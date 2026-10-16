@@ -1,15 +1,43 @@
 import json
 import os
 import threading
-import time
 
 import pytest
 from posnet.simulator import Simulator
-from PySide6.QtCore import Qt
-from PySide6.QtTest import QTest
+from PySide6.QtCore import QEventLoop, QObject, Qt, QTimer, Signal
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QSystemTrayIcon
+from test_agent import JOB
 from test_api import server, session
 from workshop_agent.app import AgentWindow
+
+
+class PrinterEvents(QObject):
+    printing = Signal()
+
+
+class ObservedAgentWindow(AgentWindow):
+    stopped = Signal()
+
+    def finished(self):
+        super().finished()
+        self.stopped.emit()
+
+
+def wait_for_signal(signal, spy):
+    if spy.count():
+        return True
+    loop = QEventLoop()
+    timer = QTimer()
+    timer.setSingleShot(True)
+    timer.timeout.connect(loop.quit)
+    signal.connect(loop.quit)
+    timer.start(5000)
+    # QSignalSpy.wait holds the GIL here, preventing the Python QThread from starting.
+    loop.exec()
+    timer.stop()
+    signal.disconnect(loop.quit)
+    return bool(spy.count())
 
 
 def test_saved_setup_does_not_start_printing(tmp_path):
@@ -20,8 +48,8 @@ def test_saved_setup_does_not_start_printing(tmp_path):
         window.token.setText("secret")
         window.port.setCurrentText(sim.connection.address)
         QTest.mouseClick(window.save_button, Qt.MouseButton.LeftButton)
-        app.processEvents()
-        if os.name != "nt":  # Windows has no POSIX mode bits
+        assert QApplication.instance() is app
+        if os.name != "nt":
             assert (tmp_path / "fiscal.json").stat().st_mode & 0o777 == 0o600
         assert requests == []
         assert sim.receipts == []
@@ -41,38 +69,33 @@ def test_saved_setup_does_not_start_printing(tmp_path):
 def test_close_keeps_running_and_quit_finishes_receipt(tmp_path, monkeypatch, tray_available):
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(QSystemTrayIcon, "isSystemTrayAvailable", lambda: tray_available)
-    printing = threading.Event()
+    events = PrinterEvents()
+    printing = QSignalSpy(events.printing)
     finish = threading.Event()
-    job = {
-        "pk": 7,
-        "payment": 2,
-        "payload": {"lines": [{"name": "Oil", "quantity": "1", "unit_price": "100.00"}]},
-    }
+    done = {**JOB, "state": "done", "receiptNumber": "1", "resolvedAt": JOB["takenAt"]}
     with (
         Simulator() as sim,
-        server([session("one"), (200, job, {}), (200, {}, {})]) as (url, requests),
+        server([session(), session(), (200, JOB, {}), (200, done, {})]) as (url, requests),
     ):
         handle = sim._handle
 
         def gate(command, params):
             if command == "trend":
-                printing.set()
+                events.printing.emit()
                 assert finish.wait(5)
             return handle(command, params)
 
         monkeypatch.setattr(sim, "_handle", gate)
-        window = AgentWindow(tmp_path)
+        window = ObservedAgentWindow(tmp_path)
         window.show()
         window.api_url.setText(url)
         window.token.setText("secret")
         window.port.setCurrentText(sim.connection.address)
+        stopped = QSignalSpy(window.stopped)
         QTest.mouseClick(window.start_button, Qt.MouseButton.LeftButton)
         try:
-            deadline = time.monotonic() + 5
-            while not printing.is_set() and time.monotonic() < deadline:
-                app.processEvents()
-                time.sleep(0.01)
-            assert printing.is_set(), (window.status.text(), requests)
+            assert wait_for_signal(events.printing, printing), (window.status.text(), requests)
+            assert QApplication.instance() is app
             window.close()
             assert window.isVisible() is not tray_available
             assert not window.worker.isInterruptionRequested()
@@ -83,20 +106,18 @@ def test_close_keeps_running_and_quit_finishes_receipt(tmp_path, monkeypatch, tr
                 window.tray.contextMenu().actions()[-1].trigger()
             else:
                 QTest.mouseClick(window.quit_button, Qt.MouseButton.LeftButton)
-            assert window.worker.isRunning()  # quit must finish and report the receipt first
+            assert window.worker.isRunning()
             assert window.worker.isInterruptionRequested()
         finally:
             finish.set()
             window.stop()
-            deadline = time.monotonic() + 5
-            while window.worker is not None and time.monotonic() < deadline:
-                app.processEvents()
-                time.sleep(0.01)
+            assert wait_for_signal(window.stopped, stopped)
         assert window.worker is None
         assert not window.isVisible()
         assert len(sim.receipts) == 1
-        assert requests[-1][2]["status"] == 3
-        assert requests[-1][2]["receipt_number"] == "1"
+        assert requests[-1][2]["state"] == "done"
+        assert requests[-1][2]["receiptNumber"] == "1"
+        assert requests[-1][2]["attempt"] == JOB["attempt"]
         assert (
             json.loads((tmp_path / "fiscal-operation.json").read_text())["state"] == "acknowledged"
         )
