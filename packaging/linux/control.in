@@ -1,0 +1,10 @@
+Package: holuto-fiscal
+Version: @VERSION@
+Section: office
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Holuto <holuto-org@users.noreply.github.com>
+Depends: @DEPENDS@
+Homepage: https://github.com/holuto-org/workshop
+Description: Holuto receipt queue and fiscal reports for Posnet Temo Online
+ Prints Holuto sales and fiscal reports on a Posnet Temo Online printer over USB.

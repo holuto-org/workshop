@@ -1,11 +1,8 @@
 ---
-description: 'Use CP1250 for Posnet wire frames in both driver and simulator'
-astCondition:
-  - '$X.encode()'
-  - '$X.decode()'
+description: 'Posnet wire text is Windows-1250 through posnet::text, never UTF-8 or Latin-1'
 condition:
-  - '\.(?:encode|decode)\s*\(\s*[''"](?:utf-?8|ascii|latin-?1|iso-8859-1)[''"]'
-scope: 'tool:edit(packages/posnet/posnet/protocol.py), tool:write(packages/posnet/posnet/protocol.py), tool:edit(packages/posnet/posnet/simulator.py), tool:write(packages/posnet/posnet/simulator.py)'
+  - 'from_utf8|as_bytes\(\)|into_bytes\(\)|encoding_rs|latin'
+scope: 'tool:edit(crates/posnet/src/**), tool:write(crates/posnet/src/**)'
 ---
 
-Encode and decode Posnet wire payloads explicitly with `cp1250`, as `protocol.encode_frame`, `protocol.decode_frame`, and `Simulator._respond` do. Default UTF-8 or an ASCII/Latin-1 codec corrupts Polish device text and the payload CRC. This is the serial-frame boundary, not JSON/settings storage (which remains UTF-8).
+Frame payloads are Windows-1250: encode and decode them only through `posnet::text::{encode, decode}`, as `frame::encode`, `frame::decode` and the simulator's replies do. UTF-8 bytes or a Latin-1 mapping corrupt Polish device text and the payload CRC, and the five unassigned code-page bytes must stay a decode error (a corrupt frame), not text. Settings and journal JSON stay UTF-8; this rule is only about bytes on the serial line.

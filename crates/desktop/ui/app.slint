@@ -1,0 +1,334 @@
+import { LineEdit, ComboBox, CheckBox, ScrollView, DatePickerPopup, Date, Palette } from "std-widgets.slint";
+
+export struct TableRow { a: string, b: string, c: string, d: string, e: string }
+export enum Action { save, start, stop, quit, queue-receipt, previous-page, next-page, daily-report, monthly-report, periodic-report, resolve-report }
+export enum Tab { documents, reports, history, settings }
+
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> primary: false;
+    callback clicked;
+    height: 36px;
+    min-width: label.preferred-width + 32px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: !enabled ? #d9d9d9 : primary ? #1677ff : area.has-hover ? #4096ff : #d9d9d9;
+    background: !enabled ? #f5f5f5 : primary ? (area.pressed ? #0958d9 : area.has-hover ? #4096ff : #1677ff) : #ffffff;
+    accessible-role: button;
+    accessible-label: text;
+    accessible-enabled: enabled;
+    accessible-action-default => { if enabled { clicked(); } }
+    forward-focus: keyboard;
+    keyboard := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    label := Text { text: root.text; color: !root.enabled ? #bfbfbf : root.primary ? white : #262626; horizontal-alignment: center; vertical-alignment: center; }
+    area := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+component Hint inherits Text { color: #8c8c8c; font-size: 12px; wrap: word-wrap; }
+component Heading inherits Text { font-size: 18px; font-weight: 600; color: #262626; }
+component Card inherits Rectangle { background: white; border-width: 1px; border-color: #f0f0f0; border-radius: 8px; }
+component DateField inherits Rectangle {
+    in-out property <Date> date;
+    in property <string> label;
+    callback changed(Date);
+    height: 34px;
+    min-width: 146px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: area.has-hover ? #1677ff : #d9d9d9;
+    Text { x: 10px; text: root.label; vertical-alignment: center; }
+    Text { x: parent.width - 24px; text: "▦"; color: #8c8c8c; vertical-alignment: center; }
+    area := TouchArea { clicked => { picker.show(); } }
+    picker := DatePickerPopup { title: "Wybierz datę"; date: root.date; accepted(value) => { root.changed(value); } }
+}
+component PortInput inherits Rectangle {
+    in-out property <string> text;
+    in property <[string]> model;
+    in property <bool> enabled: true;
+    height: 34px;
+    horizontal-stretch: 1;
+    accessible-role: combobox;
+    accessible-label: "Port drukarki";
+    accessible-value <=> root.text;
+    accessible-expandable: true;
+    accessible-action-expand => { if root.enabled { popup.show(); } }
+    HorizontalLayout {
+        spacing: 6px;
+        LineEdit { text <=> root.text; enabled: root.enabled; placeholder-text: "Automatyczne wykrywanie"; }
+        ActionButton { text: "⌄"; min-width: 34px; max-width: 34px; enabled: root.enabled; clicked => { popup.show(); } }
+    }
+    popup := PopupWindow {
+        x: 0px; y: root.height + 4px;
+        width: root.width; height: min(8, max(1, root.model.length)) * 36px + 8px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: white; border-width: 1px; border-color: #d9d9d9;
+            ScrollView {
+                VerticalLayout {
+                    padding: 4px; spacing: 2px; alignment: start;
+                    for value in root.model: ActionButton {
+                        text: value;
+                        clicked => { root.text = value; popup.close(); }
+                    }
+                    if root.model.length == 0: Hint { text: "Nie znaleziono portów. Wpisz adres drukarki."; }
+                }
+            }
+        }
+    }
+}
+component DataTable inherits Rectangle {
+    in property <[TableRow]> rows;
+    in property <TableRow> headings;
+    in-out property <int> selected: -1;
+    in property <bool> selectable: false;
+    in property <string> empty-text: "Brak dokumentów do wyświetlenia";
+    callback selected-row(int);
+    background: white;
+    VerticalLayout {
+        spacing: 0px;
+        Rectangle {
+            height: 46px; background: #fafafa;
+            HorizontalLayout {
+                padding-left: 14px; padding-right: 14px; spacing: 16px;
+                Text { text: root.headings.a; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                Text { text: root.headings.b; font-weight: 600; vertical-alignment: center; width: 140px; }
+                Text { text: root.headings.c; font-weight: 600; vertical-alignment: center; width: 155px; }
+                Text { text: root.headings.d; font-weight: 600; vertical-alignment: center; width: 110px; horizontal-alignment: right; }
+                Text { text: root.headings.e; font-weight: 600; vertical-alignment: center; width: 200px; }
+            }
+        }
+        ScrollView {
+            VerticalLayout {
+                alignment: start; spacing: 0px;
+                for row[index] in root.rows: Rectangle {
+                    height: 52px;
+                    background: root.selectable && root.selected == index ? #e6f4ff : touch.has-hover && root.selectable ? #fafafa : white;
+                    HorizontalLayout {
+                        padding-left: 14px; padding-right: 14px; spacing: 16px;
+                        Text { text: row.a; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        Text { text: row.b; vertical-alignment: center; width: 140px; overflow: elide; }
+                        Text { text: row.c; vertical-alignment: center; width: 155px; overflow: elide; }
+                        Text { text: row.d; vertical-alignment: center; width: 110px; horizontal-alignment: right; overflow: elide; }
+                        Text { text: row.e; vertical-alignment: center; width: 200px; overflow: elide; }
+                    }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: #f0f0f0; }
+                    touch := TouchArea { enabled: root.selectable; clicked => { root.selected = index; root.selected-row(index); } }
+                }
+            }
+            if root.rows.length == 0: Text { text: root.empty-text; color: #8c8c8c; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Holuto Fiscal";
+    icon: @image-url("../assets/icon.png");
+    preferred-width: 1180px; preferred-height: 820px;
+    min-width: 1040px; min-height: 720px;
+    background: #f5f5f5;
+    default-font-size: 14px;
+    in-out property <Tab> tab: Tab.settings;
+    in property <bool> connected;
+    in property <bool> running;
+    in property <bool> stopping;
+    in property <bool> queue-enabled;
+    in property <bool> reports-enabled;
+    in property <bool> previous-enabled;
+    in property <bool> next-enabled;
+    in property <bool> report-unresolved;
+    in property <string> connection-text: "Niepołączono";
+    in property <int> connection-tone;
+    in property <string> status: "Zaloguj się tokenem drukarki z Holuto.";
+    in property <int> status-tone;
+    in property <[TableRow]> documents;
+    in property <[TableRow]> history;
+    in property <string> page-label: "Strona 1";
+    in-out property <int> selected: -1;
+    in-out property <string> nip;
+    in-out property <string> api-url;
+    in-out property <string> token;
+    in-out property <string> port;
+    in property <[string]> ports;
+    in property <[string]> baud-rates;
+    in-out property <int> baud-index;
+    in property <[string]> months;
+    in-out property <int> month-index;
+    in-out property <Date> from-date;
+    in-out property <Date> to-date;
+    in property <string> from-label;
+    in property <string> to-label;
+    in-out property <bool> summary;
+    in property <string> confirm-title;
+    in property <string> confirm-text;
+    in property <string> confirm-action: "Drukuj";
+    in property <bool> confirming;
+    callback action(Action);
+    callback selected-document(int);
+    callback tab-changed(Tab);
+    callback date-changed(bool, Date);
+    callback confirm(bool);
+    init => { Palette.color-scheme = ColorScheme.light; }
+    VerticalLayout {
+        spacing: 0px;
+        Rectangle {
+            height: 88px; background: white;
+            HorizontalLayout {
+                padding-left: 28px; padding-right: 28px; padding-top: 22px; padding-bottom: 22px; spacing: 14px;
+                Image { source: @image-url("../assets/icon.png"); width: 44px; height: 44px; vertical-stretch: 0; }
+                VerticalLayout { alignment: center; spacing: 3px; Text { text: "Holuto Fiscal"; font-size: 23px; font-weight: 700; color: #141414; } Hint { text: "Twój punkt obsługi fiskalnej"; } }
+                Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    height: 32px; min-width: chip.preferred-width + 30px; border-radius: 16px;
+                    background: root.connection-tone == 2 ? #fff1f0 : root.connected ? #f6ffed : #f5f5f5;
+                    chip := Text { text: root.connection-text; horizontal-alignment: center; vertical-alignment: center; color: root.connection-tone == 2 ? #cf1322 : root.connected ? #389e0d : #595959; font-size: 12px; }
+                }
+            }
+        }
+        VerticalLayout {
+            padding-left: 28px; padding-right: 28px; padding-bottom: 16px; spacing: 16px;
+            Rectangle {
+                height: 54px;
+                HorizontalLayout {
+                    alignment: start; spacing: 32px;
+                    for item in [
+                        { title: "Do wydruku", tab: Tab.documents },
+                        { title: "Raporty", tab: Tab.reports },
+                        { title: "Historia", tab: Tab.history },
+                        { title: "Ustawienia", tab: Tab.settings }
+                    ]: Rectangle {
+                        width: tab-label.preferred-width; height: 54px;
+                        accessible-role: button;
+                        accessible-label: item.title;
+                        accessible-action-default => { root.tab = item.tab; root.tab-changed(item.tab); }
+                        forward-focus: tab-focus;
+                        tab-focus := FocusScope {
+                            key-pressed(event) => {
+                                if event.text == "\n" || event.text == " " {
+                                    root.tab = item.tab;
+                                    root.tab-changed(item.tab);
+                                    return accept;
+                                }
+                                return reject;
+                            }
+                        }
+                        tab-label := Text { text: item.title; vertical-alignment: center; color: root.tab == item.tab ? #1677ff : #595959; font-weight: root.tab == item.tab ? 600 : 400; }
+                        if root.tab == item.tab: Rectangle { y: parent.height - 3px; height: 3px; background: #1677ff; border-radius: 1px; }
+                        TouchArea { mouse-cursor: pointer; clicked => { root.tab = item.tab; root.tab-changed(item.tab); } }
+                    }
+                }
+                Rectangle { y: parent.height - 1px; height: 1px; background: #e8e8e8; }
+            }
+            if !root.connected: Rectangle {
+                height: 44px; background: #e6f4ff; border-radius: 6px; border-width: 1px; border-color: #91caff;
+                Text { x: 16px; text: "Połącz Holuto, aby pobierać zlecenia i drukować paragony."; color: #0958d9; vertical-alignment: center; }
+            }
+            if root.tab == Tab.documents: Card {
+                VerticalLayout {
+                    padding: 24px; spacing: 18px;
+                    Heading { text: "Dokumenty oczekujące na paragon"; }
+                    DataTable { rows: root.documents; headings: {a: "Zlecenie", b: "Rodzaj", c: "Klient", d: "Kwota", e: "Data"}; selected <=> root.selected; selectable: true; selected-row(row) => { root.selected-document(row); } }
+                    HorizontalLayout {
+                        ActionButton { text: "Poprzednia strona"; enabled: root.previous-enabled; clicked => { root.action(Action.previous-page); } }
+                        Rectangle { horizontal-stretch: 1; } Hint { text: root.page-label; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; }
+                        ActionButton { text: "Następna strona"; enabled: root.next-enabled; clicked => { root.action(Action.next-page); } }
+                    }
+                    HorizontalLayout { spacing: 16px; Text { text: "NIP nabywcy"; vertical-alignment: center; width: 110px; } LineEdit { text <=> root.nip; placeholder-text: "Opcjonalny NIP nabywcy — 10 cyfr"; } }
+                    ActionButton { text: "Dodaj do wydruku"; primary: true; height: 42px; enabled: root.queue-enabled; clicked => { root.action(Action.queue-receipt); } }
+                    Hint { text: "Zadania z aplikacji webowej drukują się automatycznie. Niepotwierdzone wyniki rozstrzyga personel w Holuto."; }
+                }
+            }
+            if root.tab == Tab.reports: Rectangle {
+                VerticalLayout {
+                    spacing: 16px;
+                    Card { height: 104px; VerticalLayout { padding: 24px; spacing: 9px; Heading { text: "Raporty fiskalne"; } Hint { text: "Wydruki z pamięci fiskalnej drukarki. Każda operacja wymaga Twojego potwierdzenia."; } } }
+                    Card {
+                        VerticalLayout {
+                            padding: 24px; spacing: 20px; alignment: start;
+                            HorizontalLayout { spacing: 24px; VerticalLayout { spacing: 8px; Heading { text: "Raport dobowy"; font-size: 16px; } Hint { text: "Zamyka sprzedaż bieżącego dnia w pamięci fiskalnej. Wykonuj po zakończeniu sprzedaży."; } } ActionButton { text: "Drukuj raport dobowy"; enabled: root.reports-enabled; clicked => { root.action(Action.daily-report); } } }
+                            Rectangle { height: 1px; background: #f0f0f0; }
+                            HorizontalLayout { spacing: 24px; VerticalLayout { spacing: 8px; Heading { text: "Raport miesięczny"; font-size: 16px; } Hint { text: "Łączny raport fiskalny za wybrany miesiąc."; } } ComboBox { model: root.months; current-index <=> root.month-index; width: 190px; } ActionButton { text: "Drukuj raport miesięczny"; enabled: root.reports-enabled; clicked => { root.action(Action.monthly-report); } } }
+                            Rectangle { height: 1px; background: #f0f0f0; }
+                            VerticalLayout { spacing: 16px; Heading { text: "Raport okresowy"; font-size: 16px; } Hint { text: "Za dowolny zakres dat: szczegółowy lub skrócony (łączny)."; } HorizontalLayout { spacing: 12px; DateField { date: root.from-date; label: root.from-label; changed(date) => { root.date-changed(true, date); } } Text { text: "–"; vertical-alignment: center; } DateField { date: root.to-date; label: root.to-label; changed(date) => { root.date-changed(false, date); } } CheckBox { text: "Skrócony"; checked <=> root.summary; } Rectangle { horizontal-stretch: 1; } ActionButton { text: "Drukuj raport okresowy"; enabled: root.reports-enabled; clicked => { root.action(Action.periodic-report); } } } }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+            if root.tab == Tab.history: Card {
+                VerticalLayout { padding: 24px; spacing: 20px; Heading { text: "Wydrukowane paragony"; } DataTable { rows: root.history; headings: {a: "Pozycje", b: "Data", c: "Nr paragonu", d: "Kwota", e: "Płatność"}; empty-text: "Brak wydrukowanych paragonów"; } Hint { text: "Lista z tego komputera. Numer nadaje drukarka; pamięć fiskalna jest źródłem prawdy."; } }
+            }
+            if root.tab == Tab.settings: Rectangle {
+                HorizontalLayout {
+                    spacing: 20px;
+                    Card {
+                        horizontal-stretch: 1;
+                        VerticalLayout {
+                            padding: 28px; spacing: 18px; alignment: start;
+                            Heading { text: "Połączenie z Holuto"; }
+                            Hint { text: "Wprowadź dane parowania i wybierz drukarkę, aby rozpocząć obsługę zleceń."; }
+                            Text { text: "Adres API"; }
+                            LineEdit { text <=> root.api-url; placeholder-text: "https://api.example.com"; enabled: !root.running; }
+                            Text { text: "Token parowania"; }
+                            LineEdit { text <=> root.token; input-type: password; placeholder-text: "Token parowania z Holuto"; enabled: !root.running; }
+                            Text { text: "Port drukarki"; }
+                            PortInput { text <=> root.port; model: root.ports; enabled: !root.running; }
+                            Text { text: "Prędkość transmisji"; }
+                            ComboBox { model: root.baud-rates; current-index <=> root.baud-index; enabled: !root.running; }
+                            HorizontalLayout { spacing: 10px; ActionButton { text: "Zapisz"; enabled: !root.running; clicked => { root.action(Action.save); } } ActionButton { text: "Zaloguj i uruchom"; primary: true; enabled: !root.running; clicked => { root.action(Action.start); } } ActionButton { text: "Zatrzymaj"; enabled: root.running && !root.stopping; clicked => { root.action(Action.stop); } } ActionButton { text: "Zakończ"; clicked => { root.action(Action.quit); } } }
+                            Hint { text: "Zamknięcie okna ukrywa aplikację w zasobniku. Aby zmienić ustawienia, najpierw zatrzymaj obsługę drukarki."; }
+                        }
+                    }
+                    Card {
+                        width: 260px;
+                        VerticalLayout { padding: 24px; spacing: 18px; alignment: start; Hint { text: "Zadania z Holuto drukują się automatycznie po zalogowaniu.\n\nNiepotwierdzone wyniki rozstrzyga personel w Holuto."; } }
+                    }
+                }
+            }
+            HorizontalLayout {
+                height: 36px; spacing: 16px;
+                Text { text: root.status; color: root.status-tone == 2 ? #cf1322 : root.status-tone == 1 ? #389e0d : #595959; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                if root.report-unresolved: ActionButton { text: "Wyjaśnij raport"; clicked => { root.action(Action.resolve-report); } }
+            }
+        }
+    }
+    if root.confirming: Rectangle {
+        background: #00000055;
+        TouchArea { }
+        Card {
+            width: 500px; height: dialog-layout.preferred-height;
+            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+            dialog-layout := VerticalLayout {
+                padding: 28px; spacing: 24px;
+                Heading { text: root.confirm-title; }
+                Text { text: root.confirm-text; wrap: word-wrap; color: #595959; }
+                HorizontalLayout { alignment: end; spacing: 12px; ActionButton { text: "Anuluj"; clicked => { root.confirm(false); } } ActionButton { text: root.confirm-action; primary: true; clicked => { root.confirm(true); } } }
+            }
+        }
+    }
+}
+
+export component TrayIcon inherits SystemTrayIcon {
+    icon: @image-url("../assets/icon.png");
+    tooltip: "Holuto Fiscal";
+    title: "Holuto Fiscal";
+    callback open;
+    callback quit;
+    clicked => { root.open(); }
+    Menu { MenuItem { title: "Otwórz"; activated => { root.open(); } } MenuSeparator {} MenuItem { title: "Zakończ"; activated => { root.quit(); } } }
+}
+
+export component ErrorWindow inherits Window {
+    title: "Holuto Fiscal"; preferred-width: 520px; preferred-height: 240px; background: #f5f5f5;
+    in property <string> message;
+    callback dismiss;
+    VerticalLayout { padding: 28px; spacing: 24px; Heading { text: "Nie można uruchomić aplikacji"; } Text { text: root.message; wrap: word-wrap; color: #cf1322; } ActionButton { text: "Zamknij"; primary: true; clicked => { root.dismiss(); } } }
+}

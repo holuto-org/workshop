@@ -1,0 +1,43 @@
+# Internal crates with no external consumers.
+avoid-breaking-exported-api = false
+pub-underscore-fields-behavior = "AllPubFields"
+
+# Covers `#[cfg(test)]` modules, not the `posnet` simulator other crates' tests use.
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-unwrap-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-expect-in-consts = false
+allow-unwrap-in-consts = false
+check-incompatible-msrv-in-tests = true
+
+disallowed-methods = [
+    { path = "std::thread::spawn", reason = "unnamed and panics when the OS refuses a thread; use `std::thread::Builder::new().name(..).spawn`, keep the handle and join it" },
+    { path = "std::thread::sleep", reason = "a fixed delay hides races and blocks a stop request; wait on the worker's command channel with `recv_timeout`" },
+    { path = "rust_decimal::Decimal::round", reason = "banker's rounding; fiscal amounts round half up through `posnet::money::half_up`" },
+    { path = "rust_decimal::Decimal::round_dp", reason = "banker's rounding; fiscal amounts round half up through `posnet::money::half_up`" },
+    { path = "std::process::Command::new", reason = "the app never shells out" },
+]
+
+disallowed-types = [
+    { path = "std::sync::mpsc::SyncSender", reason = "`send` blocks while the buffer is full; the GUI thread must never wait on the worker" },
+]
+
+# Empty replaces the default ["bytes::Bytes"] so the check covers every type.
+ignore-interior-mutability = []
+
+allow-mixed-uninlined-format-args = false
+allow-renamed-params-for = []
+check-inconsistent-struct-field-initializers = true
+enforce-iter-loop-reborrow = true
+lint-commented-code = true
+matches-for-let-else = "AllTypes"
+upper-case-acronyms-aggressive = true
+warn-on-all-wildcard-imports = true
+
+# Kept strict should `unsafe_code` ever be permitted; private checks apply only to safety docs.
+check-private-items = true
+accept-comment-above-attributes = false
+accept-comment-above-statement = false
+enable-raw-pointer-heuristic-for-send = false
+warn-unsafe-macro-metavars-in-private-macros = true

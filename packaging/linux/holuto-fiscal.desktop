@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Holuto Fiscal
+Comment=Paragony Holuto i raporty fiskalne
+Exec=/usr/bin/holuto-fiscal
+Icon=holuto-fiscal
+Terminal=false
+Categories=Office;Finance;
+StartupNotify=true

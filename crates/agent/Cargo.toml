@@ -1,0 +1,29 @@
+[package]
+name = "agent"
+description = "Holuto agent: /agent API, durable operation journal, receipt execution and the printer worker"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+atomicwrites.workspace = true
+dirs.workspace = true
+jiff.workspace = true
+posnet.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+ureq.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+posnet = { workspace = true, features = ["simulator"] }
+tiny_http.workspace = true
+
+[lints]
+workspace = true

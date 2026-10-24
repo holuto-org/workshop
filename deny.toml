@@ -1,0 +1,75 @@
+[graph]
+# The release targets (`.github/workflows/release.yml`).
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+all-features = true
+
+[advisories]
+yanked = "deny"
+unsound = "all"
+unused-ignored-advisory = "deny"
+# Unmaintained, not vulnerable: all arrive through Slint 1.18 (fonts, and zbus 5 for the Linux
+# tray, which the desktop's own D-Bus probe shares). Drop each once Slint moves past it.
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser via Slint's font stack" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant via zbus 5 (Slint tray)" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names via zbus 5 (Slint tray)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive via zbus 5 (Slint tray)" },
+]
+
+[licenses]
+include-dev = true
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    # File-level copyleft (serialport): unmodified use imposes nothing on this repository.
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    # Slint's terms for desktop applications; README carries the attribution badge it requires.
+    "LicenseRef-Slint-Royalty-free-2.0",
+]
+confidence-threshold = 1.0
+unused-allowed-license = "deny"
+unused-license-exception = "deny"
+
+[licenses.private]
+ignore = true
+
+[bans]
+# Denying upstream duplicates would need a skip list that also hides future duplicates.
+wildcards = "deny"
+# Workspace path dependencies have no version.
+allow-wildcard-paths = true
+deny = [
+    { crate = "openssl-sys", use-instead = "rustls" },
+    { crate = "native-tls", use-instead = "rustls" },
+    { crate = "reqwest", reason = "the worker is one blocking thread; ureq needs no async runtime" },
+    { crate = "tokio", reason = "the worker is one blocking thread; an async runtime would add threads the fiscal invariants do not cover" },
+]
+workspace-default-features = "deny"
+
+# Empty tables still enable their checks; all fields keep their defaults.
+[bans.workspace-dependencies]
+
+# Direct dependencies only: transitive hits are for upstream crates to drop.
+[bans.std-replacements]
+
+[bans.build]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"
+unused-allowed-source = "deny"

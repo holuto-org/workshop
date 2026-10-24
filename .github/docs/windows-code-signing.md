@@ -34,7 +34,7 @@ Fill in <https://signpath.org/apply>. The form is a HubSpot embed; these are its
 | Privacy Policy URL | empty; the desktop app sends nothing anywhere |
 | Wikipedia URL | empty |
 | Tagline | `Desktop app and driver for Posnet Temo Online fiscal printers used in Polish car workshops` |
-| Description | `Holuto Fiscal is a Python/Qt desktop application that prints fiscal receipts and daily, monthly and periodic reports on Posnet Temo Online printers over USB. The repository also contains the pure-Python Posnet protocol driver and an agent with a setup window that prints receipts queued from the Holuto workshop management system. MIT licensed. Windows, macOS and Linux builds are produced by GitHub Actions from every tagged release; we are applying to sign the Windows executable.` |
+| Description | `Holuto Fiscal is a Rust/Slint desktop application that prints fiscal receipts and daily, monthly and periodic reports on Posnet Temo Online printers over USB. The repository also contains the Rust Posnet protocol driver and an agent with a setup window that prints receipts queued from the Holuto workshop management system. MIT licensed. Windows, macOS and Linux builds are produced by GitHub Actions from every version-increasing release; we are applying to sign the Windows executable.` |
 | Reputation | `Published in September 2026 as the open-source part of Holuto, a car-workshop management platform (holuto.com) used in production by Polish workshops. Maintained by the Holuto team, who also run the backend the agent talks to. All commits go through pull requests with required CI; releases are built only by GitHub Actions.` Add real numbers (workshops, users) if available. |
 | Maintainer Type | company / organization, not individual |
 | First Name, Last Name, Email | the applicant; use an `@holuto.com` address, matching the organization domain helps |
@@ -88,7 +88,7 @@ In the repository: **Settings → Secrets and variables → Actions**.
 
 ## 4. Workflow Changes
 
-Add the signing step to the Windows leg of `release.yml`, between `build.sh` and the
+Add the signing step to the Windows leg of `release.yml`, between `packaging/build.sh` and the
 final artifact upload. The unsigned executable must first be uploaded as a workflow
 artifact — SignPath fetches it from GitHub rather than trusting anything the job sends —
 then the signed file replaces it.
@@ -99,7 +99,7 @@ then the signed file replaces it.
         uses: actions/upload-artifact@v7
         with:
           name: win-x64-unsigned
-          path: packages/desktop/release/holuto-fiscal-win-x64.exe
+          path: release/holuto-fiscal-win-x64.exe
           retention-days: 1
 
       - if: runner.os == 'Windows'
@@ -111,10 +111,10 @@ then the signed file replaces it.
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
           github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
           wait-for-completion: true
-          output-artifact-directory: packages/desktop/release
+          output-artifact-directory: release
 ```
 
-The signed `.exe` lands in `packages/desktop/release/` under the same name, so the
+The signed `.exe` lands in `release/` under the same name, so the
 existing upload and `publish` steps pick it up unchanged.
 
 Gate the two steps on the secret being present if pull-request builds from forks should

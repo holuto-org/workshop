@@ -3,13 +3,15 @@
 One application on the workshop PC, next to the Posnet Temo Online fiscal printer.
 It prints **only Holuto sales and advances**: staff queue a receipt in the web app or
 select an eligible document in Holuto Fiscal. There is no manual receipt editor or separate agent.
+It lives in the system tray and keeps processing while its window is closed.
 
-One uv workspace, two packages:
+One Cargo workspace, three crates:
 
-| Package | Import | Purpose |
-| --- | --- | --- |
-| `packages/posnet` | `posnet` | Posnet USB/serial driver: framing, CRC, CP1250, printer state, receipts, reports, durable intent journal and socket simulator. |
-| `packages/desktop` | `fiscal_desktop` | **Holuto Fiscal** — Polish PySide6 app, background receipt loop, reports and history. Ships as `.exe`, `.dmg` and `.deb`. |
+| Crate | Purpose |
+| --- | --- |
+| `crates/posnet` | Posnet serial driver: framing, CRC, CP1250, printer state, receipts, reports, and the socket simulator tests use. |
+| `crates/agent` | Holuto `/agent` API, the durable operation journal, receipt execution and recovery, and the single printer worker thread. |
+| `crates/desktop` | **Holuto Fiscal** (`holuto-fiscal`) — Polish Slint app with tray, reports and history. Ships as `.exe`, `.dmg` and `.deb`. |
 
 ## Install
 
@@ -27,8 +29,14 @@ Download the build for your machine from the
 File names are stable; the version is in the release tag, `SHA256SUMS.txt` and app.
 Builds are unsigned: Windows SmartScreen and macOS Gatekeeper may ask before the
 first start (macOS: right-click → Open). The `.deb` installs `holuto-fiscal` and a
-launcher entry. Linux CI builds require Ubuntu 24.04 or newer; locally built bundles
-require a compatible host libc.
+launcher entry. Linux CI builds require Ubuntu 24.04 or newer; locally built packages
+require a compatible host libc. The window renders in software: no GPU or OpenGL driver is
+needed (remote desktops and virtual machines work).
+
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
+
+The UI toolkit, [Slint](https://slint.dev), is used under the Slint Royalty-free Desktop,
+Mobile, and Web Applications License 2.0; the badge above is its required attribution.
 
 ## Sign in and connect
 
@@ -42,16 +50,24 @@ require a compatible host libc.
    processing starts only after you click **Zaloguj i uruchom** again.
 
 Use the final API URL, including any path prefix. HTTPS is required except for loopback
-development URLs (`localhost`, `127.0.0.1`, `::1`); redirects are rejected. After token
-rotation, replace the saved token. A 401 stops processing; there is no token refresh.
+development URLs (`localhost`, `127.0.0.0/8`, `::1`); redirects are rejected. TLS uses the
+operating system's certificate store. After token rotation, replace the saved token. A 401
+stops processing; there is no token refresh.
 
-The API URL, token, port and speed are stored in
-`$XDG_STATE_HOME/holuto-fiscal/fiscal.json` (default
-`~/.local/state/holuto-fiscal/fiscal.json`). On Unix this file has mode **0600**.
-On Windows keep the state directory in a private user profile with restricted ACLs.
-Do not share this file or include it in logs. Legacy standalone state is migrated
-from `workshop-agent` together with its journal and result outbox; keep those files
-together, never discard them to unblock the printer.
+The app keeps its state in one directory, readable only by the user (mode **0700**, files
+**0600** on Unix):
+
+| OS | Directory |
+| --- | --- |
+| Linux | `$XDG_STATE_HOME/holuto-fiscal` (default `~/.local/state/holuto-fiscal`) |
+| macOS | `~/Library/Application Support/holuto-fiscal` |
+| Windows | `%LOCALAPPDATA%\holuto-fiscal` |
+
+`settings.json` holds the API URL, token, port and speed; on Windows keep the profile private
+with restricted ACLs. Do not share it or include it in logs. `operation.json` is the fiscal
+journal and `history.jsonl` the local receipt history. `instance.lock` allows one running
+Holuto Fiscal per state directory; a second start is refused. `--data-dir` selects another
+directory.
 
 ### Printer
 
@@ -60,13 +76,18 @@ port is usually `/dev/ttyACM0` (prefer `/dev/serial/by-id/...`), on Windows `COM
 and on macOS `/dev/cu.usbmodem…`. The user needs read/write access (`dialout` group on
 Linux). Never run through sudo. Only serial connections are supported.
 
+When the saved port does not answer, the app scans the other serial ports with a single
+read-only identification command and adopts (and saves) the first that is a Temo Online. It
+never scans while an operation is unresolved: the device must not change then.
+
 Saved printer settings also apply to `--probe`. `--serial` and `--baudrate` override
 only their respective saved values, both in the app and in probe mode.
 
-A read-only probe, when an operator explicitly wants to inspect the device:
+A read-only probe, when an operator explicitly wants to inspect the device (close the app
+first; it holds the state directory):
 
 ```bash
-uv run fiscal-desktop --serial /dev/ttyACM0 --probe
+holuto-fiscal --serial /dev/ttyACM0 --probe
 ```
 
 ## Desktop app
@@ -80,22 +101,23 @@ uv run fiscal-desktop --serial /dev/ttyACM0 --probe
   enforces that limit. The list shows one page of up to 100 documents, oldest first,
   refreshed on each poll; **Następna strona**/**Poprzednia strona** move between pages.
 - **Raporty** — daily, monthly and periodic fiscal reports, with confirmation before
-  printing. Reports and queued receipts use the **same printer lock**, so they cannot
+  printing. Reports and queued receipts run on the **same worker thread**, so they cannot
   interleave commands.
-- **Historia** — local operation history, including printer-assigned receipt numbers.
-  It is a convenience log, not a replacement for the printer's fiscal memory.
+- **Historia** — receipts printed on this computer, including printer-assigned receipt numbers
+  (or the number staff entered in Holuto when the printer's could not be read). It is a
+  convenience log, not a replacement for the printer's fiscal memory.
 - **Ustawienia** — API URL/token and printer port/speed, plus processing controls.
 
-The background loop polls every **3 seconds**. Closing the window hides it in the
-system tray without stopping processing; open it again from the tray. **Zatrzymaj**
-stops processing; **Zakończ** exits. Both wait for the current operation to finish.
-If a system tray is unavailable,
-closing keeps the window visible instead of leaving an inaccessible background app.
-Run one Holuto Fiscal instance per printer; do not run an old standalone agent beside it.
+The background loop polls every **3 seconds** (15 seconds after an error or while blocked).
+Closing the window hides it in the system tray and releases the window's memory without
+stopping processing; open it again from the tray. **Zatrzymaj** stops processing;
+**Zakończ** exits. Both wait for the current operation to finish. If a system tray is
+unavailable, closing keeps the window visible instead of leaving an inaccessible background
+app.
 
 Prices are gross, quantities and monetary values use decimal strings at the API
 boundary, and the printer calculates the fiscal VAT block. Holuto supplies unit
-prices with at most two decimal places and each line's gross total. The desktop
+prices with at most two decimal places and each line's gross total. The app
 prints quantities and prices unchanged; a higher-precision price or a line total
 that differs from quantity × price rounded half up to grosze fails the job before
 printing. A receipt may have **mixed VAT rates**, each line using its assigned
@@ -109,36 +131,39 @@ control-character removal and device length limits).
 ## Fiscal safety
 
 - Before each operation verify printer identity, fiscal mode, header, mechanism,
-  command queue, transaction state and VAT table.
-- Journal intent **before the first command reaches the printer**. Never retry a
-  device command and never reprint a receipt.
+  command queue, transaction state and VAT table, in the same session that prints.
+- Journal intent **before the first command reaches the printer**: a taken job is claimed in
+  `operation.json` before preflight, and every printer command is journaled before it is sent.
+  Never retry a device command and never reprint a receipt.
 - An uncertain result, including a process death during dispatch, is **unknown** and
   blocks receipts and reports across restarts. Inspect the paper and printer state,
   then resolve the job in the **web app**. Resolution unblocks; it never reissues a receipt.
   A completed print without a readable receipt number also remains **unknown**
   until staff supply the number in Holuto; completed journal evidence is retained.
-- The receipt journal (`operation.json`) and result outbox (`operation.agent.json`)
-  live in the same state directory. A migrated standalone agent retains its existing
-  `fiscal-operation.json`/`fiscal-operation.agent.json` pair. Persist the job,
-  attempt and execution-start timestamp before dispatch, and the result before sending
-  it. Re-sending a saved API result is not reprinting: it keeps the same attempt and
-  timestamp. Restart recovery reconciles durable evidence without issuing printer commands again.
-- A terminal server resolution is authoritative. Corrupt, orphaned or unresolved
-  journals fail closed; deleting them is not a recovery procedure.
-- Local history is only a display cache: cache read/write errors are reported
-  separately and do not prevent acknowledgement or settlement of a server-accepted result.
+- An interrupted **report** blocks the same way; after checking the printout, an operator
+  confirms it with **Wyjaśnij raport**, which requires the same printer connected and ready
+  and never prints anything.
+- The journal persists the job, attempt and execution-start timestamp before dispatch, and the
+  result before sending it. Re-sending a saved API result is not reprinting: it keeps the same
+  attempt and timestamp. Restart recovery reconciles durable evidence with the job's server
+  state without issuing printer commands again.
+- A terminal server resolution is authoritative. A corrupt or unreadable journal fails
+  closed; deleting it is not a recovery procedure.
+- Local history is only a display cache: its read or write errors are reported
+  separately and do not prevent settling a server-accepted result.
 
 ## Fiscal API contract
 
-The app uses `/agent` with `Authorization: Bearer <device token>`.
+The app uses `/agent` with `Authorization: Bearer <device token>`, `App-Version: agent/<version>`
+and `Accept-Language: pl` (error details from Holuto are shown in Polish).
 `POST /agent/session` and `POST /agent/heartbeat` send fresh printer telemetry:
 
 ```json
 {
   "serial": "device-serial",
-  "model": "Temo Online",
-  "firmware": "2.01",
-  "appVersion": "0.1.2",
+  "model": "POSNET TEMO ONLINE",
+  "firmware": "32.01",
+  "appVersion": "0.2.0",
   "vatSlots": [{"slot": 0, "vatRate": "23"}, {"slot": 1, "vatRate": "8"}],
   "maxItemNameLength": 80,
   "maxLinesPerReceipt": 500,
@@ -148,17 +173,15 @@ The app uses `/agent` with `Authorization: Bearer <device token>`.
 
 `vatSlots` reports the actual device table, not a set of rates: slots are integers
 0–15 and `vatRate` is one of `"23"`, `"8"`, `"5"`, `"0"`, `"zw"`. Every session and
-heartbeat replaces the backend's slot mapping. Telemetry uses `appVersion` and
-`vatSlots`, not the retired `agentVersion`/`vatRates` fields. `maxItemNameLength`,
-`maxLinesPerReceipt` and `allowedCharacters` (every printable character, in NFC) are
-required; the backend queues no receipt until it has them. The protocol cannot report
-them, so the driver states the documented Temo Online values once, in `posnet.models`:
-an 80-character item name (`trline`), 500 lines per receipt (`trinit`) and the
-CP1250 characters from 0x20 to 0xFF the driver prints unchanged (all but DEL, the
-no-break space and the soft hyphen). Session/heartbeat bind
-and verify the physical serial; a serial already paired to another live printer is
-refused (409). Other requests include the unchanged
-`X-Device-Serial` header; a device swap is rejected before a job is taken or printed.
+heartbeat replaces the backend's slot mapping. `maxItemNameLength`, `maxLinesPerReceipt` and
+`allowedCharacters` (every printable character, in NFC) are required; the backend queues no
+receipt until it has them. The protocol cannot report them, so the driver states the documented
+Temo Online values once, in `posnet::text`: an 80-character item name (`trline`), 500 lines per
+receipt (`trinit`) and the CP1250 characters from 0x20 to 0xFF the driver prints unchanged (all
+but DEL, the no-break space and the soft hyphen). Session/heartbeat bind and verify the
+physical serial; a serial already paired to another live printer is refused (409). Other
+requests include the unchanged `X-Device-Serial` header; a device swap is rejected before a
+job is taken or printed.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -187,29 +210,35 @@ gross total minus advances and `fp` is the sum of payments. Fully prepaid sales
 close at zero without payment commands. Before dispatch, every slot/rate must match
 fresh telemetry, deductions cannot exceed sales at their slot, and payments must
 exactly cover the fiscal value. Amounts must be nonnegative whole grosze within the
-printer's range. Journal/outbox recovery and the no-replay rule are unchanged.
+printer's range. Journal recovery and the no-replay rule are unchanged.
 
 ## Development and releases
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # once, if uv is missing
-uv sync --locked
-uv run fiscal-desktop
-QT_QPA_PLATFORM=offscreen uv run pytest -q
-uv run ruff check packages && uv run ruff format --check packages
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # once, if rustup is missing
+rustup toolchain install nightly-2026-10-06 --profile minimal --component rustfmt
+cargo run -p holuto-fiscal
+cargo nextest run --workspace --all-features      # or: cargo test --workspace --all-features
+cargo +nightly-2026-10-06 fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo deny --locked check && cargo shear --deny-warnings
 ```
 
-Python 3.14 or newer. `bash packages/desktop/build.sh` produces the host OS/CPU bundle
-in `packages/desktop/release/`. No separate agent is built or installed; its loop is
-part of `fiscal_desktop`. HTTP uses the Python standard library, with no additional
-HTTP dependency.
+The toolchain is pinned in `rust-toolchain.toml`; formatting uses the pinned nightly because
+`.rustfmt.toml` enables unstable options. Linux builds need `pkg-config` and the fontconfig
+headers (`libfontconfig1-dev` / `fontconfig-devel`). Clippy runs pedantic, nursery and a strict
+set of restriction lints (`Cargo.toml`, `clippy.toml`); `deny.toml` holds the dependency and
+license policy.
 
-CI builds the desktop once per OS/CPU target (Windows x64, macOS ARM64/x64, Linux
-ARM64/x64), only when a push to `master` increases the root `pyproject.toml` version
-above every published release. A manual **Release** run also requires a version
-increase relative to the selected commit's parent and an unpublished version. Manual
-runs produce Actions artifacts without publishing a release. Retry failed releases
-by rerunning the original workflow run.
+For a local run without a printer, the `simulator` feature adds an in-process Temo peer:
+`cargo run -p holuto-fiscal --features simulator -- --simulator --data-dir /tmp/holuto`.
+Release builds never enable it.
+
+`bash packaging/build.sh` produces the host OS/CPU artifact in `release/`. CI builds the
+desktop once per OS/CPU target (Windows x64, macOS ARM64/x64, Linux ARM64/x64), only when a
+push to `master` increases the root `Cargo.toml` `[workspace.package] version` above every
+published release. A manual **Release** run produces Actions artifacts without publishing a
+release. Retry failed releases by rerunning the original workflow run.
 
 Printer behavior must be exercised through the socket simulator and automated tests,
 not real fiscal commands. Buyer NIP and payment forms follow

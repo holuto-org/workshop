@@ -17,56 +17,58 @@ jobs:
   static:
     name: Static analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-
-      - name: Ruff format
-        uses: astral-sh/ruff-action@v4.1.0
+      - name: Install Rust toolchains
+        run: |
+          rustup toolchain install
+          rustup toolchain install nightly-2026-10-06 --profile minimal --component rustfmt
+      - uses: Swatinem/rust-cache@v2
         with:
-          src: packages
-          args: format --check --diff
-
-      - name: Ruff check
-        uses: astral-sh/ruff-action@v4.1.0
+          key: static
+      - uses: taiki-e/install-action@v2
         with:
-          src: packages
-          args: check
-
+          tool: cargo-deny@0.20.2,cargo-shear@1.14.0
+      - name: Install Linux build dependencies
+        # fontique -> yeslogic-fontconfig-sys needs pkg-config and fontconfig headers.
+        # winit/softbuffer dlopen their display libraries; no X11/Wayland dev packages.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libfontconfig1-dev
+      - name: Format
+        run: cargo +nightly-2026-10-06 fmt --check
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Dependency policy
+        run: cargo deny --locked check
+      - name: Unused dependencies
+        run: cargo shear --deny-warnings
       - name: ShellCheck
-        run: shellcheck packages/desktop/build.sh
+        run: shellcheck packaging/*.sh
 
   test:
     name: Test suite (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.1.0
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
         with:
-          quiet: true
-          enable-cache: true
-
-      - name: Install Qt runtime
+          tool: cargo-nextest@0.9.149
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libfontconfig1 libxkbcommon0 libdbus-1-3 libglib2.0-0t64
-
-      - name: Install dependencies
-        run: uv sync --locked
-
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libfontconfig1-dev
       - name: Run tests
-        run: uv run pytest
+        run: cargo nextest run --locked --workspace --all-features --no-fail-fast
         env:
-          QT_QPA_PLATFORM: offscreen
+          NEXTEST_PROFILE: ci

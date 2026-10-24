@@ -5,24 +5,38 @@
 - Before edit or verify: collect every `AGENTS.md` from repo root to changed files.
 - Rules add together across chain.
 
+## Layout
+
+One Cargo workspace; dependency versions and lints live only in the root `Cargo.toml`, crates use
+`workspace = true`.
+
+| Crate | Owns |
+| --- | --- |
+| `crates/posnet` | Posnet Temo Online driver: CP1250 text, frames, sessions, preflight, receipts, reports. Feature `simulator`: the in-process TCP peer every printer test uses. |
+| `crates/agent` | Holuto `/agent` API, the durable operation journal, receipt execution and recovery, settings, history, and the single printer `Worker` thread. |
+| `crates/desktop` | `holuto-fiscal`: Slint UI, tray and CLI (`--probe`). Feature `simulator`: `--simulator` for local smoke runs, never in release builds. |
+
+## Code
+
+- A justified lint exception is `#[expect(lint, reason = "…")]` at the call site, never `allow`.
+- Modules are `foo.rs` + `foo/`, never `mod.rs`; unit tests live in `foo/tests.rs`.
+- No `pub use`: import items from the module that defines them.
+- Errors callers match on are `thiserror` enums; their `Display` is the Polish, operator-facing text.
+
 ## Tooling
 
-- Prefer `rtk uv run …`; no `rtk` installed → plain `uv run …`.
-- Never `uvx ruff`: use the pinned dev dep in the workspace venv.
+- Prefer `rtk cargo …`; no `rtk` installed → plain `cargo …`.
 
 ## Verify
 
 Subagents: skip checks below.
 
-Run all commands from the repo root, single uv workspace.
+Run all commands from the repo root. After code edits:
 
-After code edits:
+```sh
+cargo +nightly-2026-10-06 fmt   # pinned nightly: .rustfmt.toml uses unstable options; builds stay on stable
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo nextest run --workspace --all-features
+```
 
-- `rtk uv run ruff format <changed_files>`
-- `rtk uv run ruff check <changed_files>`
-
-Before finishing feature work:
-
-- `QT_QPA_PLATFORM=offscreen rtk uv run pytest <target_test_module>`
-
-`QT_QPA_PLATFORM=offscreen` is required for the desktop tests; without it Qt needs a display.
+Before finishing dependency changes: `cargo deny --locked check` and `cargo shear --deny-warnings`.
