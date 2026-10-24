@@ -5,10 +5,53 @@ from unicodedata import normalize
 from anyascii import anyascii
 
 MAX_CENTS = 9_999_999_999
+# Temo Online receipt capabilities. The protocol has no command that reports them, so they come
+# from Posnet POT-I-DEV-37 v5978 (Online MR2021), the specification the README cites:
+# - p. 295, `trline`: an item name ("na") holds "Do 80 znaków".
 MAX_NAME_LENGTH = 80
+# - p. 275, `trinit`: a started transaction takes "do 500 pozycji sprzedaży".
+MAX_LINES = 500
+# - pp. 14 and 430: in the WINDOWS-1250 code page (the printer's required setting) every byte
+#   0x20-0xFF prints. Listed are those `sanitize` passes through unchanged: the five bytes
+#   CP1250 leaves unassigned have no Unicode character to send, and DEL, the no-break space
+#   and the soft hyphen are not printable text (a no-break space becomes a space).
+PRINTABLE_CHARACTERS = "".join(
+    character
+    for character in bytes(range(0x20, 0x100)).decode("cp1250", "ignore")
+    if character.isprintable()
+)
+MAX_BUYER_NIP_LENGTH = 30
 VAT_COUNT = 7
 EXEMPT_PERCENT = Decimal(100)  # the rate the printer reserves for "zwolniona"
 CONTROL_CHARS = frozenset(chr(code) for code in (*range(32), 127))
+PAYMENT_TYPES = {"cash": 0, "card": 2, "transfer": 8, "mobile": 6, "credit": 5}
+
+
+def validate_cents(value: int) -> None:
+    if type(value) is not int or not 0 <= value <= MAX_CENTS:
+        raise ValueError("Kwota musi być nieujemna i mieścić się w zakresie drukarki.")
+
+
+@dataclass(frozen=True)
+class Payment:
+    form: str
+    amount_cents: int
+
+    def __post_init__(self):
+        if not isinstance(self.form, str) or self.form not in PAYMENT_TYPES:
+            raise ValueError("Nieprawidłowa forma płatności.")
+        validate_cents(self.amount_cents)
+
+
+@dataclass(frozen=True)
+class Advance:
+    vat: int
+    amount_cents: int
+
+    def __post_init__(self):
+        if type(self.vat) is not int or not 0 <= self.vat < VAT_COUNT:
+            raise ValueError("Nieprawidłowy slot VAT zaliczki.")
+        validate_cents(self.amount_cents)
 
 
 def money(cents: int) -> str:

@@ -8,6 +8,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 import serial
 
+from .models import MAX_BUYER_NIP_LENGTH
 from .protocol import MAX_FRAME, Connection, DeviceError, ProtocolError, decode_frame
 
 serial.protocol_handler_packages.append("posnet")  # resolves sim:// to posnet.protocol_sim
@@ -26,7 +27,9 @@ class Simulator:
         self.footer_open = False
         self.transaction_open = False
         self.lines = []
-        self.payment = None
+        self.payments = []
+        self.advances = []
+        self.buyer_nip = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._serve, name="Temo simulator", daemon=True)
 
@@ -94,6 +97,26 @@ class Simulator:
             ("\t".join([command, *(k + str(v) for k, v in params.items())]) + "\t").encode("cp1250")
         )
 
+    def _end_transaction(self, params):
+        total = sum(int(line["wa"]) for line in self.lines) - sum(
+            int(item["pr"]) for item in self.advances
+        )
+        paid = sum(int(item["wa"]) for item in self.payments)
+        if total != int(params["to"]) or total != paid or paid != int(params["fp"]):
+            raise ValueError
+        self.receipts.append(
+            {
+                "total_cents": total,
+                "payments": list(self.payments),
+                "advances": list(self.advances),
+                "buyer_nip": self.buyer_nip,
+                "lines": list(self.lines),
+            }
+        )
+        self.transaction_open = False
+        self.footer_open = params.get("fe") == "0"
+        return {}
+
     def _handle(self, command, params):
         if command == "getrealid":
             return {"nm": "POSNET TEMO ONLINE", "vr": "32.01", "nu": "DEMO0000001"}
@@ -140,7 +163,15 @@ class Simulator:
         if command == "trinit" and not self.transaction_open:
             self.transaction_open = True
             self.lines = []
-            self.payment = None
+            self.payments = []
+            self.advances = []
+            self.buyer_nip = None
+            return {}
+        if command == "trnipset" and self.transaction_open:
+            nip = params["ni"]
+            if not nip.strip() or len(nip) > MAX_BUYER_NIP_LENGTH:
+                raise ValueError
+            self.buyer_nip = nip
             return {}
         if command == "trline" and self.transaction_open:
             value = (Decimal(params["il"]) * int(params["pr"])).quantize(
@@ -150,27 +181,31 @@ class Simulator:
                 raise ValueError
             self.lines.append(params)
             return {}
-        if command == "trpayment" and self.transaction_open:
-            self.payment = params
-            return {}
-        if command == "trend" and self.transaction_open and self.lines and self.payment:
-            total = sum(int(line["wa"]) for line in self.lines)
+        if command == "tradvance" and self.transaction_open:
+            slot = params["vt"]
+            sales = sum(int(line["wa"]) for line in self.lines if line["vt"] == slot)
+            amount = int(params["pr"])
             if (
-                total != int(params["to"])
-                or total != int(self.payment["wa"])
-                or total != int(params["fp"])
+                slot not in {line["vt"] for line in self.lines}
+                or int(params["wa"]) != sales
+                or amount < 0
+                or amount > sales
+                or any(item["vt"] == slot for item in self.advances)
             ):
                 raise ValueError
-            self.receipts.append(
-                {
-                    "total_cents": total,
-                    "payment": int(self.payment["ty"]),
-                    "lines": list(self.lines),
-                }
-            )
-            self.transaction_open = False
-            self.footer_open = params.get("fe") == "0"
+            self.advances.append(params)
             return {}
+        if command == "trpayment" and self.transaction_open:
+            if (
+                params["ty"] not in ("0", "2", "5", "6", "8")
+                or int(params["wa"]) < 0
+                or (params["ty"] == "6" and params.get("na") != "Płatność mobilna")
+            ):
+                raise ValueError
+            self.payments.append(params)
+            return {}
+        if command == "trend" and self.transaction_open and self.lines:
+            return self._end_transaction(params)
         if (
             command in ("dailyrep", "monthlyrep", "periodicrepbydates")
             and not self.transaction_open

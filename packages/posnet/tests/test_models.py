@@ -1,7 +1,15 @@
 from decimal import Decimal
 
 import pytest
-from posnet.models import Line, VatRate, money
+from posnet.models import (
+    MAX_NAME_LENGTH,
+    PRINTABLE_CHARACTERS,
+    Line,
+    VatRate,
+    money,
+    printable,
+    sanitize,
+)
 
 
 def test_fractional_quantity_rounds_line_half_up():
@@ -80,3 +88,10 @@ def test_vat_labels_name_the_slot_the_operator_picks(index, percent, label):
     rate = VatRate(index, Decimal(percent))
     assert rate.label == label
     assert rate.active is (percent != "101")
+
+
+def test_advertised_characters_pass_the_driver_unchanged():
+    printable(PRINTABLE_CHARACTERS)  # encodes to CP1250 and holds no control character
+    for start in range(0, len(PRINTABLE_CHARACTERS), MAX_NAME_LENGTH):
+        name = PRINTABLE_CHARACTERS[start : start + MAX_NAME_LENGTH].strip()
+        assert sanitize(name, MAX_NAME_LENGTH) == name

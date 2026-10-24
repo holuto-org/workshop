@@ -1,15 +1,21 @@
-import contextlib
-import json
-from decimal import Decimal, InvalidOperation
-from pathlib import Path
+"""Holuto-connected UI; one background thread owns every printer operation."""
 
-from posnet.models import Line, money, validate_name
+import json
+import logging
+from http import HTTPStatus
+from pathlib import Path
+from queue import Empty, Queue
+from threading import Event
+from urllib.error import HTTPError
+
+from posnet.models import money
 from posnet.printer import Printer
-from posnet.protocol import Connection
-from PySide6.QtCore import QDate, QLocale, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QIcon
+from posnet.protocol import Connection, ProtocolError
+from PySide6.QtCore import QDate, QLocale, QSettings, Qt, QThread, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -19,14 +25,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLayout,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
-    QMessageBox,
+    QMenu,
     QPushButton,
-    QStyledItemDelegate,
+    QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -35,217 +38,57 @@ from PySide6.QtWidgets import (
 )
 from serial.tools import list_ports
 
-PAYMENTS = {0: "Gotówka", 2: "Karta płatnicza"}
-HISTORY_LIMIT = 500
-RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-REPROBE_MS = 10_000  # retry the printer this often while it is unavailable
-COL_NAME, COL_QUANTITY, COL_PRICE, COL_TOTAL = range(4)  # receipt table columns
-HISTORY_AMOUNT = 3  # the money column of the history table
+from .agent import (
+    POLL_SECONDS,
+    RETRY_SECONDS,
+    Agent,
+    Api,
+    load_config,
+    log,
+    save_config,
+    validated_url,
+)
 
-SERVICES = [
-    "Usługa własna",
-    "Naprawa auta",
-    "Naprawa silnika",
-    "Naprawa elektryki",
-    "Naprawa układu paliwowego",
-    "Naprawa układu wydechowego",
-    "Naprawa układu hamulcowego",
-    "Naprawa układu chłodzenia",
-    "Naprawa układu kierowniczego",
-    "Naprawa układu klimatyzacji",
-    "Serwis opon",
-]
+PAYMENTS = {
+    "cash": "Gotówka",
+    "card": "Karta płatnicza",
+    "transfer": "Przelew",
+    "mobile": "Płatność mobilna",
+    "credit": "Kredyt",
+}
+KINDS = {"advance": "Zaliczka", "sale": "Sprzedaż"}
+HISTORY_LIMIT = 500
+BUYER_NIP_LENGTH = 10
+RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+REPORTS = frozenset({"daily_report", "monthly_report", "periodic_report", "acknowledge_pending"})
 
 
 def settings():
-    return QSettings("HuggingCar", "Fiscal")
+    return QSettings("Holuto", "Fiscal")
 
 
-def saved_connection():
+def migrate_legacy_settings():
+    current = settings()
+    if not current.allKeys():
+        legacy = QSettings("HuggingCar", "Fiscal")
+        for key in legacy.allKeys():
+            current.setValue(key, legacy.value(key))
+
+
+def saved_connection(data):
+    config = load_config(data / "fiscal.json")
     saved = settings()
     try:
-        baudrate = int(saved.value("connection/baudrate", 9600))
+        baudrate = int(config.get("baudrate", saved.value("connection/baudrate", 9600)))
     except TypeError, ValueError:
         baudrate = 9600
-    return Connection(address=saved.value("connection/address", ""), baudrate=baudrate)
+    return Connection(
+        address=config.get("serial", saved.value("connection/address", "")), baudrate=baudrate
+    )
 
 
 def serial_ports():
-    """Serial devices, Temo's USB (CDC-ACM) first so a scan finds it before other ports."""
     return sorted((port.device for port in list_ports.comports()), key=lambda d: "ttyACM" not in d)
-
-
-class Operation(QThread):
-    def __init__(self, printer, method, args, kwargs, parent):
-        super().__init__(parent)
-        self.printer = printer
-        self.method = method
-        self.args = args
-        self.kwargs = kwargs
-        self.result = None
-        self.error = None
-        self.pending = None
-
-    def run(self):
-        try:
-            self.result = getattr(self.printer, self.method)(*self.args, **self.kwargs)
-        except Exception as error:  # noqa: BLE001 - contain errors at the GUI worker boundary.
-            self.error = str(error) or type(error).__name__
-        try:
-            self.pending = self.printer.pending()
-        except Exception as error:  # noqa: BLE001 - unreadable journal must block fiscal operations.
-            journal_error = f"Nie można odczytać stanu ostatniej operacji: {error}"
-            self.error = f"{self.error}\n{journal_error}" if self.error else journal_error
-            self.pending = {"operation": "unknown"}
-
-
-def saved_services():
-    names = settings().value("services", [], type=list)
-    if len(names) == 1 and names[0].startswith("["):  # v0.1.0 stored the list as one JSON string
-        with contextlib.suppress(ValueError):
-            names = json.loads(names[0])
-    return names or SERVICES
-
-
-class ServiceNameDelegate(QStyledItemDelegate):
-    error = Signal(str)
-
-    def setModelData(self, editor, model, index):  # noqa: N802 — Qt override name
-        try:
-            name = validate_name(editor.text())
-        except ValueError as error:
-            self.error.emit(f"Nie zmieniono nazwy. {error}")
-            return
-        model.setData(index, name, Qt.ItemDataRole.EditRole)
-        self.error.emit("")
-
-
-class ConnectionDialog(QDialog):
-    def __init__(self, connection, parent):
-        super().__init__(parent)
-        self.setWindowTitle("Ustawienia")
-        self.setMinimumWidth(450)
-        layout = QVBoxLayout(self)
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
-        layout.addWidget(self.tabs)
-        self.tabs.addTab(self._services_tab(), "Usługi")
-        self.tabs.addTab(self._printer_tab(connection), "Drukarka")
-        layout.addSpacing(8)
-        layout.addLayout(dialog_footer(self, "Zapisz"))
-
-    def _services_tab(self):
-        services = QWidget()
-        services_layout = QVBoxLayout(services)
-        services_layout.setContentsMargins(0, 16, 0, 0)
-        title_row = QHBoxLayout()
-        title_row.addWidget(
-            label("Dwuklik edytuje nazwę, przeciąganie zmienia kolejność.", "muted")
-        )
-        title_row.addStretch()
-        for text, slot in (("Dodaj", self._add_service), ("Usuń", self._remove_service)):
-            button = QPushButton(text)
-            button.setObjectName("linkButton")
-            button.setAutoDefault(False)
-            button.clicked.connect(slot)
-            title_row.addWidget(button)
-        title_row.setSpacing(16)
-        services_layout.addLayout(title_row)
-        self.list = QListWidget()
-        self.list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.name_error = label("", "muted")
-        set_state(self.name_error, "error")
-        self.name_error.setWordWrap(True)
-        delegate = ServiceNameDelegate(self.list)
-        delegate.error.connect(self.name_error.setText)
-        self.list.setItemDelegate(delegate)
-        self.list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        for name in saved_services():
-            item = QListWidgetItem(name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            self.list.addItem(item)
-        services_layout.addWidget(self.list)
-        services_layout.addWidget(self.name_error)
-        return services
-
-    def _printer_tab(self, connection):
-        printer = QWidget()
-        printer_layout = QVBoxLayout(printer)
-        printer_layout.setContentsMargins(0, 16, 0, 0)
-        form = QFormLayout()
-        form.setSpacing(16)
-        self.address = QComboBox()
-        self.address.setEditable(True)
-        self.address.addItems(serial_ports())
-        self.address.setCurrentText(connection.address)
-        self.address.setMinimumWidth(270)
-        self.baudrate = QComboBox()
-        self.baudrate.addItems(["9600", "19200", "38400", "57600", "115200"])
-        self.baudrate.setCurrentText(str(connection.baudrate))
-        form.addRow("Port drukarki", self.address)
-        form.addRow("Prędkość transmisji", self.baudrate)
-        printer_layout.addLayout(form)
-        note = label(
-            "Drukarka jest wykrywana automatycznie. Wskaż port ręcznie tylko, "
-            "gdy wykrywanie zawodzi.",
-            "muted",
-        )
-        note.setWordWrap(True)
-        printer_layout.addWidget(note)
-        printer_layout.addStretch()
-        return printer
-
-    def accept(self):
-        if not self.address.currentText().strip():
-            QMessageBox.warning(self, "Brak portu", "Podaj port szeregowy drukarki.")
-            return
-        try:
-            names = self.services()
-        except ValueError as error:
-            self.name_error.setText(str(error))
-            self.tabs.setCurrentIndex(0)
-            return
-        if not names:
-            QMessageBox.warning(self, "Brak usług", "Dodaj przynajmniej jedną usługę.")
-            return
-        super().accept()
-
-    def services(self):
-        names = (validate_name(self.list.item(i).text()) for i in range(self.list.count()))
-        return list(dict.fromkeys(names))
-
-    def _add_service(self):
-        item = QListWidgetItem("Nowa usługa")
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self.list.addItem(item)
-        self.list.setCurrentItem(item)
-        self.list.editItem(item)
-
-    def _remove_service(self):
-        for item in self.list.selectedItems():
-            self.list.takeItem(self.list.row(item))
-
-    def connection(self):
-        return Connection(
-            address=self.address.currentText().strip(),
-            baudrate=int(self.baudrate.currentText()),
-        )
-
-
-def dialog_footer(dialog, accept_text):
-    """antd Modal footer: Anuluj, then the primary action; Enter always means the action."""
-    footer = QHBoxLayout()
-    footer.addStretch()
-    cancel = QPushButton("Anuluj")
-    cancel.setAutoDefault(False)
-    cancel.clicked.connect(dialog.reject)
-    accept = QPushButton(accept_text)
-    accept.setObjectName("okButton")
-    accept.setDefault(True)
-    accept.clicked.connect(dialog.accept)
-    footer.addWidget(cancel)
-    footer.addWidget(accept)
-    return footer
 
 
 def label(text, name):
@@ -255,39 +98,172 @@ def label(text, name):
 
 
 def set_state(widget, state):
-    """Switch a QSS `[state=…]` selector on an already-shown widget."""
     if widget.property("state") != state:
         widget.setProperty("state", state)
         widget.style().unpolish(widget)
         widget.style().polish(widget)
 
 
+def dialog_footer(dialog, accept_text):
+    footer = QHBoxLayout()
+    footer.addStretch()
+    for text, slot in (("Anuluj", dialog.reject), (accept_text, dialog.accept)):
+        button = QPushButton(text)
+        button.setAutoDefault(False)
+        if text == accept_text:
+            button.setObjectName("okButton")
+            button.setDefault(True)
+        button.clicked.connect(slot)
+        footer.addWidget(button)
+    return footer
+
+
+class StatusLog(logging.Handler):
+    def __init__(self, signal):
+        super().__init__()
+        self.signal = signal
+
+    def emit(self, record):
+        self.signal.emit(self.format(record), "error" if record.levelno >= logging.WARNING else "")
+
+
+class Worker(QThread):
+    status = Signal(str, str)
+    documents = Signal(list, int, bool)  # one page: items, page number, whether a next exists
+    device = Signal(object, bool)
+    connected = Signal()
+    history = Signal()
+
+    def __init__(self, printer, config, parent=None):
+        super().__init__(parent)
+        self.printer = printer
+        self.config = config
+        self.agent = None
+        self.commands = Queue()
+        self.wake = Event()
+        # Discovery shows one bounded page per poll. `document_pages` holds the cursor that
+        # opened each page up to the shown one (None: the first); a requested page replaces it
+        # only once it loaded, so a failed page keeps the previous one on screen.
+        self.document_pages = [None]
+        self.next_document_cursor = None
+        self.requested_pages = None
+
+    def submit(self, method, *args, **kwargs):
+        self.commands.put((method, args, kwargs))
+        self.wake.set()
+
+    def stop(self):
+        self.requestInterruption()
+        self.wake.set()
+
+    def run(self):
+        handler = StatusLog(self.status)
+        log.addHandler(handler)
+        try:
+            device = self.printer.detect(serial_ports())
+            api = Api(self.config["api_url"], self.config["token"], device.unique_number)
+            api.describe(device)
+            api.connect()
+            self.agent = Agent(self.printer, api)
+            self.connected.emit()
+            self.status.emit(
+                f"Połączono: {device.unique_number}. Oczekiwanie na zlecenia.", "success"
+            )
+            self._loop()
+        except Exception as exc:  # noqa: BLE001 - report failures at the Qt thread boundary.
+            self.status.emit(f"Błąd: {exc}", "error")
+        finally:
+            log.removeHandler(handler)
+
+    def _loop(self):
+        while not self.isInterruptionRequested():
+            self.wake.clear()
+            delay = POLL_SECONDS
+            try:
+                self._commands()
+                if self.isInterruptionRequested():
+                    return
+                delay = self.agent.step() or 0
+                if self.isInterruptionRequested():
+                    return
+                self._refresh_documents()
+                self._publish_device()
+                self.history.emit()
+            except HTTPError as exc:
+                if exc.code == HTTPStatus.UNAUTHORIZED:
+                    raise
+                self.status.emit(f"Błąd API: {exc}", "error")
+                delay = RETRY_SECONDS
+            except (OSError, ProtocolError, ValueError, LookupError, TypeError) as exc:
+                self.status.emit(f"Błąd: {exc}", "error")
+                self._publish_device()
+                delay = RETRY_SECONDS
+            self.wake.wait(delay)
+
+    def _publish_device(self):
+        self.device.emit(self.printer.last_status, self.agent.blocked)
+
+    def _commands(self):
+        while not self.isInterruptionRequested():
+            try:
+                method, args, kwargs = self.commands.get_nowait()
+            except Empty:
+                return
+            if method == "queue":
+                self.agent.api.queue(*args, **kwargs)
+                self.status.emit("Zlecenie dodano do kolejki Holuto.", "success")
+            elif method == "next_documents":
+                if self.next_document_cursor is not None:
+                    self.requested_pages = [*self.document_pages, self.next_document_cursor]
+            elif method == "previous_documents":
+                self.requested_pages = self.document_pages[:-1] or [None]
+            elif method in REPORTS:
+                self._report(method, args, kwargs)
+            else:
+                raise ValueError("Nieznana operacja drukarki.")
+
+    def _refresh_documents(self):
+        pages, self.requested_pages = self.requested_pages or self.document_pages, None
+        page = self.agent.api.documents(pages[-1])
+        if not page["items"] and len(pages) > 1:
+            # Everything from this page on was printed or queued: start over.
+            pages = [None]
+            page = self.agent.api.documents()
+        self.document_pages, self.next_document_cursor = pages, page["nextCursor"]
+        self.documents.emit(page["items"], len(pages), page["nextCursor"] is not None)
+
+    def _report(self, method, args, kwargs):
+        self.agent.run_report(method, *args, **kwargs)
+        self.status.emit(
+            "Raport wydrukowany." if method != "acknowledge_pending" else "Wyjaśniono raport.",
+            "success",
+        )
+
+
 class MainWindow(QMainWindow):
     def __init__(self, printer: Printer):
         super().__init__()
         self.printer = printer
-        self.history_path = Path(printer.journal_path).with_name("history.jsonl")
-        self.busy = False
+        self.data = printer.journal_path.parent
+        self.history_path = self.data / "history.jsonl"
+        self.worker = None
+        self.connected = False
+        self.closing = False
         self.status = None
-        self.pending_operation = None
-        self.total_cents = 0
-        self.vat_rates = {}
-        self._valid = True
-        self._worker = None
-        self._done = ""  # last success message, repeated after the follow-up status check
-        self.setWindowTitle("HuggingCar Fiscal")
+        self.blocked = False
+        self.document_items = []
+        self.documents_page = 1
+        self.documents_have_next = False
+        self.setWindowTitle("Holuto Fiscal")
+        self.setWindowIcon(QIcon(str(Path(__file__).with_name("icon.svg"))))
         self.resize(1180, 820)
-        self.setMinimumSize(1040, 780)
         theme = Path(__file__).with_name("theme.qss")
         self.setStyleSheet(
             theme.read_text(encoding="utf-8").replace("{dir}", theme.parent.as_posix())
         )
-        self._reprobe = QTimer(self)
-        self._reprobe.setInterval(REPROBE_MS)
-        self._reprobe.timeout.connect(self._reprobe_tick)
-        self._build_ui()
-        self._update_totals()
-        QTimer.singleShot(0, self.refresh_status)
+        self._build_ui(load_config(self.data / "fiscal.json"))
+        self._build_tray()
+        self._update_controls()
 
     @staticmethod
     def _card(title=None):
@@ -324,124 +300,136 @@ class MainWindow(QMainWindow):
         for col, width in widths.items():
             table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
             table.setColumnWidth(col, width)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setShowGrid(False)
         return table
 
-    def _build_ui(self):
+    def _build_ui(self, config):
         root = QWidget()
         root.setObjectName("root")
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
         layout.setContentsMargins(24, 20, 24, 16)
-        layout.setSpacing(8)
+        self.signin = label(
+            "Połącz Holuto, aby pobierać zlecenia i drukować paragony.", "cardTitle"
+        )
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.tabs.addTab(self._build_sales(), "Sprzedaż")
+        self.tabs.addTab(self._build_documents(), "Do wydruku")
         self.tabs.addTab(self._build_reports(), "Raporty")
-        self.history_page = self._build_history()
-        self.tabs.addTab(self.history_page, "Historia")
-        self.tabs.currentChanged.connect(self._tab_changed)
-        corner = QWidget()
-        actions = QHBoxLayout(corner)
-        actions.setContentsMargins(0, 0, 0, 4)
-        actions.setSpacing(8)
-        self.settings_button = QPushButton()
-        self.settings_button.setObjectName("iconButton")
-        self.settings_button.setToolTip("Ustawienia")
-        self.settings_button.setIcon(QIcon(str(Path(__file__).with_name("settings.svg"))))
-        self.settings_button.clicked.connect(self.configure_connection)
-        actions.addWidget(self.settings_button)
-        self.tabs.setCornerWidget(corner, Qt.Corner.TopRightCorner)
+        self.tabs.addTab(self._build_history(), "Historia")
+        self.tabs.addTab(self._build_settings(config), "Ustawienia")
+        self.tabs.currentChanged.connect(lambda _: self.load_history())
+        layout.addWidget(self.signin)
         layout.addWidget(self.tabs, 1)
         footer = QHBoxLayout()
-        self.message_label = label("Sprawdzanie drukarki…", "message")
+        self.message_label = label("Zaloguj się tokenem drukarki z Holuto.", "message")
         self.message_label.setWordWrap(True)
         footer.addWidget(self.message_label, 1)
-        self.recovery_button = QPushButton("Wyjaśnij ostatnią operację")
-        self.recovery_button.clicked.connect(self.resolve_pending)
+        self.recovery_button = QPushButton("Wyjaśnij raport")
+        self.recovery_button.clicked.connect(self.resolve_report)
         self.recovery_button.hide()
         footer.addWidget(self.recovery_button)
         layout.addLayout(footer)
+        self.tabs.setCurrentIndex(3)
 
-    def _build_sales(self):
+    def _build_documents(self):
         page, body = self._page()
-        body.addWidget(self._services_card(), 1)
-        body.addWidget(self._summary_card())
-        return page
-
-    def _services_card(self):
-        services, service_layout = self._card()
-        title_row = QHBoxLayout()
-        title_row.addWidget(label("Pozycje paragonu", "cardTitle"))
-        title_row.addStretch()
-        self.clear_button = QPushButton("Wyczyść ceny")
-        self.clear_button.setObjectName("linkButton")
-        self.clear_button.clicked.connect(self.clear_prices)
-        title_row.addWidget(self.clear_button)
-        service_layout.addLayout(title_row)
-        toolbar = QHBoxLayout()
-        self.validation_label = label(
-            "Do paragonu trafią tylko usługi z ceną większą od zera.", "muted"
+        card, layout = self._card("Dokumenty oczekujące na paragon")
+        self.documents_table = self._table(
+            ["Zlecenie", "Rodzaj", "Klient", "Kwota", "Data"],
+            {1: 110, 2: 180, 3: 120, 4: 170},
+            (3,),
         )
-        self.validation_label.setWordWrap(True)
-        toolbar.addWidget(self.validation_label, 1)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Szukaj usługi")
-        self.search.setClearButtonEnabled(True)
-        self.search.setFixedWidth(240)
-        self.search.textChanged.connect(self._filter_rows)
-        toolbar.addWidget(self.search)
-        service_layout.addLayout(toolbar)
-        self.table = self._table(
-            ["Nazwa usługi", "Ilość", "Cena brutto", "Wartość"],
-            {COL_QUANTITY: 80, COL_PRICE: 120, COL_TOTAL: 120},
-            (COL_QUANTITY, COL_PRICE, COL_TOTAL),
-        )
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
-        delegate = ServiceNameDelegate(self.table)
-        delegate.error.connect(lambda text: self._say(text, "error" if text else ""))
-        self.table.setItemDelegateForColumn(COL_NAME, delegate)
-        self.table.itemChanged.connect(self._update_totals)
-        self._fill_services(saved_services())
-        service_layout.addWidget(self.table, 1)
-        return services
-
-    def _summary_card(self):
-        summary, summary_layout = self._card("Podsumowanie")
-        summary.setFixedWidth(320)
-        summary_layout.addWidget(label("Do zapłaty brutto", "secondary"))
-        self.total_label = label("0,00 zł", "statistic")
-        summary_layout.addWidget(self.total_label)
-        self.breakdown_label = label("", "muted")
-        summary_layout.addWidget(self.breakdown_label)
-        self.count_label = label("Pozycji na paragonie: 0", "muted")
-        summary_layout.addWidget(self.count_label)
-        summary_layout.addSpacing(8)
-        summary_layout.addWidget(QLabel("Stawka VAT"))
-        self.vat_combo = QComboBox()
-        self.vat_combo.currentIndexChanged.connect(self._update_totals)
-        summary_layout.addWidget(self.vat_combo)
-        self.vat_note = label("Oczekiwanie na drukarkę", "muted")
-        summary_layout.addWidget(self.vat_note)
-        summary_layout.addWidget(QLabel("Forma płatności"))
-        self.payment_combo = QComboBox()
-        for value, name in PAYMENTS.items():
-            self.payment_combo.addItem(name, value)
-        summary_layout.addWidget(self.payment_combo)
-        summary_layout.addStretch()
-        self.print_button = QPushButton("Drukuj paragon")
+        self.documents_table.itemSelectionChanged.connect(self._update_controls)
+        layout.addWidget(self.documents_table)
+        pager = QHBoxLayout()
+        self.previous_documents_button = QPushButton("Poprzednia strona")
+        self.previous_documents_button.clicked.connect(lambda: self._submit("previous_documents"))
+        self.documents_page_label = label("Strona 1", "muted")
+        self.next_documents_button = QPushButton("Następna strona")
+        self.next_documents_button.clicked.connect(lambda: self._submit("next_documents"))
+        pager.addWidget(self.previous_documents_button)
+        pager.addStretch()
+        pager.addWidget(self.documents_page_label)
+        pager.addStretch()
+        pager.addWidget(self.next_documents_button)
+        layout.addLayout(pager)
+        form = QFormLayout()
+        self.buyer_nip = QLineEdit()
+        self.buyer_nip.setPlaceholderText("Opcjonalny NIP nabywcy — 10 cyfr")
+        self.buyer_nip.setMaxLength(10)
+        form.addRow("NIP nabywcy", self.buyer_nip)
+        layout.addLayout(form)
+        self.print_button = QPushButton("Dodaj do wydruku")
         self.print_button.setObjectName("primaryButton")
         self.print_button.clicked.connect(self.submit_receipt)
-        summary_layout.addWidget(self.print_button)
-        return summary
+        layout.addWidget(self.print_button)
+        layout.addWidget(
+            label(
+                "Zadania z aplikacji webowej drukują się automatycznie. "
+                "Niepotwierdzone wyniki rozstrzyga personel w Holuto.",
+                "muted",
+            )
+        )
+        body.addWidget(card)
+        return page
+
+    def _build_settings(self, config):
+        page, body = self._page()
+        card, layout = self._card("Połączenie z Holuto")
+        self.form = QWidget()
+        form = QFormLayout(self.form)
+        self.api_url = QLineEdit(config.get("api_url", ""))
+        self.api_url.setPlaceholderText("https://api.example.com")
+        self.token = QLineEdit(config.get("token", ""))
+        self.token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.token.setPlaceholderText("Token parowania z Holuto")
+        self.port = QComboBox()
+        self.port.setEditable(True)
+        self.port.addItems(serial_ports())
+        self.port.setCurrentText(self.printer.connection.address)
+        self.baudrate = QComboBox()
+        self.baudrate.addItems(["9600", "19200", "38400", "57600", "115200"])
+        self.baudrate.setCurrentText(str(self.printer.connection.baudrate))
+        for title, widget in (
+            ("Adres API", self.api_url),
+            ("Token parowania", self.token),
+            ("Port drukarki", self.port),
+            ("Prędkość transmisji", self.baudrate),
+        ):
+            form.addRow(title, widget)
+        layout.addWidget(self.form)
+        actions = QHBoxLayout()
+        self.save_button = QPushButton("Zapisz")
+        self.start_button = QPushButton("Zaloguj i uruchom")
+        self.start_button.setObjectName("primaryButton")
+        self.stop_button = QPushButton("Zatrzymaj")
+        self.quit_button = QPushButton("Zakończ")
+        for button, slot in (
+            (self.save_button, self.save),
+            (self.start_button, self.start),
+            (self.stop_button, self.stop),
+            (self.quit_button, self.quit),
+        ):
+            button.clicked.connect(slot)
+            actions.addWidget(button)
+        layout.addLayout(actions)
+        layout.addWidget(
+            label(
+                "Zamknięcie okna ukrywa aplikację w zasobniku. "
+                "Aby zmienić ustawienia, najpierw zatrzymaj obsługę drukarki.",
+                "muted",
+            )
+        )
+        body.addWidget(card, 1, Qt.AlignmentFlag.AlignTop)
+        return page
 
     def _report_row(self, layout, title, description, *controls):
-        """antd List item: title + description on the left, controls on the right."""
         row = QHBoxLayout()
-        row.setSpacing(12)
         text = QVBoxLayout()
-        text.setSpacing(2)
         text.addWidget(QLabel(title))
         hint = label(description, "muted")
         hint.setWordWrap(True)
@@ -462,7 +450,6 @@ class MainWindow(QMainWindow):
         page, body = self._page()
         today = QDate.currentDate()
         card, layout = self._card("Raporty fiskalne")
-        card.setMaximumWidth(900)
         self.daily_button = QPushButton("Drukuj raport dobowy")
         self.daily_button.clicked.connect(self.submit_daily_report)
         self._report_row(
@@ -473,9 +460,8 @@ class MainWindow(QMainWindow):
         )
         self._divider(layout)
         self.month_picker = QComboBox()
-        self.month_picker.setMinimumWidth(180)
         locale = QLocale(QLocale.Language.Polish)
-        for back in range(1, 25):  # previous month first: the one a report is normally due for
+        for back in range(1, 25):
             month = today.addMonths(-back)
             self.month_picker.addItem(
                 f"{locale.standaloneMonthName(month.month())} {month.year()}",
@@ -516,329 +502,214 @@ class MainWindow(QMainWindow):
 
     def _build_history(self):
         page, body = self._page()
-        card, layout = self._card()
-        title_row = QHBoxLayout()
-        title_row.addWidget(label("Wydrukowane paragony", "cardTitle"))
-        title_row.addStretch()
-        self.history_hint = label("Lista z tego komputera. Numer nadaje drukarka.", "muted")
-        title_row.addWidget(self.history_hint)
-        layout.addLayout(title_row)
+        card, layout = self._card("Wydrukowane paragony")
         self.history_table = self._table(
             ["Pozycje", "Data", "Nr paragonu", "Kwota", "Płatność"],
             {1: 150, 2: 110, 3: 120, 4: 130},
             (3,),
         )
-        self.history_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        layout.addWidget(self.history_table, 1)
-        body.addWidget(card, 1)
+        layout.addWidget(self.history_table)
+        layout.addWidget(
+            label(
+                "Lista z tego komputera. Numer nadaje drukarka; "
+                "pamięć fiskalna jest źródłem prawdy.",
+                "muted",
+            )
+        )
+        body.addWidget(card)
         return page
-
-    def _tab_changed(self, index):
-        if self.tabs.widget(index) is self.history_page:
-            self.load_history()
 
     def load_history(self):
         try:
-            lines = self.history_path.read_text(encoding="utf-8").splitlines()
-            rows = [json.loads(line) for line in lines if line]
-        except OSError, ValueError:
+            rows = [
+                json.loads(line)
+                for line in self.history_path.read_text(encoding="utf-8").splitlines()
+                if line
+            ]
+        except FileNotFoundError:
             rows = []
+        except (OSError, ValueError) as exc:
+            self._say(f"Nie można odczytać historii: {exc}", "error")
+            return
         rows = rows[-HISTORY_LIMIT:][::-1]
         self.history_table.setRowCount(len(rows))
         for row, record in enumerate(rows):
-            when = record.get("timestamp", "")[:16].replace("T", " ")
+            payments = ", ".join(
+                f"{PAYMENTS.get(item['form'], '—')}: {money(item['amount_cents'])}"
+                for item in record.get("payments", [])
+            )
             values = [
                 ", ".join(line["name"] for line in record.get("lines", [])),
-                when,
+                record.get("timestamp", "")[:16].replace("T", " "),
                 record.get("receipt_number") or "—",
                 money(record.get("total_cents", 0)),
-                PAYMENTS.get(record.get("payment"), "—"),
+                payments or "—",
             ]
             for col, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                if col == HISTORY_AMOUNT:
-                    item.setTextAlignment(RIGHT)
-                self.history_table.setItem(row, col, item)
-        self.history_hint.setText(
-            "Brak paragonów wydrukowanych z tego komputera."
-            if not rows
-            else "Lista z tego komputera. Numer nadaje drukarka."
-        )
+                self.history_table.setItem(row, col, QTableWidgetItem(value))
 
-    def _append_history(self, record):
-        try:
-            self.history_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.history_path.open("a", encoding="utf-8") as file:
-                file.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError, TypeError, ValueError:
-            pass  # convenience log only; the fiscal journal is the source of truth
-
-    def _row_line(self, row, vat):
-        """Validate every name, including rows without a price."""
-        name = self.table.item(row, COL_NAME).text()
-        raw_price = self.table.item(row, COL_PRICE).text().strip()
-        try:
-            price = Decimal(raw_price.replace(",", ".")) if raw_price else Decimal(0)
-            if price == 0:
-                validate_name(name)
-                return None
-            quantity = Decimal(self.table.item(row, COL_QUANTITY).text().strip().replace(",", "."))
-            return Line(name, quantity, price, vat)
-        except (InvalidOperation, ValueError) as error:
-            detail = "" if isinstance(error, InvalidOperation) else f" {error}"
-            raise ValueError(f"Wiersz {row + 1}: sprawdź nazwę, ilość i cenę.{detail}") from error
-
-    def receipt_lines(self):
-        vat = self.vat_combo.currentData()
-        if vat is None:
-            raise ValueError("Najpierw połącz drukarkę i wybierz aktywną stawkę VAT.")
-        return [line for row in range(self.table.rowCount()) if (line := self._row_line(row, vat))]
-
-    def _update_totals(self, *_):
-        total, count, first_error = 0, 0, ""
-        self.table.blockSignals(True)
-        for row in range(self.table.rowCount()):
-            try:
-                line = self._row_line(row, self.vat_combo.currentData() or 0)
-                cents = line.total_cents if line else 0
-                total += cents
-                count += bool(line)
-                self.table.item(row, COL_TOTAL).setText(money(cents))
-                self.table.item(row, COL_TOTAL).setForeground(
-                    QBrush() if line else QColor(0, 0, 0, 64)  # default / colorTextQuaternary
-                )
-            except ValueError as error:
-                first_error = first_error or str(error)
-                self.table.item(row, COL_TOTAL).setText("Sprawdź")
-                self.table.item(row, COL_TOTAL).setForeground(QColor("#ff4d4f"))  # colorError
-        self.table.blockSignals(False)
-        self.total_cents = total
-        self._valid = not first_error
-        self.total_label.setText(money(total))
-        rate = self.vat_rates.get(self.vat_combo.currentData())
-        tax = rate.tax_cents(total) if rate else 0
-        self.breakdown_label.setText(
-            f"Netto {money(total - tax)}  ·  VAT {rate.rate_label} {money(tax)}" if rate else ""
-        )
-        self.count_label.setText(f"Pozycji na paragonie: {count}")
-        self.validation_label.setText(
-            first_error or "Do paragonu trafią tylko usługi z ceną większą od zera."
-        )
-        set_state(self.validation_label, "error" if first_error else "")
+    def set_documents(self, items, page, has_next):
+        selected = self.selected_document()
+        self.document_items = items
+        self.documents_page, self.documents_have_next = page, has_next
+        self.documents_page_label.setText(f"Strona {page}")
+        self.documents_table.setRowCount(len(items))
+        for row, document in enumerate(items):
+            values = [
+                str(document["orderNumber"]),
+                KINDS[document["kind"]],
+                document["customerName"] or "—",
+                document["amount"] + " zł",
+                document["occurredAt"][:16].replace("T", " "),
+            ]
+            for col, value in enumerate(values):
+                self.documents_table.setItem(row, col, QTableWidgetItem(value))
+            if selected and all(
+                selected[key] == document[key] for key in ("kind", "orderId", "allocationId")
+            ):
+                self.documents_table.selectRow(row)
         self._update_controls()
 
+    def selected_document(self):
+        row = self.documents_table.currentRow()
+        return self.document_items[row] if 0 <= row < len(self.document_items) else None
+
     def _update_controls(self):
-        editable = not self.busy and not self.pending_operation
-        ready = bool(self.status and self.status.ready)
-        for widget in [
-            self.table,
-            self.clear_button,
-            self.vat_combo,
-            self.payment_combo,
-            self.month_picker,
-            self.period_start,
-            self.period_end,
-            self.period_summary,
-        ]:
-            widget.setEnabled(editable)
-        self.vat_combo.setVisible(self.vat_combo.count() > 0)
-        self.vat_note.setVisible(self.vat_combo.count() == 0)
-        self.settings_button.setEnabled(not self.busy)
+        running = self.worker is not None
+        self.form.setEnabled(not running)
+        self.save_button.setEnabled(not running)
+        self.start_button.setEnabled(not running)
+        self.stop_button.setEnabled(running)
         self.print_button.setEnabled(
-            editable
-            and ready
-            and self._valid
-            and self.total_cents > 0
-            and self.vat_combo.currentData() is not None
+            self.connected and bool(self.selected_document()) and not self.blocked
         )
+        self.previous_documents_button.setEnabled(self.connected and self.documents_page > 1)
+        self.next_documents_button.setEnabled(self.connected and self.documents_have_next)
         for button in (self.daily_button, self.monthly_button, self.periodic_button):
-            button.setEnabled(editable and ready)
-        self.recovery_button.setVisible(bool(self.pending_operation))
-        self.recovery_button.setEnabled(not self.busy)
-        # Printer off at launch or unplugged: keep probing until it answers.
-        if ready or self.busy or self.pending_operation:
-            self._reprobe.stop()
-        elif not self._reprobe.isActive():
-            self._reprobe.start()
+            button.setEnabled(
+                self.connected and bool(self.status and self.status.ready) and not self.blocked
+            )
+        self.signin.setVisible(not self.connected)
 
     def _say(self, text, state=""):
         self.message_label.setText(text)
         set_state(self.message_label, state)
 
-    def _start(self, method, *args, **kwargs):
-        if self.busy:
-            return
-        self.busy = True
-        self._say("Trwa komunikacja z drukarką. Poczekaj na wynik operacji.")
-        self._update_controls()
-        self._worker = Operation(self.printer, method, args, kwargs, self)
-        self._worker.finished.connect(self._operation_done)
-        self._worker.start()
-
-    def _operation_done(self):
-        worker = self._worker
-        self._worker = None
-        self.busy = False
-        self.pending_operation = worker.pending
-        if worker.error:
-            self._done = ""
-            self.status = None
-            hint = ""
-            if worker.method == "detect":
-                hint = " Podłącz drukarkę lub wskaż port w Ustawieniach."
-                self.vat_note.setText("Brak połączenia z drukarką")
-            self._say(f"Błąd: {worker.error}{hint}", "error")
-        elif worker.method in ("probe", "detect"):
-            if worker.method == "detect":
-                self._remember_connection()
-            self.status = worker.result
-            selected = self.vat_combo.currentData()
-            self.vat_combo.blockSignals(True)
-            self.vat_combo.clear()
-            self.vat_rates = {rate.index: rate for rate in self.status.vat_rates if rate.active}
-            for rate in self.vat_rates.values():
-                self.vat_combo.addItem(rate.label, rate.index)
-            index = 0 if selected is None else self.vat_combo.findData(selected)
-            self.vat_combo.setCurrentIndex(index)  # -1: the chosen rate is gone, choose again
-            self.vat_combo.blockSignals(False)
-            self._say(
-                f"{self._done}{self.status.name} · {self.status.unique_number} · "
-                f"{self.status.description}",
-                "success" if self._done else "",
-            )
-        else:
-            if worker.method == "print_receipt":
-                self._append_history(worker.result)
-                self.clear_prices()
-                number = (worker.result or {}).get("receipt_number")
-                message = f"Paragon nr {number} wydrukowany." if number else "Paragon wydrukowany."
-            elif worker.method == "acknowledge_pending":
-                # The receipt may well have printed: never leave it loaded for a second click.
-                self.clear_prices()
-                message = (
-                    "Zapis poprzedniej operacji potwierdzony. Sprawdź połączenie przed kontynuacją."
-                )
-            else:
-                message = "Raport wydrukowany."
-            self.status = None
-            self._say(message, "success")
-            self._done = message + " "
-        if self.pending_operation:
-            self._say(
-                "Wynik ostatniej operacji jest niepotwierdzony. Sprawdź wydruk i stan drukarki, "
-                "a następnie wybierz „Wyjaśnij ostatnią operację”.",
-                "error",
-            )
-        self._update_totals()
-        worker.deleteLater()
-        self._follow_up(worker)
-
-    def _follow_up(self, worker):
-        """Re-check the printer after a success; after a failed recovery, offer a way out."""
-        if not worker.error:
-            if worker.method not in ("probe", "detect") and not self.pending_operation:
-                self._start("probe")
-            return
-        if worker.method != "acknowledge_pending" or worker.kwargs:
-            return
-        # The printer of the unresolved operation cannot be checked (dead, swapped, not ready).
-        # Without this the app stays locked until someone edits files by hand.
-        if self._confirm(
-            "Drukarka niedostępna",
-            (
-                f"{worker.error}\n\nJeśli drukarka jest uszkodzona lub wymieniona, blokadę "
-                "można usunąć bez sprawdzenia. Zrób to tylko po ustaleniu na papierze, "
-                "czy operacja się wykonała."
-            ),
-            "Usuń blokadę mimo to",
+    def save(self):
+        token = self.token.text().strip()
+        if (
+            not token
+            or not token.isascii()
+            or not token.isprintable()
+            or any(c.isspace() for c in token)
         ):
-            self._start("acknowledge_pending", force=True)
+            self._say("Wklej token drukarki z Holuto.", "error")
+            return None
+        try:
+            config = {
+                "api_url": validated_url(self.api_url.text().strip()),
+                "token": token,
+                "serial": self.port.currentText().strip(),
+                "baudrate": int(self.baudrate.currentText()),
+            }
+            save_config(self.data / "fiscal.json", config)
+        except (OSError, ValueError) as exc:
+            self._say(f"Błąd: {exc}", "error")
+            return None
+        self._say("Zapisano ustawienia.", "success")
+        return config
 
-    def _reprobe_tick(self):
-        """Retry the saved port only; rescanning every port each tick would hammer the machine."""
-        self.refresh_status(scan=not self.printer.connection.address)
+    def start(self):
+        if self.worker is not None:
+            return
+        config = self.save()
+        if config is None:
+            return
+        self.printer = Printer(
+            Connection(config["serial"], config["baudrate"]), self.printer.journal_path
+        )
+        self.worker = Worker(self.printer, config, self)
+        self.worker.status.connect(self._say)
+        self.worker.documents.connect(self.set_documents)
+        self.worker.device.connect(self.set_device)
+        self.worker.connected.connect(self._connected)
+        self.worker.history.connect(self.load_history)
+        self.worker.finished.connect(self.finished)
+        self._update_controls()
+        self._say("Łączenie z drukarką i Holuto…")
+        self.worker.start()
 
-    def refresh_status(self, *, scan=True):
-        """Check the printer; `scan` also tries other ports if the saved one does not answer."""
-        self._done = ""
-        if scan:
-            self._start("detect", serial_ports())
-        else:
-            self._start("probe")
+    def _connected(self):
+        self.connected = True
+        self.tabs.setCurrentIndex(0)
+        self._update_controls()
 
-    def _fill_services(self, names):
-        """Rebuild the receipt table; edits in progress are discarded."""
-        self.services = list(names)
-        self.table.blockSignals(True)
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(self.services))
-        for row, service in enumerate(self.services):
-            for col, value in enumerate([service, "1", "", "0,00 zł"]):
-                item = QTableWidgetItem(value)
-                if col:
-                    item.setTextAlignment(RIGHT)
-                if col == COL_TOTAL:
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table.setItem(row, col, item)
-        self.table.blockSignals(False)
-        self._filter_rows(self.search.text())
+    def set_device(self, status, blocked):
+        self.status, self.blocked = status, blocked
+        record = self.printer.last_record()
+        self.recovery_button.setVisible(
+            bool(record and record["state"] == "pending" and record.get("operation") != "receipt")
+        )
+        self._update_controls()
 
-    def _filter_rows(self, text):
-        """Hide rows not matching the search text; hidden priced rows stay on the receipt."""
-        needle = text.strip().casefold()
-        for row in range(self.table.rowCount()):
-            self.table.setRowHidden(
-                row, needle not in self.table.item(row, COL_NAME).text().casefold()
-            )
+    def stop(self):
+        if self.worker is not None:
+            self.worker.stop()
+            self.stop_button.setEnabled(False)
+            self._say("Zatrzymywanie po zakończeniu bieżącej operacji…")
 
-    def clear_prices(self):
-        self.table.blockSignals(True)
-        for row in range(self.table.rowCount()):
-            self.table.item(row, COL_PRICE).setText("")
-        self.table.blockSignals(False)
-        self._update_totals()
+    def finished(self):
+        self.worker.deleteLater()
+        self.worker = None
+        self.connected = False
+        self._update_controls()
+        self.load_history()
+        if self.closing:
+            self.quit()
+
+    def _submit(self, method, *args, **kwargs):
+        if self.worker is not None:
+            self.worker.submit(method, *args, **kwargs)
 
     def _confirm(self, title, text, action="Drukuj"):
-        """antd Modal.confirm: bold title, body, Anuluj + primary action."""
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
-        dialog.setFixedWidth(416)  # antd confirm width
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(8)
-        layout.addWidget(label(title, "cardTitle"))
         body = QLabel(text)
         body.setWordWrap(True)
-        body.setFixedWidth(416 - 48)
-        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         layout.addWidget(body)
-        layout.addSpacing(16)
         layout.addLayout(dialog_footer(dialog, action))
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         dialog.deleteLater()
         return accepted
 
     def submit_receipt(self):
-        try:
-            lines = self.receipt_lines()
-        except ValueError as error:
-            self._say(str(error), "error")
+        document = self.selected_document()
+        if not self.connected or not document or self.blocked:
             return
-        warning = "Zatwierdzenie wystawi paragon fiskalny. Sprawdź dane przed drukowaniem."
+        nip = self.buyer_nip.text().strip() or None
+        if nip is not None and (
+            not nip.isascii() or not nip.isdigit() or len(nip) != BUYER_NIP_LENGTH
+        ):
+            self._say("NIP nabywcy musi zawierać 10 cyfr.", "error")
+            return
         if self._confirm(
             "Potwierdź paragon",
-            (
-                f"Pozycji: {len(lines)}\nDo zapłaty: {money(self.total_cents)}\n"
-                f"Płatność: {self.payment_combo.currentText()}\n\n{warning}"
-            ),
+            f"{KINDS[document['kind']]} · zlecenie {document['orderNumber']} · "
+            f"{document['amount']} zł\nNIP: {nip or '—'}\n"
+            "Zatwierdzenie wystawi paragon fiskalny.",
+            "Dodaj do wydruku",
         ):
-            self._start("print_receipt", lines, self.payment_combo.currentData())
+            self._submit(
+                "queue", document["kind"], document["orderId"], document["allocationId"], nip
+            )
 
     def submit_daily_report(self):
-        text = "Raport dobowy zamknie bieżącą sprzedaż dnia w pamięci fiskalnej. Wydrukować raport?"
-        if self._confirm("Raport dobowy", text):
-            self._start("daily_report")
+        if self._confirm(
+            "Raport dobowy",
+            "Raport dobowy zamknie bieżącą sprzedaż dnia w pamięci fiskalnej. Wydrukować raport?",
+        ):
+            self._submit("daily_report")
 
     def submit_monthly_report(self):
         year, month = self.month_picker.currentData()
@@ -846,7 +717,7 @@ class MainWindow(QMainWindow):
             "Raport miesięczny",
             f"Wydrukować raport miesięczny za {self.month_picker.currentText()}?",
         ):
-            self._start("monthly_report", year, month)
+            self._submit("monthly_report", year, month)
 
     def submit_periodic_report(self):
         start, end = self.period_start.date(), self.period_end.date()
@@ -859,56 +730,62 @@ class MainWindow(QMainWindow):
             f"Wydrukować raport {kind} za okres "
             f"{start.toString('dd.MM.yyyy')} – {end.toString('dd.MM.yyyy')}?",
         ):
-            self._start(
+            self._submit(
                 "periodic_report",
                 start.toPython(),
                 end.toPython(),
                 summary=self.period_summary.isChecked(),
             )
 
-    def resolve_pending(self):
-        if self.busy or not self.pending_operation:
-            return
+    def resolve_report(self):
         if self._confirm(
-            "Potwierdź sprawdzenie drukarki",
-            (
-                "Sprawdź fizyczny wydruk i stan transakcji na drukarce. Operacja mogła "
-                "się zakończyć mimo braku odpowiedzi. Nie powtarzaj jej bez sprawdzenia.\n\n"
-                "Czy ustalono wynik operacji i można usunąć lokalną blokadę? "
-                "To potwierdzenie nie anuluje transakcji ani nie ponawia wydruku."
-            ),
+            "Wyjaśnij raport",
+            "Sprawdź fizyczny wydruk i stan drukarki. Czy ustalono wynik raportu? "
+            "To potwierdzenie nie ponawia wydruku.",
             "Usuń blokadę",
         ):
-            self._start("acknowledge_pending")
+            self._submit("acknowledge_pending")
 
-    def configure_connection(self):
-        if self.busy:
-            return
-        dialog = ConnectionDialog(self.printer.connection, self)
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        dialog.deleteLater()
-        if not accepted:
-            return
-        connection = dialog.connection()
-        services = dialog.services()
-        settings().setValue("services", services)
-        if services != self.services:
-            self._fill_services(services)
-            self._update_totals()
-        if connection != self.printer.connection:
-            self.printer = Printer(connection, self.printer.journal_path)
-            self._remember_connection()
-            self.status = None
-            self.refresh_status(scan=False)
+    def _build_tray(self):
+        self.tray = QSystemTrayIcon(self.windowIcon(), self)
+        self.tray.setToolTip("Holuto Fiscal")
+        menu = QMenu(self)
+        menu.addAction("Otwórz", self.open_window)
+        menu.addAction("Zakończ", self.quit)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self.tray_activated)
+        self.tray.show()
 
-    def _remember_connection(self):
-        saved = settings()
-        for field in ("address", "baudrate"):
-            saved.setValue(f"connection/{field}", getattr(self.printer.connection, field))
+    def open_window(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
-    def closeEvent(self, event):  # noqa: N802 — Qt override name
-        if self.busy:
-            event.ignore()
-            self._say("Poczekaj na zakończenie operacji przed zamknięciem aplikacji.", "error")
+    def tray_activated(self, reason):
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self.open_window()
+
+    def quit(self):
+        self.closing = True
+        if self.worker is not None:
+            self.stop()
         else:
+            self.tray.hide()
+            self.close()
+            QApplication.instance().quit()
+
+    def closeEvent(self, event):  # noqa: N802 - Qt API override.
+        if self.closing and self.worker is None:
             event.accept()
+            return
+        event.ignore()
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.hide()
+        else:
+            self._say(
+                "Zasobnik systemowy jest niedostępny. Aby zakończyć aplikację, kliknij Zakończ.",
+                "error",
+            )

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a self-contained HuggingCar Fiscal bundle for the current OS and CPU into release/:
+# Builds a self-contained Holuto Fiscal bundle for the current OS and CPU into release/:
 # Windows → .exe, macOS → .dmg, Linux → .deb. Runs on Git Bash on Windows.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
@@ -17,9 +17,9 @@ case "$(uname -m)" in
 esac
 
 version=$(uv version --short --package workshop)  # the root version: what release.yml tags
-stem="huggingcar-fiscal-${os}-${arch}"  # no version: releases/latest/download/<stem> stays a stable link
-name="HuggingCar Fiscal"
-[[ $os == linux ]] && name=huggingcar-fiscal  # no spaces in Unix paths
+stem="holuto-fiscal-${os}-${arch}"  # no version: releases/latest/download/<stem> stays a stable link
+name="Holuto Fiscal"
+[[ $os == linux ]] && name=holuto-fiscal  # no spaces in Unix paths
 rm -rf build dist release
 mkdir -p build release
 
@@ -42,8 +42,9 @@ mode=--onedir
 # No MSYS argument rewriting: Git Bash must hand the arguments to PyInstaller untouched.
 MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
 uv run pyinstaller --noconfirm --clean --windowed "$mode" --name "$name" --specpath build \
-  "${icon[@]}" --osx-bundle-identifier com.huggingcar.fiscal \
+  "${icon[@]}" --osx-bundle-identifier com.holuto.fiscal \
   --collect-data fiscal_desktop \
+  --copy-metadata fiscal-desktop \
   build/launcher.py
 
 # The data files (theme, icons) are only read when the window is built, so start the
@@ -78,8 +79,8 @@ case $os in
     cat >"$package/usr/share/applications/$name.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=HuggingCar Fiscal
-Comment=Paragony i raporty Posnet Temo Online
+Name=Holuto Fiscal
+Comment=Paragony Holuto i raporty fiskalne
 Exec=/usr/bin/$name
 Icon=$name
 Terminal=false
@@ -92,11 +93,11 @@ Version: $version
 Section: misc
 Priority: optional
 Architecture: $(dpkg --print-architecture)
-Maintainer: HuggingCar <huggingcar@users.noreply.github.com>
+Maintainer: Holuto <holuto-org@users.noreply.github.com>
 Depends: libglib2.0-0, libegl1, libgl1, libfontconfig1, libdbus-1-3, libxkbcommon-x11-0, libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-shape0, libwayland-cursor0
-Homepage: https://github.com/HuggingCar/workshop
-Description: Polish receipt application for Posnet Temo Online
- Prints receipts and fiscal reports on a Posnet Temo Online printer over USB.
+Homepage: https://github.com/holuto-org/workshop
+Description: Holuto receipt queue and fiscal reports for Posnet Temo Online
+ Prints Holuto sales and fiscal reports on a Posnet Temo Online printer over USB.
 EOF
     dpkg-deb --root-owner-group -Zxz --build "$package" "release/$stem.deb"
     ;;

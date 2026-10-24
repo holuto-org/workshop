@@ -2,14 +2,15 @@
 
 import copy
 import json
+import unicodedata
 from dataclasses import replace
 from datetime import datetime
 
 import pytest
+from fiscal_desktop.agent import Agent, Api, validate_result
 from posnet.printer import Printer
 from posnet.protocol import ProtocolError
 from posnet.simulator import Simulator
-from workshop_agent.agent import Agent, Api
 
 JOB_ID = "00000000-0000-0000-0000-000000000007"
 ATTEMPT = "00000000-0000-0000-0000-000000000008"
@@ -19,35 +20,82 @@ JOB = {
     "orderId": "00000000-0000-0000-0000-000000000010",
     "printerId": PRINTER_ID,
     "state": "taken",
-    "payment": "card",
-    "payload": {
-        "companyName": "Warsztat Kowalski",
-        "lines": [
-            {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100.00"},
-            {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00"},
-        ],
-    },
+    "kind": "sale",
+    "allocationId": None,
+    "advances": [],
+    "payments": [{"form": "card", "amount": "250.00"}],
+    "orderNumber": 10,
+    "companyName": "Warsztat Kowalski",
+    "buyerNip": None,
+    "total": "250.00",
+    "lines": [
+        {
+            "name": "Wymiana oleju",
+            "quantity": "2",
+            "unitPrice": "100.00",
+            "total": "200.00",
+            "vatRate": "23",
+            "vatSlot": 0,
+        },
+        {
+            "name": "Klocki hamulcowe",
+            "quantity": "1",
+            "unitPrice": "50.00",
+            "total": "50.00",
+            "vatRate": "8",
+            "vatSlot": 1,
+        },
+    ],
     "attempt": ATTEMPT,
     "receiptNumber": None,
     "result": None,
     "createdAt": "2026-10-16T10:00:00Z",
     "takenAt": "2026-10-16T10:01:00Z",
     "resolvedAt": None,
-    "etag": "opaque-job-tag",
+    "etag": "0123456789abcdef0123456789abcdef",
+}
+ADVANCE_JOB = {
+    **JOB,
+    "kind": "advance",
+    "allocationId": "00000000-0000-0000-0000-000000000012",
+    "payments": [{"form": "mobile", "amount": "250.00"}],
+    "lines": [
+        {
+            "name": "Zaliczka – naprawa pojazdu, zlecenie 10",
+            "quantity": "1",
+            "unitPrice": "200.00",
+            "total": "200.00",
+            "vatRate": "23",
+            "vatSlot": 0,
+        },
+        {
+            "name": "Zaliczka – naprawa pojazdu, zlecenie 10",
+            "quantity": "1",
+            "unitPrice": "50.00",
+            "total": "50.00",
+            "vatRate": "8",
+            "vatSlot": 1,
+        },
+    ],
 }
 PRINTER = {
     "id": PRINTER_ID,
     "branchId": "00000000-0000-0000-0000-000000000011",
     "name": "Workshop",
     "deviceSerial": "DEMO0000001",
-    "vendor": "posnet",
-    "deviceModel": "POSNET TEMO ONLINE",
+    "model": "POSNET TEMO ONLINE",
     "firmware": "32.01",
-    "agentVersion": "0.1.2",
-    "vatRates": [],
-    "lastSeenAt": "2026-10-16T10:00:00Z",
+    "appVersion": "0.1.2",
+    "vatSlots": [],
+    "maxItemNameLength": 80,
+    "maxLinesPerReceipt": 500,
+    "allowedCharacters": "ABCabc 0123456789.,-ĄąĘęŁłŃńÓóŚśŹźŻżĆć",
+}
+STATUS = {
+    "printer": PRINTER,
     "isOnline": True,
-    "etag": "opaque-printer-tag",
+    "lastSeenAt": "2026-10-16T10:00:00Z",
+    "updatedAt": "2026-10-16T09:00:00Z",
 }
 
 
@@ -63,7 +111,7 @@ class FakeApi(Api):
 
     def heartbeat(self):
         self.heartbeats.append(copy.deepcopy(self.telemetry))
-        return PRINTER
+        return STATUS
 
     def take(self):
         return self.jobs.pop(0) if self.jobs else None
@@ -72,16 +120,13 @@ class FakeApi(Api):
         return copy.deepcopy(self.remote[job_id])
 
     def report(self, job_id, body):
+        validate_result(body)
+        assert body["state"] != "done" or body["receiptNumber"]
         self.reports.append(copy.deepcopy(body))
         if self.fail_report:
             raise OSError("response lost")
         self.remote[job_id].update(body)
         return copy.deepcopy(self.remote[job_id])
-
-
-@pytest.fixture(autouse=True)
-def no_wait(monkeypatch):
-    monkeypatch.setattr("workshop_agent.agent.time.sleep", lambda _: None)
 
 
 def test_prints_once_with_brand_and_receipt_number(tmp_path):
@@ -92,8 +137,8 @@ def test_prints_once_with_brand_and_receipt_number(tmp_path):
         Agent(printer, api).step()
         assert len(sim.receipts) == 1
         assert sim.receipts[0]["total_cents"] == 25000
-        assert sim.receipts[0]["payment"] == 2
-        assert {line["vt"] for line in sim.receipts[0]["lines"]} == {"0"}
+        assert sim.receipts[0]["payments"] == [{"ty": "2", "wa": "25000"}]
+        assert [line["vt"] for line in sim.receipts[0]["lines"]] == ["0", "1"]
         assert sim.footers == [{"id": "25", "na": "Warsztat Kowalski"}]
         assert api.reports[0] == {
             "attempt": ATTEMPT,
@@ -220,9 +265,11 @@ def test_staff_resolution_unblocks_pending_without_printing_again(tmp_path, monk
         ("state", "done"),
         ("attempt", None),
         ("id", 7),
-        ("payment", 2),
+        ("payments", 2),
+        ("kind", "refund"),
+        ("advances", None),
         ("printerId", JOB_ID),
-        ("payload", None),
+        ("lines", None),
     ],
 )
 def test_malformed_or_unowned_response_never_reaches_physical_execution(tmp_path, field, value):
@@ -238,7 +285,7 @@ def test_malformed_or_unowned_response_never_reaches_physical_execution(tmp_path
 def test_invalid_amount_fails_without_printing_and_retries_same_result(tmp_path):
     with Simulator() as sim:
         bad = copy.deepcopy(JOB)
-        bad["payload"]["lines"][0]["quantity"] = "NaN"
+        bad["lines"][0]["quantity"] = "NaN"
         path = tmp_path / "operation.json"
         api = FakeApi([bad])
         api.fail_report = True
@@ -298,13 +345,52 @@ def test_telemetry_has_raw_serial_and_json_unicode(tmp_path):
     assert api.telemetry["model"] == "Żółw"
     assert api.telemetry["firmware"] == "wersja ą"
     assert api.telemetry["serial"] == "DEMO0000001"
-    assert api.telemetry["agentVersion"] == "0.1.2"
-    assert api.telemetry["vatRates"] == [
-        {"index": 0, "percent": "23"},
-        {"index": 1, "percent": "8"},
-        {"index": 2, "percent": "0"},
-        {"index": 6, "percent": "zw"},
+    assert api.telemetry["appVersion"]
+    assert api.telemetry["vatSlots"] == [
+        {"slot": 0, "vatRate": "23"},
+        {"slot": 1, "vatRate": "8"},
+        {"slot": 2, "vatRate": "0"},
+        {"slot": 6, "vatRate": "zw"},
     ]
+
+
+# `Telemetry` in the backend's openapi/agent.json: all required, no other properties.
+TELEMETRY_FIELDS = {
+    "maxItemNameLength",
+    "maxLinesPerReceipt",
+    "allowedCharacters",
+    "serial",
+    "model",
+    "firmware",
+    "appVersion",
+    "vatSlots",
+}
+
+
+def test_described_telemetry_satisfies_the_agent_contract(tmp_path):
+    with Simulator() as sim:
+        status = Printer(sim.connection, tmp_path / "operation.json").probe()
+    api = Api("https://api.example", "token", "DEMO0000001")
+    api.describe(status)
+    telemetry = json.loads(json.dumps(api.telemetry))  # exactly what goes on the wire
+    assert set(telemetry) == TELEMETRY_FIELDS
+    for field in ("serial", "model", "firmware", "appVersion"):  # Code: 1-64 printable chars
+        assert 1 <= len(telemetry[field]) <= 64 and telemetry[field].isprintable()
+    # PrinterLimit: a positive int32; the driver's documented Temo Online limits.
+    assert telemetry["maxItemNameLength"] == 80
+    assert telemetry["maxLinesPerReceipt"] == 500
+    # AllowedCharacters: NFC, no C0/C1 controls, and exactly what the driver prints unchanged.
+    characters = telemetry["allowedCharacters"]
+    assert characters == unicodedata.normalize("NFC", characters)
+    assert not any(unicodedata.category(c) == "Cc" for c in characters)
+    assert len(set(characters)) == len(characters) == 216
+    unassigned = (0x81, 0x83, 0x88, 0x90, 0x98)  # no Unicode character in CP1250
+    unprintable = (0x7F, 0xA0, 0xAD)  # DEL, no-break space, soft hyphen
+    assert characters.encode("cp1250") == bytes(
+        code for code in range(0x20, 0x100) if code not in unassigned + unprintable
+    )
+    assert {" ", "&", "€", "Ą", "ż", "ó", "ß"} <= set(characters)
+    assert "\t" not in characters and "Ж" not in characters
 
 
 def test_exempt_workshop_uses_exempt_slot(tmp_path, monkeypatch):
@@ -313,7 +399,10 @@ def test_exempt_workshop_uses_exempt_slot(tmp_path, monkeypatch):
         rates = dict.fromkeys((f"v{letter}" for letter in "abcdef"), "101,00") | {"vg": "100,00"}
         monkeypatch.setattr(sim, "_handle", lambda c, p: rates if c == "vatget" else handle(c, p))
         printer = Printer(sim.connection, tmp_path / "operation.json")
-        api = FakeApi([JOB])
+        job = copy.deepcopy(JOB)
+        for line in job["lines"]:
+            line.update(vatRate="zw", vatSlot=6)
+        api = FakeApi([job])
         Agent(printer, api).step()
         assert api.reports[0]["state"] == "done"
         assert {line["vt"] for line in sim.receipts[0]["lines"]} == {"6"}
@@ -338,7 +427,10 @@ def test_orphan_device_journal_without_attempt_fails_closed(tmp_path):
         assert sim.receipts == []
 
 
-def test_counter_failure_reports_done_with_null_number(tmp_path, monkeypatch):
+@pytest.mark.parametrize("result_source", ["dispatch", "crash", "rejected"])
+def test_missing_receipt_number_stays_unknown_until_staff_resolution(
+    tmp_path, monkeypatch, result_source
+):
     with Simulator() as sim:
         handle = sim._handle
 
@@ -348,11 +440,39 @@ def test_counter_failure_reports_done_with_null_number(tmp_path, monkeypatch):
             return handle(command, params)
 
         monkeypatch.setattr(sim, "_handle", counter_failure)
+        path = tmp_path / "operation.json"
+        printer = Printer(sim.connection, path)
         api = FakeApi([JOB])
-        Agent(Printer(sim.connection, tmp_path / "operation.json"), api).step()
-        assert api.reports[0]["state"] == "done"
+        agent = Agent(printer, api)
+        if result_source == "crash":
+            monkeypatch.setattr(
+                agent, "_report", lambda *_args, **_kwargs: (_ for _ in ()).throw(SystemExit)
+            )
+            with pytest.raises(SystemExit):
+                agent.step()
+        else:
+            agent.step()
+        if result_source == "rejected":
+            saved = json.loads(agent.outbox_path.read_text())
+            saved["body"].update(state="done", issuedAt=saved["issuedAt"])
+            agent.outbox_path.write_text(json.dumps(saved))
+            api.remote[JOB_ID]["state"] = "taken"
+            api.reports.clear()
+        agent = Agent(Printer(sim.connection, path), api)
+        agent.step()
+        agent.step()
+        assert len(api.reports) == 1
+        assert api.reports[0]["state"] == "unknown"
         assert api.reports[0]["receiptNumber"] is None
-        assert api.reports[0]["issuedAt"] is not None
+        assert api.reports[0]["issuedAt"] is None
+        assert "numer" in api.reports[0]["result"]
+        assert printer.last_record()["state"] == "completed"
+        assert agent.blocked
+        assert len(sim.receipts) == 1
+        api.remote[JOB_ID].update(state="done", receiptNumber="staff-number")
+        agent.step()
+        assert not agent.blocked
+        assert printer.last_record()["state"] == "acknowledged"
         assert len(sim.receipts) == 1
 
 
@@ -462,7 +582,7 @@ def test_failed_report_is_not_retried_over_remote_unknown(tmp_path):
     with Simulator() as sim:
         path = tmp_path / "operation.json"
         bad = copy.deepcopy(JOB)
-        bad["payload"]["lines"][0]["quantity"] = "NaN"
+        bad["lines"][0]["quantity"] = "NaN"
         api = FakeApi([bad])
         api.fail_report = True
         with pytest.raises(OSError):
@@ -493,7 +613,7 @@ def test_outbox_write_failure_happens_before_physical_dispatch(tmp_path, monkeyp
         def disk_failure(_path, _record):
             raise OSError("disk full")
 
-        monkeypatch.setattr("workshop_agent.agent.durable_save", disk_failure)
+        monkeypatch.setattr("fiscal_desktop.agent.durable_save", disk_failure)
         with pytest.raises(OSError, match="disk full"):
             Agent(printer, FakeApi([JOB])).step()
         assert printer.last_record() is None
@@ -556,3 +676,209 @@ def test_terminal_resolution_before_first_result_remains_settled_after_restart(
         assert saved["resolvedState"] == ("done" if completed else "failed")
         assert api.reports == []
         assert len(sim.receipts) == int(completed)
+
+
+def test_unmappable_active_vat_slot_is_omitted_and_logged(tmp_path, caplog):
+    from decimal import Decimal
+
+    from posnet.models import VatRate
+
+    with Simulator() as sim:
+        status = Printer(sim.connection, tmp_path / "operation.json").probe()
+    api = FakeApi()
+    api.describe(replace(status, vat_rates=[VatRate(0, Decimal(22)), VatRate(1, Decimal(5))]))
+    assert api.telemetry["vatSlots"] == [{"slot": 1, "vatRate": "5"}]
+    assert "slocie 0" in caplog.text
+
+
+def test_job_rate_must_match_the_reported_printer_slot(tmp_path):
+    with Simulator() as sim:
+        job = copy.deepcopy(JOB)
+        job["lines"][0]["vatSlot"] = 1
+        api = FakeApi([job])
+        Agent(Printer(sim.connection, tmp_path / "operation.json"), api).step()
+        assert api.reports[0]["state"] == "failed"
+        assert sim.receipts == []
+
+
+def test_unknown_receipt_blocks_manual_reports_and_cannot_be_acknowledged_locally(tmp_path):
+    with Simulator() as sim:
+        printer = Printer(sim.connection, tmp_path / "operation.json")
+        printer._save({"state": "pending", "operation": "receipt"})
+        agent = Agent(printer, FakeApi())
+        with pytest.raises(ValueError):
+            agent.run_report("daily_report")
+        with pytest.raises(ValueError, match="Holuto"):
+            agent.run_report("acknowledge_pending")
+        assert sim.reports == []
+        assert printer.pending() is not None
+
+
+def test_advance_job_prints_one_line_per_vat_rate(tmp_path):
+    with Simulator() as sim:
+        api = FakeApi([ADVANCE_JOB])
+        Agent(Printer(sim.connection, tmp_path / "operation.json"), api).step()
+        assert api.reports[0]["state"] == "done"
+        receipt = sim.receipts[0]
+        assert receipt["total_cents"] == 25000
+        assert [(line["vt"], line["il"], line["pr"]) for line in receipt["lines"]] == [
+            ("0", "1", "20000"),
+            ("1", "1", "5000"),
+        ]
+        assert receipt["advances"] == []
+        assert receipt["payments"] == [{"ty": "6", "wa": "25000", "na": "Płatność mobilna"}]
+
+
+@pytest.mark.parametrize(
+    ("kind", "advances", "payments", "fiscal_cents"),
+    [
+        (
+            "sale",
+            [{"vatSlot": 0, "vatRate": "23", "amount": "100.00"}],
+            [{"form": "card", "amount": "50.00"}, {"form": "credit", "amount": "100.00"}],
+            15000,
+        ),
+        (
+            "sale",
+            [
+                {"vatSlot": 0, "vatRate": "23", "amount": "200.00"},
+                {"vatSlot": 1, "vatRate": "8", "amount": "50.00"},
+            ],
+            [],
+            0,
+        ),
+    ],
+)
+def test_job_settlement_reaches_printer(tmp_path, kind, advances, payments, fiscal_cents):
+    job = {**JOB, "kind": kind, "advances": advances, "payments": payments}
+    with Simulator() as sim:
+        api = FakeApi([job])
+        Agent(Printer(sim.connection, tmp_path / "operation.json"), api).step()
+        assert api.reports[0]["state"] == "done"
+        assert sim.receipts[0]["total_cents"] == fiscal_cents
+        assert len(sim.receipts[0]["advances"]) == len(advances)
+        assert len(sim.receipts[0]["payments"]) == len(payments)
+
+
+def test_duplicate_advance_slot_reports_clear_failure_before_printing(tmp_path):
+    job = {
+        **JOB,
+        "advances": [
+            {"vatSlot": 0, "vatRate": "23", "amount": "40.00"},
+            {"vatSlot": 0, "vatRate": "23", "amount": "60.00"},
+        ],
+        "payments": [{"form": "card", "amount": "150.00"}],
+    }
+    with Simulator() as sim:
+        printer = Printer(sim.connection, tmp_path / "operation.json")
+        api = FakeApi([job])
+        Agent(printer, api).step()
+        assert api.reports[0]["state"] == "failed"
+        assert "Powtórzony slot VAT zaliczki" in api.reports[0]["result"]
+        assert not sim.transaction_open
+        assert sim.receipts == []
+        assert printer.last_record() is None
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"advances": [{"vatSlot": 0, "vatRate": "23", "amount": "200.01"}]},
+        {
+            "advances": [
+                {"vatSlot": 0, "vatRate": "23", "amount": "100.00"},
+                {"vatSlot": 0, "vatRate": "23", "amount": "100.01"},
+            ]
+        },
+        {"payments": [{"form": "cash", "amount": "249.99"}]},
+        {"payments": [{"form": "cash", "amount": "250.01"}]},
+        {"advances": [{"vatSlot": 3, "vatRate": "23", "amount": "1.00"}]},
+        {"advances": [{"vatSlot": 0, "vatRate": "8", "amount": "1.00"}]},
+        {"payments": [{"form": "cash", "amount": "-1.00"}]},
+        {"payments": [{"form": "cash", "amount": "NaN"}]},
+        {"payments": [{"form": "cash", "amount": "Infinity"}]},
+        {"payments": [{"form": "cash", "amount": "0.001"}]},
+        {"payments": [{"form": "cash", "amount": "100000000.00"}]},
+        {"advances": [{"vatSlot": 0, "vatRate": "23", "amount": "-1.00"}]},
+        {"total": "249.99"},
+        {"total": "100000000.00"},
+    ],
+)
+def test_invalid_job_settlement_reports_failure_without_fiscal_commands(tmp_path, changes):
+    with Simulator() as sim:
+        printer = Printer(sim.connection, tmp_path / "operation.json")
+        api = FakeApi([{**JOB, **changes}])
+        Agent(printer, api).step()
+        assert api.reports[0]["state"] == "failed"
+        assert not sim.transaction_open
+        assert sim.receipts == []
+        assert printer.last_record() is None
+
+
+@pytest.mark.parametrize("history_error", ["truncated", "disk_full"])
+def test_history_cache_failure_does_not_block_fiscal_settlement(
+    tmp_path, monkeypatch, caplog, history_error
+):
+    with Simulator() as sim:
+        path = tmp_path / "operation.json"
+        printer = Printer(sim.connection, path)
+        api = FakeApi([JOB])
+        agent = Agent(printer, api)
+        if history_error == "truncated":
+            path.with_name("history.jsonl").write_text('{"job_id":')
+        else:
+            monkeypatch.setattr(
+                agent,
+                "_save_history",
+                lambda *_: (_ for _ in ()).throw(OSError("disk full")),
+            )
+        agent.step()
+        restarted = Agent(Printer(sim.connection, path), api)
+        restarted.step()
+        assert api.reports[0]["state"] == "done"
+        assert len(api.reports) == 1
+        assert printer.last_record()["state"] == "acknowledged"
+        assert json.loads(agent.outbox_path.read_text())["settled"]
+        assert not restarted.blocked
+        assert len(sim.receipts) == 1
+        assert "historii" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"unitPrice": "100.001"}, "Cena"),
+        ({"total": "199.99"}, "Wartość pozycji"),
+    ],
+)
+def test_invalid_job_line_fails_before_printing(tmp_path, changes, reason):
+    job = copy.deepcopy(JOB)
+    job["lines"][0].update(changes)
+    if "total" in changes:
+        job["lines"][1]["total"] = "50.01"
+    with Simulator() as sim:
+        printer = Printer(sim.connection, tmp_path / "operation.json")
+        api = FakeApi([job])
+        Agent(printer, api).step()
+        assert api.reports[0]["state"] == "failed"
+        assert reason in api.reports[0]["result"]
+        assert printer.last_record() is None
+        assert not sim.transaction_open
+        assert sim.receipts == []
+
+
+def test_job_lines_print_as_received_with_half_up_line_totals(tmp_path):
+    job = copy.deepcopy(JOB)
+    job["lines"][0].update(quantity="1.5", unitPrice="0.33", total="0.50")
+    job["lines"][1].update(quantity="1", unitPrice="0.50", total="0.50")
+    job.update(total="1.00", payments=[{"form": "card", "amount": "1.00"}])
+    with Simulator() as sim:
+        printer = Printer(sim.connection, tmp_path / "operation.json")
+        api = FakeApi([job])
+        Agent(printer, api).step()
+        assert api.reports[0]["state"] == "done"
+        assert [
+            (line["quantity"], line["price_cents"], line["total_cents"])
+            for line in printer.last_record()["lines"]
+        ] == [("1.5", 33, 50), ("1", 50, 50)]
+        assert sim.receipts[0]["total_cents"] == 100

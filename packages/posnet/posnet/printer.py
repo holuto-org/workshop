@@ -4,12 +4,24 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from .models import MAX_CENTS, VAT_COUNT, Line, VatRate, sanitize
+from .models import (
+    MAX_BUYER_NIP_LENGTH,
+    MAX_CENTS,
+    MAX_LINES,
+    PAYMENT_TYPES,
+    VAT_COUNT,
+    Advance,
+    Line,
+    Payment,
+    VatRate,
+    printable,
+    sanitize,
+)
 from .protocol import Connection, ProtocolError, Session
 
 if os.name == "nt":
@@ -58,7 +70,6 @@ def vat_percent(raw: str) -> Decimal:
 
 
 SCAN_TIMEOUT = 0.5  # a Temo answers getrealid well within this; silent ports cost no more
-MAX_LINES = 500
 
 
 def _denied_port(exc: BaseException) -> bool:
@@ -67,9 +78,42 @@ def _denied_port(exc: BaseException) -> bool:
     return isinstance(cause, OSError) and cause.errno in (errno.EACCES, errno.EPERM)
 
 
-def receipt_commands(lines: list[Line], payment: int, total: int, footer: str) -> list[tuple]:
-    """The command sequence for one receipt; a non-empty `footer` adds a branded footer line."""
+def receipt_values(lines, payments, advances):
+    if any(not isinstance(item, Payment) for item in payments):
+        raise ValueError("Nieprawidłowe pozycje płatności.")
+    if any(not isinstance(item, Advance) for item in advances):
+        raise ValueError("Nieprawidłowe pozycje zaliczek.")
+    slot_sales = {}
+    for line in lines:
+        slot_sales[line.vat] = slot_sales.get(line.vat, 0) + line.total_cents
+    total = sum(slot_sales.values())
+    if total > MAX_CENTS:
+        raise ValueError("Suma paragonu przekracza zakres drukarki.")
+    advance_slots = set()
+    for advance in advances:
+        if advance.vat in advance_slots:
+            raise ValueError("Powtórzony slot VAT zaliczki. Wymagana jest jedna kwota na slot.")
+        advance_slots.add(advance.vat)
+        if advance.vat not in slot_sales or advance.amount_cents > slot_sales[advance.vat]:
+            raise ValueError("Zaliczki przekraczają sprzedaż w slocie VAT.")
+    total -= sum(item.amount_cents for item in advances)
+    if sum(item.amount_cents for item in payments) != total:
+        raise ValueError("Suma płatności nie odpowiada wartości fiskalnej paragonu.")
+    return total, slot_sales
+
+
+def receipt_commands(
+    lines: list[Line],
+    payments: list[Payment],
+    advances: list[Advance],
+    footer: str,
+    buyer_nip: str | None = None,
+) -> list[tuple]:
+    """Build and validate one receipt with advance deductions and split payments."""
+    total, slot_sales = receipt_values(lines, payments, advances)
     commands = [("trinit", {"bm": "0"}, 10)]
+    if buyer_nip is not None:
+        commands.append(("trnipset", {"ni": buyer_nip}, 10))
     commands += [
         (
             "trline",
@@ -84,15 +128,38 @@ def receipt_commands(lines: list[Line], payment: int, total: int, footer: str) -
         )
         for line in lines
     ]
-    commands.append(("trpayment", {"ty": payment, "wa": total}, 10))
+    commands += [
+        (
+            "tradvance",
+            {
+                "na": "Zaliczka",
+                "vt": advance.vat,
+                "pr": advance.amount_cents,
+                "wa": slot_sales[advance.vat],
+            },
+            10,
+        )
+        for advance in advances
+    ]
+    commands += [
+        (
+            "trpayment",
+            {"ty": PAYMENT_TYPES[item.form], "wa": item.amount_cents}
+            | ({"na": "Płatność mobilna"} if item.form == "mobile" else {}),
+            10,
+        )
+        for item in payments
+        if item.amount_cents
+    ]
+    paid = sum(item.amount_cents for item in payments)
     if footer:
         commands += [
-            ("trend", {"to": total, "fp": total, "fe": "0"}, 30),
+            ("trend", {"to": total, "fp": paid, "fe": "0"}, 30),
             ("trftrln", {"id": "25", "na": footer}, 10),
             ("trftrend", {}, 30),
         ]
     else:
-        commands.append(("trend", {"to": total, "fp": total}, 30))
+        commands.append(("trend", {"to": total, "fp": paid}, 30))
     return commands
 
 
@@ -299,10 +366,20 @@ class Printer:
                 )
 
     def print_receipt(
-        self, lines: list[Line], payment: int = 0, brand: str = "", **details
+        self,
+        lines: list[Line],
+        payments: list[Payment],
+        brand: str = "",
+        *,
+        advances: list[Advance] = (),
+        buyer_nip: str | None = None,
+        **details,
     ) -> dict:
         """Print one fiscal receipt.
 
+        `Line.vat` and `Advance.vat` are printer slots (0..6), not rate percentages.
+        `payments` must cover the fiscal value after deducting `advances`.
+        `buyer_nip` is sent unchanged (up to 30 CP1250 characters).
         `brand` is the company name: when the printer header does not already
         show it, it is added as a footer line so the receipt carries the brand.
         Extra `details` (e.g. a job id) are journaled with the operation.
@@ -312,12 +389,19 @@ class Printer:
             raise ValueError("Paragon musi zawierać od 1 do 500 pozycji.")
         if any(not isinstance(line, Line) for line in lines):
             raise ValueError("Nieprawidłowe pozycje paragonu.")
-        if payment not in (0, 2):
-            raise ValueError("Wybierz płatność gotówką lub kartą.")
+        payments, advances = list(payments), list(advances)
+        if buyer_nip is not None:
+            if (
+                not isinstance(buyer_nip, str)
+                or not buyer_nip.strip()
+                or len(buyer_nip) > MAX_BUYER_NIP_LENGTH
+            ):
+                raise ValueError("NIP nabywcy musi zawierać od 1 do 30 znaków.")
+            try:
+                printable(buyer_nip)
+            except ValueError as exc:
+                raise ValueError("NIP nabywcy zawiera niedozwolone znaki.") from exc
         brand = sanitize(brand, 40)
-        total = sum(line.total_cents for line in lines)
-        if total > MAX_CENTS:
-            raise ValueError("Suma paragonu przekracza zakres drukarki.")
         with self._locked():
             self._require_resolved()
             with Session(self.connection) as session:
@@ -329,9 +413,10 @@ class Printer:
                     session,
                     status,
                     "receipt",
-                    receipt_commands(lines, payment, total, footer),
-                    total_cents=total,
-                    payment=payment,
+                    receipt_commands(lines, payments, advances, footer, buyer_nip),
+                    total_cents=sum(item.amount_cents for item in payments),
+                    payments=[asdict(item) for item in payments],
+                    advances=[asdict(item) for item in advances],
                     footer=footer,
                     lines=[
                         {

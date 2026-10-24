@@ -1,6 +1,6 @@
 # Windows Code Signing with SignPath Foundation
 
-This guide explains how to get the Windows build of HuggingCar Fiscal signed, so that
+This guide explains how to get the Windows build of Holuto Fiscal signed, so that
 SmartScreen stops warning about an unknown publisher. SignPath Foundation signs open-source
 projects for free with an HSM-backed OV certificate issued in the Foundation's name.
 
@@ -9,10 +9,10 @@ and Apple signing needs a paid Developer ID (see the last section).
 
 ## Prerequisites
 
-- **Public repository under an OSI licence** — `HuggingCar/workshop` is public and MIT
+- **Public repository under an OSI licence** — `holuto-org/workshop` is public and MIT
   licensed.
 - **At least one published release** — the application form asks for a download URL that
-  must resolve: <https://github.com/HuggingCar/workshop/releases/latest>.
+  must resolve: <https://github.com/holuto-org/workshop/releases/latest>.
 - **Builds produced only by GitHub Actions on GitHub-hosted runners** — SignPath verifies
   the artifact was uploaded by a workflow run, not by a person. `release.yml` already does
   this.
@@ -27,18 +27,18 @@ Fill in <https://signpath.org/apply>. The form is a HubSpot embed; these are its
 
 | Field | Value |
 | --- | --- |
-| Project Name | `HuggingCar workshop` |
-| Repository URL | `https://github.com/HuggingCar/workshop` |
-| Homepage URL | `https://github.com/HuggingCar/workshop` (or `https://huggingcar.com` if that page links to the repository — reviewers check the link) |
-| Download URL | `https://github.com/HuggingCar/workshop/releases/latest` |
+| Project Name | `Holuto workshop` |
+| Repository URL | `https://github.com/holuto-org/workshop` |
+| Homepage URL | `https://github.com/holuto-org/workshop` (or `https://holuto.com` if that page links to the repository — reviewers check the link) |
+| Download URL | `https://github.com/holuto-org/workshop/releases/latest` |
 | Privacy Policy URL | empty; the desktop app sends nothing anywhere |
 | Wikipedia URL | empty |
 | Tagline | `Desktop app and driver for Posnet Temo Online fiscal printers used in Polish car workshops` |
-| Description | `HuggingCar Fiscal is a Python/Qt desktop application that prints fiscal receipts and daily, monthly and periodic reports on Posnet Temo Online printers over USB. The repository also contains the pure-Python Posnet protocol driver and an agent with a setup window that prints receipts queued from the HuggingCar workshop management system. MIT licensed. Windows, macOS and Linux builds are produced by GitHub Actions from every tagged release; we are applying to sign the Windows executable.` |
-| Reputation | `Published in September 2026 as the open-source part of HuggingCar, a car-workshop management platform (huggingcar.com) used in production by Polish workshops. Maintained by the HuggingCar team, who also run the backend the agent talks to. All commits go through pull requests with required CI; releases are built only by GitHub Actions.` Add real numbers (workshops, users) if available. |
+| Description | `Holuto Fiscal is a Python/Qt desktop application that prints fiscal receipts and daily, monthly and periodic reports on Posnet Temo Online printers over USB. The repository also contains the pure-Python Posnet protocol driver and an agent with a setup window that prints receipts queued from the Holuto workshop management system. MIT licensed. Windows, macOS and Linux builds are produced by GitHub Actions from every tagged release; we are applying to sign the Windows executable.` |
+| Reputation | `Published in September 2026 as the open-source part of Holuto, a car-workshop management platform (holuto.com) used in production by Polish workshops. Maintained by the Holuto team, who also run the backend the agent talks to. All commits go through pull requests with required CI; releases are built only by GitHub Actions.` Add real numbers (workshops, users) if available. |
 | Maintainer Type | company / organization, not individual |
-| First Name, Last Name, Email | the applicant; use an `@huggingcar.com` address, matching the organization domain helps |
-| Company Name | `HuggingCar` |
+| First Name, Last Name, Email | the applicant; use an `@holuto.com` address, matching the organization domain helps |
+| Company Name | `Holuto` |
 | Discovery source | optional |
 | Code of Conduct checkbox | required — read <https://signpath.org/terms> first; key terms: builds only by CI from the public repository, the signed binary must be exactly what the repository produces, certificates may be revoked on violation |
 | Data processing checkbox | required |
@@ -61,7 +61,7 @@ Collect these values from the SignPath web UI:
    ```xml
    <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
      <zip-file>
-       <pe-file path="huggingcar-fiscal-win-x64.exe">
+       <pe-file path="holuto-fiscal-win-x64.exe">
          <authenticode-sign />
        </pe-file>
      </zip-file>
@@ -71,7 +71,7 @@ Collect these values from the SignPath web UI:
 5. **API token** — create a CI user in the organization with *Submitter* permission on the
    project, generate its API token.
 6. **Install the SignPath GitHub App** — <https://github.com/apps/signpath>, grant access
-   to `HuggingCar/workshop`. Needed for SignPath to read the workflow run.
+   to `holuto-org/workshop`. Needed for SignPath to read the workflow run.
 7. **Add the Trusted Build System** — in SignPath: Organization → Trusted Build Systems →
    add *GitHub.com* and link it to the project.
 
@@ -99,7 +99,7 @@ then the signed file replaces it.
         uses: actions/upload-artifact@v7
         with:
           name: win-x64-unsigned
-          path: packages/desktop/release/huggingcar-fiscal-win-x64.exe
+          path: packages/desktop/release/holuto-fiscal-win-x64.exe
           retention-days: 1
 
       - if: runner.os == 'Windows'
@@ -129,7 +129,7 @@ keep working unsigned:
 After the first signed release:
 
 ```powershell
-Get-AuthenticodeSignature .\huggingcar-fiscal-win-x64.exe | Format-List
+Get-AuthenticodeSignature .\holuto-fiscal-win-x64.exe | Format-List
 ```
 
 `Status` must be `Valid` and `SignerCertificate.Subject` must name *SignPath Foundation*.

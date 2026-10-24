@@ -6,7 +6,5 @@ __pycache__/
 /packages/desktop/release/
 /packages/desktop/*.spec
 
-/packages/agent/build/
-/packages/agent/dist/
-/packages/agent/release/
-/packages/agent/*.spec
+/dist/
+/target/

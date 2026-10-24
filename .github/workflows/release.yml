@@ -88,16 +88,11 @@ jobs:
         run: |
           sudo apt-get install -y -qq ./packages/desktop/release/*.deb
           # No printer on the runner: the app must reach its "not detected" state and stay alive.
-          QT_QPA_PLATFORM=offscreen timeout 10 huggingcar-fiscal && exit 1 || [ $? -eq 124 ]
-      - name: Build and smoke-test the standalone agent
-        run: bash packages/agent/build.sh
-        shell: bash
+          QT_QPA_PLATFORM=offscreen timeout 10 holuto-fiscal && exit 1 || [ $? -eq 124 ]
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
-          path: |
-            packages/desktop/release/*
-            packages/agent/release/*
+          path: packages/desktop/release/*
           if-no-files-found: error
           retention-days: 7
 

@@ -1,22 +1,20 @@
 [project]
 name = "workshop"
 version = "0.1.2"
-description = "HuggingCar software for the workshop PC: Posnet driver, fiscal desktop app, local agent"
+description = "Holuto Fiscal for the workshop PC and its Posnet printer driver"
 requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "fiscal-desktop",
     "posnet",
-    "workshop-agent",
 ]
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = ["packages/posnet", "packages/desktop"]
 
 [tool.uv.sources]
 fiscal-desktop = { workspace = true }
 posnet = { workspace = true }
-workshop-agent = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -26,7 +24,7 @@ dev = [
 
 [tool.pytest.ini_options]
 cache_dir = ".venv/.tmp/pytest"
-testpaths = ["packages/posnet/tests", "packages/desktop/tests", "packages/agent/tests"]
+testpaths = ["packages/posnet/tests", "packages/desktop/tests"]
 
 [tool.ruff]
 cache-dir = ".venv/.tmp/ruff"

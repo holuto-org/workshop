@@ -1,186 +1,217 @@
-# HuggingCar workshop
+# Holuto Fiscal
 
-Software that runs on the workshop PC, next to the Posnet Temo Online fiscal printer.
-One uv workspace, three packages:
+One application on the workshop PC, next to the Posnet Temo Online fiscal printer.
+It prints **only Holuto sales and advances**: staff queue a receipt in the web app or
+select an eligible document in Holuto Fiscal. There is no manual receipt editor or separate agent.
 
-| Package | Import | What it is |
+One uv workspace, two packages:
+
+| Package | Import | Purpose |
 | --- | --- | --- |
-| `packages/posnet` | `posnet` | Driver for the Posnet protocol over USB/serial: framing and CRC, CP1250, status probe, receipts, reports, intent journal, plus a socket simulator for tests. Uses pySerial and anyascii. |
-| `packages/desktop` | `fiscal_desktop` | **HuggingCar Fiscal** — Polish desktop app (PySide6): receipt editor, daily/monthly/periodic reports, local history. Ships as `.exe`, `.dmg`, `.deb`. |
-| `packages/agent` | `workshop_agent` | Agent with a setup window sharing the desktop app's Ant Design-style theme. Polls the manager API, prints receipts and reports their fiscal numbers. Standalone `.exe` and `.tar.gz` builds. |
+| `packages/posnet` | `posnet` | Posnet USB/serial driver: framing, CRC, CP1250, printer state, receipts, reports, durable intent journal and socket simulator. |
+| `packages/desktop` | `fiscal_desktop` | **Holuto Fiscal** — Polish PySide6 app, background receipt loop, reports and history. Ships as `.exe`, `.dmg` and `.deb`. |
 
-The desktop app and the agent import the same `posnet` source; a driver fix lands once.
+## Install
 
-## Install HuggingCar Fiscal
-
-Download the build for your machine; each link always points at the
-[latest release](https://github.com/HuggingCar/workshop/releases/latest):
+Download the build for your machine from the
+[latest release](https://github.com/holuto-org/workshop/releases/latest):
 
 | Platform | File |
 | --- | --- |
-| Windows x64 | [`huggingcar-fiscal-win-x64.exe`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-win-x64.exe) — single file, no installation |
-| macOS Apple Silicon | [`huggingcar-fiscal-mac-arm64.dmg`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-mac-arm64.dmg) |
-| macOS Intel | [`huggingcar-fiscal-mac-x64.dmg`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-mac-x64.dmg) |
-| Ubuntu / Debian x64 | [`huggingcar-fiscal-linux-x64.deb`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-linux-x64.deb) |
-| Ubuntu / Debian ARM | [`huggingcar-fiscal-linux-arm64.deb`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-linux-arm64.deb) |
+| Windows x64 | [`holuto-fiscal-win-x64.exe`](https://github.com/holuto-org/workshop/releases/latest/download/holuto-fiscal-win-x64.exe) — single file, no installation |
+| macOS Apple Silicon | [`holuto-fiscal-mac-arm64.dmg`](https://github.com/holuto-org/workshop/releases/latest/download/holuto-fiscal-mac-arm64.dmg) |
+| macOS Intel | [`holuto-fiscal-mac-x64.dmg`](https://github.com/holuto-org/workshop/releases/latest/download/holuto-fiscal-mac-x64.dmg) |
+| Ubuntu / Debian x64 | [`holuto-fiscal-linux-x64.deb`](https://github.com/holuto-org/workshop/releases/latest/download/holuto-fiscal-linux-x64.deb) |
+| Ubuntu / Debian ARM64 | [`holuto-fiscal-linux-arm64.deb`](https://github.com/holuto-org/workshop/releases/latest/download/holuto-fiscal-linux-arm64.deb) |
 
-File names carry no version so the links stay stable; the version is in the release tag,
-in `SHA256SUMS.txt`, and in the app itself.
+File names are stable; the version is in the release tag, `SHA256SUMS.txt` and app.
+Builds are unsigned: Windows SmartScreen and macOS Gatekeeper may ask before the
+first start (macOS: right-click → Open). The `.deb` installs `holuto-fiscal` and a
+launcher entry. Linux CI builds require Ubuntu 24.04 or newer; locally built bundles
+require a compatible host libc.
 
-Builds are unsigned: Windows SmartScreen and macOS Gatekeeper ask once before the first
-start (macOS: right-click → Open). The `.deb` installs `huggingcar-fiscal` and a launcher
-entry.
+## Sign in and connect
 
-## Printer
+1. In the Holuto web app, add a fiscal printer under **Ustawienia → Drukarki fiskalne**
+   and copy its device token, which is shown only once.
+2. Open Holuto Fiscal. In **Ustawienia**, enter **Adres API** and **Token**, then select
+   the printer port and speed. The token identifies this printer, not a staff session.
+3. Click **Zaloguj i uruchom**. The app connects the physical printer to its Holuto
+   registration and processes the branch's queued receipts in the background.
+   **Zapisz** saves without starting. On the next launch, settings are restored but
+   processing starts only after you click **Zaloguj i uruchom** again.
+
+Use the final API URL, including any path prefix. HTTPS is required except for loopback
+development URLs (`localhost`, `127.0.0.1`, `::1`); redirects are rejected. After token
+rotation, replace the saved token. A 401 stops processing; there is no token refresh.
+
+The API URL, token, port and speed are stored in
+`$XDG_STATE_HOME/holuto-fiscal/fiscal.json` (default
+`~/.local/state/holuto-fiscal/fiscal.json`). On Unix this file has mode **0600**.
+On Windows keep the state directory in a private user profile with restricted ACLs.
+Do not share this file or include it in logs. Legacy standalone state is migrated
+from `workshop-agent` together with its journal and result outbox; keep those files
+together, never discard them to unblock the printer.
+
+### Printer
 
 Printer side: **PC services → USB → POSNET → Windows 1250**, 9600 baud. On Linux the
-port is usually `/dev/ttyACM0` (prefer a stable `/dev/serial/by-id/...` name when one
-exists), on Windows `COM3`-style, on macOS `/dev/cu.usbmodem…`. The user needs read and
-write access to the port (`dialout` group on Linux). Never run through sudo.
+port is usually `/dev/ttyACM0` (prefer `/dev/serial/by-id/...`), on Windows `COM3`-style,
+and on macOS `/dev/cu.usbmodem…`. The user needs read/write access (`dialout` group on
+Linux). Never run through sudo. Only serial connections are supported.
 
-The desktop app scans the serial ports on start and adopts the one answering as a Temo;
-the port can also be set by hand under Ustawienia → Drukarka. Only serial connections
-are supported.
+Saved printer settings also apply to `--probe`. `--serial` and `--baudrate` override
+only their respective saved values, both in the app and in probe mode.
 
-Read-only check that issues no receipt:
+A read-only probe, when an operator explicitly wants to inspect the device:
 
 ```bash
 uv run fiscal-desktop --serial /dev/ttyACM0 --probe
 ```
 
-## Development
+## Desktop app
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # once, if uv is missing
-uv sync --locked                                   # every package, one .venv
-uv run fiscal-desktop                              # the desktop app
-uv run workshop-agent                             # the agent setup window
-QT_QPA_PLATFORM=offscreen uv run pytest -q         # all packages
-uv run ruff check packages && uv run ruff format --check packages
-```
+- **Do wydruku** — eligible advance and sale documents for this printer's branch,
+  with their kind, amount and event date. Queue the selected document with an optional
+  buyer NIP; Holuto derives its payment forms and advance deductions. Final sales
+  need not be fully paid: the unpaid balance prints as credit.
+  Receipt lines and totals come from Holuto and cannot be edited locally.
+  Listing preserves documents above the printer's amount limit; execution still
+  enforces that limit. The list shows one page of up to 100 documents, oldest first,
+  refreshed on each poll; **Następna strona**/**Poprzednia strona** move between pages.
+- **Raporty** — daily, monthly and periodic fiscal reports, with confirmation before
+  printing. Reports and queued receipts use the **same printer lock**, so they cannot
+  interleave commands.
+- **Historia** — local operation history, including printer-assigned receipt numbers.
+  It is a convenience log, not a replacement for the printer's fiscal memory.
+- **Ustawienia** — API URL/token and printer port/speed, plus processing controls.
 
-Python 3.14 or newer. `bash packages/desktop/build.sh` and `bash packages/agent/build.sh`
-produce bundles for the host OS and CPU in their respective `release/` directories.
-CI builds both on five runners only when a push to `master` increases the root
-`pyproject.toml` version above every published release. Other pushes do not rebuild
-packages. A manual **Release** run requires a version increase in the selected commit
-relative to its parent, and an unpublished version. It builds downloadable Actions
-artifacts without publishing a GitHub release. To retry a failed release, rerun its
-original workflow run.
+The background loop polls every **3 seconds**. Closing the window hides it in the
+system tray without stopping processing; open it again from the tray. **Zatrzymaj**
+stops processing; **Zakończ** exits. Both wait for the current operation to finish.
+If a system tray is unavailable,
+closing keeps the window visible instead of leaving an inaccessible background app.
+Run one Holuto Fiscal instance per printer; do not run an old standalone agent beside it.
+
+Prices are gross, quantities and monetary values use decimal strings at the API
+boundary, and the printer calculates the fiscal VAT block. Holuto supplies unit
+prices with at most two decimal places and each line's gross total. The desktop
+prints quantities and prices unchanged; a higher-precision price or a line total
+that differs from quantity × price rounded half up to grosze fails the job before
+printing. A receipt may have **mixed VAT rates**, each line using its assigned
+printer VAT slot. Supported rates are `23`, `8`, `5`, `0` and `zw`; there is no
+highest-rate or whole-receipt fallback. Zero-price lines are omitted. Missing
+VAT-slot mappings reject queueing rather than silently changing the tax rate.
+Buyer NIP, advance deductions and payment amounts are carried through the job to
+the device. Receipt text is sanitized at the driver boundary (transliteration,
+control-character removal and device length limits).
 
 ## Fiscal safety
 
-Both the desktop app and the agent follow the same rules, in the driver:
+- Before each operation verify printer identity, fiscal mode, header, mechanism,
+  command queue, transaction state and VAT table.
+- Journal intent **before the first command reaches the printer**. Never retry a
+  device command and never reprint a receipt.
+- An uncertain result, including a process death during dispatch, is **unknown** and
+  blocks receipts and reports across restarts. Inspect the paper and printer state,
+  then resolve the job in the **web app**. Resolution unblocks; it never reissues a receipt.
+  A completed print without a readable receipt number also remains **unknown**
+  until staff supply the number in Holuto; completed journal evidence is retained.
+- The receipt journal (`operation.json`) and result outbox (`operation.agent.json`)
+  live in the same state directory. A migrated standalone agent retains its existing
+  `fiscal-operation.json`/`fiscal-operation.agent.json` pair. Persist the job,
+  attempt and execution-start timestamp before dispatch, and the result before sending
+  it. Re-sending a saved API result is not reprinting: it keeps the same attempt and
+  timestamp. Restart recovery reconciles durable evidence without issuing printer commands again.
+- A terminal server resolution is authoritative. Corrupt, orphaned or unresolved
+  journals fail closed; deleting them is not a recovery procedure.
+- Local history is only a display cache: cache read/write errors are reported
+  separately and do not prevent acknowledgement or settlement of a server-accepted result.
 
-- Before every operation the Temo identity, fiscal mode, header, mechanism, command
-  queue, transaction state and VAT rates are verified.
-- Intent is journaled before the first command reaches the printer. Nothing is ever
-  retried on the device and nothing is ever reprinted.
-- An uncertain outcome (no answer mid-transaction, process death) blocks further
-  operations, including across restarts, until a person checks the paper and the
-  printer state and acknowledges: in the desktop app "Wyjaśnij ostatnią operację", for
-  the agent the job is reported as *unknown* and resolved in the web app.
-  Acknowledging unblocks; it does not reissue the receipt.
+## Fiscal API contract
 
-Prices are gross; the printer computes and prints the VAT block. A receipt contains only
-lines priced above zero. VAT rates come from the printer's own table (`vatget`); the
-desktop app applies one selected rate to the whole receipt. The agent uses the highest
-active non-exempt rate (or the exempt slot when that is the only active rate).
-The agent does not support mixed-rate receipts. Verify that this rule fits the workshop
-before printing. When the fiscal header does not contain the company name, it is added
-as a footer line.
+The app uses `/agent` with `Authorization: Bearer <device token>`.
+`POST /agent/session` and `POST /agent/heartbeat` send fresh printer telemetry:
 
-## Desktop app
+```json
+{
+  "serial": "device-serial",
+  "model": "Temo Online",
+  "firmware": "2.01",
+  "appVersion": "0.1.2",
+  "vatSlots": [{"slot": 0, "vatRate": "23"}, {"slot": 1, "vatRate": "8"}],
+  "maxItemNameLength": 80,
+  "maxLinesPerReceipt": 500,
+  "allowedCharacters": " !\"#$%&'()*+,-./0123…"
+}
+```
 
-Three tabs and a message line at the bottom; styling follows Ant Design v5 default tokens
-(`theme.qss`).
+`vatSlots` reports the actual device table, not a set of rates: slots are integers
+0–15 and `vatRate` is one of `"23"`, `"8"`, `"5"`, `"0"`, `"zw"`. Every session and
+heartbeat replaces the backend's slot mapping. Telemetry uses `appVersion` and
+`vatSlots`, not the retired `agentVersion`/`vatRates` fields. `maxItemNameLength`,
+`maxLinesPerReceipt` and `allowedCharacters` (every printable character, in NFC) are
+required; the backend queues no receipt until it has them. The protocol cannot report
+them, so the driver states the documented Temo Online values once, in `posnet.models`:
+an 80-character item name (`trline`), 500 lines per receipt (`trinit`) and the
+CP1250 characters from 0x20 to 0xFF the driver prints unchanged (all but DEL, the
+no-break space and the soft hyphen). Session/heartbeat bind
+and verify the physical serial; a serial already paired to another live printer is
+refused (409). Other requests include the unchanged
+`X-Device-Serial` header; a device swap is rejected before a job is taken or printed.
 
-- **Sprzedaż** — the receipt editor (editable names, quantities to 8 decimals, gross
-  prices to 2), a search box that filters the service list without dropping priced rows,
-  and the summary with the net and VAT contained in the gross total. Prices are cleared
-  after a successful print and kept after an error.
-- **Raporty** — daily report, monthly report (previous month preselected), periodic
-  report by dates (full or summary). All three confirm before printing.
-- **Historia** — receipts printed from this computer, newest first, with the number
-  assigned by the printer. A convenience log; the printer's fiscal memory is the record.
-- **Ustawienia** (gear) — the service list shown on Sprzedaż (add, rename by
-  double-click, delete, drag to reorder) and, on the second tab, printer port and speed.
-
-Receipt text is sanitized by the driver, not the API: unsupported characters are
-transliterated, control characters removed, and names shortened to the device limit.
-The desktop editor also checks names before printing.
-
-State: journal and history in `$XDG_STATE_HOME/huggingcar-fiscal/`
-(`~/.local/state/huggingcar-fiscal/`), settings in `~/.config/HuggingCar/Fiscal.conf`.
-
-## Agent
-
-### Standalone agent (0.1.2)
-
-No Python, uv, or desktop app is required. Download the matching agent asset from the
-[release page](https://github.com/HuggingCar/workshop/releases/latest):
-
-| Platform | Asset |
+| Endpoint | Purpose |
 | --- | --- |
-| Windows x64 | `huggingcar-agent-win-x64.exe` |
-| macOS Apple Silicon | `huggingcar-agent-mac-arm64.tar.gz` |
-| macOS Intel | `huggingcar-agent-mac-x64.tar.gz` |
-| Linux x64 | `huggingcar-agent-linux-x64.tar.gz` |
-| Linux ARM64 | `huggingcar-agent-linux-arm64.tar.gz` |
+| `GET /agent/documents?limit=100[&cursor=…]` | One page of eligible documents: `{items:[{kind, orderId, orderNumber, allocationId, amount, customerName, occurredAt}], nextCursor}`. Pass `nextCursor` back unchanged (URL-encoded) for the next page; null means the last page. Kind is `advance` or `sale`; advance documents identify their allocation and payment time, sales use null allocation and posting time. |
+| `POST /agent/jobs` | Queue `{kind, orderId, allocationId, buyerNip}`; allocation is required for an advance and null for a sale; buyer NIP may be null. Holuto derives the payments. |
+| `POST /agent/jobs/take` | Claim a job; no body, 204 when the queue is empty. |
+| `GET /agent/jobs/{id}` | Reconcile current job state without printing. |
+| `POST /agent/jobs/{id}/result` | Send `{attempt, state, receiptNumber, issuedAt, result}`; state is `done`, `failed` or `unknown`. `done` requires a receipt number and issue timestamp; `failed`/`unknown` leave both null. |
 
-Agent assets appear after the 0.1.2 release is published. For an unpublished build,
-use the manual workflow's Actions artifacts or build locally with `bash packages/agent/build.sh`.
-Linux CI builds target Ubuntu 24.04 or newer; a local build requires a compatible
-host libc. Builds are unsigned, as with the desktop application.
+Job lines contain `name`, `quantity`, `unitPrice`, `total`, `vatRate`, `vatSlot`. Job metadata
+includes `orderId`, `orderNumber` (integer), `printerId`, `kind`, nullable `allocationId`,
+`etag`, `buyerNip`, `companyName`, `total`, `advances`, `payments`, the immutable attempt
+and lifecycle timestamps. Advance jobs identify their allocation and have one line
+per VAT rate, each with quantity 1.
+`total` is the gross sum of line totals. `advances` contains `{vatSlot, vatRate, amount}`
+deductions (always empty for advance jobs), with at most one deduction per VAT slot;
+duplicate slots fail validation before fiscal commands. `payments` contains `{form, amount}`.
+Forms are `cash`, `card`, `transfer`, `mobile` and `credit`. Decimals are strings.
+Deploy the app with the matching backend; older protocol shapes are unsupported.
 
-1. Deploy the matching API first. Version 0.1.2 requires the new session endpoint;
-   older agents that send a permanent token to job endpoints must be upgraded.
-2. In the web app (director): Ustawienia → Drukarki fiskalne → Dodaj drukarkę.
-   Copy the credential; it is shown only once. Existing printer credentials also work.
-3. Extract the Unix archive. Double-click the Windows `.exe` or macOS `.app`;
-   on Linux launch `./huggingcar-agent` with no arguments.
-4. Enter **Adres API**, paste the credential into **Token**, and select or type the
-   printer port. Leave the speed at 9600 unless the printer uses another speed.
-5. Click **Zapisz** to save without printing. Click **Uruchom** to connect and print
-   queued jobs. The window shows connection and error messages.
-   Closing the window hides it in the system tray; the agent keeps processing jobs.
-   Use **Otwórz** in the tray menu to reopen it. **Zatrzymaj** stops processing;
-   **Zakończ**, in the window or tray menu, exits the app. Both wait for the current
-   operation to finish. If no system tray is available, closing keeps the window
-   visible; use **Zakończ** to exit. Do not run the desktop app against the same printer.
+The driver sends `trinit`, optional `trnipset`, `trline` for each line, `tradvance`
+for each deduction (name `Zaliczka`, VAT slot, amount, gross sales at that slot), then
+`trpayment` for each nonzero payment. Types are cash 0, card 2, transfer 8, mobile 6
+(named `Płatność mobilna`) and credit 5. It closes with `trend`, whose `to` is the
+gross total minus advances and `fp` is the sum of payments. Fully prepaid sales
+close at zero without payment commands. Before dispatch, every slot/rate must match
+fresh telemetry, deductions cannot exceed sales at their slot, and payments must
+exactly cover the fiscal value. Amounts must be nonnegative whole grosze within the
+printer's range. Journal/outbox recovery and the no-replay rule are unchanged.
 
-The API URL and permanent credential are saved in
-`$XDG_STATE_HOME/workshop-agent/fiscal.json` (default `~/.local/state/workshop-agent/`).
-Unix credentials are saved with mode 0600;
-on Windows, keep the directory in your private user profile and restrict its ACL.
-Launching the app restores the URL, masked token, port and speed. It does not
-start printing until you click **Uruchom**. Reopening the window from the tray does
-not interrupt or restart the agent.
+## Development and releases
 
-The agent sends `Authorization: Agent <credential>` only to
-`POST /integrations/fiscal/agent/session/`, with the printer serial and telemetry headers.
-The server pins that serial atomically and returns a signed bearer token valid for
-15 minutes. Job calls use `Authorization: Bearer <access_token>`. Session tokens
-remain in memory, renew before expiry, and are invalidated immediately by credential
-rotation or service/company deletion. A 401 causes one session refresh and one HTTP
-retry; network errors never trigger a physical reprint.
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # once, if uv is missing
+uv sync --locked
+uv run fiscal-desktop
+QT_QPA_PLATFORM=offscreen uv run pytest -q
+uv run ruff check packages && uv run ruff format --check packages
+```
 
-HTTPS is required, except for loopback development URLs (`localhost`, `127.0.0.1`, `::1`).
-Redirects are rejected; use the final manager API URL, including any path prefix.
-Serial binding prevents accidental device swaps; it is not hardware attestation.
+Python 3.14 or newer. `bash packages/desktop/build.sh` produces the host OS/CPU bundle
+in `packages/desktop/release/`. No separate agent is built or installed; its loop is
+part of `fiscal_desktop`. HTTP uses the Python standard library, with no additional
+HTTP dependency.
 
-Polls every 3 seconds. Queued jobs older than 10 minutes expire rather than print late.
-A crash after printing but before reporting is reconciled from the journal on restart,
-including when the server has marked the job's outcome unknown.
+CI builds the desktop once per OS/CPU target (Windows x64, macOS ARM64/x64, Linux
+ARM64/x64), only when a push to `master` increases the root `pyproject.toml` version
+above every published release. A manual **Release** run also requires a version
+increase relative to the selected commit's parent and an unpublished version. Manual
+runs produce Actions artifacts without publishing a release. Retry failed releases
+by rerunning the original workflow run.
 
-## Tests
-
-Driver: the CRC vector from the Posnet documentation, CP1250 encoding, exact amounts,
-VAT-in-gross rounding, protocol error forms, port autodetection and the branding footer
-against the simulator. Desktop: value validation, the Qt editor, reports, lock release
-after a failed connection. Agent: real HTTP session exchange, renewal, revocation
-responses and redirect rejection; receipt jobs and crash recovery against the simulator.
-Real printouts still need an attached printer.
-
-The protocol source is Posnet's POT-I-DEV-37 specification (v5406, 2022-06-13, Temo
-Online 2.01). No vendor SDK is used, and the specification is not redistributed here.
+Printer behavior must be exercised through the socket simulator and automated tests,
+not real fiscal commands. Buyer NIP and payment forms follow
+[Posnet POT-I-DEV-37 v5978, pp. 295, 297 and 314](https://raw.githubusercontent.com/kashiash/PosnetLibrary/master/DOCS/pot-i-dev-37-5978-specyfikacja-protokolu-posnet-online-mr2021-2%20(1).pdf)
+(Online MR2021; Temo Online). No vendor SDK or specification is redistributed.

@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import tempfile
-import time
 from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -14,13 +13,21 @@ from importlib.metadata import version
 from ipaddress import ip_address
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import UUID
 
-from posnet.models import EXEMPT_PERCENT, Line
-from posnet.printer import MAX_LINES
+from posnet.models import (
+    EXEMPT_PERCENT,
+    MAX_CENTS,
+    MAX_LINES,
+    MAX_NAME_LENGTH,
+    PAYMENT_TYPES,
+    PRINTABLE_CHARACTERS,
+    Advance,
+    Line,
+    Payment,
+)
 from posnet.protocol import ProtocolError
 
 if TYPE_CHECKING:
@@ -45,6 +52,8 @@ RETRY_SECONDS = 15
 SERIAL_LIMIT = 32
 TOKEN_LIMIT = 4096
 VAT_RATE_LIMIT = 16
+VAT_RATES = frozenset({"23", "8", "5", "0", "zw"})
+DOCUMENTS_LIMIT = 100  # the largest page `/agent/documents` serves
 STATES = frozenset({"queued", "taken", "done", "failed", "unknown", "expired"})
 UNKNOWN_MESSAGE = "Przerwano w trakcie drukowania. Sprawdź drukarkę."
 
@@ -83,9 +92,11 @@ def validated_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def require(condition):
+def require(
+    condition, message="Nieprawidłowa odpowiedź API lub rejestr agenta. Drukowanie zablokowane."
+):
     if not condition:
-        raise ValueError("Nieprawidłowa odpowiedź API lub rejestr agenta. Drukowanie zablokowane.")
+        raise ValueError(message)
 
 
 def uuid_value(value):
@@ -112,14 +123,59 @@ def nullable_fields(value, fields, validate):
             validate(value[field])
 
 
+def amount_decimal(value):
+    require(isinstance(value, str))
+    try:
+        number = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError("Nieprawidłowa kwota w odpowiedzi API.") from exc
+    require(number.is_finite() and number >= 0)
+    return number
+
+
+def amount_cents(value):
+    number = amount_decimal(value)
+    require(number <= Decimal(MAX_CENTS) / 100)
+    cents = number * 100
+    require(cents == cents.to_integral_value())
+    return int(cents)
+
+
+def document_identity(kind, order_id, allocation_id):
+    require(kind in ("advance", "sale"))
+    uuid_value(order_id)
+    if kind == "advance":
+        uuid_value(allocation_id)
+    else:
+        require(allocation_id is None)
+
+
 def validate_payload(payload):
     require(isinstance(payload, dict))
-    text_fields(payload, ("companyName",))
+    text_fields(payload, ("companyName", "total"))
+    require(type(payload.get("orderNumber")) is int and payload["orderNumber"] > 0)
     lines = payload.get("lines")
     require(isinstance(lines, list) and 1 <= len(lines) <= MAX_LINES)
     for line in lines:
         require(isinstance(line, dict))
-        text_fields(line, ("name", "quantity", "unitPrice"))
+        text_fields(line, ("name", "quantity", "unitPrice", "total"))
+        require(line.get("vatRate") in VAT_RATES)
+        require(type(line.get("vatSlot")) is int and 0 <= line["vatSlot"] < VAT_RATE_LIMIT)
+    require(payload.get("kind") in ("advance", "sale"))
+    advances = payload.get("advances")
+    require(isinstance(advances, list))
+    require(payload["kind"] != "advance" or not advances)
+    for item in advances:
+        require(isinstance(item, dict))
+        text_fields(item, ("amount",))
+        require(item.get("vatRate") in VAT_RATES)
+        require(type(item.get("vatSlot")) is int and 0 <= item["vatSlot"] < VAT_RATE_LIMIT)
+    payments = payload.get("payments")
+    require(isinstance(payments, list))
+    for item in payments:
+        require(isinstance(item, dict))
+        text_fields(item, ("amount", "form"))
+        require(item["form"] in PAYMENT_TYPES)
 
 
 def validate_job(job, printer_id=None):
@@ -128,13 +184,18 @@ def validate_job(job, printer_id=None):
         uuid_value(job.get(field))
     require(printer_id is None or job["printerId"] == printer_id)
     require(job.get("state") in STATES)
-    require(job.get("payment") in ("cash", "card"))
-    validate_payload(job.get("payload"))
+    nullable_fields(
+        job,
+        ("buyerNip",),
+        lambda value: require(
+            isinstance(value, str) and re.fullmatch(r"[0-9]{10}", value) is not None
+        ),
+    )
+    validate_payload(job)
     nullable_fields(job, ("attempt",), uuid_value)
     nullable_fields(job, ("receiptNumber", "result"), lambda value: require(isinstance(value, str)))
     timestamp(job.get("createdAt"))
     nullable_fields(job, ("takenAt", "resolvedAt"), timestamp)
-    text_fields(job, ("etag",))
     return job
 
 
@@ -152,21 +213,32 @@ def validate_result(body):
         require(body["issuedAt"] is None and body["receiptNumber"] is None)
 
 
-def validate_printer(printer, serial):
+def validate_printer(status, serial):
+    require(isinstance(status, dict))
+    require(type(status.get("isOnline")) is bool)
+    nullable_fields(status, ("lastSeenAt",), timestamp)
+    timestamp(status.get("updatedAt"))
+    printer = status.get("printer")
     require(isinstance(printer, dict))
     uuid_value(printer.get("id"))
     uuid_value(printer.get("branchId"))
-    require(printer.get("deviceSerial") == serial)
-    text_fields(printer, ("name", "vendor", "deviceModel", "firmware", "agentVersion", "etag"))
-    require(type(printer.get("isOnline")) is bool)
-    nullable_fields(printer, ("lastSeenAt",), timestamp)
-    rates = printer.get("vatRates")
-    require(isinstance(rates, list) and len(rates) <= VAT_RATE_LIMIT)
-    for rate in rates:
-        require(isinstance(rate, dict) and set(rate) == {"index", "percent"})
-        require(type(rate["index"]) is int and 0 <= rate["index"] < VAT_RATE_LIMIT)
-        require(isinstance(rate["percent"], str))
-        require(re.fullmatch(r"(?:[0-9]{1,2}(?:\.[0-9]{1,2})?|zw)", rate["percent"]) is not None)
+    require(printer.get("deviceSerial") in (None, serial))
+    for field in ("model", "firmware", "appVersion"):
+        require(printer.get(field) is None or isinstance(printer[field], str))
+    nullable_fields(
+        printer,
+        ("maxItemNameLength", "maxLinesPerReceipt"),
+        lambda value: require(type(value) is int and value > 0),
+    )
+    nullable_fields(
+        printer, ("allowedCharacters",), lambda value: require(isinstance(value, str) and value)
+    )
+    slots = printer.get("vatSlots")
+    require(isinstance(slots, list) and len(slots) <= VAT_RATE_LIMIT)
+    for slot in slots:
+        require(isinstance(slot, dict) and set(slot) == {"slot", "vatRate"})
+        require(type(slot["slot"]) is int and 0 <= slot["slot"] < VAT_RATE_LIMIT)
+        require(slot["vatRate"] in VAT_RATES)
     return printer
 
 
@@ -190,40 +262,40 @@ class Api:
         self.serial = device_serial(serial)
         self.printer_id = None
         self.opener = build_opener(NoRedirect())
+        # The posnet driver's Temo Online limits: the protocol cannot report them, and the
+        # backend refuses to queue receipts for a printer that never sent them.
         self.telemetry = {
             "serial": self.serial,
-            "vendor": "posnet",
+            "appVersion": version("fiscal-desktop"),
             "model": "",
             "firmware": "",
-            "agentVersion": version("workshop-agent"),
-            "vatRates": [],
+            "vatSlots": [],
+            "maxItemNameLength": MAX_NAME_LENGTH,
+            "maxLinesPerReceipt": MAX_LINES,
+            "allowedCharacters": PRINTABLE_CHARACTERS,
         }
 
     def describe(self, status: Status) -> None:
         if device_serial(status.unique_number) != self.serial:
             raise ValueError("Podłącz drukarkę sparowaną przy uruchomieniu agenta.")
-        self.telemetry.update(
-            model=status.name,
-            firmware=status.version,
-            vatRates=[
-                {
-                    "index": vat.index,
-                    "percent": "zw"
-                    if vat.percent == EXEMPT_PERCENT
-                    else f"{vat.percent.normalize():f}",
-                }
-                for vat in status.vat_rates
-                if vat.active
-            ],
-        )
+        slots = []
+        for vat in status.vat_rates:
+            if not vat.active:
+                continue
+            rate = "zw" if vat.percent == EXEMPT_PERCENT else f"{vat.percent.normalize():f}"
+            if rate not in VAT_RATES:
+                log.warning("Pomijam nieobsługiwaną stawkę VAT w slocie %s: %s", vat.index, rate)
+                continue
+            slots.append({"slot": vat.index, "vatRate": rate})
+        self.telemetry.update(model=status.name, firmware=status.version, vatSlots=slots)
 
     def _send(self, method: str, path: str, body: dict | None = None):
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.token}",
-            "App-Version": f"agent/{self.telemetry['agentVersion']}",
+            "App-Version": f"agent/{self.telemetry['appVersion']}",
         }
-        if path != "session":
+        if path not in ("session", "heartbeat"):
             headers["X-Device-Serial"] = self.serial
         request = Request(  # noqa: S310 - validated HTTPS or loopback HTTP; redirects disabled
             f"{self.base_url}/agent/{path}",
@@ -235,7 +307,7 @@ class Api:
             if response.status == HTTPStatus.NO_CONTENT:
                 require(path == "jobs/take")
                 return None
-            require(response.status == HTTPStatus.OK)
+            require(response.status in (HTTPStatus.OK, HTTPStatus.CREATED))
             return json.load(response)
 
     def _telemetry(self, path):
@@ -266,11 +338,44 @@ class Api:
     def report(self, job_id: str, body: dict):
         uuid_value(job_id)
         validate_result(body)
+        require(body["state"] != "done" or bool(body["receiptNumber"]))
         job = validate_job(self._send("POST", f"jobs/{job_id}/result", body), self.printer_id)
         require(job["id"] == job_id and job["attempt"] == body["attempt"])
         require(job["state"] == body["state"])
         require(job["receiptNumber"] == body["receiptNumber"] and job["result"] == body["result"])
         return job
+
+    def documents(self, cursor: str | None = None) -> dict:
+        """One page of printable documents, oldest first.
+
+        Pass the page's `nextCursor` back unchanged for the following page; null ends the list.
+        Every item is validated before the page is returned, so a bad page yields nothing.
+        """
+        require(cursor is None or (isinstance(cursor, str) and bool(cursor)))
+        query = {"limit": DOCUMENTS_LIMIT} | ({} if cursor is None else {"cursor": cursor})
+        response = self._send("GET", f"documents?{urlencode(query, quote_via=quote)}")
+        require(isinstance(response, dict) and isinstance(response.get("items"), list))
+        require(len(response["items"]) <= DOCUMENTS_LIMIT and "nextCursor" in response)
+        next_cursor = response["nextCursor"]
+        require(next_cursor is None or (isinstance(next_cursor, str) and bool(next_cursor)))
+        for item in response["items"]:
+            require(isinstance(item, dict) and "allocationId" in item)
+            document_identity(item.get("kind"), item.get("orderId"), item["allocationId"])
+            amount_decimal(item.get("amount"))
+            require(type(item.get("orderNumber")) is int and item["orderNumber"] > 0)
+            timestamp(item.get("occurredAt"))
+            nullable_fields(item, ("customerName",), lambda value: require(isinstance(value, str)))
+        return {"items": response["items"], "nextCursor": next_cursor}
+
+    def queue(self, kind, order_id, allocation_id, buyer_nip=None):
+        document_identity(kind, order_id, allocation_id)
+        body = {
+            "kind": kind,
+            "orderId": order_id,
+            "allocationId": allocation_id,
+            "buyerNip": buyer_nip,
+        }
+        return validate_job(self._send("POST", "jobs", body), self.printer_id)
 
 
 def durable_save(path: Path, record: dict):
@@ -296,7 +401,6 @@ class Agent:
     def __init__(self, printer: Printer, api: Api):
         self.printer = printer
         self.api = api
-        self.stopping = False
         self.outbox_path = printer.journal_path.with_suffix(".agent.json")
 
     @contextmanager
@@ -308,27 +412,25 @@ class Agent:
                 raise ValueError("Inny agent używa tego rejestru operacji.") from exc
             yield
 
-    def run_forever(self):
-        # A stop request waits for the current receipt; device commands are never replayed.
-        while not self.stopping:
-            try:
-                self.step()
-            except HTTPError as exc:
-                if exc.code == HTTPStatus.UNAUTHORIZED:
-                    raise
-                log.warning("%s — ponowna próba za %ss", exc, RETRY_SECONDS)
-                time.sleep(RETRY_SECONDS)
-            except (
-                OSError,
-                ProtocolError,
-                ValueError,
-                LookupError,
-                TypeError,
-                InvalidOperation,
-            ) as exc:
-                log.warning("%s — ponowna próba za %ss", exc, RETRY_SECONDS)
-                time.sleep(RETRY_SECONDS)
-        log.info("Zatrzymano")
+    @property
+    def blocked(self):
+        outbox = self._load_outbox()
+        return bool(self.printer.pending() or (outbox and not outbox["settled"]))
+
+    def run_report(self, method, *args, **kwargs):
+        require(
+            method in ("daily_report", "monthly_report", "periodic_report", "acknowledge_pending")
+        )
+        with self._locked():
+            record = self.printer.last_record()
+            if method == "acknowledge_pending":
+                if not record or record.get("operation") == "receipt":
+                    raise ValueError("Wynik paragonu rozstrzyga personel w aplikacji Holuto.")
+            elif self._settle_last_operation():
+                raise ValueError("Najpierw rozstrzygnij niepotwierdzony paragon w Holuto.")
+            result = getattr(self.printer, method)(*args, **kwargs)
+            if result and result["state"] == "completed":
+                self.printer.acknowledge(result)
 
     def step(self):
         with self._locked():
@@ -341,19 +443,20 @@ class Agent:
             # An unready, disconnected or blocked device still updates its last-seen time.
             self.api.heartbeat()
             if self._settle_last_operation():
-                time.sleep(RETRY_SECONDS)
-                return
+                log.warning(
+                    "Niepotwierdzony wynik. Sprawdź wydruk i rozstrzygnij zadanie w Holuto."
+                )
+                return RETRY_SECONDS
             if probe_error is not None:
                 raise probe_error
             if not status.ready:
                 log.warning("Drukarka niegotowa: %s", status.description)
-                time.sleep(RETRY_SECONDS)
-                return
+                return RETRY_SECONDS
             job = self.api.take()
             if job is None:
-                time.sleep(POLL_SECONDS)
-                return
+                return POLL_SECONDS
             self._execute(job)
+            return 0
 
     def _load_outbox(self):
         try:
@@ -384,6 +487,11 @@ class Agent:
         return None
 
     def _finish(self, outbox, record):
+        if record and record["state"] == "completed" and record.get("operation") == "receipt":
+            try:
+                self._save_history(record)
+            except (OSError, ValueError) as exc:
+                log.warning("Nie można zapisać historii: %s", exc)
         if record and record["state"] == "pending":
             self.printer.acknowledge_pending()
         elif record and record["state"] != "acknowledged":
@@ -391,10 +499,31 @@ class Agent:
         outbox["settled"] = True
         durable_save(self.outbox_path, outbox)
 
+    def _save_history(self, record):
+        path = self.printer.journal_path.with_name("history.jsonl")
+        try:
+            rows = [
+                json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line
+            ]
+        except FileNotFoundError:
+            rows = []
+        if not any(row.get("job_id") == record.get("job_id") for row in rows):
+            with path.open("a", encoding="utf-8") as file:
+                file.write(json.dumps(record, ensure_ascii=False) + "\n")
+                file.flush()
+                os.fsync(file.fileno())
+
     def _settle_last_operation(self) -> bool:
         outbox = self._load_outbox()
         if outbox is None or outbox["settled"]:
             record = self.printer.last_record()
+            if (
+                record
+                and record["state"] == "completed"
+                and record.get("operation") in ("daily_report", "monthly_report", "periodic_report")
+            ):
+                self.printer.acknowledge(record)
+                return False
             require(not record or record["state"] == "acknowledged")
             return False
         record = self._matching_record(outbox)
@@ -411,7 +540,11 @@ class Agent:
         if (
             record
             and record["state"] == "completed"
-            and (body is None or body["state"] == "unknown")
+            and (
+                body is None
+                or (body["state"] == "unknown" and record.get("receipt_number"))
+                or (body["state"] == "done" and not body["receiptNumber"])
+            )
         ):
             self._report(outbox, "done", record=record)
         elif body is None:
@@ -424,10 +557,16 @@ class Agent:
         return False
 
     def _report(self, outbox, state, *, record=None, result=None):
+        if state == "done" and not record.get("receipt_number"):
+            state = "unknown"
+            result = (
+                "Wydruk zakończony, ale nie odczytano numeru paragonu. "
+                "Sprawdź wydruk i rozstrzygnij zadanie w Holuto."
+            )
         body = {
             "attempt": outbox["attempt"],
             "state": state,
-            "receiptNumber": (record.get("receipt_number") or None) if record else None,
+            "receiptNumber": record["receipt_number"] if state == "done" else None,
             "issuedAt": outbox["issuedAt"] if state == "done" else None,
             "result": result[:2000] if result else None,
         }
@@ -435,17 +574,6 @@ class Agent:
         outbox["body"] = body
         durable_save(self.outbox_path, outbox)
         self.api.report(outbox["jobId"], body)
-
-    def _standard_vat_slot(self) -> int:
-        # Automotive receipts use one device-programmed rate, usually PL 23%.
-        status = self.printer.last_status
-        active = [vat for vat in (status.vat_rates if status else ()) if vat.active]
-        taxed = [vat for vat in active if vat.percent != EXEMPT_PERCENT]
-        if taxed:
-            return max(taxed, key=lambda vat: vat.percent).index
-        if active:
-            return active[0].index
-        raise ValueError("Drukarka nie ma zaprogramowanej żadnej stawki VAT.")
 
     def _execute(self, job):
         validate_job(job, self.api.printer_id)
@@ -463,24 +591,45 @@ class Agent:
         durable_save(self.outbox_path, outbox)
         self.api.describe(self.printer.probe())
         try:
-            vat = self._standard_vat_slot()
+            rates = {slot["slot"]: slot["vatRate"] for slot in self.api.telemetry["vatSlots"]}
+            require(
+                all(
+                    rates.get(item["vatSlot"]) == item["vatRate"]
+                    for item in [*job["lines"], *job["advances"]]
+                )
+            )
             lines = [
-                Line(item["name"], Decimal(item["quantity"]), Decimal(item["unitPrice"]), vat)
-                for item in job["payload"]["lines"]
+                Line(
+                    item["name"],
+                    Decimal(item["quantity"]),
+                    Decimal(item["unitPrice"]),
+                    item["vatSlot"],
+                )
+                for item in job["lines"]
+            ]
+            for line, item in zip(lines, job["lines"], strict=True):
+                require(
+                    line.total_cents == amount_cents(item["total"]),
+                    "Wartość pozycji nie zgadza się z zaokrąglonym iloczynem ilości i ceny.",
+                )
+            require(sum(line.total_cents for line in lines) == amount_cents(job["total"]))
+            advances = [
+                Advance(item["vatSlot"], amount_cents(item["amount"])) for item in job["advances"]
+            ]
+            payments = [
+                Payment(item["form"], amount_cents(item["amount"])) for item in job["payments"]
             ]
             record = self.printer.print_receipt(
                 lines,
-                0 if job["payment"] == "cash" else 2,
-                brand=job["payload"]["companyName"],
+                payments,
+                advances=advances,
+                buyer_nip=job["buyerNip"],
+                brand=job["companyName"],
                 job_id=job["id"],
                 attempt=job["attempt"],
                 issued_at=outbox["issuedAt"],
             )
-        except (ValueError, InvalidOperation) as exc:
-            self._report(outbox, "failed", result=str(exc))
-            self._finish(outbox, None)
-            return
-        except (OSError, ProtocolError) as exc:
+        except (OSError, ProtocolError, ValueError, InvalidOperation) as exc:
             record = self._matching_record(outbox)
             state = "unknown" if record else "failed"
             self._report(outbox, state, result=str(exc))
@@ -488,6 +637,8 @@ class Agent:
                 self._finish(outbox, None)
             return
         self._report(outbox, "done", record=record)
+        if outbox["body"]["state"] == "unknown":
+            return
         self._finish(outbox, record)
         log.info("Paragon %s dla zlecenia (job %s)", record.get("receipt_number"), job["id"])
 
@@ -501,6 +652,5 @@ def load_config(path: Path) -> dict:
 
 def save_config(path: Path, config: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(mode=0o600)
+    durable_save(path, config)
     path.chmod(0o600)
-    path.write_text(json.dumps(config, indent=2))

@@ -8,72 +8,39 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: checks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Changes
-    runs-on: ubuntu-slim
-    timeout-minutes: 1
-    outputs:
-      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
-
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dorny/paths-filter@v4
-        id: filter
-        with:
-          filters: |
-            code:
-              - ".github/workflows/**"
-              - "packages/**"
-              - ".python-version"
-              - "pyproject.toml"
-              - "uv.lock"
-
   static:
     name: Static analysis
-    needs: changes
-    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Verify change detection
-        if: needs.changes.result != 'success'
-        run: exit 1
-
       - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
         with:
           persist-credentials: false
 
       - name: Ruff format
-        if: needs.changes.outputs.code == 'true'
         uses: astral-sh/ruff-action@v4.1.0
         with:
           src: packages
           args: format --check --diff
 
       - name: Ruff check
-        if: needs.changes.outputs.code == 'true'
         uses: astral-sh/ruff-action@v4.1.0
         with:
           src: packages
           args: check
 
       - name: ShellCheck
-        if: needs.changes.outputs.code == 'true'
-        run: shellcheck packages/desktop/build.sh packages/agent/build.sh
+        run: shellcheck packages/desktop/build.sh
 
   test:
     name: Test suite (${{ matrix.os }})
-    needs: changes
-    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -82,32 +49,24 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Verify change detection
-        if: needs.changes.result != 'success'
-        run: exit 1
-
       - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
         with:
           persist-credentials: false
 
       - name: Install uv
-        if: needs.changes.outputs.code == 'true'
         uses: astral-sh/setup-uv@v10.1.0
         with:
           quiet: true
           enable-cache: true
 
       - name: Install Qt runtime
-        if: needs.changes.outputs.code == 'true' && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libfontconfig1 libxkbcommon0 libdbus-1-3 libglib2.0-0t64
 
       - name: Install dependencies
-        if: needs.changes.outputs.code == 'true'
         run: uv sync --locked
 
       - name: Run tests
-        if: needs.changes.outputs.code == 'true'
         run: uv run pytest
         env:
           QT_QPA_PLATFORM: offscreen
