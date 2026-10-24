@@ -36,19 +36,17 @@ pub enum VatCode {
 
 impl VatCode {
     /// The code for a printer rate; `None` for a rate Holuto does not use.
-    pub fn of(rate: VatRate) -> Option<Self> {
+    pub const fn of(rate: VatRate) -> Option<Self> {
         if rate.exempt() {
             return Some(Self::Exempt);
         }
-        [
-            (2300, Self::Standard),
-            (800, Self::Reduced),
-            (500, Self::SuperReduced),
-            (0, Self::Zero),
-        ]
-        .into_iter()
-        .find(|(basis_points, _)| rate.basis_points == *basis_points)
-        .map(|(_, code)| code)
+        match rate.basis_points {
+            2300 => Some(Self::Standard),
+            800 => Some(Self::Reduced),
+            500 => Some(Self::SuperReduced),
+            0 => Some(Self::Zero),
+            _ => None,
+        }
     }
 
     pub const fn label(self) -> &'static str {
