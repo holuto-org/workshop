@@ -618,10 +618,11 @@ fn filter(ports: Vec<SerialPortInfo>, os: Os,
 **Interfaces:** `acceptance` enables unqualified capabilities and relaxes only
 the fiscal-mode readiness check; it never compiles into release builds.
 
-- [ ] **Step 1:** test `acceptance_build_is_rejected_in_release` is not
-  possible as a unit test; instead add the `compile_error!` and verify with
-  `cargo build --release --features acceptance` failing (expected:
-  compile error naming the feature) and the debug build succeeding.
+- [ ] **Step 1:** a release build with acceptance mode cannot be unit
+  tested; add a `compile_error!` for `all(workshop_acceptance,
+  not(debug_assertions))` and verify that
+  `RUSTFLAGS='--cfg workshop_acceptance' cargo build --release` fails with
+  that error, while the same flag on a debug build succeeds.
 - [ ] **Step 1b: keep `--all-features` from hiding production gates.**
   `acceptance` must not be reachable from `--all-features`: name it so the
   standard suite never enables it (gate it behind a dedicated
