@@ -1,4 +1,4 @@
-//! Serializes GUI preference writes; pairing credentials remain worker-owned.
+//! Serializes GUI preferences and redacted status writes; credentials remain worker-owned.
 use std::{
     io,
     sync::{
@@ -8,7 +8,7 @@ use std::{
     thread,
 };
 
-use agent::{Error, settings::Settings, store::StateDir};
+use agent::{Error, settings::Settings, status::Snapshot, store::StateDir};
 
 use crate::autostart;
 
@@ -18,6 +18,7 @@ pub(super) enum Request {
     Port(String),
     Autostart { settings: Settings, enabled: bool },
     Reload,
+    Status(Snapshot),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -28,6 +29,7 @@ pub(super) enum Outcome {
     Port,
     Autostart(bool),
     Reload(Settings),
+    Status(Snapshot),
 }
 
 pub(super) type Completion = Result<Outcome, String>;
@@ -86,6 +88,10 @@ fn persist(dir: &StateDir, request: Request) -> Result<Outcome, Error> {
             Ok(Outcome::Autostart(enabled))
         },
         Request::Reload => Ok(Outcome::Reload(Settings::load(dir)?.unwrap_or_default())),
+        Request::Status(snapshot) => {
+            snapshot.save(dir)?;
+            Ok(Outcome::Status(snapshot))
+        },
     }
 }
 

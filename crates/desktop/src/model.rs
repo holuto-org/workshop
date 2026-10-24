@@ -5,9 +5,10 @@ use agent::{
     documents::{BuyerNip, Document},
     history::HistoryEntry,
     settings::{BAUD_RATES, Settings},
+    status::Snapshot,
     worker::{Command, Tone},
 };
-use jiff::{ToSpan, civil::Date};
+use jiff::{Timestamp, ToSpan, civil::Date};
 use posnet::{money::zloty, printer::Status};
 use slint::{ModelRc, SharedString, VecModel};
 use table::{Sort, Table};
@@ -70,6 +71,7 @@ pub(crate) struct Model {
     pub(crate) saving: bool,
     pub(crate) connected: bool,
     pub(crate) serial: String,
+    pub(crate) printer_id: Option<String>,
     pub(crate) device: Option<Status>,
     pub(crate) blocked: bool,
     pub(crate) report_unresolved: bool,
@@ -107,6 +109,7 @@ impl Model {
             saving: false,
             connected: false,
             serial: String::new(),
+            printer_id: None,
             device: None,
             blocked: false,
             report_unresolved: false,
@@ -162,6 +165,32 @@ impl Model {
         self.in_flight = false;
         // Recheck readiness on reconnect; retain the persisted fiscal block.
         self.device = None;
+    }
+
+    pub(crate) fn status(&self, updated_at: Timestamp) -> Snapshot {
+        Snapshot {
+            processing: self.running,
+            connected: self.connected,
+            // Keep the last connected identity, like the retained fiscal block, after Stop.
+            serial: (!self.serial.is_empty()).then(|| self.serial.clone()),
+            printer_id: self.printer_id.clone(),
+            blocked: self.blocked,
+            report_unresolved: self.report_unresolved,
+            orphaned_receipt: self.orphaned_receipt,
+            updated_at,
+        }
+    }
+
+    pub(crate) fn status_matches(&self, snapshot: &Snapshot) -> bool {
+        let processing = self.running;
+        snapshot.processing == processing
+            && snapshot.connected == self.connected
+            && snapshot.serial.as_deref()
+                == (!self.serial.is_empty()).then_some(self.serial.as_str())
+            && snapshot.printer_id == self.printer_id
+            && snapshot.blocked == self.blocked
+            && snapshot.report_unresolved == self.report_unresolved
+            && snapshot.orphaned_receipt == self.orphaned_receipt
     }
 
     pub(crate) const fn command_completed(&mut self) {

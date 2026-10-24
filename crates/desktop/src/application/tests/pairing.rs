@@ -140,3 +140,54 @@ fn invalid_pairing_code_keeps_credentials_and_allows_operator_correction()
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "UI assertions propagate fallible fixture setup"
+)]
+fn malformed_pairing_code_is_rejected_locally_and_remains_editable() -> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let fake = Holuto::new();
+    let simulator = Simulator::start();
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let settings = Settings {
+        api_url: fake.url().into(),
+        token: "existing-paired-token".into(),
+        ..Settings::default()
+    };
+    settings.save(&dir)?;
+    let app = make_app(dir, settings.clone(), simulator.link())?;
+    let window = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing window")?
+        .clone_strong();
+    control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-123I");
+    button(&window, "Sparuj")?.invoke_accessible_default_action();
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    assert_eq!(
+        window.get_status().as_str(),
+        "Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234."
+    );
+    assert_eq!(window.get_pairing_code().as_str(), "ABCD-123I");
+    assert_eq!(button(&window, "Sparuj")?.accessible_enabled(), Some(true));
+    assert_eq!(
+        control(&window, "Kod parowania", AccessibleRole::TextInput)?.accessible_enabled(),
+        Some(true)
+    );
+    assert_eq!(Settings::load(&app.borrow().dir)?, Some(settings));
+    assert!(
+        fake.requests().is_empty(),
+        "malformed codes never reach HTTP"
+    );
+    assert!(
+        simulator.frames().is_empty(),
+        "pairing never opens a printer"
+    );
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
+}

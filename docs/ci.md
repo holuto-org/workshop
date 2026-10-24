@@ -1,10 +1,11 @@
 # CI
 
 - **Checks (`checks.yml`)**
-  - **Trigger**: Pull requests into `master`; reusable workflow for release.
-  - **Runner and work**: Static checks on Ubuntu; Clippy for default and all
-    features on Linux, Windows and macOS; native nextest suite on the five
-    targets below; invokes Package for PR artifacts.
+  - **Trigger**: Pull requests into `master`, merge groups and reusable release
+    invocation.
+  - **Runner and work**: Installer checks/dry runs on Linux, Windows and macOS;
+    static checks on Ubuntu; default/all-feature Clippy on those three OSes;
+    native nextest on the five targets below; Package for PR artifacts.
 - **Package (`package.yml`)**
   - **Trigger**: Reused by Checks and Release.
   - **Runner and work**: Build and verify Windows x64 `.exe`, Linux x64/ARM64
@@ -20,8 +21,8 @@
     version increases.
 - **Cleanup merged PR branches (`cleanup-merged-pr-branches.yml`)**
   - **Trigger**: Merged pull request.
-  - **Runner and work**: Lightweight Ubuntu runner; remove the merged head
-    branch subject to workflow safeguards.
+  - **Runner and work**: `ubuntu-latest`; remove the merged head branch subject
+    to workflow safeguards.
 
 The workflow YAML is authoritative for triggers, permissions, pinned tools and
 job dependencies. There is **no weekly workflow**. Mutation testing is a
@@ -49,16 +50,16 @@ release builds reject simulator/testing features; packaging never enables them.
 See [local platform procedures](testing/platforms.md).
 
 Windows package smoke requires a clean disposable user profile and refuses if
-app state already exists. Windows Known Folders cannot safely be redirected with
-`LOCALAPPDATA`; never smoke-launch against someone's saved state.
+app state already exists. Windows Known Folders ignore a `LOCALAPPDATA`
+environment override; never smoke-launch against someone's saved state.
 
 ## Release telemetry artifacts
 
 Set repository variables `SENTRY_DSN`, `SENTRY_ORG=holuto`,
 `SENTRY_PROJECT=workshop`, `SENTRY_URL=https://de.sentry.io`, and
-organization-token secret `SENTRY_AUTH_TOKEN`. The user provisions the
-`holuto/workshop` Sentry project in the EU; a missing build-time DSN disables
-client telemetry.
+organization-token secret `SENTRY_AUTH_TOKEN`. Provision the `holuto/workshop`
+project in the EU; local workflow files do not prove provisioning or repository
+variable values. A missing build-time DSN disables client telemetry.
 
 Release identity is `workshop@<workspace version>` and release builds use
 environment `production`. Keep debug information in the unstripped build,

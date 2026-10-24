@@ -9,6 +9,7 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::Arc};
 use agent::{
     history,
     settings::Settings,
+    status::Snapshot,
     store::StateDir,
     worker::{Command, Event, Tone, Worker},
 };
@@ -39,6 +40,11 @@ thread_local! {
 
 type AppCallback = Box<dyn FnOnce(&mut Application) -> Result<(), slint::PlatformError>>;
 
+enum WriteKind {
+    Settings,
+    Status,
+}
+
 struct Application {
     model: Model,
     dir: Arc<StateDir>,
@@ -48,7 +54,9 @@ struct Application {
     tray: Option<TrayIcon>,
     quitting: bool,
     settings_writer: Option<preferences::Writer>,
-    settings_pending: usize,
+    writes_pending: VecDeque<WriteKind>,
+    status_requested: Option<Snapshot>,
+    status_saved: Option<Snapshot>,
 }
 
 pub(crate) fn run(
@@ -113,13 +121,16 @@ impl Application {
             tray: None,
             quitting: false,
             settings_writer: None,
-            settings_pending: 0,
+            writes_pending: VecDeque::new(),
+            status_requested: None,
+            status_saved: None,
         }
     }
 
     fn launch(&mut self) -> Result<(), slint::PlatformError> {
         self.reload_history();
         self.open()?;
+        self.publish_status();
         if self.model.settings.start_on_launch {
             self.start();
             self.sync();
@@ -201,7 +212,7 @@ impl Application {
                 telemetry::set_enabled(enabled);
                 app.capture();
                 app.model.settings.telemetry_enabled = enabled;
-                app.write_settings(preferences::Request::Telemetry(enabled));
+                let _submitted = app.write_settings(preferences::Request::Telemetry(enabled));
                 Ok(())
             });
         });
@@ -209,7 +220,7 @@ impl Application {
             with_app(move |app| {
                 if !app.model.pairing && !app.model.saving && !app.quitting {
                     app.capture();
-                    app.write_settings(preferences::Request::Autostart {
+                    let _submitted = app.write_settings(preferences::Request::Autostart {
                         settings: app.model.settings.clone(),
                         enabled,
                     });
@@ -240,13 +251,19 @@ impl Application {
             self.model.say(error.to_string(), Tone::Error);
             return;
         }
-        self.write_settings(preferences::Request::Save {
+        let _submitted = self.write_settings(preferences::Request::Save {
             settings: self.model.settings.clone(),
             start,
         });
     }
 
-    fn write_settings(&mut self, request: preferences::Request) {
+    fn write_settings(&mut self, request: preferences::Request) -> bool {
+        let is_status = matches!(&request, preferences::Request::Status(_));
+        let description = if is_status {
+            "stanu aplikacji"
+        } else {
+            "ustawień"
+        };
         if self.settings_writer.is_none() {
             let sink = |completion| {
                 let _event_loop_closed = slint::invoke_from_event_loop(move || {
@@ -259,28 +276,54 @@ impl Application {
             match preferences::Writer::spawn(Arc::clone(&self.dir), sink) {
                 Ok(writer) => self.settings_writer = Some(writer),
                 Err(error) => {
-                    self.model
-                        .say(format!("Nie można zapisać ustawień: {error}"), Tone::Error);
-                    return;
+                    self.model.say(
+                        format!("Nie można zapisać {description}: {error}"),
+                        Tone::Error,
+                    );
+                    return false;
                 },
             }
         }
         if let Some(writer) = &self.settings_writer {
             match writer.submit(request) {
                 Ok(()) => {
-                    self.settings_pending += 1;
-                    self.model.saving = true;
+                    self.writes_pending.push_back(if is_status {
+                        WriteKind::Status
+                    } else {
+                        WriteKind::Settings
+                    });
+                    self.model.saving |= !is_status;
+                    return true;
                 },
-                Err(error) => self
-                    .model
-                    .say(format!("Nie można zapisać ustawień: {error}"), Tone::Error),
+                Err(error) => self.model.say(
+                    format!("Nie można zapisać {description}: {error}"),
+                    Tone::Error,
+                ),
             }
+        }
+        false
+    }
+
+    fn publish_status(&mut self) {
+        if self
+            .status_requested
+            .as_ref()
+            .is_some_and(|snapshot| self.model.status_matches(snapshot))
+        {
+            return;
+        }
+        let snapshot = self.model.status(jiff::Timestamp::now());
+        if self.write_settings(preferences::Request::Status(snapshot.clone())) {
+            self.status_requested = Some(snapshot);
         }
     }
 
     fn settings_saved(&mut self, completion: preferences::Completion) {
-        self.settings_pending -= 1;
-        self.model.saving = self.settings_pending != 0;
+        let kind = self.writes_pending.pop_front();
+        self.model.saving = self
+            .writes_pending
+            .iter()
+            .any(|kind| matches!(kind, WriteKind::Settings));
         match completion {
             Ok(preferences::Outcome::Start(mut settings)) if !self.quitting => {
                 settings.telemetry_enabled = self.model.settings.telemetry_enabled;
@@ -304,13 +347,26 @@ impl Application {
             Ok(preferences::Outcome::Reload(settings)) => {
                 self.model.settings = settings;
             },
+            Ok(preferences::Outcome::Status(snapshot)) => {
+                self.status_saved = Some(snapshot);
+            },
             Ok(
                 preferences::Outcome::Port
                 | preferences::Outcome::Start(_)
                 | preferences::Outcome::Saved
                 | preferences::Outcome::Telemetry,
             ) => {},
-            Err(error) => self.model.say(error, Tone::Error),
+            Err(error) => {
+                if matches!(kind, Some(WriteKind::Status))
+                    && !self
+                        .writes_pending
+                        .iter()
+                        .any(|kind| matches!(kind, WriteKind::Status))
+                {
+                    self.status_requested = None;
+                }
+                self.model.say(error, Tone::Error);
+            },
         }
         if let Err(error) = self.finish_quit() {
             self.model.say(error.to_string(), Tone::Error);
@@ -392,6 +448,7 @@ impl Application {
                 self.model.stopping = false;
                 self.model
                     .say("Łączenie z drukarką i Holuto…".into(), Tone::Info);
+                self.publish_status();
             },
             Err(error) => self.model.say(error.to_string(), Tone::Error),
         }
@@ -430,13 +487,23 @@ impl Application {
                 Tone::Info,
             );
         } else {
+            self.publish_status();
             self.finish_quit()?;
         }
         Ok(())
     }
 
     fn finish_quit(&self) -> Result<(), slint::PlatformError> {
-        if self.quitting && self.worker.is_none() && self.settings_pending == 0 {
+        if self.quitting
+            && self.worker.is_none()
+            && self.writes_pending.is_empty()
+            && self.status_saved.as_ref().is_some_and(|saved| {
+                !saved.processing
+                    && !saved.connected
+                    && self.status_requested.as_ref() == Some(saved)
+                    && self.model.status_matches(saved)
+            })
+        {
             slint::quit_event_loop().map_err(|error| error.to_string())?;
         }
         Ok(())
@@ -452,6 +519,10 @@ impl Application {
     }
 
     fn event(&mut self, event: Event) {
+        let publish = matches!(
+            &event,
+            Event::Connected { .. } | Event::Device { .. } | Event::Stopped
+        );
         match event {
             Event::Status { text, tone } => self.model.say(text, tone),
             Event::PairingFailed { message, .. } => self.model.say(message, Tone::Error),
@@ -461,11 +532,11 @@ impl Application {
                     "Sparowano z Holuto. Możesz uruchomić obsługę drukarki.".into(),
                     Tone::Success,
                 );
-                self.write_settings(preferences::Request::Reload);
+                let _submitted = self.write_settings(preferences::Request::Reload);
             },
             Event::PortDetected(port) => {
                 self.model.settings.port.clone_from(&port);
-                self.write_settings(preferences::Request::Port(port));
+                let _submitted = self.write_settings(preferences::Request::Port(port));
             },
             Event::Connected {
                 printer_id,
@@ -475,6 +546,7 @@ impl Application {
                 telemetry::printer(&printer_id, &serial);
                 self.model.connected = true;
                 self.model.serial = serial;
+                self.model.printer_id = Some(printer_id);
                 self.model.settings.port = port;
                 self.model.tab = Tab::Documents;
             },
@@ -503,10 +575,13 @@ impl Application {
                 }
                 self.model.stopped();
                 self.model.pairing = false;
-                if let Err(error) = self.finish_quit() {
-                    self.model.say(error.to_string(), Tone::Error);
-                }
             },
+        }
+        if publish {
+            self.publish_status();
+            if let Err(error) = self.finish_quit() {
+                self.model.say(error.to_string(), Tone::Error);
+            }
         }
     }
 

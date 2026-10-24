@@ -1,23 +1,28 @@
 # Diagnostics and privacy
 
-Holuto Workshop uses Sentry project **`holuto/workshop`** in the EU
-(`de.sentry.io`), provisioned by the project owner. This is separate from the
-printer identity/VAT telemetry sent to Holuto's `/agent/session` and
-`/agent/heartbeat` for fiscal processing.
+CI expects the Sentry project **`holuto/workshop`** and EU service URL
+**`https://de.sentry.io`** to be configured as repository variables; the repository
+does not prove that provisioning. Diagnostics are separate from printer identity
+and VAT telemetry sent to Holuto's `/agent/session` and `/agent/heartbeat`.
 
 ## Enable and opt out
 
 The public DSN and environment are baked into the binary from build-time
 `SENTRY_DSN` and `SENTRY_ENVIRONMENT` (`option_env!`). Without a DSN, telemetry
-is disabled; simulator builds never report either. Ordinary local/dev/test
-builds do not report. `SENTRY_AUTH_TOKEN` is an upload credential used only by
-CI, never an application setting or binary value.
+is disabled; simulator builds never report either. A debug build with a DSN
+can report, using environment `development`. `SENTRY_AUTH_TOKEN` is an upload
+credential used only by CI, never an application setting or binary value.
 
 The **Ustawienia → Udostępniaj diagnostykę** toggle defaults on; an explicit off
-value survives restart. Turn it off and restart the app to ensure no diagnostics
-client/native crash reporter remains active. This affects diagnostics, not the
-Holuto requests required to print. Tests use a capturing transport, not the
-production DSN.
+value survives restart. Turning it off immediately gates new structured signals
+and envelopes; already submitted requests cannot be recalled. Restart to disable
+the native crash reporter. Turning it on after a disabled startup also needs a
+restart to initialize the client. This affects diagnostics, not Holuto requests
+required to print. Tests use capturing transports, not production ingestion.
+
+Normal CLI commands return before diagnostics initialization. A native reporter
+child bypasses CLI dispatch and enters initialization even if consent changed
+after its parent launched; this is another reason native opt-out needs restart.
 
 ## What is sent
 
@@ -26,17 +31,18 @@ Structured diagnostics use an allowlist:
 - **Errors and Rust panics**: Actionable error classification, sanitized
   message and stack frames; SDK/platform/release/environment and timestamps;
   no raw fiscal payload or arbitrary error body.
-- **Logs and breadcrumbs through `tracing`**: Operation milestones and
-  handled degradation: IDs, command names, states, attempt numbers, device
-  error codes; safe fixed text.
-- **Fiscal traces**: One agent span per receipt/report (`fiscal.receipt` /
-  `fiscal.report`), job ID/attempt/kind and timing/status; nested driver spans
-  use `device.receipt` / `device.report`, not another fiscal operation.
-- **HTTP traces**: Method, route **template** such as
-  `/agent/jobs/{id}/result`, status and timing; forward the SDK's
-  trace-propagation headers to `/agent` so backend traces can link. SDK 0.49.3
-  currently emits `sentry-trace`, not `baggage`; future SDK-provided baggage
-  is forwarded, never fabricated.
+- **Logs and breadcrumbs through `tracing`**: WARN/INFO become logs and
+  breadcrumbs; ERROR becomes an error event; DEBUG/TRACE are ignored. Only
+  reviewed fixed messages survive; other text becomes
+  `Fiscal application diagnostic`. Arbitrary fields, including attempts and
+  device error codes, are removed.
+- **Fiscal traces**: Only `fiscal.receipt` / `fiscal.report` roots are sampled.
+  Transactions are named `fiscal.operation`; timings/status and span operations
+  remain, but descriptions, span data/tags and transaction extras are cleared.
+- **HTTP trace propagation**: The API records method/route-template/status
+  locally; structured transport removes their span data. SDK-provided headers
+  still link requests to Holuto. SDK 0.49.3 emits `sentry-trace`, not `baggage`;
+  future SDK-provided baggage is forwarded, never fabricated.
 - **Release health**: Application-mode sessions: generated session identity,
   release/environment, start/duration and healthy/error/crash/exit status
   needed for crash-free-session accounting.
@@ -105,11 +111,17 @@ context may be forwarded to the crash reporter; it does not automatically
 inherit later scope changes
 ([reporter lifecycle](https://docs.sentry.io/platforms/rust/native-crash-reporting.md#how-it-works)).
 
+Client shutdown and native-reporter flushing use a **500 ms** timeout.
+The bounded best-effort transport keeps SDK HTTP ownership and disposal off the
+application thread; it may drop diagnostics rather than delay fiscal shutdown.
+Structured capture/transport tests do not verify native minidump delivery.
+
 ## Release and debug files
 
-Release identity is **`workshop@<workspace version>`**, environment
-**`production`**. CI builds all five native targets with debug information,
-retains matching symbols before distribution stripping, and uploads debug
+Release identity is **`workshop@<workspace version>`**. CI release packages use
+environment **`production`**; other release builds use `SENTRY_ENVIRONMENT`,
+defaulting to `production` only when unset. Debug builds use `development`.
+CI retains matching symbols before distribution stripping and uploads debug
 files/source context using `sentry-cli debug-files upload --include-sources`.
 Source uploads contain application source code, not runtime settings or fiscal
 documents. Release records/commits and client events must agree on identity;

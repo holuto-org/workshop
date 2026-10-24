@@ -55,7 +55,7 @@ Additional finish evidence by changed area:
     --document-private-items
   ```
 
-- **Markdown links**: `lychee --offline AGENTS.md README.md docs .omp`;
+- **Markdown links**: `lychee --offline AGENTS.md README.md docs .omp llms.txt`;
   online/fragment checks when available.
 
 Worker stress command:
@@ -67,9 +67,9 @@ cargo nextest run --all-features --stress-count 10 \
 
 Stress is
 [nextest's repetition mode](https://nexte.st/docs/features/stress-tests/), not
-permission to tolerate flakes. Platform prerequisites still apply: run Linux bus
-tests under `dbus-run-session`, and opt into the `ci` profile for a configured
-Windows COM pair. See [platform procedures](testing/platforms.md).
+permission to tolerate flakes. Linux watcher tests launch their own private bus
+and require `dbus-run-session`; Windows COM tests require the `ci` profile and
+a configured virtual pair. See [platform procedures](testing/platforms.md).
 
 For snapshots, `cargo insta review` reviews pending changes; never
 blanket-accept unseen fiscal output. The
@@ -104,9 +104,9 @@ information before distribution stripping.
 With explicit approval, a synthetic event from an isolated release-test
 environment may confirm readable function/file/line frames and release
 association; never crash the production app during a fiscal operation and never
-send customer data as a probe. Local automated tests use a capturing Sentry
-transport and synthetic child-process crashes, not live ingestion. Confirm
-traces carry safe route names and link to the backend without leaking a URL or
+send customer data as a probe. Local automated tests capture structured Sentry
+envelopes and exercise transport shutdown; they do not prove native crash capture.
+Confirm trace linkage to the backend without leaking a URL or
 token.
 [Sentry's source-context guide](https://docs.sentry.io/platforms/rust/source-context/)
 explains symbol/source artifacts; [telemetry](telemetry.md) states what is sent.

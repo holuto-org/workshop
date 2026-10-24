@@ -114,15 +114,26 @@ fn malformed_snapshot_errors_never_echo_values_or_unknown_keys() -> TestResult {
         GOLDEN.replace("\"processing\": true", "\"processing\": null"),
         GOLDEN.replace("  \"processing\": true,\n", ""),
         GOLDEN.replace("\"processing\": true", "\"processing\": \"secret-token\""),
-        GOLDEN.replace("\"serial\": \"TEMO-1234\"", "\"serial\": {\"customer\": \"private-name\"}"),
-        GOLDEN.replace("\"2026-10-24T12:34:56Z\"", "\"https://private.invalid/token\""),
+        GOLDEN.replace(
+            "\"serial\": \"TEMO-1234\"",
+            "\"serial\": {\"customer\": \"private-name\"}",
+        ),
+        GOLDEN.replace(
+            "\"2026-10-24T12:34:56Z\"",
+            "\"https://private.invalid/token\"",
+        ),
         GOLDEN.replace("{\n", "{\n  \"secret-token\": \"customer-payload\",\n"),
     ] {
         fs::write(dir.file("status.json"), bytes.as_bytes())?;
         let error = Snapshot::load_at(dir.path())
             .err()
             .ok_or("malformed snapshot unexpectedly loaded")?;
-        let Error::Store { action, path, source } = &error else {
+        let Error::Store {
+            action,
+            path,
+            source,
+        } = &error
+        else {
             return Err("malformed snapshot must report a store error".into());
         };
         assert_eq!(*action, "Nie można odczytać stanu aplikacji");
@@ -184,14 +195,20 @@ fn refused_replacement_preserves_previous_snapshot_evidence() -> TestResult {
     let mut replacement = previous.clone();
     replacement.processing = false;
     replacement.connected = false;
-    let error = replacement.save(&dir).err().ok_or("replacement unexpectedly succeeded")?;
+    let error = replacement
+        .save(&dir)
+        .err()
+        .ok_or("replacement unexpectedly succeeded")?;
     let Error::Store { action, path, .. } = error else {
         return Err("refused replacement must report a store error".into());
     };
     assert_eq!(action, "Nie można zapisać stanu aplikacji");
     assert_eq!(path, dir.file("status.json"));
     assert_eq!(Snapshot::load_at(previous_dir.path())?, Some(previous));
-    assert_eq!(fs::read(previous_dir.file("status.json"))?, GOLDEN.as_bytes());
+    assert_eq!(
+        fs::read(previous_dir.file("status.json"))?,
+        GOLDEN.as_bytes()
+    );
     assert_eq!(fs::read_dir(dir.path())?.count(), 2);
     Ok(())
 }

@@ -329,8 +329,16 @@ fn status(path: &Path) -> Result<Response, Failure> {
     let human = format!(
         "Aplikacja działa. Przetwarzanie: {}. Połączenie z drukarką: {}. \
          Blokada fiskalna: {}. Stan z {}.",
-        if snapshot.processing { "włączone" } else { "wyłączone" },
-        if snapshot.connected { "aktywne" } else { "nieaktywne" },
+        if snapshot.processing {
+            "włączone"
+        } else {
+            "wyłączone"
+        },
+        if snapshot.connected {
+            "aktywne"
+        } else {
+            "nieaktywne"
+        },
         if snapshot.blocked { "tak" } else { "nie" },
         snapshot.updated_at
     );

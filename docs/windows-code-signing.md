@@ -1,8 +1,8 @@
 # Windows signing with SignPath Foundation
 
-SignPath Foundation signs open-source builds free with an HSM-backed OV
-certificate in the Foundation's name. Signing identifies the publisher; it does
-not guarantee immediate SmartScreen reputation.
+This is a proposed signing procedure, not implemented CI. Check current
+[SignPath Foundation eligibility and terms](https://signpath.org/) before
+applying. Signing identifies the publisher; it does not guarantee SmartScreen reputation.
 
 ## Prerequisites
 
@@ -15,12 +15,12 @@ not guarantee immediate SmartScreen reputation.
 - GitHub organization admin access to install the SignPath App and configure
   secrets.
 
-SignPath prefers established projects. Describe real users in the application;
-new projects may be asked to reapply.
+Describe only verified project history and usage; the repository does not prove
+production adoption or provider approval.
 
 ## 1. Apply
 
-Use <https://signpath.org/apply> (embedded HubSpot form):
+Use <https://signpath.org/apply>; confirm the current form and service requirements.
 
 - **Project Name**: `Holuto Workshop`
 - **Repository URL**: `https://github.com/holuto-org/workshop`
@@ -38,9 +38,9 @@ Use <https://signpath.org/apply> (embedded HubSpot form):
   the Posnet driver and background worker. GitHub Actions builds Windows,
   macOS and Linux packages on version increases. We are applying to sign the
   Windows executable.
-- **Reputation**: Describe production use by Polish workshops, Holuto's
-  maintenance of the app and backend, and the September 2026 open-source
-  release. Add verified workshop/user counts and review/CI practices.
+- **Reputation**: Supply verified release history, workshop/user counts and
+  maintenance/review practices; do not claim production use or a launch date
+  from this template.
 - **Maintainer Type**: Company / organization
 - **First Name, Last Name, Email**: Applicant details; prefer an `@holuto.com`
   address matching the organization domain
@@ -119,9 +119,9 @@ retrieves the unsigned artifact from GitHub, then replaces the executable in
     output-artifact-directory: release
 ```
 
-In `checksums` and `publish`, restrict `actions/download-artifact` to the final
-matrix artifacts (and `checksums` for publishing). Exclude `win-x64-unsigned`:
-merging it could overwrite the signed executable.
+`release.yml` already downloads only `package-*` and the named `checksums`
+artifact. Keep `win-x64-unsigned` outside that pattern so it cannot overwrite the
+signed executable. Ensure checksum generation and attestation use the signed file.
 
 For unsigned builds without secrets (such as fork PRs), set a job-level
 environment variable from the secret and gate both steps on it.
@@ -160,16 +160,12 @@ workflow files do not prove repository settings.
 
 ## Other signing options
 
-- **Azure Artifact Signing** (formerly Trusted Signing): about USD 10/month, no
-  purchased certificate; `azure/trusted-signing-action`. Requires an Azure
-  tenant and an eligible company with three years of verifiable history. An
-  option for a private repository.
-- **Commercial OV/EV** (Sectigo, DigiCert, SSL.com): roughly USD 200–400/year;
-  private key stored on a hardware token or CA cloud HSM.
-- **macOS**: Apple Developer Program (USD 99/year), a **Developer ID
-  Application** certificate and notarization. In `packaging/build.sh`, sign the
-  `.app` with `codesign --options runtime`, submit the `.dmg` with
-  `xcrun notarytool submit --wait`, then `xcrun stapler staple`. Required
-  secrets: base64 `.p12`, certificate password, Apple ID, app-specific password
-  and Team ID.
+- **Azure Artifact Signing**: Review current
+  [eligibility, pricing and setup](https://learn.microsoft.com/en-us/azure/artifact-signing/overview)
+  before choosing it.
+- **Commercial OV/EV**: Check the certificate authority's current validation,
+  pricing and HSM/key-storage requirements.
+- **macOS**: Developer ID signing and notarization are not implemented here.
+  Plan certificate/key storage, hardened-runtime signing, notarization and
+  stapling against [Apple's current instructions](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 - **Linux**: `.deb` packages are not signed by these steps.

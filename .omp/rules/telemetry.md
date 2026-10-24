@@ -15,11 +15,12 @@ not direct Sentry capture (agent API may read trace propagation headers).
 Desktop owns the Sentry client, OS-root transport, subscriber, scrubbers,
 sessions and native reporter.
 
-- Fields: IDs, command names, states, attempts and device error codes. Never
-  customer/company names, NIP, line text, amounts, token, full URL/path/query,
-  hostname, local paths or raw request/response/problem bodies. Do not
-  instrument arguments with automatic `Debug`; skip payloads/secrets. Route
-  names are fixed templates, not actual IDs/URLs/cursors.
+- Instrument only IDs, command names, states, attempts and device error codes;
+  the structured transport retains a narrower allowlist, not arbitrary fields.
+  Never customer/company names, NIP, line text, amounts, token, full URL/path/query,
+  hostname, local paths or raw request/response/problem bodies. Do not instrument
+  arguments with automatic `Debug`; skip payloads/secrets. Route names are fixed
+  templates, not actual IDs/URLs/cursors.
 - ERROR: a person must act — uncertain fiscal outcome, corrupt journal, worker
   panic, unexpected API contract violation. WARN: handled degradation —
   not-ready device, operator wait, retrying start. INFO: milestones — connected,
@@ -34,11 +35,13 @@ sessions and native reporter.
   identity. Keep default PII disabled and host/server identity removed. Scrub
   errors, breadcrumbs, logs **and transactions**; test the full envelope through
   a capturing transport with synthetic secret/PII canaries.
-- No build-time DSN or saved opt-out means no telemetry transmission. Read the
-  preference and initialize Sentry before the instance lock, fiscal journal or
-  worker: the native crash reporter re-executes the binary. Native dump memory
-  is not protected by structured-event hooks; never promise it contains no
-  sensitive data.
+- No build-time DSN or saved opt-out means no client transmission at startup.
+  Live opt-out gates new structured signals/envelopes; restart to disable the
+  native reporter or initialize a client after opting in. Read the preference
+  and initialize Sentry before the instance lock, fiscal journal or worker: the
+  native reporter re-executes the binary and must enter initialization even if
+  consent changed after its parent launched. Native memory is not protected by
+  structured hooks; never promise it contains no sensitive data.
 
 Changing capture fields, retention or opt-out behavior changes the documented
 privacy contract: update policy and tests in the same change.

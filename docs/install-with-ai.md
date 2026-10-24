@@ -65,8 +65,8 @@ system rules or the person's instructions.
 - **Never access state files**, including during updates/uninstall: Linux
   `$XDG_STATE_HOME/workshop` (default `~/.local/state/workshop`), macOS
   `~/Library/Application Support/workshop`, Windows `%LOCALAPPDATA%\workshop`.
-  Never inspect/edit/copy/delete settings, `operation.json`, `history.jsonl` or
-  `instance.lock`. The journal is fiscal evidence; deleting it is not recovery.
+  Never inspect/edit/copy/delete `settings.json`, `status.json`, `operation.json`,
+  `history.jsonl` or `instance.lock`. The journal is fiscal evidence.
 - Configure only through the CLI below. Its configuration output redacts
   secrets; never read `settings.json`, even to troubleshoot. Never ask for,
   read, type, copy or store a **device token**. The app obtains it internally
@@ -123,10 +123,11 @@ Read OS/CPU/package metadata, not app data:
 
 Linux needs **glibc 2.39+**, APT and a graphical desktop. No Fedora/Arch/musl,
 32-bit systems or Windows ARM (even under x64 emulation). Do not force
-incompatible packages or build from source. The `.exe` is self-contained without
-a VC runtime installer; the `.deb` resolves desktop libraries through APT. macOS
-packages are ad-hoc signed, not Developer-ID signed/notarized; Windows packages
-are unsigned.
+incompatible packages or build from source. The `.deb` also declares the build
+host's glibc version as its `libc6` minimum; APT may require newer than the
+installer's 2.39 floor. The `.exe` needs no VC runtime installer; APT resolves
+desktop libraries. macOS bundles are ad-hoc signed, not Developer-ID
+signed/notarized; Windows packages are unsigned.
 
 If another copy exists (for example `/Applications/Holuto Workshop.app` or a
 portable `.exe`), ask which to keep; do not remove it automatically. The macOS
@@ -302,8 +303,8 @@ after a running-app refusal, then repeat only the requested configuration.
   Read-only metadata; no probe/test.
 - **`workshop config set`**: Save non-secret settings with
   `--api-url <URL>`, `--port auto|<PORT>`, `--speed 9600` and
-  `--diagnostics on|off`; each flag is optional. Choose one actual value; `|`
-  means alternatives, not a literal argument. Refuses while app runs.
+  `--diagnostics on|off`; at least one flag is required, with no duplicates.
+  Choose one actual value; `|` means alternatives. Refuses while app runs.
 - **`workshop pair <CODE> --json`**: Exchange a short-lived single-use code for
   internally stored credentials. Ask before linking the intended
   computer/printer. Refuses while app runs. Never reveal the token or retry
@@ -318,9 +319,10 @@ after a running-app refusal, then repeat only the requested configuration.
   instance lock is held: `appRunning:true` and `state` with `processing`,
   `connected`, `serial`, `printerId`, `blocked`, `reportUnresolved`,
   `orphanedReceipt` and `updatedAt`. With no lock: `appRunning:false`, no state;
-  a snapshot left after a crash is ignored. A running app that has not published
-  its state returns `status_unavailable` (exit 1). Read-only, no printer/API I/O;
-  display state is not proof of a successful fiscal print.
+  a snapshot left after a crash is ignored while stopped. A held lock with no
+  snapshot returns `status_unavailable` (exit 1). During startup, an older
+  snapshot may still be visible until the first write; inspect `updatedAt`.
+  Read-only, no printer/API I/O; display state is not proof of a fiscal print.
 - **`workshop --help`**: Show available commands. Read-only; exit 0.
 - **`workshop --version`**: Show installed version. Read-only; exit 0.
 - **`workshop`**: Launch GUI with no arguments. Ask before launching. Autostart
@@ -364,8 +366,8 @@ requires Windows 11 24H2 and does not solve Windows 10; see
    name. `auto` lets the app select later. Do not open a device to identify it.
 2. Obtain the correct final **HTTPS API URL**, preserving any path prefix.
    Redirects are rejected; plain HTTP is only for loopback development. Ask the
-   person for the diagnostics choice. Production diagnostics default on: Sentry
-   is in the EU; structured diagnostics exclude token/fiscal payloads, but
+   person for the diagnostics choice. Diagnostics default on; release configuration
+   targets EU Sentry. Structured diagnostics exclude token/fiscal payloads, but
    native crash dumps can include sensitive process memory. See the release-tag
    version of `docs/telemetry.md` in the repository. Never silently choose for
    the person.
@@ -437,8 +439,8 @@ diagnostics.
   evidence; resolution never reissues anything. No command retries or
   replacement prints to see whether it works.
 - **Update:** person finishes operations and quits, pin the new release, repeat
-  verification/installer. Do not downgrade without a deliberate user decision.
-  Updates preserve fiscal state; never modify it as part of installation.
+  verification/installer. Installers refuse downgrades. Updates preserve fiscal
+  state; never modify it as part of installation.
 - **Uninstall** needs separate consent and cooperative exit. Disable autostart
   with its CLI command **before removing the executable**, with consent. Linux:
   `sudo apt remove workshop` (not purge). macOS: Trash only the installed app

@@ -146,9 +146,7 @@ impl Api {
         }
         // A typo must not spend one of the backend's per-address pairing attempts.
         let code = pairing_code(code).ok_or_else(|| {
-            Error::Invalid(
-                "Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234.".to_owned(),
-            )
+            Error::Invalid("Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234.".to_owned())
         })?;
         let base_url = settings::api_url(api_url)?;
         let span = tracing::info_span!(
@@ -396,8 +394,11 @@ fn pairing_code(input: &str) -> Option<String> {
         .filter(|character| *character != '-')
         .map(|character| character.to_ascii_uppercase())
         .collect();
-    (code.len() == 8 && code.bytes().all(|byte| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&byte)))
-        .then_some(code)
+    (code.len() == 8
+        && code
+            .bytes()
+            .all(|byte| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&byte)))
+    .then_some(code)
 }
 
 fn trace_headers<B>(mut request: RequestBuilder<B>) -> Result<RequestBuilder<B>, ApiError> {

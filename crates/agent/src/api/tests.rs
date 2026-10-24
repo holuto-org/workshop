@@ -656,7 +656,15 @@ fn pairing_is_unauthenticated_and_returns_a_redacted_credential() -> TestResult 
 )]
 fn a_malformed_pairing_code_is_refused_without_spending_a_backend_attempt() -> TestResult {
     let server = Holuto::new();
-    for code in ["", "1234", "ABCD-123", "ABCD12345", "ABCD-123I", "ABCD-123O", "ĄBCD-1234"] {
+    for code in [
+        "",
+        "1234",
+        "ABCD-123",
+        "ABCD12345",
+        "ABCD-123I",
+        "ABCD-123O",
+        "ĄBCD-1234",
+    ] {
         let error = Api::pair(server.url(), code)
             .err()
             .ok_or("malformed code accepted")?;

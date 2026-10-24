@@ -34,9 +34,9 @@ transport connected only to the simulator peer. macOS port filtering and
 platform path tests remain gated to the relevant OS.
 
 The default nextest profile excludes `com_pair` tests. Linux tray tests belong
-to `session_bus` and the serial test group configured in `.config/nextest.toml`;
-use a private bus for the complete Linux run:
-
+to `session_bus` and the serial test group in `.config/nextest.toml`. The
+watcher scenario re-executes itself under `dbus-run-session`; the caller need
+not supply a session-bus address. CI also wraps the complete Linux run:
 ```sh
 dbus-run-session -- cargo nextest run --profile ci --workspace --all-features
 # Only the fake tray watcher scenarios:
@@ -44,11 +44,10 @@ dbus-run-session -- cargo nextest run --profile ci -p workshop --all-features \
   -E 'test(session_bus)'
 ```
 
-Install `dbus-run-session` from the OS D-Bus package. These tests require
-`DBUS_SESSION_BUS_ADDRESS`, start their own fake watcher and must not depend on
-the logged-in desktop's watcher. The Slint testing backend needs no X11/Wayland
-display; package startup checks use the platform headless/display setup in the
-packaging verifier.
+Install `dbus-run-session` from the OS D-Bus package. The child requires its
+private `DBUS_SESSION_BUS_ADDRESS` and creates its own watcher, never using the
+logged-in desktop's watcher. The Slint testing backend needs no X11/Wayland
+display; package startup uses the display setup in the packaging verifier.
 
 ## Windows com0com locally
 
@@ -67,6 +66,21 @@ missing or invalid; no silent skip and no fallback to enumerated hardware. The
 `ci` profile includes the tests; a default-profile filter alone still excludes
 them. Run them serially when sharing the single pair. CI provisions the signed
 pair before the Windows suite.
+
+## Autostart artefacts
+
+Autostart registers the current executable and saves `startOnLaunch`:
+
+- Linux: `$XDG_CONFIG_HOME/autostart/workshop.desktop`, falling back to
+  `~/.config/autostart/workshop.desktop` for an absent/relative base.
+- macOS: `~/Library/LaunchAgents/com.holuto.workshop.plist`, label
+  `com.holuto.workshop`, with `RunAtLoad`.
+- Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`,
+  `REG_SZ` value `Holuto Workshop` containing the quoted executable path.
+
+Disabling removes this registration and clears the preference. See the
+[CLI guide](../install-with-ai.md#4-configure-through-the-cli-not-files) for use.
+
 
 ## Process environment and filesystem
 

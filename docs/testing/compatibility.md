@@ -2,10 +2,10 @@
 
 ## Current stored-file contracts
 
-Holuto Workshop has never been deployed. There is no historical-format corpus or
-backward-compatibility requirement before the first release. Keep sanitized,
-literal golden fixtures only to pin the **current** on-disk format, not fixtures
-serialized by the reader/writer under test or obsolete settings/journal shapes.
+The repository pins the current on-disk formats; it does not establish deployment
+history. Keep sanitized, literal golden fixtures, not fixtures serialized by the
+reader/writer under test. Decide migrations explicitly before changing persisted
+contracts; never infer that an unreadable journal can be discarded.
 
 - **`operation.json`**: Current receipt/report variants, claim/attempt/serial,
   `NotStarted`, `Dispatching`, completed with/without number, results and
@@ -68,8 +68,9 @@ patch-level semver guarantees
 Compile and run accessible-label scenarios on upgrades; do not patch around a
 mismatched backend.
 
-Exercise default production features as well as all debug/test features. Release
-builds must reject `simulator` and agent `testing`; a green all-features test
-run does not prove the real serial branch builds. Rebuild and verify all five
-packages for dependency/toolchain upgrades; run advisory/license and
+Exercise default production features as well as all debug/test features. Desktop
+release builds reject `simulator`; agent builds without debug assertions reject
+`testing`. Posnet's standalone simulator has no release guard. A green
+all-features test run does not prove the real serial branch builds. Rebuild and
+verify all five packages for dependency/toolchain upgrades; run advisory/license and
 unused-dependency checks. See [CI](../ci.md).

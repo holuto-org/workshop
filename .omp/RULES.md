@@ -5,8 +5,8 @@
   and tests. Why: a fiscal receipt or report is an irreversible legal record.
 - Preserve the fiscal safety invariants from README "Fiscal safety" in every
   driver, agent or desktop change: verify the printer state before every
-  operation; journal intent before the first command reaches the printer; never
-  retry a command on the device and never reprint; an uncertain outcome blocks
+  operation; journal fiscal intent before the first fiscal command reaches the
+  printer; never retry a command on the device and never reprint; an uncertain outcome blocks
   further operations across restarts until a person resolves it, and resolving
   never reissues anything. Why: breaking any of them can double-print or lose a
   fiscal record.
@@ -16,3 +16,7 @@
   block the GUI thread on it and never abandon it mid-operation. Why: a frozen
   UI invites a second click, and a killed operation leaves an uncertain fiscal
   outcome.
+- Configure `workshop` through its CLI or GUI and pair with a one-time Holuto
+  code; never ask for a device token. Pairing uses `Worker::pair` without
+  opening a printer. Why: credentials must stay internal, and pairing is not
+  permission to print.

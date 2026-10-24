@@ -1,6 +1,5 @@
 use super::*;
 use agent::documents::ReceiptKind;
-use jiff::Timestamp;
 use uuid::Uuid;
 
 fn today() -> Date {
@@ -181,7 +180,7 @@ fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data()
     model.stopped();
     assert_eq!(
         model.status(updated_at),
-        agent::status::Snapshot {
+        Snapshot {
             processing: false,
             connected: false,
             serial: Some("SERIAL42".into()),
@@ -193,4 +192,27 @@ fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data()
         },
         "stopping disconnects without erasing unresolved fiscal evidence"
     );
+}
+
+#[test]
+fn each_public_status_change_invalidates_the_previous_publication() {
+    let changes: [fn(&mut Model); 7] = [
+        |model| model.running = true,
+        |model| model.connected = true,
+        |model| model.serial = "SERIAL42".into(),
+        |model| model.printer_id = Some("printer-42".into()),
+        |model| model.blocked = true,
+        |model| model.report_unresolved = true,
+        |model| model.orphaned_receipt = true,
+    ];
+    for change in changes {
+        let mut model = Model::new(Settings::default(), today());
+        let published = model.status(Timestamp::UNIX_EPOCH);
+        assert!(model.status_matches(&published));
+        change(&mut model);
+        assert!(
+            !model.status_matches(&published),
+            "changed state needs a new publication"
+        );
+    }
 }

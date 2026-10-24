@@ -8,10 +8,10 @@ it cannot prove that a visible button is wired to the worker.
 
 `i-slint-backend-testing` is an exact-version dev dependency matching Slint.
 Initialize it **before** creating any component/backend. Use
-`init_integration_test_with_system_time` for application tests that receive
-worker events through `slint::invoke_from_event_loop`. It initializes once per
-process, so run these scenarios with nextest's per-test process isolation; do
-not assume `cargo test`'s shared-process runner is equivalent.
+`init_integration_test_with_mock_time` for application tests that receive
+worker events through `slint::invoke_from_event_loop`, as the application
+fixtures do. Run these scenarios with nextest's per-test process isolation;
+do not assume `cargo test`'s shared-process runner is equivalent.
 
 Use `init_no_event_loop` only for isolated component/unit cases that truly need
 no event loop. Slint's mock-time backend may advance UI timers/animations; it
@@ -66,6 +66,9 @@ No sleep after clicking and no layout-coordinate search.
   availability uses separate private-bus tests.
 - Stop/quit during a held print completes it once, receives `Stopped`, joins,
   then exits. Do not test shutdown by killing the worker mid-operation.
+- On macOS, `macos_quit` is a deliberate exception: a harness-free test target
+  runs real AppKit/winit on the main thread. Its child must reach the
+  post-`Stopped` completion marker; an early native exit is a failure.
 
 Backend tests prove semantics and accessibility, not fonts, pixels, compositor
 integration or packaged startup. Those need

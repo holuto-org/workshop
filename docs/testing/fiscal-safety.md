@@ -73,10 +73,11 @@ Backend expiry distinguishes queued jobs (expired) from taken attempts
 identically. Result notes are trimmed and NFC-canonicalized to the backend's
 form before journaling and sending; replay preserves that canonical note.
 
-A device error explicitly naming `trinit`, `dailyrep`, `monthlyrep` or
-`periodicrepbydates` is a certain refusal of that operation, with its device
-reason and no unresolved block. A lost reply or a reply naming a different
-command is not equivalent. A later receipt-command refusal remains uncertain.
+A device error naming `trinit` is a certain refusal: without `trend`, no receipt
+can have been issued. Reports are themselves fiscal records: only an `ERR`
+frame rejection naming `dailyrep`, `monthlyrep` or `periodicrepbydates` is
+certain. An execution-error reply, lost reply or wrong-command reply for a report
+remains uncertain, as does a later receipt-command refusal.
 
 Table-test each state/command pair, then use `proptest-state-machine` to
 generate claim/dispatch/complete/report/restart/reconcile/acknowledge sequences.

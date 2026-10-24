@@ -17,7 +17,7 @@ regression that fails without it.
   - Test shape: Unit table + properties against independent integer arithmetic
 - **Receipt construction**
   - Required guarantee: Line/name/count limits; per-slot VAT; NIP unchanged;
-    full company footer only when needed; zero-price omission at agent boundary
+    full company footer only when needed; backend zero-price omission and agent rejection
   - Test shape: Boundary table + fixed-output snapshot + scenario
 - **Advances and payments**
   - Required guarantee: Unique deduction slot; deduction ≤ slot sales; correct
@@ -55,8 +55,8 @@ regression that fails without it.
   - Test shape: Fault matrix; assert effects and exact command sequence
 - **Daily/monthly/periodic reports**
   - Required guarantee: Exact dates/summary parameters; readiness and same
-    serial; named report-command refusal is certain; silent/wrong-command
-    failures uncertain
+    serial; report `ERR` frame rejection naming the command is certain;
+    execution-error/silent/wrong-command failures uncertain
   - Test shape: Fixed-clock snapshot + scenario per classification
 
 ## Agent and persistence
@@ -176,8 +176,8 @@ regression that fails without it.
     leap dates; from ≤ to ≤ today; periodic lower bound 2000-01-01
   - Test shape: Injected-today table + accessible dialog scenario
 - **Worker event bridge**
-  - Required guarantee: Connected/device/notice/history/stopped reach Slint
-    through event loop; blocked/stopping disables fiscal actions
+  - Required guarantee: `Connected`, `Device`, notices, `HistoryChanged` and
+    `Stopped` reach Slint; blocked/stopping disables fiscal actions
   - Test shape: Real worker + Slint event-loop backend
 - **GUI responsiveness**
   - Required guarantee: UI can process a marker/action while command held; no

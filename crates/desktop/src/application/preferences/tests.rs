@@ -1,11 +1,12 @@
 use std::{
     error::Error,
+    fs,
     sync::{Arc, mpsc},
     thread,
     time::Duration,
 };
 
-use agent::{settings::Settings, store::StateDir};
+use agent::{settings::Settings, status::Snapshot, store::StateDir};
 use tempfile::TempDir;
 
 use super::{Outcome, Request, Writer};
@@ -208,11 +209,11 @@ fn status_and_preferences_share_one_durable_fifo() -> Result<(), Box<dyn Error>>
     let writer = Writer::spawn(Arc::clone(&dir), move |completion| {
         let _sent = completed.send((
             completion,
-            agent::status::Snapshot::load_at(observed_dir.path()),
+            Snapshot::load_at(observed_dir.path()),
             Settings::load(&observed_dir),
         ));
     })?;
-    let connected = agent::status::Snapshot {
+    let connected = Snapshot {
         processing: true,
         connected: true,
         serial: Some("DEMO0000001".into()),
@@ -222,7 +223,7 @@ fn status_and_preferences_share_one_durable_fifo() -> Result<(), Box<dyn Error>>
         orphaned_receipt: false,
         updated_at: "2025-10-24T10:00:00Z".parse()?,
     };
-    let stopped = agent::status::Snapshot {
+    let stopped = Snapshot {
         processing: false,
         connected: false,
         blocked: true,
@@ -240,7 +241,10 @@ fn status_and_preferences_share_one_durable_fifo() -> Result<(), Box<dyn Error>>
     let (outcome, status, stored_settings) = completions.recv_timeout(WAIT)?;
     assert_eq!(outcome, Ok(Outcome::Status(connected.clone())));
     assert_eq!(status?, Some(connected.clone()));
-    assert_eq!(stored_settings?, None, "later preferences cannot overtake status");
+    assert_eq!(
+        stored_settings?, None,
+        "later preferences cannot overtake status"
+    );
     let (outcome, status, stored_settings) = completions.recv_timeout(WAIT)?;
     assert_eq!(outcome, Ok(Outcome::Saved));
     assert_eq!(status?, Some(connected));
@@ -249,5 +253,44 @@ fn status_and_preferences_share_one_durable_fifo() -> Result<(), Box<dyn Error>>
     assert_eq!(outcome, Ok(Outcome::Status(stopped.clone())));
     assert_eq!(status?, Some(stopped));
     assert_eq!(stored_settings?, Some(settings()));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn failed_status_write_is_not_acknowledged_as_saved_or_blocking_later_preferences()
+-> Result<(), Box<dyn Error>> {
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    fs::create_dir(temporary.path().join("status.json"))?;
+    let (completed, completions) = mpsc::channel();
+    let writer = Writer::spawn(Arc::clone(&dir), move |completion| {
+        let _sent = completed.send(completion);
+    })?;
+    writer.submit(Request::Status(Snapshot {
+        processing: false,
+        connected: false,
+        serial: None,
+        printer_id: None,
+        blocked: false,
+        report_unresolved: false,
+        orphaned_receipt: false,
+        updated_at: jiff::Timestamp::UNIX_EPOCH,
+    }))?;
+    writer.submit(Request::Telemetry(false))?;
+    assert!(
+        completions.recv_timeout(WAIT)?.is_err(),
+        "failed status has no success outcome"
+    );
+    assert_eq!(completions.recv_timeout(WAIT)?, Ok(Outcome::Telemetry));
+    assert!(
+        !Settings::load(&dir)?
+            .ok_or("missing preferences")?
+            .telemetry_enabled,
+        "a failed status write must not drop the next preference"
+    );
     Ok(())
 }

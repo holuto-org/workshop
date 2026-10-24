@@ -58,16 +58,16 @@ One Cargo workspace; dependency versions and lints live only in the root
   separate local state.
 
 Fiscal invariants and worker ownership are hard requirements in
-[`.omp/RULES.md`](.omp/RULES.md). `simulator`/`testing` are test/development
-features, rejected by release builds. Never validate behavior with a real
-printer.
+[`.omp/RULES.md`](.omp/RULES.md). Agent `testing` and desktop `simulator` are
+test/development features rejected without debug assertions; posnet's simulator
+feature alone has no release guard. Never validate behavior with a real printer.
 
 ## Code conventions
 
 - A justified lint exception is `#[expect(lint, reason = "…")]` at the call
   site, never `allow`.
 - Modules are `foo.rs` + `foo/`, never `mod.rs`; unit tests live in
-  `foo/tests.rs`.
+  `foo/tests.rs`. `macos_quit` is the harness-free native AppKit exception.
 - No `pub use`: import items from the module that defines them.
 - Errors callers match on are `thiserror` enums; their `Display` is the Polish,
   operator-facing text.

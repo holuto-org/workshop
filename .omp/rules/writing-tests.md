@@ -26,7 +26,8 @@ constructing those tests, not test-count or coverage targets.
 
 - Module unit tests: `foo/tests.rs`, declared from `foo.rs`. Scenarios spanning
   modules of one crate: `src/tests.rs` and `src/tests/` submodules. No top-level
-  `tests/` integration-test directories.
+  `tests/` directories. The harness-free `macos_quit` target in
+  `src/bin_tests/` is the native AppKit/main-thread exception.
 - One module's fixture helpers stay with it; cross-module helpers belong in the
   owning crate's `src/testing.rs`. Cross-crate boundaries reuse
   `posnet::simulator` and feature-gated `agent::testing`; never copy an HTTP
@@ -87,13 +88,13 @@ constructing those tests, not test-count or coverage targets.
 - **Platform:** `#[cfg(...)]` on what the test proves. Windows virtual-serial
   module is `com_pair`, requires `HOLUTO_TEST_COM_PAIR` and fails loudly if
   absent; default nextest excludes it, CI includes it. Linux `session_bus`
-  requires a private `DBUS_SESSION_BUS_ADDRESS` and serial test group. No silent
-  platform skip.
+  uses a self-spawned `dbus-run-session` child and the serial test group. No
+  silent platform skip.
 - **Processes:** environment overrides/locks re-run `std::env::current_exe()`
   with child marker and command-local environment; never unsafe global
   `set_var`.
-- **Files:** separate temp directory per test; kept old literal fixtures for
-  settings/journal/history. Inject portable failures, not chmod-only assumptions
+- **Files:** separate temp directory per test; keep current-format literal fixtures
+  for settings/journal/history. Inject portable failures, not chmod-only assumptions
   under root. Assert the previous durable record survives.
 
 Use [workflows](../../docs/workflows.md) for mutants, snapshot review, stress

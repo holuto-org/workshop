@@ -36,12 +36,12 @@ Never read state files as an installation shortcut.
 
 ## Local state
 
-On Unix assert state directory 0700 and sensitive files 0600, including
-settings, journal, history and instance lock, for fresh **and existing** paths
-and after replacement. On Windows use the Local AppData Known Folder and profile
-ACL protection; do not claim Unix modes prove Windows privacy. Test
-cross-process lock exclusion and atomic whole-file replacement on all supported
-OSes.
+On Unix assert state directory 0700 and created/replaced data files 0600,
+including settings, status, journal and history. Opening the state tightens an
+existing directory/lock; loading history tightens its file. Settings/journal/
+status reads alone do not repair modes. On Windows use the Local AppData Known
+Folder and profile ACL protection; Unix modes do not prove Windows privacy.
+Test cross-process locking and atomic replacement on every supported OS.
 
 Inject a deterministic write failure (for example a directory occupying the
 target file), not chmod assumptions that disappear when CI runs as root. Assert

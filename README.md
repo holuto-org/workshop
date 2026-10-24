@@ -26,28 +26,17 @@ Download from the
 | Ubuntu 24.04+ / Debian 13+ ARM64 | [`workshop-linux-arm64.deb`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-linux-arm64.deb) |
 
 Filenames are stable; the release tag, `SHA256SUMS.txt` and app identify the
-version. Builds are unsigned. Windows SmartScreen may prompt on first launch. On
-macOS 15 and newer, Gatekeeper blocks the first launch: open **System Settings →
-Privacy & Security** and click **Open Anyway** (right-click → Open no longer
-bypasses it). The Windows `.exe` links the C runtime statically and needs no
-redistributable. The `.deb` installs `/usr/bin/workshop` and a launcher; it
-requires the glibc of the Ubuntu 24.04 build host (2.39) or newer. Software
-rendering needs no GPU or OpenGL driver, including on remote desktops and VMs.
+version. Windows builds are unsigned; macOS bundles are ad-hoc signed, not
+Developer-ID signed or notarized. The Windows `.exe` links the C runtime
+statically. The `.deb` installs `/usr/bin/workshop` and a launcher; its `libc6`
+dependency records the build host's glibc version. Software rendering needs no
+GPU or OpenGL driver, including on remote desktops and VMs.
 
-For verified per-user installation, follow the
-[AI/manual installation guide](docs/install-with-ai.md). Each release includes
-[install.sh](https://github.com/holuto-org/workshop/releases/latest/download/install.sh),
-[install.ps1](https://github.com/holuto-org/workshop/releases/latest/download/install.ps1)
-and
-[SHA256SUMS.txt](https://github.com/holuto-org/workshop/releases/latest/download/SHA256SUMS.txt).
-Pin one release and verify its guide, script and package before running them;
-never pipe a download to a shell. The scripts refuse running apps and do not
-launch, pair, enable autostart or access fiscal state. Windows installs
-`%LOCALAPPDATA%\Programs\Holuto Workshop\workshop.exe` plus a Start Menu
-shortcut and user PATH entry. macOS installs
-`~/Applications/Holuto Workshop.app` and `~/.local/bin/workshop`; add that
-directory to PATH yourself if needed, or use
-`~/Applications/Holuto Workshop.app/Contents/MacOS/workshop` directly.
+Follow the [AI/manual installation guide](docs/install-with-ai.md) for platform
+requirements, pinned downloads, checksums/attestations, OS security prompts,
+per-user installation paths, updates and uninstall. Each release includes that
+guide, `install.sh`, `install.ps1` and `SHA256SUMS.txt`. Never pipe a download to
+a shell.
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
 
@@ -56,22 +45,20 @@ Applications License 2.0; the badge is required attribution.
 
 ## Sign in and connect
 
-1. In Holuto, add/select a printer under **Ustawienia → Drukarki fiskalne** and
-   generate a **one-time pairing code**. It expires after 15 minutes.
-2. In Holuto Workshop's **Ustawienia**, enter the final **Adres API**, select
-   the printer port/speed, then enter **Kod parowania** and choose **Sparuj**.
-   Pairing stores credentials internally; no device token is displayed or
-   copied. Codes are single-use; successful pairing revokes the previous token.
-3. Click **Uruchom** when ready to process the branch's queued receipts.
-   **Zapisz** saves without starting. Processing requires an explicit start on
-   each launch unless you separately opt into [autostart](#autostart).
+Pair in **Ustawienia** using a one-time code generated for the printer in Holuto.
+Codes expire after 15 minutes; successful redemption replaces the previous
+device token, which stays internal. See the
+[guided configuration sequence](docs/install-with-ai.md#guided-configuration-sequence)
+for setup. **Zapisz** saves without starting; **Uruchom** starts processing.
+Each launch requires explicit start unless the user opts into
+[autostart](#autostart).
 
 Use the final API URL, including any path prefix. HTTPS is required except on
 loopback (`localhost`, `127.0.0.0/8`, `::1`); redirects are rejected. TLS uses
 the OS certificate store. A 401 stops processing; generate a fresh pairing code
 in Holuto and pair again. There is no token refresh.
 
-State directory (Unix: **0700**, data files **0600**):
+State directory (Unix: **0700**; created/replaced data files: **0600**):
 
 | OS      | Directory                                                      |
 | ------- | -------------------------------------------------------------- |
@@ -87,8 +74,9 @@ unblock printing; unresolved evidence requires human reconciliation.
 private, out of logs, and protected by profile ACLs on Windows. `operation.json`
 is the fiscal journal; `history.jsonl` is local receipt history, compacted to
 the newest 500 receipts. `instance.lock` prevents a second instance from using
-the same state directory. On Unix every one of these files is **0600**, and an
-existing state directory is tightened to **0700**.
+the same state directory. Unix opens tighten the state directory to **0700**
+and lock to **0600**; writes replace data files with **0600** copies. History
+loading also tightens its file. Settings/journal/status reads do not repair modes.
 
 Settings and `status.json` are persisted by one background FIFO writer. Starting
 waits for successful settings persistence; quitting waits cooperatively for
@@ -101,46 +89,23 @@ credentials or customer data. It is display state, not fiscal evidence.
 One binary serves both modes: `workshop` opens the GUI; a subcommand runs in the
 terminal without opening a printer port. Use `workshop --help` and the
 [CLI contract and stable exit codes](docs/install-with-ai.md#4-configure-through-the-cli-not-files).
-`--json` is available on every command. `config show` reports pairing as
-`paired`, never a token. Configuration changes, pairing and autostart changes
-refuse while the app holds the instance lock: choose **Zakończ**, let pending
-work finish, then configure. `ports` lists names only; `check` and `status`
-never prove printer readiness.
+`--json` is available on every CLI command. `config show` reports pairing as
+`paired`, never a token. Configuration, pairing and autostart mutations refuse
+while the app holds the instance lock. `ports` lists names only; `check` and
+`status` never prove printer readiness. The
+[installation guide](docs/install-with-ai.md#4-configure-through-the-cli-not-files)
+owns commands, JSON fields, exit codes and configuration examples.
 
-`status` reports the running app's published `state`: `processing`, `connected`,
-`serial`, `printerId`, `blocked`, `reportUnresolved`, `orphanedReceipt` and
-`updatedAt`. With no instance lock it reports `appRunning:false` and omits state;
-a snapshot left after a crash is ignored. While a running app has not published
-state yet, the command reports `status_unavailable` (exit 1), not a guessed value.
-
-```sh
-workshop config show --json
-workshop ports --json
-workshop config set --api-url https://holuto.example --port auto --speed 9600 \
-  --diagnostics off
-workshop pair XXXX-XXXX
-workshop check --json
-workshop status --json
-```
-
-Replace the example URL and pairing code with the intended Holuto instance and
-fresh code; never include codes or credentials in reports/logs.
+Never include pairing codes or credentials in reports/logs.
 
 ## Autostart
 
-Opt-in only: use **Ustawienia** or `workshop autostart on` /
-`workshop autostart off` while the app is stopped (**Uruchamiaj przy
-logowaniu**). Enabling registers a per-user login item and saves a preference to
-start processing at launch. Login can then print queued fiscal jobs without
-another click; approve it separately. Full printer preflight and unresolved
-operation blocks remain mandatory. Disable autostart before removing the app.
-
-- **Linux**: `$XDG_CONFIG_HOME/autostart/workshop.desktop` (default
-  `~/.config/autostart/workshop.desktop`).
-- **macOS**: `~/Library/LaunchAgents/com.holuto.workshop.plist`
-  (`com.holuto.workshop`).
-- **Windows**: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
-  `Holuto Workshop`.
+Opt-in only: **Uruchamiaj przy logowaniu** registers a per-user login item and
+saves the preference to start processing at launch. Login can then print queued
+fiscal jobs without another click; approve it separately. Printer preflight and
+unresolved-operation blocks still apply. See the
+[autostart command](docs/install-with-ai.md#4-configure-through-the-cli-not-files)
+and [OS artefacts](docs/testing/platforms.md#autostart-artefacts).
 
 ## Printer
 
@@ -149,9 +114,9 @@ Typical ports: Linux `/dev/ttyACM0` (prefer `/dev/serial/by-id/...`), Windows
 `COM3`, macOS `/dev/cu.usbmodem…`. Only serial connections are supported. The
 user needs read/write access (`dialout` group on Linux); never run with sudo.
 
-If the saved port does not answer, the app sends one read-only identification
-command per other serial port, then uses and saves the first Temo Online found.
-It never scans with an unresolved operation: the device must not change.
+If the saved port fails, discovery identifies other serial candidates read-only
+and verifies the first Temo Online found before using and saving it. It never
+scans with an unresolved operation: the device must not change.
 
 ## Desktop app
 
@@ -185,15 +150,16 @@ tray, closing keeps the window visible. **Zatrzymaj** stops processing;
 **Zakończ**, the tray's quit and the macOS Dock/⌘Q quit exit. All of them finish
 the current operation first.
 
-Prices are gross; API quantities and amounts are decimal strings. Holuto
-supplies unit prices with at most two decimal places and line gross totals.
-Quantities and prices print unchanged. Higher-precision prices or totals
-differing from quantity × price rounded half up to grosze fail before printing.
+Prices are gross; API quantities and amounts are decimal strings. The schema
+allows unit prices with up to eight decimal places, but this driver requires
+whole grosze (at most two fractional digits in the string). It does not round
+higher-precision prices; inconsistent line gross totals also fail before printing.
 The printer calculates VAT. Each line uses its assigned slot for `23`, `8`, `5`,
 `0` or `zw`; mixed rates are supported, with no highest-rate or whole-receipt
-fallback. Zero-price lines are omitted. Missing VAT-slot mappings reject
-queueing, never substitute a rate. Buyer NIP, advance deductions and payments
-reach the device unchanged. Line and company names must print in full as
+fallback. Holuto omits zero-price lines; the agent rejects any it receives.
+Missing VAT-slot mappings reject queueing, never substitute a rate.
+Buyer NIP, advance deductions and payments reach the device unchanged.
+Line and company names must print in full as
 received; unsupported text fails before fiscal commands, never transliterated or
 truncated.
 
@@ -202,9 +168,9 @@ truncated.
 - Before each operation, verify printer identity, fiscal mode, header,
   mechanism, command queue, transaction state, read-only mode, transaction
   resources held by another interface and VAT table in the session that prints.
-- Journal intent **before the first command reaches the printer**: claim taken
-  jobs in `operation.json` before preflight; journal every command before
-  sending. Never retry a device command or reprint a receipt.
+- Journal claimed jobs in `operation.json` before their preflight; journal every
+  fiscal command **before sending it**. Startup/discovery uses read-only commands
+  without creating fiscal intent. Never retry a device command or reprint a receipt.
 - Printer replies follow execution. After a silent command timeout, asynchronous
   `!sprn`/`!sdev` queries check for operator intervention (paper, cover, lever,
   temperature, power or a key). Wait up to 10 minutes from the first wait,
@@ -251,17 +217,17 @@ truncated.
 
 The contract is the backend's generated OpenAPI document, vendored as
 [`openapi/agent.json`](openapi/agent.json); `crates/agent` generates its wire
-types from it at build time and the test fake validates every request and
-response against it. After a backend `/agent` change, run
-`scripts/openapi-sync.sh` (`BACKEND_DIR` defaults to `../backend`) and commit
-the `openapi/` diff. Nothing checks the live API against this copy: the backend
-deploys first.
+types from it at build time. The test fake validates normal requests/responses
+against it; scripted malformed-response faults deliberately bypass validation.
+See [contract synchronization](docs/testing/compatibility.md#agent-and-the-backend)
+for the update procedure. Nothing checks the live API against this copy: deploy
+backend changes first.
 
-Requests use `/agent`, `Authorization: Bearer <device token>`,
-`App-Version: agent/<version>` and `Accept-Language: pl` for Polish error
-details, plus the `sentry-trace` header the Sentry SDK provides, so a fiscal
-operation's trace continues in the backend. `POST /agent/session` and
-`POST /agent/heartbeat` send fresh telemetry:
+Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
+`App-Version: agent/<version>` and `Accept-Language: pl`, plus SDK-provided
+`sentry-trace` propagation. `POST /agent/pair` exchanges `{code}` for
+`{token, printerId}` without bearer or device-serial headers.
+`POST /agent/session` and `POST /agent/heartbeat` send fresh telemetry:
 
 ```json
 {
@@ -337,34 +303,23 @@ printer's range.
 
 ## Diagnostics
 
-Release builds use Sentry in the EU. Build-time `SENTRY_DSN` and
-`SENTRY_ENVIRONMENT` select ingestion/environment; absent DSN and simulator
-builds never report. **Ustawienia → Udostępniaj diagnostykę** defaults on; turn
-it off to opt out. Disabling native crash reporting requires restarting.
+Release-workflow packages require a build-time `SENTRY_DSN`; absent DSN and simulator
+builds never report. **Udostępniaj diagnostykę** defaults on. Live opt-out gates
+new structured telemetry; restart to disable native crash reporting.
 
-Structured diagnostics send actionable errors/panics, safe logs/breadcrumbs,
-operation/HTTP timings, release-health sessions and printer ID/device serial.
-They never send pairing codes/tokens, customer/company names, NIP, receipt
-lines, amounts, settings/journals/history, API URL path/query or hostname.
-Structured diagnostics remove local paths while retaining file basenames and
-debug identifiers. Native crash dumps contain process memory and may contain
-sensitive data. Sentry processes and discards them by default unless attachment
-storage is enabled. See the
-[privacy policy and native-dump warning](docs/telemetry.md) and
-[required GitHub configuration](docs/ci.md#release-telemetry-artifacts).
+Structured diagnostics retain reviewed messages, sanitized errors/frames,
+timing/status, release-health sessions and printer ID/device serial; payloads,
+arbitrary fields, hostnames and local paths are scrubbed. Native dumps contain
+process memory and may expose sensitive data despite those hooks. See
+[Diagnostics and privacy](docs/telemetry.md) for the exact allowlist, lifecycle,
+500 ms flush bound and native-dump warning, and
+[CI configuration](docs/ci.md#release-telemetry-artifacts).
 
 ## Development and releases
 
-```bash
-# If rustup is missing
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup toolchain install nightly-2026-10-06 --profile minimal --component rustfmt
-cargo run -p workshop
-cargo nextest run --workspace --all-features
-cargo +nightly-2026-10-06 fmt --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo deny --locked check && cargo shear --deny-warnings
-```
+Use [contributor commands](AGENTS.md#verify),
+[testing](docs/testing/README.md) and [finishing workflows](docs/workflows.md)
+for checks, snapshots, mutation/stress runs and contract synchronization.
 
 `rust-toolchain.toml` pins Rust. Formatting uses the dated nightly because
 `.rustfmt.toml` enables unstable options. Linux needs `pkg-config` and
@@ -378,15 +333,8 @@ to replace serial I/O with an in-process Temo peer. Its state lives in
 `workshop-simulator` beside the real state directory. Release builds reject this
 feature.
 
-Linux's complete suite runs under `dbus-run-session`; nextest's default profile
-excludes Windows COM-pair tests. The `ci` profile includes them and requires
-`HOLUTO_TEST_COM_PAIR` pointing only at a signed virtual com0com pair on
-Windows. Review fiscal snapshots with
-`cargo insta test --test-runner nextest --review -p posnet --all-features`, then
-rerun ordinary nextest. After backend contract changes regenerate its OpenAPI
-and run `bash scripts/openapi-sync.sh` here. See
-[testing](docs/testing/README.md), [finishing workflows](docs/workflows.md) and
-[CI](docs/ci.md).
+Linux watcher tests require `dbus-run-session` and spawn their own private bus;
+Windows COM tests need a signed virtual pair. See [platform procedures](docs/testing/platforms.md).
 
 `bash packaging/build.sh` writes the host OS/CPU package to `release/`. CI
 builds Windows x64, macOS ARM64/x64 and Linux ARM64/x64. A push to `master`

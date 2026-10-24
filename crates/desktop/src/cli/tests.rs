@@ -173,29 +173,43 @@ fn invalid_configuration_is_not_partially_saved() -> TestResult {
 fn status_exposes_the_running_apps_published_state_without_configuration_secrets() -> TestResult {
     let temp = tempfile::tempdir()?;
     let dir = StateDir::open(temp.path().join("state"))?;
-    Settings { api_url:"https://private.example.test".into(), token:"token-canary".into(),
-        ..Settings::default() }.save(&dir)?;
+    Settings {
+        api_url: "https://private.example.test".into(),
+        token: "token-canary".into(),
+        ..Settings::default()
+    }
+    .save(&dir)?;
     let snapshot = Snapshot {
-        processing:true, connected:true, serial:Some("DEMO0000001".into()),
-        printer_id:Some("00000000-0000-0000-0000-000000000009".into()),
-        blocked:true, report_unresolved:false, orphaned_receipt:true,
-        updated_at:"2026-10-24T12:34:56Z".parse()?
+        processing: true,
+        connected: true,
+        serial: Some("DEMO0000001".into()),
+        printer_id: Some("00000000-0000-0000-0000-000000000009".into()),
+        blocked: true,
+        report_unresolved: false,
+        orphaned_receipt: true,
+        updated_at: "2026-10-24T12:34:56Z".parse()?,
     };
     snapshot.save(&dir)?;
     let response = execute(Command::Status, dir.path())?;
-    assert_eq!(response.value, json!({"ok":true,"appRunning":true,"state":{
-        "processing":true,"connected":true,"serial":"DEMO0000001",
-        "printerId":"00000000-0000-0000-0000-000000000009",
-        "blocked":true,"reportUnresolved":false,"orphanedReceipt":true,
-        "updatedAt":"2026-10-24T12:34:56Z"
-    }}));
+    assert_eq!(
+        response.value,
+        json!({"ok":true,"appRunning":true,"state":{
+            "processing":true,"connected":true,"serial":"DEMO0000001",
+            "printerId":"00000000-0000-0000-0000-000000000009",
+            "blocked":true,"reportUnresolved":false,"orphanedReceipt":true,
+            "updatedAt":"2026-10-24T12:34:56Z"
+        }})
+    );
     assert!(!response.value.to_string().contains("token-canary"));
     assert!(!response.value.to_string().contains("private.example.test"));
     Ok(())
 }
 
 #[test]
-#[expect(clippy::panic_in_result_fn, reason = "Assertions prove status; setup propagates I/O")]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove status; setup propagates I/O"
+)]
 fn unlocked_status_ignores_even_a_corrupt_snapshot_left_after_a_crash() -> TestResult {
     let temp = tempfile::tempdir()?;
     fs::write(temp.path().join("status.json"), b"corrupt secret-canary")?;
@@ -206,13 +220,20 @@ fn unlocked_status_ignores_even_a_corrupt_snapshot_left_after_a_crash() -> TestR
 }
 
 #[test]
-#[expect(clippy::panic_in_result_fn, reason = "Assertions prove status; setup propagates I/O")]
-fn running_app_without_a_published_snapshot_reports_unavailable_instead_of_guessing() -> TestResult {
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove status; setup propagates I/O"
+)]
+fn running_app_without_a_published_snapshot_reports_unavailable_instead_of_guessing() -> TestResult
+{
     let temp = tempfile::tempdir()?;
     let dir = StateDir::open(temp.path().join("state"))?;
     let error = execute(Command::Status, dir.path()).expect_err("not yet published");
-    assert_eq!((error.exit,error.code), (1,"status_unavailable"));
-    assert_eq!(error.message, "Aplikacja nie udostępniła jeszcze stanu. Spróbuj ponownie.");
+    assert_eq!((error.exit, error.code), (1, "status_unavailable"));
+    assert_eq!(
+        error.message,
+        "Aplikacja nie udostępniła jeszcze stanu. Spróbuj ponownie."
+    );
     Ok(())
 }
 
@@ -337,7 +358,10 @@ fn pairing_command_maps_refusals_to_stable_exit_codes_without_saving() -> TestRe
 }
 
 #[test]
-#[expect(clippy::panic_in_result_fn, reason = "Assertions prove pairing; setup propagates I/O")]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove pairing; setup propagates I/O"
+)]
 fn malformed_pairing_code_exits_three_without_a_backend_request_or_settings_change() -> TestResult {
     use agent::testing::Holuto;
     let server = Holuto::new();
@@ -345,9 +369,11 @@ fn malformed_pairing_code_exits_three_without_a_backend_request_or_settings_chan
     save_api_url(temp.path(), server.url())?;
     let before = Settings::load_at(temp.path())?;
     let error = execute(Command::Pair("bad".into()), temp.path()).expect_err("malformed proof");
-    assert_eq!((error.exit,error.code), (3,"pairing_invalid"));
-    assert_eq!(error.message,
-        "Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234.");
+    assert_eq!((error.exit, error.code), (3, "pairing_invalid"));
+    assert_eq!(
+        error.message,
+        "Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234."
+    );
     assert_eq!(server.requests(), []);
     assert_eq!(Settings::load_at(temp.path())?, before);
     Ok(())

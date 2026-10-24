@@ -9,7 +9,11 @@ mod pairing;
 #[path = "tests/start.rs"]
 mod start;
 
-use std::error::Error;
+use std::{
+    error::Error,
+    fs,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use agent::documents::{Document, ReceiptKind};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
@@ -517,30 +521,97 @@ fn missing_native_quit_hook_blocks_worker_start() -> Result<(), Box<dyn Error>> 
 )]
 fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement()
 -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = fixture()?;
-    assert!(!app.borrow().model.saving, "launch status is not a settings save");
-    assert_eq!(button(&window, "Uruchom")?.accessible_enabled(), Some(true));
-    let (sent, received) = std::sync::mpsc::channel();
-    let dir = Arc::clone(&app.borrow().dir);
-    let mut state = app.borrow_mut();
-    // Drain the launch publication through a controlled acknowledgement sink.
-    state.settings_writer = Some(preferences::Writer::spawn(dir, move |completion| {
-        let _sent = sent.send(completion);
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let simulator = Simulator::start();
+    let app = Rc::new(RefCell::new(Application::new(
+        Arc::clone(&dir),
+        Settings::default(),
+        simulator.link(),
+        Date::constant(2025, 10, 24),
+    )));
+    APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
+    let acknowledgements = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&acknowledgements);
+    app.borrow_mut().settings_writer = Some(preferences::Writer::spawn(dir, move |completion| {
+        let _previous = observed.fetch_add(1, Ordering::SeqCst);
+        let _scheduled = slint::invoke_from_event_loop(move || {
+            with_app(move |app| {
+                assert!(!app.model.saving, "status is not a settings save");
+                let window = app.window.as_ref().ok_or("missing window")?;
+                assert_eq!(
+                    button(window, "Uruchom")
+                        .map_err(|error| error.to_string())?
+                        .accessible_enabled(),
+                    Some(true)
+                );
+                app.settings_saved(completion);
+                assert!(app.writes_pending.is_empty());
+                app.publish_status();
+                assert!(
+                    app.writes_pending.is_empty(),
+                    "acknowledgement and unchanged state never form a save loop"
+                );
+                assert!(app.status_saved.is_some());
+                app.stop(true)
+            });
+        });
     })?);
-    state.writes_pending.clear();
-    state.status_requested = None;
-    state.publish_status();
-    assert_eq!(state.writes_pending.len(), 1);
-    assert!(!state.model.saving);
-    let completion = received.recv_timeout(std::time::Duration::from_secs(10))?;
-    state.settings_saved(completion);
-    assert!(state.writes_pending.is_empty());
-    assert!(!state.model.saving);
-    state.publish_status();
-    assert!(
-        state.writes_pending.is_empty(),
-        "an unchanged snapshot and its acknowledgement never form a save loop"
-    );
-    assert!(state.status_saved.is_some());
+    app.borrow_mut().launch()?;
+    assert!(!app.borrow().model.saving);
+    slint::run_event_loop_until_quit()?;
+    assert_eq!(acknowledgements.load(Ordering::SeqCst), 1);
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn failed_status_publication_stays_unacknowledged_without_an_automatic_retry()
+-> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    fs::create_dir(temporary.path().join("status.json"))?;
+    let simulator = Simulator::start();
+    let app = Rc::new(RefCell::new(Application::new(
+        Arc::clone(&dir),
+        Settings::default(),
+        simulator.link(),
+        Date::constant(2025, 10, 24),
+    )));
+    APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
+    app.borrow_mut().settings_writer = Some(preferences::Writer::spawn(dir, |completion| {
+        let _scheduled = slint::invoke_from_event_loop(move || {
+            with_app(move |app| {
+                assert!(completion.is_err());
+                app.settings_saved(completion);
+                assert!(
+                    app.status_saved.is_none(),
+                    "failed persistence is not accepted"
+                );
+                assert!(
+                    app.status_requested.is_none(),
+                    "explicit Quit may try saving again"
+                );
+                assert!(
+                    app.writes_pending.is_empty(),
+                    "failure does not schedule its own retry"
+                );
+                assert!(!app.model.saving);
+                assert_eq!(app.model.tone, Tone::Error);
+                // Test cleanup only: production Quit must wait for a successful stopped snapshot.
+                slint::quit_event_loop().map_err(|error| error.to_string())?;
+                Ok(())
+            });
+        });
+    })?);
+    app.borrow_mut().launch()?;
+    slint::run_event_loop_until_quit()?;
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }

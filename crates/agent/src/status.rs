@@ -22,6 +22,10 @@ use crate::{
 
 const FILE: &str = "status.json";
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent worker capability and block flags"
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Snapshot {
@@ -50,20 +54,23 @@ impl Snapshot {
         let Some(bytes) = store::read_optional(&path).map_err(unreadable)? else {
             return Ok(None);
         };
-        serde_json::from_slice(&bytes).map(Some).map_err(|_| {
-            // Serde errors may echo arbitrary malformed values or unknown keys.
-            unreadable(io::Error::new(
-                ErrorKind::InvalidData,
-                "Nieprawidłowy JSON stanu aplikacji.",
-            ))
-        })
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_malformed| {
+                // Serde errors may echo arbitrary malformed values or unknown keys.
+                unreadable(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "Nieprawidłowy JSON stanu aplikacji.",
+                ))
+            })
     }
 
     /// Atomically publishes a durable snapshot, private (0600) on Unix.
     pub fn save(&self, directory: &StateDir) -> Result<(), Error> {
         let path = directory.file(FILE);
-        let bytes = serde_json::to_vec_pretty(self)
-            .map_err(|_| Error::Invalid("Nie można zakodować stanu aplikacji.".to_owned()))?;
+        let bytes = serde_json::to_vec_pretty(self).map_err(|_encoding| {
+            Error::Invalid("Nie można zakodować stanu aplikacji.".to_owned())
+        })?;
         store::write_durably(&path, &bytes).map_err(|source| Error::Store {
             action: "Nie można zapisać stanu aplikacji",
             path,
