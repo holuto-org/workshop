@@ -388,7 +388,7 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
                         "quit still waits for status"
                     );
                     assert!(
-                        app.status_saved
+                        app.status_settled
                             .as_ref()
                             .is_some_and(|saved| saved.processing),
                         "a persisted but unacknowledged snapshot is not optimistically accepted"

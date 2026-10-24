@@ -56,7 +56,9 @@ struct Application {
     settings_writer: Option<preferences::Writer>,
     writes_pending: VecDeque<WriteKind>,
     status_requested: Option<Snapshot>,
-    status_saved: Option<Snapshot>,
+    /// Latest requested snapshot whose write finished, successfully or not: a failed
+    /// `status.json` write is reported, but must never keep a cooperative quit from exiting.
+    status_settled: Option<Snapshot>,
 }
 
 pub(crate) fn run(
@@ -123,7 +125,7 @@ impl Application {
             settings_writer: None,
             writes_pending: VecDeque::new(),
             status_requested: None,
-            status_saved: None,
+            status_settled: None,
         }
     }
 
@@ -348,7 +350,7 @@ impl Application {
                 self.model.settings = settings;
             },
             Ok(preferences::Outcome::Status(snapshot)) => {
-                self.status_saved = Some(snapshot);
+                self.status_settled = Some(snapshot);
             },
             Ok(
                 preferences::Outcome::Port
@@ -363,7 +365,8 @@ impl Application {
                         .iter()
                         .any(|kind| matches!(kind, WriteKind::Status))
                 {
-                    self.status_requested = None;
+                    // Forget the request so the next state change retries the write.
+                    self.status_settled = self.status_requested.take();
                 }
                 self.model.say(error, Tone::Error);
             },
@@ -497,11 +500,8 @@ impl Application {
         if self.quitting
             && self.worker.is_none()
             && self.writes_pending.is_empty()
-            && self.status_saved.as_ref().is_some_and(|saved| {
-                !saved.processing
-                    && !saved.connected
-                    && self.status_requested.as_ref() == Some(saved)
-                    && self.model.status_matches(saved)
+            && self.status_settled.as_ref().is_some_and(|settled| {
+                !settled.processing && !settled.connected && self.model.status_matches(settled)
             })
         {
             slint::quit_event_loop().map_err(|error| error.to_string())?;

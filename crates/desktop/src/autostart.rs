@@ -94,7 +94,8 @@ fn set_at(artifact: &Path, executable: &Path, enabled: bool) -> Result<(), Error
     }
     let text = executable
         .to_str()
-        .filter(|text| !text.contains(['\n', '\r']))
+        // Desktop-entry strings and plist XML both forbid raw control characters.
+        .filter(|text| !text.chars().any(char::is_control))
         .ok_or_else(|| Error::Invalid("Ścieżka aplikacji nie nadaje się do autostartu.".into()))?;
     let content = registration(text);
     if let Some(parent) = artifact.parent() {
@@ -105,15 +106,21 @@ fn set_at(artifact: &Path, executable: &Path, enabled: bool) -> Result<(), Error
         .map_err(|error| store_error(artifact, io::Error::from(error)))
 }
 
+/// Writes the XDG autostart entry for exactly this executable.
+///
+/// Exec is unescaped twice: first as a desktop-entry string (`\\` → `\`), then by the Exec
+/// quoting rules (`\"`, `` \` ``, `\$`, `\\` inside quotes), so each Exec escape is written
+/// with its backslash doubled.
+/// <https://specifications.freedesktop.org/desktop-entry-spec/latest/exec-variables.html>
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn registration(executable: &str) -> String {
     let mut escaped = String::with_capacity(executable.len());
     for character in executable.chars() {
         match character {
             '%' => escaped.push_str("%%"),
-            '\\' => escaped.push_str("\\\\"),
+            '\\' => escaped.push_str("\\\\\\\\"),
             '"' | '`' | '$' => {
-                escaped.push('\\');
+                escaped.push_str("\\\\");
                 escaped.push(character);
             },
             _ => escaped.push(character),

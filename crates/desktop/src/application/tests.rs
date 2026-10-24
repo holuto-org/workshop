@@ -553,7 +553,7 @@ fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement(
                     app.writes_pending.is_empty(),
                     "acknowledgement and unchanged state never form a save loop"
                 );
-                assert!(app.status_saved.is_some());
+                assert!(app.status_settled.is_some());
                 app.stop(true)
             });
         });
@@ -571,11 +571,11 @@ fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement(
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
-fn failed_status_publication_stays_unacknowledged_without_an_automatic_retry()
--> Result<(), Box<dyn Error>> {
+fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn Error>> {
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    // A directory in place of status.json makes every status write fail.
     fs::create_dir(temporary.path().join("status.json"))?;
     let simulator = Simulator::start();
     let app = Rc::new(RefCell::new(Application::new(
@@ -585,33 +585,33 @@ fn failed_status_publication_stays_unacknowledged_without_an_automatic_retry()
         Date::constant(2025, 10, 24),
     )));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
-    app.borrow_mut().settings_writer = Some(preferences::Writer::spawn(dir, |completion| {
+    let failures = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&failures);
+    app.borrow_mut().settings_writer = Some(preferences::Writer::spawn(dir, move |completion| {
+        if completion.is_err() {
+            let _counted = counted.fetch_add(1, Ordering::SeqCst);
+        }
         let _scheduled = slint::invoke_from_event_loop(move || {
             with_app(move |app| {
-                assert!(completion.is_err());
                 app.settings_saved(completion);
-                assert!(
-                    app.status_saved.is_none(),
-                    "failed persistence is not accepted"
-                );
-                assert!(
-                    app.status_requested.is_none(),
-                    "explicit Quit may try saving again"
-                );
-                assert!(
-                    app.writes_pending.is_empty(),
-                    "failure does not schedule its own retry"
-                );
-                assert!(!app.model.saving);
-                assert_eq!(app.model.tone, Tone::Error);
-                // Test cleanup only: production Quit must wait for a successful stopped snapshot.
-                slint::quit_event_loop().map_err(|error| error.to_string())?;
                 Ok(())
             });
         });
     })?);
     app.borrow_mut().launch()?;
+    app.borrow_mut().stop(true)?;
+    // Returns only because finish_quit accepted the failed (settled) stopped snapshot.
     slint::run_event_loop_until_quit()?;
+    assert!(
+        failures.load(Ordering::SeqCst) >= 1,
+        "the write really failed"
+    );
+    assert_eq!(
+        app.borrow().model.tone,
+        Tone::Error,
+        "the failure was shown"
+    );
+    assert!(app.borrow().writes_pending.is_empty());
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }

@@ -39,17 +39,60 @@ fn linux_login_entry_launches_only_the_exact_executable_and_is_removable() -> Te
     clippy::panic_in_result_fn,
     reason = "Assertions prove artifacts; setup propagates I/O"
 )]
-fn desktop_exec_escapes_field_codes_and_shell_metacharacters() -> TestResult {
+fn desktop_exec_launches_paths_with_field_codes_and_shell_metacharacters() -> TestResult {
     let temp = tempfile::tempdir()?;
     let artifact = temp.path().join("workshop.desktop");
-    set_at(&artifact, Path::new("/tmp/a%u$`\"\\workshop"), true)?;
-    assert_eq!(
-        fs::read_to_string(&artifact)?,
-        "[Desktop Entry]\nType=Application\nName=Holuto Workshop\n\
-         Exec=\"/tmp/a%%u\\$\\`\\\"\\\\workshop\"\n\
-         Terminal=false\nX-GNOME-Autostart-enabled=true\n"
+    for path in ["/tmp/a%u$`\"\\workshop", "/opt/\\\\x/$HOME/%%/workshop"] {
+        set_at(&artifact, Path::new(path), true)?;
+        let entry = fs::read_to_string(&artifact)?;
+        let exec = entry
+            .lines()
+            .find_map(|line| line.strip_prefix("Exec="))
+            .ok_or("missing Exec key")?;
+        assert_eq!(exec_path(exec)?, path, "{exec}");
+    }
+    assert!(
+        set_at(&artifact, Path::new("/tmp/work\tshop"), true).is_err(),
+        "control characters are refused, never written raw"
     );
     Ok(())
+}
+
+/// Independent model of the spec for one quoted argument: string unescaping (`\\`), then
+/// Exec quoting and `%%`. Anything the generator must never emit is an error.
+#[cfg(target_os = "linux")]
+fn exec_path(value: &str) -> Result<String, Box<dyn Error>> {
+    let mut string = String::new();
+    let mut characters = value.chars();
+    while let Some(character) = characters.next() {
+        if character == '\\' && characters.next() != Some('\\') {
+            return Err("unexpected string escape".into());
+        }
+        string.push(character);
+    }
+    let inner = string
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .ok_or("not one quoted argument")?;
+    let mut path = String::new();
+    let mut characters = inner.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => match characters.next() {
+                Some(escaped @ ('"' | '`' | '$' | '\\')) => path.push(escaped),
+                other => return Err(format!("invalid Exec escape {other:?}").into()),
+            },
+            '"' | '`' | '$' => return Err(format!("unescaped {character} in quotes").into()),
+            '%' => {
+                if characters.next() != Some('%') {
+                    return Err("field code".into());
+                }
+                path.push('%');
+            },
+            other => path.push(other),
+        }
+    }
+    Ok(path)
 }
 
 #[cfg(target_os = "macos")]
