@@ -8,9 +8,8 @@ use agent::{
     status::Snapshot,
     worker::{Command, Tone},
 };
-use fiscal::money::zloty;
+use fiscal::{device::Device, money::zloty};
 use jiff::{Timestamp, ToSpan, civil::Date};
-use posnet::printer::Status;
 use slint::{ModelRc, SharedString, VecModel};
 use table::{Sort, Table};
 
@@ -73,7 +72,7 @@ pub(crate) struct Model {
     pub(crate) connected: bool,
     pub(crate) serial: String,
     pub(crate) printer_id: Option<String>,
-    pub(crate) device: Option<Status>,
+    pub(crate) device: Option<Device>,
     pub(crate) blocked: bool,
     pub(crate) report_unresolved: bool,
     pub(crate) orphaned_receipt: bool,
@@ -332,7 +331,7 @@ impl Model {
     }
 
     fn reports_enabled(&self) -> bool {
-        self.queue_enabled() && self.device.as_ref().is_some_and(Status::ready)
+        self.queue_enabled() && self.device.as_ref().is_some_and(Device::ready)
     }
 
     const fn resolve_enabled(&self) -> bool {

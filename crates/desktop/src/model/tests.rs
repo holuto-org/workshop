@@ -1,5 +1,7 @@
 use super::*;
 use agent::documents::ReceiptKind;
+use fiscal::device::Vendor;
+use posnet::capabilities::capabilities;
 use uuid::Uuid;
 
 fn today() -> Date {
@@ -19,12 +21,14 @@ fn document() -> Document {
 fn ready() -> Model {
     let mut model = Model::new(Settings::default(), today());
     model.connected = true;
-    model.device = Some(Status {
-        name: String::new(),
+    model.device = Some(Device {
+        vendor: Vendor::Posnet,
+        model: String::new(),
+        firmware: String::new(),
         serial: String::new(),
-        version: String::new(),
         problems: Vec::new(),
         vat: Vec::new(),
+        capabilities: capabilities(),
     });
     model.set_documents(vec![document()], 1, false);
     model.selected = Some(0);

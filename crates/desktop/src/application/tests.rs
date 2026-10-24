@@ -16,9 +16,10 @@ use std::{
 };
 
 use agent::documents::{Document, ReceiptKind};
+use fiscal::device::{Device, Vendor};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use jiff::Timestamp;
-use posnet::{printer::Status, simulator::Simulator};
+use posnet::{capabilities::capabilities, simulator::Simulator};
 use slint::{
     Model as _,
     platform::{Key, WindowEvent},
@@ -96,12 +97,14 @@ fn ready(app: &Rc<RefCell<Application>>) {
         port: "test".into(),
     });
     app.event(Event::Device {
-        status: Some(Status {
-            name: "TEMO".into(),
-            version: "32.01".into(),
+        status: Some(Device {
+            vendor: Vendor::Posnet,
+            model: "TEMO".into(),
+            firmware: "32.01".into(),
             serial: "SERIAL42".into(),
             problems: Vec::new(),
             vat: Vec::new(),
+            capabilities: capabilities(),
         }),
         blocked: false,
         report_unresolved: false,

@@ -92,7 +92,7 @@ impl Quantity {
         10_u64
             .checked_pow(decimals.into())
             .filter(|places| *places <= QUANTITY_UNIT)
-            .is_none_or(|places| self.0 % (QUANTITY_UNIT / places) == 0)
+            .is_none_or(|places| self.0.is_multiple_of(QUANTITY_UNIT / places))
     }
 
     /// Matches printer line rounding: half up to whole grosze; `None` on overflow.

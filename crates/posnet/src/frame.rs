@@ -3,7 +3,7 @@
 //! CRC-16/XMODEM (polynomial 0x1021, initial value 0) covers the payload;
 //! four uppercase hex digits carry the checksum (spec p. 13).
 
-use fiscal::{error::Error, receipt::posnet::check_printable};
+use fiscal::error::Error;
 
 use crate::text;
 
@@ -203,8 +203,20 @@ fn corrupt() -> Error {
     Error::Protocol(CORRUPT.to_owned())
 }
 
-#[cfg(test)]
-pub(crate) mod tests;
+/// Controls would corrupt framing; all other characters need a Windows-1250 byte.
+fn check_printable(value: &str) -> Result<(), Error> {
+    if value.chars().any(char::is_control) {
+        return Err(Error::Invalid(
+            "Tekst nie może zawierać znaków sterujących.".to_owned(),
+        ));
+    }
+    if text::encode(value).is_none() {
+        return Err(Error::Invalid(
+            "Drukarka nie obsługuje niektórych znaków w tekście.".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 fn parameter(field: &str) -> String {
     if field.is_empty() {
@@ -228,3 +240,6 @@ const fn explanation(code: u32) -> &'static str {
         _ => "",
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

@@ -13,9 +13,7 @@ pub(crate) fn capabilities() -> Capabilities {
         max_company_name: 40,
         max_buyer_nip: 30,
         max_quantity_decimals: 8,
-        allowed_characters: (' '..='~')
-            .chain("ĄĆĘŁŃÓŚŹŻąćęłńóśźż".chars())
-            .collect(),
+        allowed_characters: (' '..='~').chain("ĄĆĘŁŃÓŚŹŻąćęłńóśźż".chars()).collect(),
         advance_deductions: true,
         zero_total_receipts: true,
         company_footer: true,
@@ -122,7 +120,10 @@ fn receipt_limits_follow_capabilities() {
     };
     assert!(build(2, "123", "abcde").is_ok());
     for (result, message) in [
-        (build(3, "123", "abcde"), "Paragon musi zawierać od 1 do 2 pozycji."),
+        (
+            build(3, "123", "abcde"),
+            "Paragon musi zawierać od 1 do 2 pozycji.",
+        ),
         (
             build(2, "1234", "abcde"),
             "NIP nabywcy musi zawierać od 1 do 3 znaków.",

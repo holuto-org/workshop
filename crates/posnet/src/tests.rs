@@ -3,6 +3,7 @@ use std::io;
 use jiff::civil::date;
 
 use fiscal::{
+    driver::Driver,
     error::Error,
     journal::Journal,
     link::Connection,
@@ -12,6 +13,7 @@ use fiscal::{
 };
 
 use crate::{
+    capabilities::capabilities,
     frame,
     printer::Printer,
     simulator::{Fault, SERIAL, Simulator},
@@ -62,6 +64,7 @@ fn sale() -> Receipt {
         vec![pay(PaymentForm::Cash, 100)],
         None,
         BRAND,
+        &capabilities(),
     )
     .unwrap()
 }
@@ -76,6 +79,7 @@ fn all_steps_receipt() -> Receipt {
         vec![pay(PaymentForm::Card, 100)],
         Some("1234567890".to_owned()),
         "Inna marka",
+        &capabilities(),
     )
     .unwrap()
 }
@@ -199,6 +203,7 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
                 vec![pay(PaymentForm::Cash, 100)],
                 None,
                 BRAND,
+                &capabilities(),
             )
             .unwrap()
         } else {

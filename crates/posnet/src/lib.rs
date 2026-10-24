@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod capabilities;
 pub mod frame;
 pub mod printer;
 pub mod receipt;

@@ -10,6 +10,8 @@
 use std::{io, mem, time::Duration};
 
 use fiscal::{
+    device::{Capabilities, Device as PrinterDevice},
+    driver::Driver,
     error::Error as PrinterError,
     journal::Journal as DeviceJournal,
     money::Grosze,
@@ -17,14 +19,13 @@ use fiscal::{
     report::Report,
 };
 use jiff::Timestamp;
-use posnet::printer::{Printer, Status};
 use uuid::Uuid;
 
 use crate::{
     Error,
     api::{
         Api, ApiError,
-        model::{Job, JobState, Telemetry, printer_slots},
+        model::{Job, JobState, Telemetry},
     },
     history::{self, HistoryEntry},
     journal::{
@@ -59,13 +60,13 @@ pub(crate) enum Blocked {
 }
 
 pub(crate) struct Agent<'dir> {
-    printer: Printer,
+    printer: Box<dyn Driver>,
     api: Api,
     dir: &'dir StateDir,
     journal: Journal,
     telemetry: Telemetry,
     /// Last probe of the paired device; source of the telemetry.
-    status: Option<Status>,
+    status: Option<PrinterDevice>,
     /// Operator intervention needed mid-operation; `None` when cleared.
     waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     news: News,
@@ -74,7 +75,7 @@ pub(crate) struct Agent<'dir> {
 
 impl<'dir> Agent<'dir> {
     pub(crate) fn new(
-        printer: Printer,
+        printer: Box<dyn Driver>,
         api: Api,
         dir: &'dir StateDir,
         waiting: &'dir (dyn Fn(Option<&str>) + Sync),
@@ -97,7 +98,7 @@ impl<'dir> Agent<'dir> {
         &mut self.api
     }
 
-    pub(crate) const fn status(&self) -> Option<&Status> {
+    pub(crate) const fn status(&self) -> Option<&PrinterDevice> {
         self.status.as_ref()
     }
 
@@ -106,20 +107,17 @@ impl<'dir> Agent<'dir> {
     }
 
     /// Updates telemetry; returns notices for active VAT rates Holuto does not support.
-    pub(crate) fn describe(&mut self, status: Status) -> Result<Vec<String>, Error> {
-        if status.serial != self.api.serial() {
+    pub(crate) fn describe(&mut self, device: PrinterDevice) -> Result<Vec<String>, Error> {
+        if device.serial != self.api.serial() {
             return Err(Error::Blocked(format!(
                 "Podłączona drukarka {} nie jest drukarką {} sparowaną przy uruchomieniu. \
                  Podłącz ją ponownie albo zatrzymaj i uruchom obsługę.",
-                status.serial,
+                device.serial,
                 self.api.serial()
             )));
         }
-        let (slots, skipped) = printer_slots(&status.vat);
-        status.name.clone_into(&mut self.telemetry.model);
-        status.version.clone_into(&mut self.telemetry.firmware);
-        self.telemetry.vat_slots = slots;
-        self.status = Some(status);
+        let skipped = self.telemetry.describe(&device);
+        self.status = Some(device);
         Ok(skipped)
     }
 
@@ -400,7 +398,7 @@ impl<'dir> Agent<'dir> {
                 return self.finish(&mut operation, JobState::Failed, None);
             },
         };
-        let receipt = match self.receipt(job) {
+        let receipt = match self.receipt(job, &status.capabilities) {
             Ok(receipt) => receipt,
             Err(reason) => {
                 self.report(&mut operation, JobResult::failed(&reason))?;
@@ -439,7 +437,7 @@ impl<'dir> Agent<'dir> {
         }
     }
 
-    fn receipt(&self, job: &Job) -> Result<Receipt, String> {
+    fn receipt(&self, job: &Job, capabilities: &Capabilities) -> Result<Receipt, String> {
         let rates = &self.telemetry.vat_slots;
         let slot_rate = |slot: u8, rate| {
             rates
@@ -470,6 +468,7 @@ impl<'dir> Agent<'dir> {
                 quantity(&item.quantity)?,
                 amount("Cena", &item.unit_price)?,
                 slot(item.vat_slot)?,
+                capabilities,
             )
             .map_err(|error| error.to_string())?;
             if line.total() != amount("Wartość pozycji", &item.total)? {
@@ -509,6 +508,7 @@ impl<'dir> Agent<'dir> {
             payments,
             job.buyer_nip.clone(),
             &job.company_name,
+            capabilities,
         )
         .map_err(|error| error.to_string())
     }

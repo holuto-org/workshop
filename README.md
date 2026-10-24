@@ -5,8 +5,9 @@ Prints **only Holuto sales and advances** queued in the web app or selected in
 Holuto Workshop. No manual receipt editor or separate agent; processing
 continues with the window closed.
 
-- **`crates/fiscal`**: Shared fiscal values, receipt validation, report/journal
-  contracts, Windows-1250 codec and serial links.
+- **`crates/fiscal`**: Shared fiscal values, receipt validation against driver
+  capabilities, the `Driver` trait and `Device` model, report/journal contracts,
+  Windows-1250 codec and serial links.
 - **`crates/posnet`**: Serial driver: framing, CRC, CP1250, printer state,
   receipts, reports and socket simulator.
 - **`crates/agent`**: Holuto `/agent` API, durable journal, receipt execution
@@ -253,9 +254,10 @@ contract allows 0–15), rates `"23"`, `"8"`, `"5"`, `"0"` or `"zw"`. Each
 session/heartbeat replaces the backend mapping. `maxItemNameLength`,
 `maxLinesPerReceipt`, `maxCompanyNameLength` and `allowedCharacters` (all
 printable characters, NFC) are required before queueing; the backend rejects
-line or company names outside these limits. The protocol cannot report them, so
-`fiscal::receipt::posnet` defines the documented Temo Online limits: 80-character item
-names (`trline`), 500 lines (`trinit`), 40-character company footer lines
+line or company names outside these limits. The protocol cannot report them, so each
+driver publishes them as `fiscal::device::Capabilities`, which also validate receipts
+before printer I/O. `posnet::capabilities` defines the documented Temo Online limits:
+80-character item names (`trline`), 500 lines (`trinit`), 40-character company footer lines
 (`trftrln`) and printable CP1250 from 0x20–0xFF, excluding DEL, no-break space,
 soft hyphen and the bytes the protocol prints as table-drawing glyphs
 (`¤ ¨ ˛ ´ ¸`, POT-I-DEV-37 p. 14).

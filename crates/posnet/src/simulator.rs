@@ -22,10 +22,11 @@ use fiscal::{
     decimal,
     error::Error,
     link::{Link, Port},
-    receipt::{Quantity, posnet::MAX_BUYER_NIP_LENGTH},
+    receipt::Quantity,
 };
 
 use crate::{
+    capabilities::MAX_BUYER_NIP,
     frame::{self, ETX, MAX_FRAME, Reply},
     printer::PRINTER_ZONE,
     text,
@@ -674,7 +675,7 @@ impl State {
             },
             "trnipset" if self.transaction_open => {
                 let nip = params.get("ni").ok_or(())?;
-                if nip.trim().is_empty() || nip.chars().count() > MAX_BUYER_NIP_LENGTH {
+                if nip.trim().is_empty() || nip.chars().count() > MAX_BUYER_NIP {
                     return Err(());
                 }
                 self.buyer_nip = Some(nip.clone());

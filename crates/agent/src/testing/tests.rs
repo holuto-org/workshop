@@ -26,10 +26,7 @@ fn api(server: &Holuto) -> Result<Api, Box<dyn StdError>> {
 }
 
 fn telemetry() -> Telemetry {
-    let mut telemetry = Telemetry::new("DEMO0000001");
-    telemetry.model = "POSNET TEMO ONLINE".to_owned();
-    telemetry.firmware = "32.01".to_owned();
-    telemetry
+    super::telemetry("DEMO0000001")
 }
 
 fn document(order: Uuid, allocation: Option<Uuid>, occurred_at: &str) -> Value {

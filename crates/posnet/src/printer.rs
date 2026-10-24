@@ -5,16 +5,18 @@ use std::{
 
 use fiscal::{
     decimal,
+    device::{Device, VatKind, VatRate, Vendor},
+    driver::Driver,
     error::Error,
     journal::{Journal, Printed},
     link::{Connection, DEFAULT_TIMEOUT, Link},
     receipt::{Receipt, VAT_SLOTS},
     report::Report,
-    vat::VatRate,
 };
 use jiff::{Timestamp, civil::Date, fmt::strtime::BrokenDownTime, tz::TimeZone};
 
 use crate::{
+    capabilities::capabilities,
     frame::Reply,
     receipt::{self, Step},
     session::{self, Session},
@@ -30,49 +32,10 @@ const PERIODIC_REPORT_TIMEOUT: Duration = Duration::from_secs(300);
 const OPERATOR_WAIT: Duration = Duration::from_secs(600);
 const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 pub(crate) const PRINTER_ZONE: &str = "Europe/Warsaw";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Status {
-    pub name: String,
-    pub version: String,
-    pub serial: String,
-    /// Empty when ready.
-    pub problems: Vec<String>,
-    pub vat: Vec<VatRate>,
-}
-
-impl Status {
-    pub const fn ready(&self) -> bool {
-        self.problems.is_empty()
-    }
-
-    pub fn description(&self) -> String {
-        if self.ready() {
-            "Gotowa do drukowania".to_owned()
-        } else {
-            self.problems.join(". ")
-        }
-    }
-
-    fn require_ready(&self) -> Result<(), Error> {
-        if self.ready() {
-            Ok(())
-        } else {
-            Err(Error::NotReady(self.description()))
-        }
-    }
-
-    fn require_device(&self, serial: &str) -> Result<(), Error> {
-        if self.serial == serial {
-            Ok(())
-        } else {
-            Err(Error::Invalid(format!(
-                "Podłączona drukarka {} nie jest drukarką {serial}, której dotyczy operacja.",
-                self.serial
-            )))
-        }
-    }
-}
+/// The printer encodes VAT exemption as 100 %.
+const EXEMPT_BASIS_POINTS: u32 = 10_000;
+/// Above 99.99 %, only the exempt 100 % slot is active.
+const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
 
 #[derive(Debug)]
 pub struct Printer {
@@ -85,20 +48,12 @@ impl Printer {
         Self { link, connection }
     }
 
-    pub const fn connection(&self) -> &Connection {
-        &self.connection
-    }
-
-    pub fn probe(&self) -> Result<Status, Error> {
-        read_status(&mut self.session()?)
-    }
-
     /// Probes the configured port, then other candidates if `may_switch` permits.
     /// Adopts the first Temo Online; unidentified devices receive only `getrealid`.
     /// Switching must be forbidden while an operation is unresolved.
-    pub fn detect(&mut self, may_switch: bool) -> Result<Status, Error> {
+    pub fn detect(&mut self, may_switch: bool) -> Result<Device, Error> {
         let error = match self.probe() {
-            Ok(status) => return Ok(status),
+            Ok(device) => return Ok(device),
             Err(error) => error,
         };
         if !may_switch {
@@ -114,9 +69,9 @@ impl Printer {
                 baud_rate: self.connection.baud_rate,
             };
             match identify(self.link.as_ref(), &connection) {
-                Ok(Some(status)) => {
+                Ok(Some(device)) => {
                     self.connection = connection;
-                    return Ok(status);
+                    return Ok(device);
                 },
                 Ok(None) => {},
                 Err(scan) => {
@@ -134,34 +89,52 @@ impl Printer {
         }))
     }
 
+    fn session(&self) -> Result<Session, Error> {
+        Session::open(self.link.as_ref(), &self.connection)
+    }
+}
+
+impl Driver for Printer {
+    fn vendor(&self) -> Vendor {
+        Vendor::Posnet
+    }
+
+    fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    fn probe(&self) -> Result<Device, Error> {
+        read_device(&mut self.session()?)
+    }
+
     /// Requires the paired device to be ready before resolving an interrupted operation.
-    pub fn verify(&self, serial: &str) -> Result<Status, Error> {
-        let status = self.probe()?;
-        status.require_ready()?;
-        status.require_device(serial)?;
-        Ok(status)
+    fn verify(&self, serial: &str) -> Result<Device, Error> {
+        let device = self.probe()?;
+        device.require_ready()?;
+        device.require_serial(serial)?;
+        Ok(device)
     }
 
     /// Rechecks identity, readiness and expected VAT table in the printing session.
     #[tracing::instrument(skip_all, fields(sentry.op = "device.receipt"))]
-    pub fn print_receipt(
+    fn print_receipt(
         &self,
         receipt: &Receipt,
-        expected: &Status,
+        expected: &Device,
         journal: &mut dyn Journal,
     ) -> Result<Printed, Error> {
         let mut session = self.session()?;
-        let status = read_status(&mut session)?;
-        status.require_ready()?;
-        status.require_device(&expected.serial)?;
-        if status.vat != expected.vat {
+        let device = read_device(&mut session)?;
+        device.require_ready()?;
+        device.require_serial(&expected.serial)?;
+        if device.vat != expected.vat {
             return Err(Error::Invalid(
                 "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
                     .to_owned(),
             ));
         }
         let inactive = receipt.sales().keys().any(|slot| {
-            status
+            device
                 .vat
                 .get(usize::from(slot.get()))
                 .is_none_or(|rate| !rate.active())
@@ -190,7 +163,7 @@ impl Printer {
     }
 
     #[tracing::instrument(skip_all, fields(sentry.op = "device.report", report = report.label()))]
-    pub fn print_report(
+    fn print_report(
         &self,
         report: Report,
         serial: &str,
@@ -204,9 +177,9 @@ impl Printer {
             ));
         }
         let mut session = self.session()?;
-        let status = read_status(&mut session)?;
-        status.require_ready()?;
-        status.require_device(serial)?;
+        let device = read_device(&mut session)?;
+        device.require_ready()?;
+        device.require_serial(serial)?;
         let step = match report {
             Report::Daily => {
                 let clock = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
@@ -247,10 +220,6 @@ impl Printer {
         dispatch(&mut session, &[step], journal)?;
         tracing::info!("Report printed");
         Ok(())
-    }
-
-    fn session(&self) -> Result<Session, Error> {
-        Session::open(self.link.as_ref(), &self.connection)
     }
 }
 
@@ -426,13 +395,13 @@ fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<String> {
     matches!(device.get("ds"), Some("2" | "3")).then(|| "Drukarka oczekuje na operatora".to_owned())
 }
 
-fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Status>, Error> {
+fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
     let mut session = Session::open(link, connection)?;
     let identity = session.command("getrealid", &[], SCAN_TIMEOUT)?;
     if identity.get("nm") != Some(TEMO) {
         return Ok(None);
     }
-    read_status(&mut session).map(Some)
+    read_device(&mut session).map(Some)
 }
 
 /// Prefer ISO8601 `tm` (spec p. 17), preserving the autumn-hour offset; seconds round down.
@@ -462,28 +431,28 @@ fn clock(session: &mut Session) -> Result<Timestamp, Error> {
         .map_err(|error| unreadable(error.to_string()))
 }
 
-fn read_status(session: &mut Session) -> Result<Status, Error> {
+fn read_device(session: &mut Session) -> Result<Device, Error> {
     let identity = session.command("getrealid", &[], DEFAULT_TIMEOUT)?;
     let device = session.command("sdev", &[], DEFAULT_TIMEOUT)?;
     let mechanism = session.command("sprn", &[], DEFAULT_TIMEOUT)?;
     let common = session.command("scomm", &[], DEFAULT_TIMEOUT)?;
     let transaction = session.command("strns", &[], DEFAULT_TIMEOUT)?;
     let vat = session.command("vatget", &[], DEFAULT_TIMEOUT)?;
-    status(&identity, &device, &mechanism, &common, &transaction, &vat).map_err(|error| {
+    device_from(&identity, &device, &mechanism, &common, &transaction, &vat).map_err(|error| {
         Error::Protocol(format!(
             "Niepełna lub nieprawidłowa odpowiedź statusu drukarki: {error}"
         ))
     })
 }
 
-fn status(
+fn device_from(
     identity: &Reply,
     device: &Reply,
     mechanism: &Reply,
     common: &Reply,
     transaction: &Reply,
     vat: &Reply,
-) -> Result<Status, Error> {
+) -> Result<Device, Error> {
     let name = identity.require("nm")?.to_owned();
     let version = identity.require("vr")?.to_owned();
     let serial = identity.require("nu")?.to_owned();
@@ -499,7 +468,12 @@ fn status(
             let basis_points = decimal::parse(&raw.replace(',', "."), 2)
                 .and_then(|units| u32::try_from(units).ok())
                 .ok_or_else(|| Error::Protocol(format!("nieprawidłowa stawka VAT {raw:?}")))?;
-            Ok(VatRate { slot, basis_points })
+            let kind = match basis_points {
+                EXEMPT_BASIS_POINTS => VatKind::Exempt,
+                ..=MAX_ACTIVE_BASIS_POINTS => VatKind::Rate { basis_points },
+                _ => VatKind::Inactive,
+            };
+            Ok(VatRate { slot, kind })
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let mut problems = Vec::new();
@@ -531,12 +505,14 @@ fn status(
     if !rates.iter().any(|rate| rate.active()) {
         problems.push("Brak aktywnych stawek VAT".to_owned());
     }
-    Ok(Status {
-        name,
-        version,
+    Ok(Device {
+        vendor: Vendor::Posnet,
+        model: name,
+        firmware: version,
         serial,
         problems,
         vat: rates,
+        capabilities: capabilities(),
     })
 }
 

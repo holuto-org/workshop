@@ -9,16 +9,14 @@ use crate::{
         model::{Job, Outcome, Page, PrinterStatus, QueueForm, ResultForm, Telemetry, VatSlotRate},
     },
     documents::{Document, ReceiptKind},
-    testing::{Holuto, JOB_ID, ORDER_ID, job_json, status_json},
+    testing::{Holuto, JOB_ID, ORDER_ID, job_json, status_json, telemetry},
 };
 
 #[test]
 fn every_client_operation_matches_the_vendored_method_path_and_success_statuses() {
     let server = Holuto::new();
     let mut api = Api::new(server.url(), server.token(), "TEST-001").unwrap();
-    let mut telemetry = Telemetry::new("TEST-001");
-    telemetry.model = "POSNET TEMO ONLINE".into();
-    telemetry.firmware = "32.01".into();
+    let telemetry = telemetry("TEST-001");
     api.session(&telemetry).unwrap();
     api.heartbeat(&telemetry).unwrap();
     let page = api.documents(None).unwrap();

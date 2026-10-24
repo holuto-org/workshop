@@ -17,12 +17,14 @@ use std::{
 };
 
 use fiscal::{
+    device::Device,
+    driver::Driver,
     error::Error as PrinterError,
     link::{Connection, Link},
     report::Report,
 };
 use jiff::civil::Date;
-use posnet::printer::{Printer, Status};
+use posnet::printer::Printer;
 use tracing::dispatcher;
 
 use crate::{
@@ -102,7 +104,7 @@ pub enum Event {
         has_next: bool,
     },
     Device {
-        status: Option<Status>,
+        status: Option<Device>,
         blocked: bool,
         report_unresolved: bool,
         orphaned_receipt: bool,
@@ -155,7 +157,7 @@ impl fmt::Debug for Event {
                 orphaned_receipt,
             } => f
                 .debug_struct("Device")
-                .field("ready", &status.as_ref().map(Status::ready))
+                .field("ready", &status.as_ref().map(Device::ready))
                 .field("blocked", blocked)
                 .field("report_unresolved", report_unresolved)
                 .field("orphaned_receipt", orphaned_receipt)
@@ -378,7 +380,7 @@ fn run(
             },
         ));
     };
-    let mut agent = Agent::new(printer, api, dir, &waiting);
+    let mut agent = Agent::new(Box::new(printer), api, dir, &waiting);
     let notices = agent.describe(status.clone())?;
     let mut queue = VecDeque::new();
     if !start_session(&mut agent, inbox, sink, &mut queue)? {

@@ -17,11 +17,13 @@ use tracing_subscriber::{
 
 use super::{Recorder, printer, simulator};
 use fiscal::{
+    driver::Driver,
     error::Error,
     receipt::{PaymentForm, Receipt},
 };
 
 use crate::{
+    capabilities::capabilities,
     simulator::Fault,
     testing::{line, pay},
 };
@@ -62,6 +64,7 @@ fn command_traces_include_timeouts_and_device_codes_but_never_fiscal_payloads() 
             vec![pay(PaymentForm::Card, 93_764_321)],
             Some("9876543210".to_owned()),
             "COMPANY_SECRET_NAME",
+            &capabilities(),
         )
         .unwrap();
         assert!(

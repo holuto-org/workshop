@@ -29,7 +29,7 @@ fn agent<'a>(sim: &Simulator, dir: &'a StateDir, server: &Holuto) -> Result<Agen
             baud_rate: 9600,
         },
     );
-    let mut agent = Agent::new(printer, api, dir, &waiting);
+    let mut agent = Agent::new(Box::new(printer), api, dir, &waiting);
     let status = agent.printer.probe()?;
     let _notices = agent.describe(status)?;
     agent.session()?;

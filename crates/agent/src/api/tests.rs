@@ -12,15 +12,14 @@ use super::{
 };
 use crate::{
     Error,
-    testing::{Fault, Holuto, JOB_ID, PRINTER_ID, job_json, status_json, with},
+    testing::{
+        Fault, Holuto, JOB_ID, PRINTER_ID, job_json, status_json, telemetry as telemetry_for, with,
+    },
 };
 
 type TestResult = Result<(), Box<dyn StdError>>;
 fn telemetry() -> Telemetry {
-    let mut value = Telemetry::new("DEMO0000001");
-    value.model = "POSNET TEMO ONLINE".to_owned();
-    value.firmware = "32.01".to_owned();
-    value
+    telemetry_for("DEMO0000001")
 }
 fn api(server: &Holuto) -> Result<Api, Error> {
     Api::new(server.url(), server.token(), "DEMO0000001")

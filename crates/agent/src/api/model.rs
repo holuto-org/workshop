@@ -4,11 +4,8 @@
 //! `Option::deserialize` requires nullable fields to be present; plain `Option` does not.
 
 use fiscal::{
-    receipt::{
-        VAT_SLOTS,
-        posnet::{MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH, printable_characters},
-    },
-    vat::VatRate,
+    device::{Device, VatKind, VatRate},
+    receipt::VAT_SLOTS,
 };
 use uuid::Uuid;
 
@@ -53,15 +50,16 @@ const MAX_BACKEND_SLOTS: u8 = 16;
 impl VatCode {
     /// `None` for printer rates Holuto does not support.
     pub const fn of(rate: VatRate) -> Option<Self> {
-        if rate.exempt() {
-            return Some(Self::Zw);
-        }
-        match rate.basis_points {
-            2300 => Some(Self::X23),
-            800 => Some(Self::X8),
-            500 => Some(Self::X5),
-            0 => Some(Self::X0),
-            _ => None,
+        match rate.kind {
+            VatKind::Exempt => Some(Self::Zw),
+            VatKind::Rate { basis_points } => match basis_points {
+                2300 => Some(Self::X23),
+                800 => Some(Self::X8),
+                500 => Some(Self::X5),
+                0 => Some(Self::X0),
+                _ => None,
+            },
+            VatKind::Inactive => None,
         }
     }
 
@@ -77,18 +75,36 @@ impl VatCode {
 }
 
 impl Telemetry {
+    /// Device identity and limits stay empty until [`Self::describe`] reads them.
     pub fn new(serial: &str) -> Self {
         Self {
-            allowed_characters: printable_characters(),
+            allowed_characters: String::new(),
             app_version: APP_VERSION,
             firmware: String::new(),
-            max_company_name_length: MAX_COMPANY_NAME_LENGTH,
-            max_item_name_length: MAX_NAME_LENGTH,
-            max_lines_per_receipt: MAX_LINES,
+            max_company_name_length: 0,
+            max_item_name_length: 0,
+            max_lines_per_receipt: 0,
             model: String::new(),
             serial: serial.to_owned(),
             vat_slots: Vec::new(),
         }
+    }
+
+    /// Takes identity, limits and VAT slots from the connected device; returns notices for
+    /// active rates Holuto does not support.
+    pub(crate) fn describe(&mut self, device: &Device) -> Vec<String> {
+        let (slots, skipped) = printer_slots(&device.vat);
+        device.model.clone_into(&mut self.model);
+        device.firmware.clone_into(&mut self.firmware);
+        let capabilities = &device.capabilities;
+        self.max_item_name_length = capabilities.max_item_name;
+        self.max_lines_per_receipt = capabilities.max_lines;
+        self.max_company_name_length = capabilities.max_company_name;
+        capabilities
+            .allowed_characters
+            .clone_into(&mut self.allowed_characters);
+        self.vat_slots = slots;
+        skipped
     }
 }
 
@@ -145,8 +161,8 @@ impl Job {
         if self.order_number <= 0 {
             return Err("numer zlecenia musi być dodatni".to_owned());
         }
-        if !(1..=MAX_LINES).contains(&self.lines.len()) {
-            return Err("zadanie musi mieć od 1 do 500 pozycji".to_owned());
+        if self.lines.is_empty() {
+            return Err("zadanie musi mieć co najmniej jedną pozycję".to_owned());
         }
         if self.kind == ReceiptKind::Advance && !self.advances.is_empty() {
             return Err("zaliczka nie może odliczać zaliczek".to_owned());

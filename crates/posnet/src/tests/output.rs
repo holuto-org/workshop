@@ -2,10 +2,12 @@ use jiff::civil::date;
 
 use super::{Recorder, printer, sale, simulator};
 use crate::{
+    capabilities::capabilities,
     simulator::{SERIAL, Simulator},
     testing::{BRAND, line, pay},
 };
 use fiscal::{
+    driver::Driver,
     money::Grosze,
     receipt::{Advance, PaymentForm, Receipt, VatSlot},
     report::Report,
@@ -64,6 +66,7 @@ fn mixed_vat_and_fractional_quantity_frames() {
         vec![pay(PaymentForm::Cash, 1900)],
         None,
         BRAND,
+        &capabilities(),
     )
     .unwrap();
     insta::assert_snapshot!(receipt_stream(&receipt, BRAND));
@@ -77,6 +80,7 @@ fn buyer_nip_frames() {
         vec![pay(PaymentForm::Cash, 100)],
         Some("123-456-78-90".to_owned()),
         BRAND,
+        &capabilities(),
     )
     .unwrap();
     insta::assert_snapshot!(receipt_stream(&receipt, BRAND));
@@ -99,6 +103,7 @@ fn advance_deductions_and_split_payment_frames() {
         vec![pay(PaymentForm::Cash, 100), pay(PaymentForm::Card, 150)],
         None,
         BRAND,
+        &capabilities(),
     )
     .unwrap();
     insta::assert_snapshot!(receipt_stream(&receipt, BRAND));
@@ -114,6 +119,7 @@ macro_rules! payment_frames {
                 vec![pay($form, 100), pay(PaymentForm::Cash, 0)],
                 None,
                 BRAND,
+                &capabilities(),
             )
             .unwrap();
             insta::assert_snapshot!(receipt_stream(&receipt, BRAND));
@@ -136,6 +142,7 @@ fn fully_prepaid_sale_frames() {
         vec![pay(PaymentForm::Cash, 0)],
         None,
         BRAND,
+        &capabilities(),
     )
     .unwrap();
     insta::assert_snapshot!(receipt_stream(&receipt, BRAND));
@@ -195,6 +202,7 @@ fn fully_prepaid_sale_with_brand_footer_frames() {
         vec![],
         None,
         BRAND,
+        &capabilities(),
     )
     .unwrap();
     insta::assert_snapshot!(receipt_stream(&receipt, "Inny warsztat"));

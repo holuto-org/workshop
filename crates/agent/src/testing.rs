@@ -9,9 +9,15 @@
 
 use crate::api::contract;
 #[cfg(test)]
+use crate::api::model::Telemetry;
+#[cfg(test)]
 use crate::store::StateDir;
+#[cfg(test)]
+use fiscal::device::{Device, Vendor};
 use icu_normalizer::ComposingNormalizerBorrowed;
 use jiff::Timestamp;
+#[cfg(test)]
+use posnet::capabilities::capabilities;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, VecDeque},
@@ -35,6 +41,22 @@ pub const PRINTER_ID: Uuid = Uuid::from_u128(9);
 pub const ORDER_ID: Uuid = Uuid::from_u128(10);
 pub const ALLOCATION_ID: Uuid = Uuid::from_u128(12);
 const TOKEN: &str = "synthetic-device-token";
+
+/// Posnet telemetry for the pairing `serial`, as the agent sends it once connected.
+#[cfg(test)]
+pub(crate) fn telemetry(serial: &str) -> Telemetry {
+    let mut telemetry = Telemetry::new(serial);
+    let _skipped = telemetry.describe(&Device {
+        vendor: Vendor::Posnet,
+        model: "POSNET TEMO ONLINE".to_owned(),
+        firmware: "32.01".to_owned(),
+        serial: serial.to_owned(),
+        problems: Vec::new(),
+        vat: Vec::new(),
+        capabilities: capabilities(),
+    });
+    telemetry
+}
 
 #[derive(Debug)]
 pub enum Fault {

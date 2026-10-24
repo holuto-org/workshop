@@ -47,8 +47,9 @@ makes guidance untrue, update its home in the same change.
 One Cargo workspace; dependency versions and lints live only in the root
 `Cargo.toml`; crates use `workspace = true`.
 
-- **`crates/fiscal` / `fiscal`**: Shared fiscal values, receipt validation,
-  report/journal contracts, Windows-1250 codec and serial links.
+- **`crates/fiscal` / `fiscal`**: Shared fiscal values, capability-driven receipt
+  validation, `Driver` trait and `Device`/`Capabilities`, report/journal
+  contracts, Windows-1250 codec and serial links.
 - **`crates/posnet` / `posnet`**: CP1250 frames, sessions, preflight,
   receipt/report commands; feature `simulator` provides the printer peer used
   by tests.
