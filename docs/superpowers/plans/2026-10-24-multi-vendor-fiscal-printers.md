@@ -366,10 +366,11 @@ pub trait Driver: Send + fmt::Debug {
   requires `operation.vendor == driver.vendor()` and the same serial;
   otherwise the existing "podłącz drukarkę…" blocked messages name both.
 - `Settings.vendor: Option<Vendor>` (`"vendor": null` = detect), validated;
-  `Settings::default()` has `None`. A settings file without `vendor` fails to
-  load as today (`deny_unknown_fields` / missing field). Rule on whether a
-  pre-change settings file must load: it must, so add the same one-time
-  rewrite as the journal (`vendor: null`).
+  `Settings::default()` has `None`. A pre-change settings file (no `vendor`
+  key) must still load, as "detect" (`#[serde(default)]` on this one field):
+  missing really means unknown, and settings are read without the instance
+  lock (telemetry preference, crash reporter), so a write-on-read migration
+  is not allowed there. `deny_unknown_fields` stays.
 - `status::Snapshot.vendor: Option<Vendor>`; `workshop status --json` and
   `config show --json` include `vendor`.
 
