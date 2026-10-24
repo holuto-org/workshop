@@ -112,10 +112,14 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
 
     /// Whether new work is refused, and why.
     pub(crate) fn blocked(&self) -> Result<Option<Blocked>, Error> {
-        Ok(self.journal.load()?.and_then(|operation| match operation {
-            Operation::Receipt(receipt) => receipt.settled.is_none().then_some(Blocked::Receipt),
-            Operation::Report(report) => report.unresolved().then_some(Blocked::Report),
-        }))
+        Ok(self
+            .journal
+            .load()?
+            .filter(Operation::blocks)
+            .map(|operation| match operation {
+                Operation::Receipt(_) => Blocked::Receipt,
+                Operation::Report(_) => Blocked::Report,
+            }))
     }
 
     /// One poll: probe, heartbeat (even when the probe failed, so Holuto sees the device alive),
@@ -215,12 +219,9 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
 
     /// Reconciles the journaled operation; `Some` while it still blocks new work.
     fn settle(&mut self, step: &mut Step) -> Result<Option<Blocked>, Error> {
-        let mut operation = match self.journal.load()? {
+        let mut operation = match self.journal.load()?.filter(Operation::blocks) {
             None => return Ok(None),
-            Some(Operation::Report(report)) => {
-                return Ok(report.unresolved().then_some(Blocked::Report));
-            },
-            Some(Operation::Receipt(operation)) if operation.settled.is_some() => return Ok(None),
+            Some(Operation::Report(_)) => return Ok(Some(Blocked::Report)),
             Some(Operation::Receipt(operation)) => operation,
         };
         if operation.device_serial != self.api.serial() {

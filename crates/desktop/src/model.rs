@@ -23,18 +23,14 @@ pub(crate) enum Tab {
 }
 
 impl Tab {
-    const ALL: [Self; 4] = [
-        Self::Documents,
-        Self::Reports,
-        Self::History,
-        Self::Settings,
-    ];
-
-    fn from_index(index: i32) -> Option<Self> {
-        usize::try_from(index)
-            .ok()
-            .and_then(|index| Self::ALL.get(index))
-            .copied()
+    const fn from_index(index: i32) -> Option<Self> {
+        match index {
+            0 => Some(Self::Documents),
+            1 => Some(Self::Reports),
+            2 => Some(Self::History),
+            3 => Some(Self::Settings),
+            _ => None,
+        }
     }
 
     const fn index(self) -> i32 {
