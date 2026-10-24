@@ -1,10 +1,10 @@
 //! Rows for the `StandardTableView`s: Slint draws them, Rust owns their order.
 
-use std::{cmp::Ordering, rc::Rc};
+use std::{cmp::Ordering, mem, rc::Rc};
 
 use agent::{documents::Document, history::HistoryEntry};
 use jiff::{Timestamp, tz::TimeZone};
-use posnet::money::zloty;
+use posnet::money::{Grosze, zloty};
 use slint::{
     Model as _, ModelRc, SharedString, VecModel,
     language::{SortOrder, StandardListViewItem, TableColumn},
@@ -13,9 +13,11 @@ use slint::{
 /// Both tables show five columns; the `.slint` column lists match `Row::cells`.
 const COLUMNS: usize = 5;
 
-/// One table row type: its cells and how a column orders it.
+/// One table row type: its cells, its identity and how a column orders it.
 pub(crate) trait Row: PartialEq {
     fn cells(&self) -> [SharedString; COLUMNS];
+    /// Whether both rows show the same record, possibly with changed details.
+    fn same(&self, other: &Self) -> bool;
     /// Orders by the underlying values (amounts, timestamps), not by the formatted text.
     fn compare(&self, other: &Self, column: usize) -> Ordering;
 }
@@ -72,25 +74,25 @@ impl<T: Row> Table<T> {
         &self.items
     }
 
-    pub(crate) fn rows(&self) -> ModelRc<ModelRc<StandardListViewItem>> {
-        Rc::clone(&self.rows).into()
-    }
-
-    /// Replaces the items, in the order the operator chose.
-    pub(crate) fn set(&mut self, mut items: Vec<T>) {
+    /// Replaces the items in the operator's order; returns where the record at `selected` is now.
+    pub(crate) fn set(&mut self, mut items: Vec<T>, selected: Option<usize>) -> Option<usize> {
         if let Some(sort) = self.sort {
             items.sort_by(|a, b| sort.compare(a, b));
         }
+        let selected = selected
+            .and_then(|index| self.items.get(index))
+            .and_then(|old| items.iter().position(|new| new.same(old)));
         if self.items != items {
             self.rows.set_vec(items.iter().map(row).collect::<Vec<_>>());
             self.items = items;
         }
+        selected
     }
 
-    /// Sorts stably and returns where the item at `selected` moved.
+    /// Sorts stably; returns where the row at `selected` moved.
     pub(crate) fn sort(&mut self, sort: Sort, selected: Option<usize>) -> Option<usize> {
         self.sort = Some(sort);
-        let mut tagged: Vec<_> = std::mem::take(&mut self.items)
+        let mut tagged: Vec<_> = mem::take(&mut self.items)
             .into_iter()
             .enumerate()
             .collect();
@@ -102,7 +104,7 @@ impl<T: Row> Table<T> {
         selected
     }
 
-    /// Shows the sort indicator on the sorted column only; a recreated window starts unsorted.
+    /// Marks only the sorted column, also in a window recreated from the tray.
     pub(crate) fn sync_columns(&self, columns: &ModelRc<TableColumn>) {
         for index in 0..columns.row_count() {
             let order = match self.sort {
@@ -132,6 +134,10 @@ impl Row for Document {
             zloty(self.amount).into(),
             timestamp_label(self.occurred_at).into(),
         ]
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        self.same_document(other)
     }
 
     fn compare(&self, other: &Self, column: usize) -> Ordering {
@@ -166,6 +172,10 @@ impl Row for HistoryEntry {
         ]
     }
 
+    fn same(&self, other: &Self) -> bool {
+        self.job_id == other.job_id
+    }
+
     fn compare(&self, other: &Self, column: usize) -> Ordering {
         match column {
             0 => self.items.cmp(&other.items),
@@ -178,7 +188,7 @@ impl Row for HistoryEntry {
     }
 }
 
-fn payments(entry: &HistoryEntry) -> impl Iterator<Item = (&'static str, posnet::money::Grosze)> {
+fn payments(entry: &HistoryEntry) -> impl Iterator<Item = (&'static str, Grosze)> {
     entry
         .payments
         .iter()

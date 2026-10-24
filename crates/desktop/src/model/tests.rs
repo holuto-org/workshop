@@ -7,6 +7,7 @@ use std::error::Error;
 
 use super::*;
 use agent::documents::ReceiptKind;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 fn document() -> Document {
@@ -26,7 +27,7 @@ fn controls_follow_connection_selection_readiness_and_blocking() -> Result<(), B
     i_slint_backend_testing::init_no_event_loop();
     let window = AppWindow::new()?;
     let mut model = Model::new(Settings::default());
-    model.documents = vec![document()];
+    model.set_documents(vec![document()], 1, false);
     model.selected = Some(0);
     model.sync(&window);
     assert!(
@@ -83,7 +84,7 @@ fn controls_follow_connection_selection_readiness_and_blocking() -> Result<(), B
 fn queue_confirmation_captures_document_and_validated_nip() {
     let mut model = Model::new(Settings::default());
     model.connected = true;
-    model.documents = vec![document()];
+    model.set_documents(vec![document()], 1, false);
     model.selected = Some(0);
     model.nip = "123".into();
     model.request(Action::QueueReceipt);
@@ -106,7 +107,7 @@ fn queue_confirmation_captures_document_and_validated_nip() {
 }
 
 #[test]
-fn report_commands_and_date_order() -> Result<(), Box<dyn Error>> {
+fn ready_model() -> Model {
     let mut model = Model::new(Settings::default());
     model.connected = true;
     model.device = Some(Status {
@@ -116,6 +117,12 @@ fn report_commands_and_date_order() -> Result<(), Box<dyn Error>> {
         problems: vec![],
         vat: vec![],
     });
+    model
+}
+
+#[test]
+fn report_commands_and_date_order() -> Result<(), Box<dyn Error>> {
+    let mut model = ready_model();
     let mut commands = Vec::new();
     model.request(Action::DailyReport);
     model.confirm(true, |command| commands.push(command));
@@ -132,8 +139,8 @@ fn report_commands_and_date_order() -> Result<(), Box<dyn Error>> {
             }
         ]
     );
-    model.from = Date::new(2026, 10, 20)?;
-    model.to = Date::new(2026, 10, 19)?;
+    model.from = "20.10.2025".into();
+    model.to = "19.10.2025".into();
     model.request(Action::PeriodicReport);
     assert_eq!(
         model.message,
@@ -143,15 +150,15 @@ fn report_commands_and_date_order() -> Result<(), Box<dyn Error>> {
         model.pending.is_none(),
         "Reversed dates cannot be confirmed"
     );
-    model.to = Date::new(2026, 10, 21)?;
+    model.to = "21.10.2025".into();
     model.summary = true;
     model.request(Action::PeriodicReport);
     model.confirm(true, |command| commands.push(command));
     assert_eq!(
         commands.last(),
         Some(&Command::PeriodicReport {
-            from: model.from,
-            to: model.to,
+            from: Date::new(2025, 10, 20)?,
+            to: Date::new(2025, 10, 21)?,
             summary: true
         })
     );
@@ -164,7 +171,7 @@ fn refresh_retains_identity_not_old_row_index() {
     let selected = document();
     let mut other = document();
     other.order_id = Uuid::from_u128(1);
-    model.documents = vec![selected.clone(), other.clone()];
+    model.set_documents(vec![selected.clone(), other.clone()], 1, false);
     model.selected = Some(0);
     model.set_documents(vec![other, selected], 2, false);
     assert_eq!(model.selected, Some(1));
@@ -176,7 +183,7 @@ fn refresh_retains_identity_not_old_row_index() {
 fn confirmation_does_not_submit_after_blocking_or_cancellation() {
     let mut model = Model::new(Settings::default());
     model.connected = true;
-    model.documents = vec![document()];
+    model.set_documents(vec![document()], 1, false);
     model.selected = Some(0);
     let mut commands = Vec::new();
     model.request(Action::QueueReceipt);
@@ -191,18 +198,72 @@ fn confirmation_does_not_submit_after_blocking_or_cancellation() {
 }
 
 #[test]
-fn future_date_is_refused_without_changing_selected_range() -> Result<(), Box<dyn Error>> {
-    let mut model = Model::new(Settings::default());
-    let old = model.to;
-    let tomorrow = old.checked_add(1.day())?;
-    model.change_date(false, &ui_date(tomorrow));
-    assert_eq!(
-        model.to, old,
-        "A future date must not become a report boundary"
-    );
+fn typed_report_dates_must_be_valid_and_not_in_the_future() -> Result<(), Box<dyn Error>> {
+    let mut model = ready_model();
+    model.to = date_label(Zoned::now().date().checked_add(1.day())?);
+    model.request(Action::PeriodicReport);
     assert_eq!(
         model.message,
-        "Data nie może być późniejsza niż dzisiejsza."
+        "Data końcowa nie może być późniejsza niż dzisiejsza."
+    );
+    assert!(
+        model.pending.is_none(),
+        "A future date must not become a report boundary"
+    );
+    for typed in ["31.02.2025", "2025-10-20", "20.10", ""] {
+        model.from = typed.into();
+        model.request(Action::PeriodicReport);
+        assert_eq!(
+            model.message, "Data początkowa musi mieć postać dd.mm.rrrr.",
+            "{typed:?} is not a dd.mm.rrrr date"
+        );
+        assert!(model.pending.is_none(), "{typed:?} cannot be confirmed");
+    }
+    Ok(())
+}
+
+#[test]
+fn sorting_and_refresh_keep_the_selected_document() {
+    let mut model = Model::new(Settings::default());
+    model.connected = true;
+    let selected = document();
+    let mut other = document();
+    other.order_id = Uuid::from_u128(1);
+    other.order_number = 7;
+    model.set_documents(vec![selected.clone(), other.clone()], 1, false);
+    model.selected = Some(0);
+    model.sort_documents(0, false);
+    assert_eq!(model.documents(), [other.clone(), selected.clone()]);
+    assert_eq!(model.selected, Some(1));
+    // The worker refreshes in server order; the operator's order stays.
+    model.set_documents(vec![selected.clone(), other], 1, false);
+    assert_eq!(model.selected, Some(1));
+    model.request(Action::QueueReceipt);
+    let mut commands = Vec::new();
+    model.confirm(true, |command| commands.push(command));
+    assert_eq!(
+        commands,
+        vec![Command::Queue {
+            document: selected,
+            buyer_nip: None
+        }]
+    );
+}
+
+#[test]
+fn running_worker_settings_ignore_window_edits() -> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_no_event_loop();
+    let window = AppWindow::new()?;
+    let mut model = Model::new(Settings::default());
+    model.running = true;
+    model.sync(&window);
+    window.set_port("/dev/ttyUSB9".into());
+    window.set_api_url("https://other.example".into());
+    model.capture(&window);
+    assert_eq!(
+        model.settings,
+        Settings::default(),
+        "Settings change only while the worker is stopped"
     );
     Ok(())
 }

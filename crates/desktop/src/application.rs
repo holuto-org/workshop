@@ -109,14 +109,21 @@ impl Application {
                 app.capture();
                 app.model.selected = usize::try_from(index)
                     .ok()
-                    .filter(|index| *index < app.model.documents.len());
+                    .filter(|index| *index < app.model.documents().len());
                 Ok(())
             });
         });
-        window.on_date_changed(|from, date| {
+        window.on_sort_documents(|column, descending| {
             with_app(|app| {
                 app.capture();
-                app.model.change_date(from, &date);
+                app.model.sort_documents(column, descending);
+                Ok(())
+            });
+        });
+        window.on_sort_history(|column, descending| {
+            with_app(|app| {
+                app.capture();
+                app.model.sort_history(column, descending);
                 Ok(())
             });
         });

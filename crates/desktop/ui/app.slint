@@ -1,18 +1,27 @@
-import { Button, LineEdit, ComboBox, CheckBox, ScrollView, TabWidget, DatePickerPopup, Date, Palette } from "std-widgets.slint";
+import { Button, LineEdit, ComboBox, CheckBox, ScrollView, StandardTableView, TabWidget, Palette } from "std-widgets.slint";
 
-export struct TableRow { a: string, b: string, c: string, d: string, e: string }
 export enum Action { save, start, stop, quit, queue-receipt, previous-page, next-page, daily-report, monthly-report, periodic-report, resolve-report }
 
 component Hint inherits Text { color: #8c8c8c; font-size: 12px; wrap: word-wrap; }
 component Heading inherits Text { font-size: 18px; font-weight: 600; color: #262626; }
 component Card inherits Rectangle { background: white; border-width: 1px; border-color: #f0f0f0; border-radius: 8px; }
-component DateField inherits HorizontalLayout {
-    in-out property <Date> date;
-    in property <string> text;
-    in property <string> name;
-    callback changed(Date);
-    Button { text: root.text; min-width: 146px; accessible-label: root.name + " " + root.text; clicked => { picker.show(); } }
-    picker := DatePickerPopup { title: "Wybierz datę"; date: root.date; accepted(value) => { root.changed(value); } }
+// A sortable table; Rust reorders the rows and marks the sorted column.
+component Table inherits Rectangle {
+    in property <[[StandardListViewItem]]> rows;
+    in-out property <[TableColumn]> columns;
+    in-out property <int> current-row: -1;
+    in property <string> empty-text;
+    callback current-row-changed(int);
+    callback sort(int, bool);
+    StandardTableView {
+        columns <=> root.columns;
+        rows: root.rows;
+        current-row <=> root.current-row;
+        current-row-changed(row) => { root.current-row-changed(row); }
+        sort-ascending(column) => { root.sort(column, false); }
+        sort-descending(column) => { root.sort(column, true); }
+    }
+    if root.rows.length == 0: Text { width: 100%; height: 100%; text: root.empty-text; color: #8c8c8c; horizontal-alignment: center; vertical-alignment: center; }
 }
 component PortInput inherits Rectangle {
     in-out property <string> text;
@@ -49,49 +58,6 @@ component PortInput inherits Rectangle {
         }
     }
 }
-component DataTable inherits Rectangle {
-    in property <[TableRow]> rows;
-    in property <TableRow> headings;
-    in-out property <int> selected: -1;
-    in property <bool> selectable: false;
-    in property <string> empty-text: "Brak dokumentów do wyświetlenia";
-    callback selected-row(int);
-    background: white;
-    VerticalLayout {
-        spacing: 0px;
-        Rectangle {
-            height: 46px; background: #fafafa;
-            HorizontalLayout {
-                padding-left: 14px; padding-right: 14px; spacing: 16px;
-                Text { text: root.headings.a; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
-                Text { text: root.headings.b; font-weight: 600; vertical-alignment: center; width: 140px; }
-                Text { text: root.headings.c; font-weight: 600; vertical-alignment: center; width: 155px; }
-                Text { text: root.headings.d; font-weight: 600; vertical-alignment: center; width: 110px; horizontal-alignment: right; }
-                Text { text: root.headings.e; font-weight: 600; vertical-alignment: center; width: 200px; }
-            }
-        }
-        ScrollView {
-            VerticalLayout {
-                alignment: start; spacing: 0px;
-                for row[index] in root.rows: Rectangle {
-                    height: 52px;
-                    background: root.selectable && root.selected == index ? #e6f4ff : touch.has-hover && root.selectable ? #fafafa : white;
-                    HorizontalLayout {
-                        padding-left: 14px; padding-right: 14px; spacing: 16px;
-                        Text { text: row.a; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-                        Text { text: row.b; vertical-alignment: center; width: 140px; overflow: elide; }
-                        Text { text: row.c; vertical-alignment: center; width: 155px; overflow: elide; }
-                        Text { text: row.d; vertical-alignment: center; width: 110px; horizontal-alignment: right; overflow: elide; }
-                        Text { text: row.e; vertical-alignment: center; width: 200px; overflow: elide; }
-                    }
-                    Rectangle { y: parent.height - 1px; height: 1px; background: #f0f0f0; }
-                    touch := TouchArea { enabled: root.selectable; clicked => { root.selected = index; root.selected-row(index); } }
-                }
-            }
-            if root.rows.length == 0: Text { text: root.empty-text; color: #8c8c8c; horizontal-alignment: center; vertical-alignment: center; }
-        }
-    }
-}
 
 export component AppWindow inherits Window {
     title: "Holuto Fiscal";
@@ -114,8 +80,23 @@ export component AppWindow inherits Window {
     in property <int> connection-tone;
     in property <string> status: "Zaloguj się tokenem drukarki z Holuto.";
     in property <int> status-tone;
-    in property <[TableRow]> documents;
-    in property <[TableRow]> history;
+    in property <[[StandardListViewItem]]> documents;
+    in property <[[StandardListViewItem]]> history;
+    // Column order matches `Row::cells` in model/table.rs.
+    in-out property <[TableColumn]> document-columns: [
+        { title: "Zlecenie", horizontal-stretch: 1 },
+        { title: "Rodzaj", min-width: 140px },
+        { title: "Klient", min-width: 155px },
+        { title: "Kwota", min-width: 110px },
+        { title: "Data", min-width: 140px },
+    ];
+    in-out property <[TableColumn]> history-columns: [
+        { title: "Pozycje", horizontal-stretch: 1 },
+        { title: "Data", min-width: 140px },
+        { title: "Nr paragonu", min-width: 155px },
+        { title: "Kwota", min-width: 110px },
+        { title: "Płatność", min-width: 200px },
+    ];
     in property <string> page-label: "Strona 1";
     in-out property <int> selected: -1;
     in-out property <string> nip;
@@ -127,10 +108,9 @@ export component AppWindow inherits Window {
     in-out property <int> baud-index;
     in property <[string]> months;
     in-out property <int> month-index;
-    in-out property <Date> from-date;
-    in-out property <Date> to-date;
-    in property <string> from-label;
-    in property <string> to-label;
+    // The periodic report range as typed, dd.mm.rrrr; Rust validates it on request.
+    in-out property <string> from-date;
+    in-out property <string> to-date;
     in-out property <bool> summary;
     in property <string> confirm-title;
     in property <string> confirm-text;
@@ -138,7 +118,8 @@ export component AppWindow inherits Window {
     in property <bool> confirming;
     callback action(Action);
     callback selected-document(int);
-    callback date-changed(bool, Date);
+    callback sort-documents(int, bool);
+    callback sort-history(int, bool);
     callback confirm(bool);
     init => { Palette.color-scheme = ColorScheme.light; }
     VerticalLayout {
@@ -173,7 +154,7 @@ export component AppWindow inherits Window {
                             VerticalLayout {
                                 padding: 24px; spacing: 18px;
                                 Heading { text: "Dokumenty oczekujące na paragon"; }
-                                DataTable { rows: root.documents; headings: {a: "Zlecenie", b: "Rodzaj", c: "Klient", d: "Kwota", e: "Data"}; selected <=> root.selected; selectable: true; selected-row(row) => { root.selected-document(row); } }
+                                Table { rows: root.documents; columns <=> root.document-columns; empty-text: "Brak dokumentów do wyświetlenia"; current-row <=> root.selected; current-row-changed(row) => { root.selected-document(row); } sort(column, descending) => { root.sort-documents(column, descending); } }
                                 HorizontalLayout {
                                     Button { text: "Poprzednia strona"; enabled: root.previous-enabled; clicked => { root.action(Action.previous-page); } }
                                     Rectangle { horizontal-stretch: 1; } Hint { text: root.page-label; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; }
@@ -198,7 +179,7 @@ export component AppWindow inherits Window {
                                 Rectangle { height: 1px; background: #f0f0f0; }
                                 HorizontalLayout { spacing: 24px; VerticalLayout { spacing: 8px; Heading { text: "Raport miesięczny"; font-size: 16px; } Hint { text: "Łączny raport fiskalny za wybrany miesiąc."; } } ComboBox { model: root.months; current-index <=> root.month-index; width: 190px; } Button { text: "Drukuj raport miesięczny"; enabled: root.reports-enabled; clicked => { root.action(Action.monthly-report); } } }
                                 Rectangle { height: 1px; background: #f0f0f0; }
-                                VerticalLayout { spacing: 16px; Heading { text: "Raport okresowy"; font-size: 16px; } Hint { text: "Za dowolny zakres dat: szczegółowy lub skrócony (łączny)."; } HorizontalLayout { spacing: 12px; DateField { date: root.from-date; text: root.from-label; name: "Data początkowa"; changed(date) => { root.date-changed(true, date); } } Text { text: "–"; vertical-alignment: center; } DateField { date: root.to-date; text: root.to-label; name: "Data końcowa"; changed(date) => { root.date-changed(false, date); } } CheckBox { text: "Skrócony"; checked <=> root.summary; } Rectangle { horizontal-stretch: 1; } Button { text: "Drukuj raport okresowy"; enabled: root.reports-enabled; clicked => { root.action(Action.periodic-report); } } } }
+                                VerticalLayout { spacing: 16px; Heading { text: "Raport okresowy"; font-size: 16px; } Hint { text: "Za dowolny zakres dat: szczegółowy lub skrócony (łączny)."; } HorizontalLayout { spacing: 12px; Text { text: "Od"; vertical-alignment: center; } LineEdit { text <=> root.from-date; placeholder-text: "dd.mm.rrrr"; width: 130px; accessible-label: "Data początkowa"; } Text { text: "do"; vertical-alignment: center; } LineEdit { text <=> root.to-date; placeholder-text: "dd.mm.rrrr"; width: 130px; accessible-label: "Data końcowa"; } CheckBox { text: "Skrócony"; checked <=> root.summary; } Rectangle { horizontal-stretch: 1; } Button { text: "Drukuj raport okresowy"; enabled: root.reports-enabled; clicked => { root.action(Action.periodic-report); } } } }
                             }
                         }
                         Rectangle { vertical-stretch: 1; }
@@ -209,7 +190,7 @@ export component AppWindow inherits Window {
                     VerticalLayout {
                         padding-top: 16px;
                         Card {
-                            VerticalLayout { padding: 24px; spacing: 20px; Heading { text: "Wydrukowane paragony"; } DataTable { rows: root.history; headings: {a: "Pozycje", b: "Data", c: "Nr paragonu", d: "Kwota", e: "Płatność"}; empty-text: "Brak wydrukowanych paragonów"; } Hint { text: "Lista z tego komputera. Numer nadaje drukarka; pamięć fiskalna jest źródłem prawdy."; } }
+                            VerticalLayout { padding: 24px; spacing: 20px; Heading { text: "Wydrukowane paragony"; } Table { rows: root.history; columns <=> root.history-columns; empty-text: "Brak wydrukowanych paragonów"; sort(column, descending) => { root.sort-history(column, descending); } } Hint { text: "Lista z tego komputera. Numer nadaje drukarka; pamięć fiskalna jest źródłem prawdy."; } }
                         }
                     }
                 }
