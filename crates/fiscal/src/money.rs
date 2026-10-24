@@ -4,7 +4,7 @@ use std::{fmt, iter::Sum};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, decimal};
+use crate::{decimal, error::Error};
 
 /// Nonnegative amount, at most 9 999 999 999 grosze.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

@@ -10,11 +10,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use posnet::{
+use fiscal::{
+    error::Error as PrinterError,
+    link::{Link, Port},
     money::Grosze,
-    session::{Link, Port},
-    simulator::{Fault as PrinterFault, SERIAL, SimReport, Simulator},
 };
+use posnet::simulator::{Fault as PrinterFault, SERIAL, SimReport, Simulator};
 use serde_json::{Value, json};
 use tracing::{
     Subscriber,
@@ -205,7 +206,7 @@ impl Link for PanicLink {
         clippy::panic_in_result_fn,
         reason = "the link deliberately panics to prove worker panic containment and redaction"
     )]
-    fn open(&self, _port: &str, _baud_rate: u32) -> Result<Box<dyn Port>, posnet::Error> {
+    fn open(&self, _port: &str, _baud_rate: u32) -> Result<Box<dyn Port>, PrinterError> {
         panic!("private-token-customer-nip");
     }
 

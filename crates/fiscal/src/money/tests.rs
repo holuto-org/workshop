@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::{Grosze, zloty};
-use crate::Error;
+use crate::error::Error;
 
 #[test]
 fn printer_money_has_exact_nonnegative_grosze_and_a_hard_upper_bound() {

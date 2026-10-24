@@ -1,7 +1,9 @@
 use proptest::prelude::*;
 
 use super::{MAX_FRAME, crc16, decode, encode, wrap};
-use crate::{Error, text};
+use fiscal::error::Error;
+
+use crate::text;
 
 pub(crate) fn reply(payload: &str) -> Vec<u8> {
     wrap(&text::encode(payload).unwrap())
@@ -38,8 +40,10 @@ fn documented_device_errors_preserve_the_command_code_and_field() {
         let error = decode(&reply(payload)).unwrap_err();
         assert!(
             matches!(&error,
-                Error::Device { code:2036, command, field, rejected }
-                if command == "trinit" && field == "ts" && *rejected == expected_rejected),
+                Error::Device { code:2036, command, detail, rejected }
+                if command == "trinit"
+                    && detail == "Drukarka zwróciła błąd 2036 (trinit, parametr ts). Urządzenie w stanie tylko do odczytu."
+                    && *rejected == expected_rejected),
             "{error:?}"
         );
         assert_eq!(

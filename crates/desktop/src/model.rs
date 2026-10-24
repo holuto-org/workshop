@@ -8,8 +8,9 @@ use agent::{
     status::Snapshot,
     worker::{Command, Tone},
 };
+use fiscal::money::zloty;
 use jiff::{Timestamp, ToSpan, civil::Date};
-use posnet::{money::zloty, printer::Status};
+use posnet::printer::Status;
 use slint::{ModelRc, SharedString, VecModel};
 use table::{Sort, Table};
 

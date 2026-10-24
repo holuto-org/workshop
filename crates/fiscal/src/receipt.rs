@@ -1,24 +1,25 @@
 //! Fiscal receipts validated before printer I/O.
 
-use std::{collections::BTreeMap, fmt, time::Duration};
+use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, decimal,
+    decimal,
+    error::Error,
     money::Grosze,
-    text::{self, MAX_BUYER_NIP_LENGTH, MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH},
+    receipt::posnet::{
+        self as text, MAX_BUYER_NIP_LENGTH, MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH,
+    },
 };
+
+pub mod posnet;
 
 /// VAT slots A–G.
 pub const VAT_SLOTS: u8 = 7;
 const QUANTITY_SCALE: usize = 8;
 const QUANTITY_UNIT: u64 = 100_000_000;
 const MAX_QUANTITY: u64 = 9_999_999_999 * QUANTITY_UNIT;
-const LINE_TIMEOUT: Duration = Duration::from_secs(10);
-const END_TIMEOUT: Duration = Duration::from_secs(30);
-const ADVANCE_NAME: &str = "Zaliczka";
-const MOBILE_NAME: &str = "Płatność mobilna";
 
 /// VAT slot 0 (A) through 6 (G), not a rate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -57,17 +58,6 @@ impl PaymentForm {
             Self::Credit => "Kredyt",
         }
     }
-
-    /// `trpayment` `ty` (spec p. 314).
-    const fn wire_type(self) -> u8 {
-        match self {
-            Self::Cash => 0,
-            Self::Card => 2,
-            Self::Transfer => 8,
-            Self::Mobile => 6,
-            Self::Credit => 5,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,8 +91,13 @@ impl Quantity {
             })
     }
 
+    /// Quantity in hundred-millionths.
+    pub const fn units(self) -> u64 {
+        self.0
+    }
+
     /// Matches printer line rounding: half up to whole grosze; `None` on overflow.
-    pub(crate) fn times(self, grosze: u64) -> Option<u64> {
+    pub fn times(self, grosze: u64) -> Option<u64> {
         // u64::MAX² plus half a quantity unit fits u128.
         let exact = u128::from(self.0) * u128::from(grosze);
         let unit = u128::from(QUANTITY_UNIT);
@@ -186,26 +181,13 @@ impl Line {
     pub const fn price(&self) -> Grosze {
         self.price
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Step {
-    pub command: &'static str,
-    pub params: Vec<(&'static str, String)>,
-    pub timeout: Duration,
-}
+    pub const fn quantity(&self) -> Quantity {
+        self.quantity
+    }
 
-impl Step {
-    const fn new(
-        command: &'static str,
-        params: Vec<(&'static str, String)>,
-        timeout: Duration,
-    ) -> Self {
-        Self {
-            command,
-            params,
-            timeout,
-        }
+    pub const fn vat(&self) -> VatSlot {
+        self.vat
     }
 }
 
@@ -324,6 +306,14 @@ impl Receipt {
         &self.lines
     }
 
+    pub fn advances(&self) -> &[Advance] {
+        &self.advances
+    }
+
+    pub fn buyer_nip(&self) -> Option<&str> {
+        self.buyer_nip.as_deref()
+    }
+
     pub fn payments(&self) -> &[Payment] {
         &self.payments
     }
@@ -337,78 +327,8 @@ impl Receipt {
         self.fiscal_total
     }
 
-    pub(crate) fn slots(&self) -> impl Iterator<Item = VatSlot> + '_ {
-        self.sales.keys().copied()
-    }
-
-    /// Fiscal command order per spec pp. 275-314; zero payments send no command.
-    /// A footer requires footer commands after `trend`.
-    pub fn steps(&self, footer: Option<&str>) -> Vec<Step> {
-        let mut steps = vec![Step::new(
-            "trinit",
-            vec![("bm", "0".to_owned())],
-            LINE_TIMEOUT,
-        )];
-        if let Some(nip) = &self.buyer_nip {
-            steps.push(Step::new(
-                "trnipset",
-                vec![("ni", nip.clone())],
-                LINE_TIMEOUT,
-            ));
-        }
-        steps.extend(self.lines.iter().map(|line| {
-            let params = vec![
-                ("na", line.name.clone()),
-                ("vt", line.vat.0.to_string()),
-                ("pr", line.price().get().to_string()),
-                ("il", line.quantity.to_string()),
-                ("wa", line.total.get().to_string()),
-            ];
-            Step::new("trline", params, LINE_TIMEOUT)
-        }));
-        steps.extend(self.advances.iter().map(|advance| {
-            let sales = self.sales.get(&advance.vat).copied().unwrap_or_default();
-            let params = vec![
-                ("na", ADVANCE_NAME.to_owned()),
-                ("vt", advance.vat.0.to_string()),
-                ("pr", advance.amount.get().to_string()),
-                ("wa", sales.get().to_string()),
-            ];
-            Step::new("tradvance", params, LINE_TIMEOUT)
-        }));
-        steps.extend(
-            self.payments
-                .iter()
-                .filter(|payment| payment.amount > Grosze::ZERO)
-                .map(|payment| {
-                    let mut params = vec![
-                        ("ty", payment.form.wire_type().to_string()),
-                        ("wa", payment.amount.get().to_string()),
-                    ];
-                    if payment.form == PaymentForm::Mobile {
-                        params.push(("na", MOBILE_NAME.to_owned()));
-                    }
-                    Step::new("trpayment", params, LINE_TIMEOUT)
-                }),
-        );
-        // Validated payments equal the fiscal total.
-        let mut end = vec![
-            ("to", self.fiscal_total.get().to_string()),
-            ("fp", self.fiscal_total.get().to_string()),
-        ];
-        if let Some(footer) = footer {
-            end.push(("fe", "0".to_owned()));
-            steps.push(Step::new("trend", end, END_TIMEOUT));
-            steps.push(Step::new(
-                "trftrln",
-                vec![("id", "25".to_owned()), ("na", footer.to_owned())],
-                LINE_TIMEOUT,
-            ));
-            steps.push(Step::new("trftrend", Vec::new(), END_TIMEOUT));
-        } else {
-            steps.push(Step::new("trend", end, END_TIMEOUT));
-        }
-        steps
+    pub const fn sales(&self) -> &BTreeMap<VatSlot, Grosze> {
+        &self.sales
     }
 }
 

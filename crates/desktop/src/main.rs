@@ -33,9 +33,9 @@ use std::{
 };
 
 use agent::{settings::Settings, store::StateDir};
-use posnet::session::Link;
+use fiscal::link::Link;
 #[cfg(not(feature = "simulator"))]
-use posnet::session::SerialLink;
+use fiscal::link::SerialLink;
 #[cfg(feature = "simulator")]
 use posnet::simulator::Simulator;
 use slint::ComponentHandle;

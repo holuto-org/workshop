@@ -1,5 +1,5 @@
+use fiscal::decimal;
 use jiff::Timestamp;
-use posnet::decimal;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{Error as _, Unexpected},

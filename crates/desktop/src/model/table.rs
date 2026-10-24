@@ -3,8 +3,8 @@
 use std::{cmp::Ordering, mem, rc::Rc};
 
 use agent::{documents::Document, history::HistoryEntry};
+use fiscal::money::{Grosze, zloty};
 use jiff::{Timestamp, tz::TimeZone};
-use posnet::money::{Grosze, zloty};
 use slint::{
     Model as _, ModelRc, SharedString, VecModel,
     language::{SortOrder, StandardListViewItem, TableColumn},

@@ -1,9 +1,8 @@
 use std::{collections::BTreeMap, error::Error as StdError, fs, io::ErrorKind};
 
+use fiscal::{error::Error as PrinterError, link::Connection, money::Grosze, report::Report};
 use posnet::{
-    money::Grosze,
-    printer::{Printer, Report},
-    session::Connection,
+    printer::Printer,
     simulator::{Fault as DeviceFault, SERIAL, Simulator},
 };
 use serde_json::json;
@@ -578,7 +577,7 @@ fn named_report_refusal_is_certain_and_does_not_block_following_work() -> TestRe
     assert!(
         matches!(
             agent.run_report(Report::Daily),
-            Err(Error::Printer(posnet::Error::Device { code: 2000, .. }))
+            Err(Error::Printer(PrinterError::Device { code: 2000, .. }))
         ),
         "operator gets the device's certain report refusal"
     );

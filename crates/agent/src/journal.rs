@@ -5,13 +5,13 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{borrow::Cow, fmt, io, path::PathBuf};
 
+use fiscal::{
+    money::Grosze,
+    receipt::{Payment, Receipt},
+    report::Report,
+};
 use icu_normalizer::ComposingNormalizerBorrowed;
 use jiff::Timestamp;
-use posnet::{
-    money::Grosze,
-    printer::Report,
-    receipt::{Payment, Receipt},
-};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

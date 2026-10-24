@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::{Advance, Line, Payment, PaymentForm, Quantity, Receipt, VatSlot};
-use crate::{Error, money::Grosze};
+use crate::{error::Error, money::Grosze};
 
 pub(crate) const BRAND: &str = "Warsztat Kowalski";
 

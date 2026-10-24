@@ -9,19 +9,18 @@ version.workspace = true
 
 [features]
 # Offline TCP simulator for tests and local smoke runs; excluded from release builds.
-simulator = []
+simulator = ["fiscal/simulator"]
 
 [dependencies]
+fiscal.workspace = true
 jiff.workspace = true
-serde.workspace = true
-serialport.workspace = true
-thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+fiscal = { workspace = true, features = ["simulator"] }
+serialport.workspace = true
 insta.workspace = true
 proptest.workspace = true
-serde_json.workspace = true
 tracing-subscriber.workspace = true
 
 [lints]

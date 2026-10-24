@@ -1,10 +1,12 @@
 use std::time::{Duration, Instant};
 
 use super::{Fault, SERIAL, Simulator};
-use crate::{
-    Error,
-    session::{Connection, DEFAULT_TIMEOUT, Session},
+use fiscal::{
+    error::Error,
+    link::{Connection, DEFAULT_TIMEOUT},
 };
+
+use crate::session::Session;
 
 fn connect(sim: &Simulator) -> Session {
     Session::open(

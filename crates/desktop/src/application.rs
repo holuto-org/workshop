@@ -13,8 +13,8 @@ use agent::{
     store::StateDir,
     worker::{Command, Event, Tone, Worker},
 };
+use fiscal::link::{Link, serial_ports};
 use jiff::{Zoned, civil::Date};
-use posnet::session::{Link, serial_ports};
 use slint::{
     CloseRequestResponse, ComponentHandle,
     winit_030::{WinitWindowAccessor as _, winit::window::Window as NativeWindow},

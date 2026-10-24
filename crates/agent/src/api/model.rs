@@ -3,10 +3,12 @@
 //! Decimal strings let malformed amounts fail individual jobs, not entire responses.
 //! `Option::deserialize` requires nullable fields to be present; plain `Option` does not.
 
-use posnet::{
-    printer::VatRate,
-    receipt::VAT_SLOTS,
-    text::{MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH, printable_characters},
+use fiscal::{
+    receipt::{
+        VAT_SLOTS,
+        posnet::{MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH, printable_characters},
+    },
+    vat::VatRate,
 };
 use uuid::Uuid;
 

@@ -2,16 +2,20 @@ use std::io;
 
 use jiff::civil::date;
 
-use crate::{
-    Error, frame,
+use fiscal::{
+    error::Error,
+    journal::Journal,
+    link::Connection,
     money::Grosze,
-    printer::{Journal, Printer, Report},
-    receipt::{
-        Advance, PaymentForm, Receipt, VatSlot,
-        tests::{BRAND, line, pay},
-    },
-    session::Connection,
+    receipt::{Advance, PaymentForm, Receipt, VatSlot},
+    report::Report,
+};
+
+use crate::{
+    frame,
+    printer::Printer,
     simulator::{Fault, SERIAL, Simulator},
+    testing::{BRAND, line, pay},
 };
 
 mod output;
@@ -509,32 +513,6 @@ fn unidentified_devices_receive_only_the_identification_command() {
         "foreign device is not adopted"
     );
     assert_eq!(commands(&sim), ["getrealid"]);
-}
-
-#[test]
-fn persisted_reports_keep_their_exact_kind_and_date_fields() {
-    for (report, json) in [
-        (Report::Daily, "{\"kind\":\"daily\"}"),
-        (
-            Report::Monthly {
-                year: 2026,
-                month: 6,
-            },
-            "{\"kind\":\"monthly\",\"year\":2026,\"month\":6}",
-        ),
-        (
-            Report::Periodic {
-                from: date(2026, 1, 1),
-                to: date(2026, 6, 30),
-                summary: true,
-            },
-            "{\"kind\":\"periodic\",\"from\":\"2026-01-01\",\
-             \"to\":\"2026-06-30\",\"summary\":true}",
-        ),
-    ] {
-        assert_eq!(serde_json::to_string(&report).unwrap(), json);
-        assert_eq!(serde_json::from_str::<Report>(json).unwrap(), report);
-    }
 }
 
 macro_rules! uncertain_receipt {

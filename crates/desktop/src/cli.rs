@@ -18,7 +18,7 @@ use agent::{
     store::StateDir,
     worker::{Event, PairingFailure, Worker},
 };
-use posnet::session;
+use fiscal::link;
 use serde_json::{Value, json};
 
 use crate::autostart;
@@ -280,7 +280,7 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
         },
         Command::Status => status(path),
         Command::Ports => {
-            let ports = session::serial_ports();
+            let ports = link::serial_ports();
             Ok(Response {
                 value: json!({"ok":true,"ports":ports}),
                 human: ports.join("\n"),

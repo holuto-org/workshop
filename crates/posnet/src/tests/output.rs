@@ -2,13 +2,13 @@ use jiff::civil::date;
 
 use super::{Recorder, printer, sale, simulator};
 use crate::{
-    money::Grosze,
-    printer::Report,
-    receipt::{
-        Advance, PaymentForm, Receipt, VatSlot,
-        tests::{BRAND, line, pay},
-    },
     simulator::{SERIAL, Simulator},
+    testing::{BRAND, line, pay},
+};
+use fiscal::{
+    money::Grosze,
+    receipt::{Advance, PaymentForm, Receipt, VatSlot},
+    report::Report,
 };
 
 fn stream(sim: &Simulator, from: usize) -> String {

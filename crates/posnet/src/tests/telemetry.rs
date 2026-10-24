@@ -16,13 +16,14 @@ use tracing_subscriber::{
 };
 
 use super::{Recorder, printer, simulator};
+use fiscal::{
+    error::Error,
+    receipt::{PaymentForm, Receipt},
+};
+
 use crate::{
-    Error,
-    receipt::{
-        PaymentForm, Receipt,
-        tests::{line, pay},
-    },
     simulator::Fault,
+    testing::{line, pay},
 };
 
 #[derive(Clone)]

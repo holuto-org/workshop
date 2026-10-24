@@ -293,6 +293,7 @@ name = "agent"
 version = "0.2.0"
 dependencies = [
  "atomicwrites",
+ "fiscal",
  "icu_normalizer",
  "jiff",
  "jsonschema",
@@ -1651,6 +1652,18 @@ dependencies = [
  "lazy_static",
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "fiscal"
+version = "0.2.0"
+dependencies = [
+ "jiff",
+ "proptest",
+ "serde",
+ "serde_json",
+ "serialport",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4417,13 +4430,11 @@ dependencies = [
 name = "posnet"
 version = "0.2.0"
 dependencies = [
+ "fiscal",
  "insta",
  "jiff",
  "proptest",
- "serde",
- "serde_json",
  "serialport",
- "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
 ]
@@ -7243,6 +7254,7 @@ version = "0.2.0"
 dependencies = [
  "agent",
  "atomicwrites",
+ "fiscal",
  "i-slint-backend-testing",
  "jiff",
  "objc2 0.6.5",

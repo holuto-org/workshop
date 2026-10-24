@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("PrinterLimit", "u32"), // Keep nullable limits' existing zero/domain checks.
         ("VatSlotNumber", "u8"), // Backend slots are checked before reaching the printer.
         ("FiscalReceiptKind", "crate::documents::ReceiptKind"), // Shared document/journal identity.
-        ("FiscalPaymentForm", "posnet::receipt::PaymentForm"), // The driver owns payment commands.
+        ("FiscalPaymentForm", "fiscal::receipt::PaymentForm"), // Shared payment identity.
         ("AgentDocument", "crate::documents::Document"), // Keep integer-grosze domain conversion.
         ("TokenTokenKindAgent", "crate::settings::Token"), // Redacted device credentials.
         ("PairingInput", "String"), // Backend validates opaque human pairing proofs.

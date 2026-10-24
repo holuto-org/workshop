@@ -1,10 +1,12 @@
 use std::{io, time::Duration};
 
-use super::{Journal, execute};
+use fiscal::{error::Error, journal::Journal, link::Connection};
+
+use super::execute;
 use crate::{
-    Error, frame,
+    frame,
     receipt::Step,
-    session::{Connection, Session},
+    session::Session,
     simulator::{Fault, Hold, Simulator},
 };
 

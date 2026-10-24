@@ -25,12 +25,14 @@ pub mod testing;
 
 use std::{fmt, io, path::PathBuf};
 
+use fiscal::error::Error as PrinterError;
+
 use api::ApiError;
 
 #[derive(thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Printer(#[from] posnet::Error),
+    Printer(#[from] PrinterError),
     #[error(transparent)]
     Api(#[from] ApiError),
     #[error("{action} ({path}): {source}")]

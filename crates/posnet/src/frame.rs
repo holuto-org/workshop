@@ -3,7 +3,9 @@
 //! CRC-16/XMODEM (polynomial 0x1021, initial value 0) covers the payload;
 //! four uppercase hex digits carry the checksum (spec p. 13).
 
-use crate::{Error, text};
+use fiscal::{error::Error, receipt::posnet::check_printable};
+
+use crate::text;
 
 pub(crate) const MAX_FRAME: usize = 16_384;
 pub(crate) const STX: u8 = 0x02;
@@ -43,7 +45,11 @@ impl Reply {
             return Err(Error::Device {
                 code,
                 command: named.to_owned(),
-                field: self.get("fd").unwrap_or_default().to_owned(),
+                detail: format!(
+                    "Drukarka zwróciła błąd {code} ({named}{}).{}",
+                    parameter(self.get("fd").unwrap_or_default()),
+                    explanation(code),
+                ),
                 rejected: command == "ERR",
             });
         }
@@ -101,7 +107,7 @@ pub(crate) fn encode(command: &str, params: &[(&str, String)]) -> Result<Vec<u8>
                 "Nieprawidłowy parametr drukarki.".to_owned(),
             ));
         }
-        text::check_printable(value)?;
+        check_printable(value)?;
         payload.push_str(key);
         payload.push_str(value);
         payload.push('\t');
@@ -199,3 +205,26 @@ fn corrupt() -> Error {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+fn parameter(field: &str) -> String {
+    if field.is_empty() {
+        String::new()
+    } else {
+        format!(", parametr {field}")
+    }
+}
+
+/// Errors preflight cannot detect (POT-I-DEV-37 v5978, "Opisy błędów").
+const fn explanation(code: u32) -> &'static str {
+    match code {
+        1039 | 2904 => " Pamięć chroniona zapełniona.",
+        2036 => " Urządzenie w stanie tylko do odczytu.",
+        2098 => " Pamięć fiskalna zapełniona.",
+        3728 => " Upłynął termin ważności certyfikatu.",
+        3733 => " Sprzedaż zablokowana. Brak przekazanych kluczy do Repozytorium.",
+        3735 => " Sprzedaż zablokowana. Wgraj nowe certyfikaty.",
+        3903 => " Operacja w toku. Spróbuj ponownie.",
+        3929 => " Sprzedaż zablokowana. Brak klucza współdzielonego.",
+        _ => "",
+    }
+}

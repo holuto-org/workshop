@@ -12,6 +12,7 @@ testing = ["posnet/simulator", "dep:tiny_http", "dep:jsonschema"]
 
 [dependencies]
 atomicwrites.workspace = true
+fiscal.workspace = true
 icu_normalizer.workspace = true
 jiff.workspace = true
 jsonschema = { workspace = true, optional = true }

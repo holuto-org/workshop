@@ -1,9 +1,9 @@
 use std::{error::Error as StdError, fs};
 
-use posnet::{
+use fiscal::{
     money::Grosze,
-    printer::Report,
     receipt::{Payment, PaymentForm},
+    report::Report,
 };
 use uuid::Uuid;
 

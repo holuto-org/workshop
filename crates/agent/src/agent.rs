@@ -9,12 +9,15 @@
 
 use std::{io, mem, time::Duration};
 
-use jiff::Timestamp;
-use posnet::{
+use fiscal::{
+    error::Error as PrinterError,
+    journal::Journal as DeviceJournal,
     money::Grosze,
-    printer::{Journal as DeviceJournal, Printer, Report, Status},
     receipt::{Advance, Line, Payment, Quantity, Receipt, VatSlot},
+    report::Report,
 };
+use jiff::Timestamp;
+use posnet::printer::{Printer, Status};
 use uuid::Uuid;
 
 use crate::{
@@ -205,7 +208,7 @@ impl<'dir> Agent<'dir> {
             waiting: self.waiting,
         };
         if let Err(error) = self.printer.print_report(report, &serial, &mut dispatch) {
-            if matches!(error, posnet::Error::Device { .. })
+            if matches!(error, PrinterError::Device { .. })
                 && matches!(operation.device, Device::Dispatching { .. })
             {
                 // The driver returns a bare Device error only for a refusal naming this report.
@@ -425,7 +428,7 @@ impl<'dir> Agent<'dir> {
                 }
                 Ok(())
             },
-            Err(error @ posnet::Error::Uncertain(_)) => {
+            Err(error @ PrinterError::Uncertain(_)) => {
                 tracing::error!(job_id = %job.id, "Fiscal receipt outcome is uncertain");
                 self.report(&mut operation, JobResult::unknown(&error.to_string()))
             },

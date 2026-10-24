@@ -16,11 +16,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use jiff::civil::Date;
-use posnet::{
-    printer::{Printer, Report, Status},
-    session::{Connection, Link},
+use fiscal::{
+    error::Error as PrinterError,
+    link::{Connection, Link},
+    report::Report,
 };
+use jiff::civil::Date;
+use posnet::printer::{Printer, Status};
 use tracing::dispatcher;
 
 use crate::{
@@ -462,7 +464,7 @@ fn trace_failure(error: &Error) {
         Error::Api(ApiError::Response(_))
         | Error::Blocked(_)
         | Error::Store { .. }
-        | Error::Printer(posnet::Error::Uncertain(_)) => {
+        | Error::Printer(PrinterError::Uncertain(_)) => {
             tracing::error!("Worker operation requires attention");
         },
         Error::Api(ApiError::Unauthorized | ApiError::Status { .. } | ApiError::Transport(_))

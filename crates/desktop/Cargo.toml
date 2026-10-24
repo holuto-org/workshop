@@ -13,6 +13,7 @@ simulator = ["posnet/simulator"]
 [dependencies]
 agent.workspace = true
 atomicwrites.workspace = true
+fiscal.workspace = true
 posnet.workspace = true
 jiff.workspace = true
 slint = { workspace = true, features = ["unstable-winit-030"] }

@@ -6,18 +6,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serialport::{SerialPortInfo, SerialPortType, UsbPortInfo};
+use fiscal::{
+    error::Error,
+    link::{Connection, Link, Port},
+};
 
-use super::{Connection, Link, Port, Session, filter_serial_ports, next_token};
+use super::{Session, next_token};
 use crate::{
-    Error,
     frame::{self, MAX_FRAME, tests::reply},
     simulator::Simulator,
 };
 
 const TIMEOUT: Duration = Duration::from_millis(40);
-
-mod serial_zero;
 
 struct Wire {
     reads: VecDeque<io::Result<Vec<u8>>>,
@@ -170,53 +170,6 @@ fn tokens_do_not_repeat_before_the_full_ten_thousand_value_cycle() {
 }
 
 #[test]
-fn macos_filters_carrier_waiting_duplicates_and_keeps_usb_first_on_every_os() {
-    let ports = vec![
-        SerialPortInfo {
-            port_name: "/dev/tty.Bluetooth".to_owned(),
-            port_type: SerialPortType::BluetoothPort,
-        },
-        SerialPortInfo {
-            port_name: "COM1".to_owned(),
-            port_type: SerialPortType::Unknown,
-        },
-        SerialPortInfo {
-            port_name: "/dev/tty.usbmodem".to_owned(),
-            port_type: SerialPortType::UsbPort(UsbPortInfo {
-                vid: 1,
-                pid: 2,
-                serial_number: None,
-                manufacturer: None,
-                product: None,
-            }),
-        },
-        SerialPortInfo {
-            port_name: "/dev/cu.usbmodem".to_owned(),
-            port_type: SerialPortType::UsbPort(UsbPortInfo {
-                vid: 1,
-                pid: 2,
-                serial_number: None,
-                manufacturer: None,
-                product: None,
-            }),
-        },
-    ];
-    assert_eq!(
-        filter_serial_ports(ports.clone(), true),
-        ["/dev/cu.usbmodem", "COM1"]
-    );
-    assert_eq!(
-        filter_serial_ports(ports, false),
-        [
-            "/dev/tty.usbmodem",
-            "/dev/cu.usbmodem",
-            "/dev/tty.Bluetooth",
-            "COM1"
-        ]
-    );
-}
-
-#[test]
 fn an_empty_port_is_refused_before_attempting_to_open_any_device() {
     let sim = Simulator::start();
     assert!(
@@ -281,7 +234,7 @@ fn serial_timeout_and_partial_reads(
 #[cfg(unix)]
 mod pty {
     use super::{Connection, Link, Session, TIMEOUT, serial_timeout_and_partial_reads};
-    use crate::session::SerialLink;
+    use fiscal::link::SerialLink;
     use serialport::{SerialPort, TTYPort};
 
     fn pair() -> (TTYPort, Session, String) {
@@ -324,7 +277,7 @@ mod pty {
 #[cfg(windows)]
 mod com_pair {
     use super::{Connection, Link, Session, TIMEOUT, serial_timeout_and_partial_reads};
-    use crate::session::SerialLink;
+    use fiscal::link::SerialLink;
 
     #[test]
     fn real_com_ports_are_exclusive_and_preserve_partial_reads_and_timeouts() {

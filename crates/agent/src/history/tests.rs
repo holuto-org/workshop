@@ -1,6 +1,6 @@
 use std::{error::Error as StdError, fs};
 
-use posnet::{money::Grosze, receipt::PaymentForm};
+use fiscal::{money::Grosze, receipt::PaymentForm};
 use uuid::Uuid;
 
 use super::{HistoryEntry, append, load};

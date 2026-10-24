@@ -15,7 +15,7 @@ cargo mutants --all-features --in-diff /tmp/workshop-changes.diff \
   -p <changed-package>
 ```
 
-Use `posnet`, `agent` or `workshop` as the changed package; repeat mutation runs
+Use `fiscal`, `posnet`, `agent` or `workshop` as the changed package; repeat mutation runs
 for each changed product package. `.cargo/mutants.toml` selects nextest and
 workspace tests so dependent-crate scenarios can kill driver/agent mutants; its
 `mutants` profile excludes unavailable COM-pair tests. It excludes

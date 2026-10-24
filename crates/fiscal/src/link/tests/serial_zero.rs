@@ -5,7 +5,7 @@ use std::{
 
 use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBits};
 
-use crate::session::{Port, SerialStream};
+use crate::link::{Port, SerialStream};
 
 /// The Windows serial API returns successful zero-byte reads for expired timeouts.
 struct ZeroRead {

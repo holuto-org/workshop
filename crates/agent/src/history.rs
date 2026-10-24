@@ -12,8 +12,8 @@ use std::{
     path::Path,
 };
 
+use fiscal::{money::Grosze, receipt::PaymentForm};
 use jiff::Timestamp;
-use posnet::{money::Grosze, receipt::PaymentForm};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
