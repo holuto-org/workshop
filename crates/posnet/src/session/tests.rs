@@ -7,9 +7,8 @@ use std::{
 use super::Session;
 use crate::{
     Error,
-    frame::{self, encode},
+    frame::{encode, tests::reply},
     simulator::TcpPort,
-    text,
 };
 
 const TIMEOUT: Duration = Duration::from_millis(300);
@@ -45,10 +44,6 @@ fn tcp_pair() -> (TcpStream, Session) {
     let driver = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     let (peer, _) = listener.accept().unwrap();
     (peer, Session::new(Box::new(TcpPort(driver))))
-}
-
-fn reply(payload: &str) -> Vec<u8> {
-    frame::wrap(&text::encode(payload).unwrap())
 }
 
 /// A lost reply surfaces as a timeout; the fiscal command is never sent a second time.

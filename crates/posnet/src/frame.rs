@@ -177,4 +177,4 @@ fn corrupt() -> Error {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
