@@ -2,7 +2,7 @@
 avoid-breaking-exported-api = false
 pub-underscore-fields-behavior = "AllPubFields"
 
-# Covers `#[cfg(test)]` modules, not the `posnet` simulator other crates' tests use.
+# Test exemptions exclude the simulator used by other crates.
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-unwrap-in-tests = true
@@ -21,7 +21,7 @@ disallowed-types = [
     { path = "std::sync::mpsc::SyncSender", reason = "`send` blocks while the buffer is full; the GUI thread must never wait on the worker" },
 ]
 
-# Empty replaces the default ["bytes::Bytes"] so the check covers every type.
+# Replace the default ["bytes::Bytes"] exemption to check every type.
 ignore-interior-mutability = []
 
 allow-mixed-uninlined-format-args = false
@@ -33,7 +33,7 @@ matches-for-let-else = "AllTypes"
 upper-case-acronyms-aggressive = true
 warn-on-all-wildcard-imports = true
 
-# Kept strict should `unsafe_code` ever be permitted; private checks apply only to safety docs.
+# Check private safety docs if unsafe code is ever permitted.
 check-private-items = true
 accept-comment-above-attributes = false
 accept-comment-above-statement = false

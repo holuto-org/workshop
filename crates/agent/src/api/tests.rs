@@ -1,5 +1,3 @@
-//! Real HTTP exchanges with a local server.
-
 use std::{
     io::{BufRead, BufReader, Read, Write},
     mem,
@@ -38,7 +36,7 @@ impl Recorded {
     }
 }
 
-/// Reads one request; only `Content-Length` bodies, as the agent always knows its body size.
+/// Agent request sizes are known, so only `Content-Length` bodies are needed.
 fn read_request(stream: &TcpStream) -> Recorded {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -71,9 +69,7 @@ fn read_request(stream: &TcpStream) -> Recorded {
     recorded
 }
 
-/// Answers each request with the next reply, one connection each, until `finish`.
-///
-/// Requests beyond the replies are recorded and dropped unanswered, so retries show up.
+/// Records and drops requests beyond the supplied replies to expose retries.
 struct Fake {
     url: String,
     addr: SocketAddr,
@@ -93,7 +89,7 @@ impl Fake {
                 let mut replies = replies.into_iter();
                 loop {
                     let (mut stream, _peer) = listener.accept().unwrap();
-                    // `finish` wakes the server with a connection that sends nothing.
+                    // `finish` wakes this listener with an empty connection.
                     if stream.peek(&mut [0]).unwrap() == 0 {
                         return;
                     }
@@ -129,9 +125,8 @@ impl Fake {
         Api::new(&self.url, "secret", "DEMO0000001").unwrap()
     }
 
-    /// Every request the server received.
     fn finish(mut self) -> Vec<Recorded> {
-        // An empty connection releases a server still awaiting a request the client never sent.
+        // Wake the listener if the client sent fewer requests than expected.
         drop(TcpStream::connect(self.addr));
         self.thread.take().unwrap().join().unwrap();
         mem::take(&mut *self.requests.lock().unwrap())
@@ -226,7 +221,6 @@ fn every_call_uses_the_permanent_token_and_clean_paths() {
     );
 }
 
-/// One API call, its result reduced to success or the error.
 type Call = fn(&mut Api) -> Result<(), ApiError>;
 
 #[test]

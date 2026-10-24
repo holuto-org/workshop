@@ -16,7 +16,7 @@ use crate::{
 };
 
 thread_local! {
-    // Worker callbacks carry only owned events across threads, never GUI handles.
+    // Cross-thread callbacks carry owned events, never GUI handles.
     static APPLICATION: RefCell<Option<Rc<RefCell<Application>>>> = const { RefCell::new(None) };
 }
 
@@ -273,7 +273,7 @@ impl Application {
             },
             Event::HistoryChanged => self.reload_history(),
             Event::Stopped => {
-                // This event is emitted only after the worker has finished its operation.
+                // Stopped follows operation completion, so joining cannot interrupt printer I/O.
                 if let Some(worker) = self.worker.take() {
                     worker.join();
                 }
@@ -290,7 +290,7 @@ impl Application {
 }
 
 fn request_close() -> CloseRequestResponse {
-    // D-Bus is asynchronous; the window stays visible until a tray host is confirmed.
+    // Keep the window visible until the asynchronous tray-host check succeeds.
     let check = slint::spawn_local(async {
         let available = tray::available().await;
         with_app(|app| {

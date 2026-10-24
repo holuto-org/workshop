@@ -1,8 +1,7 @@
 #[cfg(not(all(unix, not(target_vendor = "apple"))))]
 use std::future::{Ready, ready};
 
-/// Slint reports backend creation errors, but not whether a Linux tray host exists.
-/// Check the `StatusNotifierWatcher` before hiding, including after a shell restart.
+/// Slint does not detect missing Linux tray hosts; recheck before hiding after shell restarts.
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub(crate) async fn available() -> bool {
     use zbus::{Connection, fdo::DBusProxy, names::BusName};

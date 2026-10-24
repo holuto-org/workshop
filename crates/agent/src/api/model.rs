@@ -1,8 +1,6 @@
-//! `/agent` request and response bodies (backend `openapi/agent.json`).
-//!
-//! Decimals stay strings until the agent converts them, so a malformed amount fails its job with
-//! a reason instead of rejecting the whole response. A field the contract requires but allows to
-//! be `null` is `deserialize_with = "Option::deserialize"`: a plain `Option` may also be missing.
+//! `/agent` bodies from backend `openapi/agent.json`.
+//! Decimal strings let malformed amounts fail individual jobs, not entire responses.
+//! `Option::deserialize` requires nullable fields to be present; plain `Option` does not.
 
 use jiff::Timestamp;
 use posnet::{
@@ -16,10 +14,10 @@ use uuid::Uuid;
 use super::{APP_VERSION, DOCUMENTS_LIMIT};
 use crate::documents::{BuyerNip, Document, ReceiptKind};
 
-/// Slots the backend accepts; the printer itself has seven.
+/// Backend slot limit; the printer has seven.
 const MAX_BACKEND_SLOTS: u8 = 16;
 
-/// Polish VAT rates as `KSeF` codes them; `zw` marks an exempt supply.
+/// `KSeF` VAT codes; `zw` means exempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VatCode {
     #[serde(rename = "23")]
@@ -35,7 +33,7 @@ pub enum VatCode {
 }
 
 impl VatCode {
-    /// The code for a printer rate; `None` for a rate Holuto does not use.
+    /// `None` for printer rates Holuto does not support.
     pub const fn of(rate: VatRate) -> Option<Self> {
         if rate.exempt() {
             return Some(Self::Exempt);
@@ -67,10 +65,8 @@ pub struct VatSlotRate {
     pub vat_rate: VatCode,
 }
 
-/// Fresh printer facts sent with every session and heartbeat.
-///
-/// The backend queues no receipt until it has the limits, which the protocol cannot report, so
-/// they are the driver's documented Temo Online values.
+/// Session and heartbeat telemetry. The backend requires limits before queueing receipts.
+/// Limits use documented Temo Online values because the protocol cannot report them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Telemetry {
@@ -78,7 +74,7 @@ pub struct Telemetry {
     pub model: String,
     pub firmware: String,
     pub app_version: &'static str,
-    /// The device's actual slot table, not a set of rates.
+    /// Actual slot assignments, not a set of rates.
     pub vat_slots: Vec<VatSlotRate>,
     pub max_item_name_length: usize,
     pub max_lines_per_receipt: usize,
@@ -186,7 +182,7 @@ pub enum JobState {
 }
 
 impl JobState {
-    /// A resolution only staff or the backend can make; it is authoritative.
+    /// Authoritative staff or backend resolution.
     pub const fn terminal(self) -> bool {
         matches!(self, Self::Done | Self::Failed | Self::Expired)
     }
@@ -218,7 +214,7 @@ pub struct JobPayment {
     pub amount: String,
 }
 
-/// A fiscal job; its lines, totals and payments come from Holuto and are printed unchanged.
+/// Holuto supplies the lines, totals and payments; printing must not alter them.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Job {
@@ -237,7 +233,7 @@ pub struct Job {
     pub lines: Vec<JobLine>,
     pub advances: Vec<JobAdvance>,
     pub payments: Vec<JobPayment>,
-    /// Immutable once taken; every result names it.
+    /// Immutable after claim; required in every result.
     #[serde(deserialize_with = "Option::deserialize")]
     pub attempt: Option<Uuid>,
     #[serde(deserialize_with = "Option::deserialize")]
@@ -252,8 +248,6 @@ pub struct Job {
 }
 
 impl Job {
-    /// The shape every job must have before anything acts on it, and that it belongs to the
-    /// paired printer.
     pub(crate) fn check(&self, printer_id: Option<Uuid>) -> Result<(), String> {
         if printer_id != Some(self.printer_id) {
             return Err("zadanie innej drukarki".to_owned());
@@ -287,7 +281,6 @@ impl Job {
     }
 }
 
-/// The three results a device can report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Outcome {
@@ -306,7 +299,7 @@ impl From<Outcome> for JobState {
     }
 }
 
-/// `done` carries the receipt number and issue time; `failed` and `unknown` leave both null.
+/// Only `done` carries a receipt number and issue time; otherwise both are null.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultForm {
@@ -336,7 +329,7 @@ pub struct Page {
 }
 
 impl Page {
-    /// One bad item rejects the whole page: nothing partial is shown.
+    /// Rejects the whole page if any item is invalid.
     pub(crate) fn check(&self) -> Result<(), String> {
         if self.items.len() > DOCUMENTS_LIMIT {
             return Err("strona przekracza limit".to_owned());
@@ -348,7 +341,6 @@ impl Page {
     }
 }
 
-/// The printer's own slots (A to G) that can carry a Holuto rate.
 pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatSlotRate>, Vec<String>) {
     let mut slots = Vec::new();
     let mut skipped = Vec::new();

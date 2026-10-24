@@ -8,10 +8,10 @@ license = "MIT"
 publish = false
 repository = "https://github.com/holuto-org/workshop"
 rust-version = "1.99"
-# The release workflow tags `v<version>` when a push to master raises it.
+# A version bump on master releases `v<version>`.
 version = "0.2.0"
 
-# CI promotes warnings to errors; local builds remain unblocked.
+# CI treats warnings as errors.
 [workspace.lints.rust]
 ambiguous_negative_literals = "warn"
 deprecated_in_future = "warn"
@@ -31,7 +31,7 @@ trivial_numeric_casts = "warn"
 unit_bindings = "warn"
 unnameable_types = "warn"
 unreachable_pub = "warn"
-# `deny`, not `forbid`: Slint's generated UI code allows it internally. Handwritten crates forbid it.
+# Slint-generated code overrides this lint; handwritten crates forbid unsafe code.
 unsafe_code = "deny"
 unused_import_braces = "warn"
 unused_lifetimes = "warn"
@@ -42,18 +42,17 @@ unused_results = "warn"
 [workspace.lints.clippy]
 nursery = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-# Internal crates without published docs: error and panic sections would only repeat signatures.
+# Internal crates need no error or panic sections.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-# Would put #[must_use] on nearly every getter in internal code.
+# Avoid annotating nearly every internal getter.
 must_use_candidate = "allow"
-# pub(crate) inside private modules states intent; this nursery lint just removes it.
+# Keep explicit pub(crate) visibility in private modules.
 redundant_pub_crate = "allow"
 return_self_not_must_use = "allow"
-# Suggests dropping the instance lock and journal guards early, which would unlock the printer.
+# Early drops would release the printer's instance lock and journal guards.
 significant_drop_tightening = "allow"
 
-# Restriction lints. Fiscal code must not panic, lose an error cause or truncate a number.
 absolute_paths = "warn"
 allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
@@ -66,7 +65,7 @@ empty_structs_with_brackets = "warn"
 exit = "warn"
 expect_used = "warn"
 filetype_is_file = "warn"
-# Money is integer grosze; a float anywhere near it is a bug.
+# Fiscal amounts use integer grosze, never floats.
 float_arithmetic = "warn"
 float_cmp_const = "warn"
 fn_to_numeric_cast_any = "warn"
@@ -79,7 +78,7 @@ infinite_loop = "warn"
 let_underscore_must_use = "warn"
 let_underscore_untyped = "warn"
 lossy_float_literal = "warn"
-# Keeps the device or OS error that explains an uncertain fiscal outcome.
+# Preserve causes of uncertain fiscal outcomes.
 map_err_ignore = "warn"
 mem_forget = "warn"
 missing_assert_message = "warn"
@@ -102,7 +101,7 @@ rest_pat_in_fully_bound_structs = "warn"
 same_name_method = "warn"
 semicolon_outside_block = "warn"
 string_lit_chars_any = "warn"
-# Polish text: byte slicing a &str panics inside a multi-byte character.
+# Byte slicing can split Polish characters.
 string_slice = "warn"
 suspicious_xor_used_as_pow = "warn"
 tests_outside_test_module = "warn"
@@ -118,33 +117,31 @@ unused_result_ok = "warn"
 unwrap_in_result = "warn"
 unwrap_used = "warn"
 verbose_file_reads = "warn"
-# Journal and job states grow; a wildcard arm would silently accept the new one.
+# New journal or job states must be handled explicitly.
 wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
 agent = { path = "crates/agent" }
 posnet = { path = "crates/posnet" }
 
-# Durable atomic replace: directory fsync on Unix, `MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows.
+# Durable replace: directory fsync on Unix, MoveFileExW(MOVEFILE_WRITE_THROUGH) on Windows.
 atomicwrites = "0.4.4"
 jiff = { version = "0.2.38", features = ["serde"] }
-# Windows state directory: `SHGetKnownFolderPath`, never the overridable `%LOCALAPPDATA%`.
+# Resolve Windows state paths with SHGetKnownFolderPath, not overridable LOCALAPPDATA.
 known-folders = "1.4.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-# No libudev: 4.9 enumerates Linux ports from sysfs, so the .deb needs no udev library.
+# sysfs enumeration avoids a libudev dependency.
 serialport = { version = "4.10.1", default-features = false }
-# Test fixtures' temporary directories.
 tempfile = "3.27.0"
 thiserror = "2.0.21"
-# rustls with the platform verifier: workshop PCs may trust a corporate CA the OS knows about.
+# Use OS trust roots, including corporate CAs.
 ureq = { version = "3.5.0", default-features = false, features = ["json", "platform-verifier", "rustls"] }
 url = "2.5.8"
 uuid = { version = "1.29.0", features = ["serde"] }
 
-# The software renderer runs without a GPU or OpenGL driver (RDP, VMs, old workshop PCs) and
-# keeps the resident footprint lowest: FemtoVG on WGPU measured ~4× the memory with the window
-# open and ~2.3× while hidden in the tray. `system-tray` provides SystemTrayIcon.
+# Software rendering needs no GPU/OpenGL (RDP, VMs, old PCs). FemtoVG/WGPU used
+# ~4× the memory with the window open and ~2.3× in the tray.
 slint = { version = "1.18.1", default-features = false, features = [
     "accessibility",
     "backend-winit",
@@ -154,8 +151,7 @@ slint = { version = "1.18.1", default-features = false, features = [
     "system-tray",
 ] }
 winresource = "0.1.34"
-# Linux tray-availability probe (StatusNotifierWatcher); Slint already builds it for its ksni tray
-# and AccessKit AT-SPI backends, on the same async-io runtime.
+# Probe StatusNotifierWatcher using Slint's existing async-io zbus dependency.
 zbus = { version = "5.14.0", default-features = false, features = ["async-io"] }
 
 [profile.dev]
@@ -168,6 +164,6 @@ opt-level = 1
 [profile.release]
 codegen-units = 1
 lto = "fat"
-# An overflow in a grosze sum must stop the operation, never wrap into a wrong fiscal amount.
+# Overflow must stop fiscal operations, never wrap amounts.
 overflow-checks = true
 strip = "symbols"

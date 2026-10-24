@@ -1,5 +1,4 @@
-//! Connection settings: the Holuto API address, the printer's device token and its serial port.
-//! Stored in the state directory, readable only by the user (0600 on Unix) because of the token.
+//! Contains the device token; stored privately (0600 on Unix).
 
 use std::net::IpAddr;
 
@@ -26,7 +25,7 @@ pub struct Settings {
     pub baud_rate: u32,
 }
 
-/// Nothing configured yet, at the printer's factory speed.
+/// Unconfigured, at the printer's factory baud rate.
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -54,7 +53,6 @@ impl Settings {
             .map_err(|error| unreadable(error.into()))
     }
 
-    /// Validates, then replaces the stored settings durably.
     pub fn save(&self, dir: &StateDir) -> Result<(), Error> {
         self.validate()?;
         let path = dir.file(FILE);
@@ -82,7 +80,6 @@ impl Settings {
         Ok(())
     }
 
-    /// Records a port the worker detected, keeping everything else as stored.
     pub(crate) fn remember_port(dir: &StateDir, port: &str) -> Result<(), Error> {
         let Some(mut settings) = Self::load(dir)? else {
             return Ok(());
@@ -95,8 +92,8 @@ impl Settings {
     }
 }
 
-/// The final API address, including any path prefix, without a trailing slash. HTTPS is required
-/// except for loopback development hosts; credentials, a query or a fragment are refused.
+/// Preserves path prefixes and strips trailing slashes. HTTP is allowed only on loopback;
+/// credentials, queries and fragments are rejected.
 pub(crate) fn api_url(text: &str) -> Result<String, Error> {
     let refused = || {
         Error::Invalid(

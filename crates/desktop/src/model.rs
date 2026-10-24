@@ -13,7 +13,7 @@ use table::{Sort, Table};
 
 use crate::ui::{Action, AppWindow};
 
-/// The `AppWindow` tabs, in the order of its `TabWidget`.
+/// Must match `AppWindow`'s tab order.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Tab {
     Documents,
@@ -73,10 +73,10 @@ pub(crate) struct Model {
     pub(crate) nip: String,
     pub(crate) message: String,
     pub(crate) tone: Tone,
-    /// The first day of each month offered for the monthly report, newest first.
+    /// Month starts, newest first.
     pub(crate) months: Vec<Date>,
     pub(crate) month_index: usize,
-    /// The periodic report range as typed, `dd.mm.rrrr`; checked only when requested.
+    /// Raw `dd.mm.rrrr` range; validated on request.
     pub(crate) from: String,
     pub(crate) to: String,
     pub(crate) summary: bool,
@@ -123,7 +123,7 @@ impl Model {
         self.documents.items()
     }
 
-    /// The selection follows the document, never its old row.
+    /// Preserve selection by document identity, not row index.
     pub(crate) fn set_documents(&mut self, documents: Vec<Document>, page: usize, has_next: bool) {
         let previous = self.documents.set(documents);
         self.selected = self
@@ -143,17 +143,14 @@ impl Model {
         let _previous = self.history.set(history);
     }
 
-    /// The worker thread finished: nothing runs until the operator starts it again.
     pub(crate) fn stopped(&mut self) {
         self.running = false;
         self.stopping = false;
         self.connected = false;
-        // Readiness is read again on the next connection; blocking stays, as on disk.
+        // Recheck readiness on reconnect; retain the persisted fiscal block.
         self.device = None;
     }
 
-    /// Offers the months before `today`'s, keeping the operator's month while it is offered.
-    /// `false` when the list did not change.
     fn roll_months(&mut self, today: Date) -> bool {
         let newest = today.first_of_month().checked_sub(1.month()).ok();
         if self.months.first().copied() == newest {
@@ -190,8 +187,7 @@ impl Model {
     }
 
     pub(crate) fn capture(&mut self, window: &AppWindow) {
-        // Settings are fixed while the worker runs. Slint 1.18 still runs an assistive
-        // technology's default action on a disabled widget, so the window may hold edits.
+        // Slint 1.18 allows assistive actions on disabled widgets; ignore edits while running.
         if !self.running {
             window
                 .get_api_url()
@@ -210,7 +206,7 @@ impl Model {
         }
         self.nip = window.get_nip().to_string();
         self.month_index = usize::try_from(window.get_month_index()).unwrap_or_default();
-        // The app runs for weeks in the tray; the month that just ended must be offered.
+        // Tray sessions can span months.
         if self.roll_months(Zoned::now().date()) {
             window.set_months(strings(self.months.iter().copied().map(month_label)));
         }
@@ -273,7 +269,6 @@ impl Model {
         self.history.sync_columns(&window.get_history_columns());
     }
 
-    /// The worker takes commands: connected, and not asked to stop (it discards later ones).
     const fn accepting(&self) -> bool {
         self.connected && !self.stopping
     }
@@ -441,7 +436,6 @@ impl Model {
     }
 }
 
-/// Why a typed periodic report range cannot be printed.
 #[derive(Debug, thiserror::Error)]
 enum RangeError {
     #[error("Data {which} musi mieć postać dd.mm.rrrr.")]
@@ -455,7 +449,7 @@ enum RangeError {
 fn report_range(from: &str, to: &str) -> Result<(Date, Date), RangeError> {
     let today = Zoned::now().date();
     let date = |which, text: &str| {
-        // `%Y` also reads "25" as the year 25: the year must be written in full.
+        // `%Y` accepts "25" as year 0025.
         let full_year = text.rsplit_once('.').is_some_and(|(_, year)| {
             year.len() == 4 && year.bytes().all(|byte| byte.is_ascii_digit())
         });
@@ -485,7 +479,6 @@ const fn tone_number(tone: Tone) -> i32 {
 fn date_label(date: Date) -> String {
     date.strftime("%d.%m.%Y").to_string()
 }
-/// The 24 months before `today`'s, newest first.
 fn months_before(today: Date) -> Vec<Date> {
     today
         .first_of_month()

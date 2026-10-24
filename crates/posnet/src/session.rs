@@ -13,21 +13,18 @@ use crate::{
     frame::{self, ETX, MAX_FRAME, Reply, STX},
 };
 
-/// Status and setup commands answer well within this.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 const READ_CHUNK: usize = 256;
 
-/// A byte stream to the printer.
 pub trait Port: Send {
     fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()>;
-    /// Bytes that arrived within `timeout`; [`io::ErrorKind::TimedOut`] when none did.
+    /// Returns [`io::ErrorKind::TimedOut`] if no bytes arrive within `timeout`.
     fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize>;
 }
 
-/// Where ports come from: the OS serial ports, or the simulator in tests.
 pub trait Link: Send + Sync + fmt::Debug {
     fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, Error>;
-    /// Ports worth probing for a printer, the likeliest first.
+    /// Probe order, likeliest ports first.
     fn candidates(&self) -> Vec<String>;
 }
 
@@ -37,7 +34,6 @@ pub struct Connection {
     pub baud_rate: u32,
 }
 
-/// The operating system's serial ports.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SerialLink;
 
@@ -58,8 +54,7 @@ impl Link for SerialLink {
     }
 }
 
-/// Serial ports a printer could be on, USB-attached ports first. macOS lists every device twice;
-/// only the call-out `/dev/cu.*` node opens without waiting for a carrier.
+/// USB ports first. On macOS, use `/dev/cu.*`: duplicate `/dev/tty.*` nodes wait for a carrier.
 pub fn serial_ports() -> Vec<String> {
     let mut ports = serialport::available_ports().unwrap_or_default();
     ports.retain(|port| !port.port_name.starts_with("/dev/tty.") || cfg!(not(target_os = "macos")));
@@ -67,12 +62,11 @@ pub fn serial_ports() -> Vec<String> {
     ports.into_iter().map(|port| port.port_name).collect()
 }
 
-/// A native port (`TTYPort`/`COMPort`), so a session holds one trait object, not two.
+/// Native port avoids nesting trait objects.
 pub(crate) struct SerialStream<P>(pub(crate) P);
 
 impl<P: SerialPort> Port for SerialStream<P> {
-    /// No `flush`: `tcdrain`/`FlushFileBuffers` wait without a deadline for a device that stopped
-    /// reading. The reply the session waits for already proves the bytes arrived.
+    /// No flush: `tcdrain`/`FlushFileBuffers` can block indefinitely; the reply confirms delivery.
     fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
         self.0.set_timeout(timeout)?;
         self.0.write_all(bytes)
@@ -89,7 +83,7 @@ impl<P: SerialPort> Port for SerialStream<P> {
 
 pub struct Session {
     port: Box<dyn Port>,
-    /// Bytes received after the last frame; they belong to whatever reply comes next.
+    /// Bytes beyond the last frame, retained for the next reply.
     pending: Vec<u8>,
 }
 
@@ -118,7 +112,7 @@ impl Session {
         }
     }
 
-    /// Sends one command once and waits up to `timeout` for its reply.
+    /// Sends once and waits up to `timeout`.
     pub fn command(
         &mut self,
         command: &'static str,
@@ -129,8 +123,7 @@ impl Session {
         self.receive(command, deadline)
     }
 
-    /// The reply to `command`, due by `deadline`. A reply to a different command (a late answer)
-    /// is an error, never this command's success.
+    /// A late reply to another command is an error, not this command's success.
     pub(crate) fn receive(
         &mut self,
         command: &'static str,
@@ -138,7 +131,7 @@ impl Session {
     ) -> Result<Reply, Error> {
         loop {
             let (answered, reply) = self.next_frame(command, deadline)?;
-            // Only status queries carry a token: this reply answers an earlier one, not `command`.
+            // Tokens mark replies to earlier asynchronous status queries.
             if reply.get("@").is_some() {
                 continue;
             }
@@ -151,7 +144,7 @@ impl Session {
         }
     }
 
-    /// Writes one command frame; its reply is due by the returned deadline.
+    /// Returns the reply deadline after sending once.
     pub(crate) fn send(
         &mut self,
         command: &'static str,
@@ -166,8 +159,8 @@ impl Session {
         Ok(deadline)
     }
 
-    /// The next frame the printer sends, whichever command it answers; an error reply is an
-    /// `Err`. Nothing by `deadline` is a timeout of `command`.
+    /// Accepts any command's reply; device errors return `Err`.
+    /// Silence until `deadline` times out `command`.
     pub(crate) fn next_frame(
         &mut self,
         command: &'static str,
@@ -177,7 +170,7 @@ impl Session {
         loop {
             if let Some(end) = self.pending.iter().position(|byte| *byte == ETX) {
                 let raw: Vec<u8> = self.pending.drain(..=end).collect();
-                // Bytes before the last STX are line noise; the CRC guards the frame itself.
+                // Discard line noise before the last STX; CRC validates the frame.
                 let Some(start) = raw.iter().rposition(|byte| *byte == STX) else {
                     continue;
                 };
@@ -200,7 +193,7 @@ impl Session {
     }
 }
 
-/// A fresh request token, `0000` to `9999` (spec p. 11); the printer echoes it in its reply.
+/// Echoed request token, `0000`–`9999` (spec p. 11).
 pub(crate) fn token() -> String {
     static NEXT: AtomicU16 = AtomicU16::new(0);
     format!("{:04}", NEXT.fetch_add(1, Ordering::Relaxed) % 10_000)

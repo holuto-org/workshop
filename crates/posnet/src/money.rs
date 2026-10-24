@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, decimal};
 
-/// A nonnegative amount within the printer's range: 9 999 999 999 grosze.
+/// Nonnegative amount, at most 9 999 999 999 grosze.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "u64", into = "u64")]
 pub struct Grosze(u64);
@@ -22,7 +22,7 @@ impl Grosze {
         Ok(Self(grosze))
     }
 
-    /// A plain złoty amount with at most two decimal places, e.g. `"12.50"`.
+    /// Plain złoty amount with at most two decimal places, e.g. `"12.50"`.
     pub fn parse(zloty: &str) -> Result<Self, Error> {
         let grosze = decimal::parse(zloty, 2).ok_or_else(|| {
             Error::Invalid(
@@ -59,7 +59,7 @@ impl From<Grosze> for u64 {
     }
 }
 
-/// Saturates at one past [`Grosze::MAX`] so an oversized sum fails the range check, never wraps.
+/// Saturates at one past [`Grosze::MAX`] to fail range checks instead of wrapping.
 impl Sum for Grosze {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         Self(
@@ -75,7 +75,7 @@ impl fmt::Display for Grosze {
     }
 }
 
-/// `1 234 567,89 zł`, the way a Polish receipt writes it; also beyond [`Grosze::MAX`].
+/// Formats as `1 234 567,89 zł`, including values above [`Grosze::MAX`].
 pub fn zloty(grosze: u64) -> String {
     let whole = (grosze / 100).to_string();
     let mut grouped = String::with_capacity(whole.len() + whole.len() / 3);

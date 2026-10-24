@@ -1,5 +1,3 @@
-//! Holuto documents eligible for a receipt, and the operator's request to queue one.
-
 use jiff::Timestamp;
 use posnet::decimal;
 use serde::{
@@ -13,9 +11,9 @@ use crate::Error;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReceiptKind {
-    /// An advance payment: identified by its payment allocation, one line per VAT rate.
+    /// Payment allocation with one line per VAT rate.
     Advance,
-    /// The final sale of a posted order; the unpaid rest prints as credit.
+    /// Posted order's final sale; unpaid balance prints as credit.
     Sale,
 }
 
@@ -27,7 +25,6 @@ impl ReceiptKind {
         }
     }
 
-    /// An advance names its allocation; a sale has none.
     pub(crate) fn check_allocation(self, allocation_id: Option<Uuid>) -> Result<(), String> {
         match (self, allocation_id) {
             (Self::Advance, Some(_)) | (Self::Sale, None) => Ok(()),
@@ -45,7 +42,7 @@ pub struct Document {
     pub order_number: i64,
     #[serde(deserialize_with = "Option::deserialize")]
     pub allocation_id: Option<Uuid>,
-    /// In grosze; listed even above the printer's limit, which execution enforces.
+    /// Grosze; execution, not listing, enforces the printer's limit.
     #[serde(deserialize_with = "grosze")]
     pub amount: u64,
     #[serde(deserialize_with = "Option::deserialize")]
@@ -54,7 +51,7 @@ pub struct Document {
 }
 
 impl Document {
-    /// Whether both describe the same printable document (an order can have several advances).
+    /// An order may have multiple advances, each identified by its allocation.
     pub fn same_document(&self, other: &Self) -> bool {
         self.kind == other.kind
             && self.order_id == other.order_id
@@ -70,7 +67,7 @@ impl Document {
     }
 }
 
-/// A złoty string with at most two decimal places, e.g. `"250.00"`, as grosze.
+/// Converts a złoty string with at most two decimal places to grosze.
 fn grosze<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     let zloty = String::deserialize(deserializer)?;
     decimal::parse(&zloty, 2).ok_or_else(|| {
@@ -81,7 +78,6 @@ fn grosze<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     })
 }
 
-/// A buyer's tax number printed on the receipt: exactly ten digits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct BuyerNip(String);

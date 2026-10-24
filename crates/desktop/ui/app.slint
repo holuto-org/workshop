@@ -5,7 +5,7 @@ export enum Action { save, start, stop, quit, queue-receipt, previous-page, next
 component Hint inherits Text { color: #8c8c8c; font-size: 12px; wrap: word-wrap; }
 component Heading inherits Text { font-size: 18px; font-weight: 600; color: #262626; }
 component Card inherits Rectangle { background: white; border-width: 1px; border-color: #f0f0f0; border-radius: 8px; }
-// A sortable table; Rust reorders the rows and marks the sorted column.
+// Rust owns row order and sort indicators.
 component Table inherits Rectangle {
     in property <[[StandardListViewItem]]> rows;
     in-out property <[TableColumn]> columns;
@@ -70,7 +70,7 @@ export component AppWindow inherits Window {
     min-width: 1040px; min-height: 720px;
     background: #f5f5f5;
     default-font-size: 14px;
-    // Index into the TabWidget below; Rust `model::Tab` lists the tabs in the same order.
+    // Must match Rust's model::Tab order.
     in-out property <int> tab;
     in property <bool> connected;
     in property <bool> running;
@@ -86,7 +86,7 @@ export component AppWindow inherits Window {
     in property <int> status-tone;
     in property <[[StandardListViewItem]]> documents;
     in property <[[StandardListViewItem]]> history;
-    // Column order matches `Row::cells` in model/table.rs.
+    // Must match Row::cells in model/table.rs.
     in-out property <[TableColumn]> document-columns: [
         { title: "Zlecenie", min-width: 100px, horizontal-stretch: 1 },
         { title: "Rodzaj", min-width: 140px },
@@ -112,7 +112,7 @@ export component AppWindow inherits Window {
     in-out property <int> baud-index;
     in property <[string]> months;
     in-out property <int> month-index;
-    // The periodic report range as typed, dd.mm.rrrr; Rust validates it on request.
+    // Raw dd.mm.rrrr range; Rust validates it on request.
     in-out property <string> from-date;
     in-out property <string> to-date;
     in-out property <bool> summary;

@@ -1,10 +1,5 @@
-//! Executes Holuto jobs on the printer and settles their results, durably and without replay.
-//!
-//! A receipt job moves through the journal as: claimed (`NotStarted`, before preflight), one
-//! `Dispatching` entry per printer command, `Completed`, then the result persisted and sent, then
-//! settled. After a restart the journal decides: nothing is ever sent to the printer again; an
-//! unsettled receipt is reconciled with the job's server state and its saved result is resent
-//! unchanged. A terminal server state (staff resolution) is authoritative.
+//! Recovery reconciles the journal with Holuto without replaying printer commands.
+//! Saved results are resent unchanged; terminal server states are authoritative.
 
 use std::{io, mem, time::Duration};
 
@@ -36,21 +31,19 @@ const INTERRUPTED: &str = "Przerwano w trakcie drukowania. Sprawdź drukarkę.";
 const UNNUMBERED: &str = "Wydruk zakończony, ale nie odczytano numeru paragonu. Sprawdź wydruk i \
                           rozstrzygnij zadanie w Holuto.";
 
-/// What the operator should hear about. The agent keeps it until the worker takes it, so a
-/// receipt settled by a call that fails afterwards (or by a report) is still announced.
+/// Retained until the worker drains it, even if settlement is followed by an error or report.
 #[derive(Debug, Default)]
 pub(crate) struct News {
-    /// Warnings for the operator; none of them stop processing.
+    /// Non-blocking operator warnings.
     pub(crate) notices: Vec<String>,
     pub(crate) history_changed: bool,
 }
 
-/// Why new work is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Blocked {
-    /// A receipt result is not settled with Holuto; staff resolve it in the web app.
+    /// Unsettled receipt; staff resolve it in Holuto.
     Receipt,
-    /// A report was interrupted; an operator confirms the printout on the same device.
+    /// Interrupted report; the operator confirms its printout on the same device.
     Report,
 }
 
@@ -60,9 +53,9 @@ pub(crate) struct Agent<'dir, H> {
     dir: &'dir StateDir,
     journal: Journal,
     telemetry: Telemetry,
-    /// The status the telemetry describes: the paired device as last probed.
+    /// Last probe of the paired device; source of the telemetry.
     status: Option<Status>,
-    /// Hears what the printer waits for an operator to fix mid-operation; `None` once fixed.
+    /// Operator intervention needed mid-operation; `None` when cleared.
     waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     news: News,
 }
@@ -95,13 +88,11 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         self.status.as_ref()
     }
 
-    /// Everything to announce since the last call.
     pub(crate) fn take_news(&mut self) -> News {
         mem::take(&mut self.news)
     }
 
-    /// Adopts a fresh probe of the paired device into the telemetry. Returns notices for active
-    /// slots whose rate Holuto does not use.
+    /// Updates telemetry; returns notices for active VAT rates Holuto does not support.
     pub(crate) fn describe(&mut self, status: Status) -> Result<Vec<String>, Error> {
         if status.serial != self.api.serial() {
             return Err(Error::Blocked(format!(
@@ -124,7 +115,6 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         Ok(())
     }
 
-    /// Whether new work is refused, and why.
     pub(crate) fn blocked(&self) -> Result<Option<Blocked>, Error> {
         Ok(self
             .journal
@@ -136,9 +126,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             }))
     }
 
-    /// One poll: probe, heartbeat (even when the probe failed, so Holuto sees the device alive),
-    /// settle the last operation, and take and execute one job when nothing blocks. Returns when
-    /// the next poll should run.
+    /// Heartbeats even after a failed probe so Holuto still sees the device online.
     pub(crate) fn step(&mut self) -> Result<Duration, Error> {
         let probe = self
             .printer
@@ -174,7 +162,6 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         Ok(Duration::ZERO)
     }
 
-    /// Prints a fiscal report. Refused while any operation is unresolved.
     pub(crate) fn run_report(&mut self, report: Report) -> Result<(), Error> {
         if let Some(blocked) = self.settle()? {
             return Err(Error::Blocked(
@@ -205,9 +192,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         self.journal.save(&Operation::Report(operation))
     }
 
-    /// Records that an operator checked the printout of an interrupted report.
-    ///
-    /// The device it ran on must be connected and ready, so the check was possible. Never prints.
+    /// Confirms the printout on the same ready device; never prints.
     pub(crate) fn resolve_report(&self) -> Result<(), Error> {
         let mut report = match self.journal.load()? {
             Some(Operation::Receipt(_)) => {
@@ -227,7 +212,6 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         self.journal.save(&Operation::Report(report))
     }
 
-    /// Reconciles the journaled operation; `Some` while it still blocks new work.
     fn settle(&mut self) -> Result<Option<Blocked>, Error> {
         let mut operation = match self.journal.load()?.filter(Operation::blocks) {
             None => return Ok(None),
@@ -263,17 +247,16 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             Device::NotStarted | Device::Dispatching { .. } => None,
         };
         match (&operation.result, completed_number) {
-            // Even a known preflight failure never clears a server UNKNOWN automatically.
+            // A preflight failure must not clear a server UNKNOWN automatically.
             (Some(JobResult::Failed { .. }), _) if remote.state == JobState::Unknown => {
                 return Ok(Some(Blocked::Receipt));
             },
-            // Completed on the device: report it, upgrading an earlier UNKNOWN once numbered.
             (None, Some(number)) | (Some(JobResult::Unknown { .. }), Some(number @ Some(_))) => {
                 self.report(&mut operation, done(number))?;
             },
             (None, None) => self.report(&mut operation, JobResult::unknown(INTERRUPTED))?,
             (Some(result), _) => {
-                // Resending a saved result is not reprinting: same attempt, same issue time.
+                // Resend the same attempt and issue time, never the print commands.
                 if !(matches!(result, JobResult::Unknown { .. })
                     && remote.state == JobState::Unknown)
                 {
@@ -326,8 +309,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             result: None,
             settled: None,
         };
-        // The claim is durable before any possible physical action: an interruption from here on
-        // is reported as UNKNOWN, never retried.
+        // Persist before any physical action; interruptions become UNKNOWN, never retries.
         self.journal.save(&Operation::Receipt(operation.clone()))?;
         let status = self.printer.probe()?;
         let notices = self.describe(status.clone())?;
@@ -359,7 +341,6 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 }
                 Ok(())
             },
-            // Only an uncertain error means a command reached the printer.
             Err(error @ posnet::Error::Uncertain(_)) => {
                 self.report(&mut operation, JobResult::unknown(&error.to_string()))
             },
@@ -370,7 +351,6 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         }
     }
 
-    /// The job as a printer receipt; `Err` is the reason the job fails before printing.
     fn receipt(&self, job: &Job) -> Result<Receipt, String> {
         let rates = &self.telemetry.vat_slots;
         let slot_rate = |slot: u8, rate| {
@@ -445,7 +425,6 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         .map_err(|error| error.to_string())
     }
 
-    /// Persists the result, then sends it.
     fn report(&mut self, operation: &mut ReceiptOperation, result: JobResult) -> Result<(), Error> {
         operation.result = Some(result);
         self.journal.save(&Operation::Receipt(operation.clone()))?;
@@ -459,8 +438,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         Ok(self.api.report(operation.job_id, &form)?)
     }
 
-    /// Settles the operation with the backend `state`; a printed receipt enters the history, with
-    /// the number staff supplied in Holuto when the printer's could not be read.
+    /// Uses the staff-supplied receipt number if the printer's was unreadable.
     fn finish(
         &mut self,
         operation: &mut ReceiptOperation,
@@ -497,7 +475,6 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     }
 }
 
-/// Journals each receipt command before it is sent.
 struct ReceiptDispatch<'a> {
     journal: &'a Journal,
     operation: &'a mut ReceiptOperation,
@@ -520,8 +497,7 @@ impl DeviceJournal for ReceiptDispatch<'_> {
     }
 }
 
-/// Journals each report command before it is sent; the report is journaled only once a command
-/// is about to reach the printer.
+/// Reports enter the journal only when the first command is about to be sent.
 struct ReportDispatch<'a> {
     journal: &'a Journal,
     operation: &'a mut ReportOperation,
@@ -544,7 +520,7 @@ impl DeviceJournal for ReportDispatch<'_> {
     }
 }
 
-/// A printed receipt without a readable number stays UNKNOWN until staff supply the number.
+/// An unreadable receipt number stays UNKNOWN until staff supply it.
 fn done(receipt_number: Option<String>) -> JobResult {
     receipt_number.map_or_else(
         || JobResult::unknown(UNNUMBERED),
@@ -556,7 +532,6 @@ fn quantity(text: &str) -> Result<Quantity, String> {
     Quantity::parse(text).map_err(|error| format!("{error} ({text:?})"))
 }
 
-/// `field` names the amount in the failure reason.
 fn amount(field: &str, text: &str) -> Result<Grosze, String> {
     Grosze::parse(text).map_err(|error| format!("{field}: {error} ({text:?})"))
 }

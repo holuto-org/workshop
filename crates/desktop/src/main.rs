@@ -45,7 +45,7 @@ fn main() -> ExitCode {
             if let Err(dialog_error) = show_error(&error.to_string())
                 && let Err(write_error) = writeln!(io::stderr().lock(), "{error}\n{dialog_error}")
             {
-                // There is no second output channel when stderr itself is unavailable.
+                // No output channel remains.
                 drop(write_error);
             }
             ExitCode::FAILURE
@@ -55,9 +55,7 @@ fn main() -> ExitCode {
 
 fn start() -> Result<(), Box<dyn Error>> {
     let path = StateDir::default_path().ok_or("Nie można ustalić katalogu stanu aplikacji.")?;
-    // Simulator builds keep their own state beside the real one, in the same private base: the
-    // worker saves the simulator's TCP address as the printer port, and its journal and history
-    // must never mix with a real printer's.
+    // Keep simulator ports, journal and history separate from real-printer state.
     #[cfg(feature = "simulator")]
     let path = path.with_file_name("holuto-fiscal-simulator");
     let dir = Arc::new(StateDir::open(path)?);

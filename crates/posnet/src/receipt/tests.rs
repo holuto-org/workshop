@@ -19,7 +19,7 @@ fn grosze(amount: u64) -> Grosze {
     Grosze::new(amount).unwrap()
 }
 
-/// The simulator's header names this company, so receipts carrying it print no footer.
+/// Matches the simulator header to avoid footer commands.
 pub(crate) const BRAND: &str = "Warsztat Kowalski";
 
 pub(crate) fn line(name: &str, quantity_text: &str, zloty: &str, vat: u8) -> Line {

@@ -1,7 +1,7 @@
 //! Posnet frames: `STX command TAB (key value TAB)* # CRC16 ETX`, payload in Windows-1250.
 //!
-//! The checksum is CRC-16/XMODEM (polynomial 0x1021, initial value 0) of the payload, written as
-//! four uppercase hex digits (spec p. 13).
+//! CRC-16/XMODEM (polynomial 0x1021, initial value 0) covers the payload;
+//! four uppercase hex digits carry the checksum (spec p. 13).
 
 use crate::{Error, text};
 
@@ -12,7 +12,7 @@ pub(crate) const ETX: u8 = 0x03;
 const KEY_LENGTH: usize = 2;
 const CORRUPT: &str = "Uszkodzona odpowiedź drukarki (CRC lub kodowanie).";
 
-/// Parameters of one reply, in the order the device sent them; keys are unique.
+/// Reply parameters in device order, with unique keys.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Reply(Vec<(String, String)>);
 
@@ -24,7 +24,6 @@ impl Reply {
             .map(|(_, value)| value.as_str())
     }
 
-    /// The value of a parameter the reply must carry.
     pub(crate) fn require(&self, key: &str) -> Result<&str, Error> {
         self.get(key).ok_or_else(|| {
             Error::Protocol(format!(
@@ -50,7 +49,6 @@ pub(crate) fn crc16(payload: &[u8]) -> u16 {
     })
 }
 
-/// Wraps an already encoded payload into a frame.
 pub(crate) fn wrap(payload: &[u8]) -> Vec<u8> {
     let mut frame = Vec::with_capacity(payload.len() + 7);
     frame.push(STX);
@@ -74,7 +72,7 @@ fn valid_key(key: &str) -> bool {
         || (key.len() == KEY_LENGTH && key.chars().all(|character| character.is_ascii_lowercase()))
 }
 
-/// A command frame; every value must be printable Windows-1250 text without tabs or controls.
+/// Values must be printable Windows-1250 without tabs or controls.
 pub(crate) fn encode(command: &str, params: &[(&str, String)]) -> Result<Vec<u8>, Error> {
     if !valid_command(command) {
         return Err(Error::Invalid(
@@ -106,8 +104,7 @@ pub(crate) fn encode(command: &str, params: &[(&str, String)]) -> Result<Vec<u8>
     Ok(frame)
 }
 
-/// A reply frame as its command and parameters. A reply carrying an error code is a
-/// [`Error::Device`]; `ERR` without a code is a protocol error, never a success.
+/// Error codes yield [`Error::Device`]; `ERR` without a code is a protocol error.
 pub(crate) fn decode(frame: &[u8]) -> Result<(String, Reply), Error> {
     let body = frame
         .strip_prefix(&[STX])

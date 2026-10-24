@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build native release artifacts from the workspace root (Git Bash on Windows).
+# Windows requires Git Bash.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
@@ -27,7 +27,7 @@ build_dir="packaging/build/${os}-${arch}"
 rm -rf -- "$build_dir"
 mkdir -p "$build_dir" release
 
-# Production builds must never enable the simulator feature.
+# Never package the simulator.
 cargo build --release --locked -p holuto-fiscal
 binary="$target_dir/release/holuto-fiscal"
 
@@ -39,7 +39,7 @@ case $os in
     app="$build_dir/Holuto Fiscal.app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     install -m 755 "$binary" "$app/Contents/MacOS/holuto-fiscal"
-    # ImageMagick cannot write ICNS; its pre-rendered PNG iconset is committed.
+    # ImageMagick cannot write ICNS; use the committed PNG iconset.
     iconutil -c icns packaging/macos/icon.iconset -o "$app/Contents/Resources/icon.icns"
     VERSION="$version" python3 - "$app/Contents/Info.plist" <<'PY'
 import os
@@ -64,13 +64,13 @@ PY
     install -m 644 crates/desktop/assets/icon.svg "$package/usr/share/icons/hicolor/scalable/apps/holuto-fiscal.svg"
     install -m 644 crates/desktop/assets/icon.png "$package/usr/share/icons/hicolor/256x256/apps/holuto-fiscal.png"
 
-    # libc/libgcc: Rust's GNU runtime; use the build host's glibc baseline.
-    # fontconfig: fontique's system font discovery; fonts-dejavu-core: readable Polish UI.
+    # Most display libraries are dlopened; ldd/dpkg-shlibdeps miss them.
+    # libc/libgcc: Rust runtime, using the host's glibc baseline.
+    # fontconfig: fontique; fonts-dejavu-core: Polish glyphs.
     # X11/X11-xcb/Xcursor/Xi: winit; xcb: softbuffer; xkbcommon[-x11]: keyboard maps.
-    # wayland-client: winit/softbuffer's Wayland transport (cursor parsing is pure Rust).
-    # ca-certificates: HTTPS trust roots. zbus/tray is pure Rust: no libdbus/GTK/GL.
-    # tzdata: the printer clock is Europe/Warsaw time; jiff reads /usr/share/zoneinfo.
-    # Most window libraries are dlopened, so dpkg-shlibdeps/ldd alone miss them.
+    # wayland-client: winit/softbuffer transport; cursor parsing is pure Rust.
+    # ca-certificates: HTTPS roots; pure-Rust zbus/tray needs no libdbus/GTK/GL.
+    # tzdata: jiff reads /usr/share/zoneinfo for the Europe/Warsaw printer clock.
     glibc_version=$(getconf GNU_LIBC_VERSION)
     glibc_version=${glibc_version#glibc }
     depends="libc6 (>= $glibc_version), libgcc-s1, libfontconfig1, fonts-dejavu-core, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, ca-certificates, tzdata"

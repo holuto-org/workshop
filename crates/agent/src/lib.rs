@@ -1,10 +1,9 @@
-//! Holuto agent: the `/agent` API, the durable operation journal, receipt execution and the single
-//! worker thread that owns all printer I/O.
+//! Fiscal operations run on one worker thread.
 //!
-//! Fiscal safety lives here: before any command reaches the printer the claim is journaled; no
-//! device command is retried and nothing is reprinted; an uncertain outcome blocks every receipt
-//! and report, across restarts, until staff resolve the job in Holuto (receipts) or an operator
-//! confirms the printout on the same device (reports). Resolving never reissues anything.
+//! Journal intent before dispatch; never retry device commands or reprint.
+//! Uncertain outcomes block receipts and reports across restarts until staff resolve
+//! receipts in Holuto or an operator confirms reports on the same device.
+//! Resolution never reissues commands.
 
 #![forbid(unsafe_code)]
 
@@ -37,10 +36,10 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
-    /// Input the operator can correct: settings, a buyer NIP.
+    /// Operator-correctable input.
     #[error("{0}")]
     Invalid(String),
-    /// Fiscal safety refuses to continue until a person resolves the state.
+    /// Requires human resolution before fiscal operations can continue.
     #[error("{0}")]
     Blocked(String),
 }

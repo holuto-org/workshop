@@ -33,8 +33,7 @@ jobs:
         with:
           tool: cargo-deny@0.20.2,cargo-shear@1.14.0
       - name: Install Linux build dependencies
-        # fontique -> yeslogic-fontconfig-sys needs pkg-config and fontconfig headers.
-        # winit/softbuffer dlopen their display libraries; no X11/Wayland dev packages.
+        # fontique needs fontconfig headers; winit/softbuffer dlopen display libraries.
         run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libfontconfig1-dev
       - name: Format
         run: cargo +nightly-2026-10-06 fmt --check

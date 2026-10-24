@@ -30,7 +30,6 @@ fn document() -> Document {
     }
 }
 
-/// A windowless platform, so tests drive `AppWindow` properties without a display server.
 struct Headless;
 
 impl Platform for Headless {
@@ -39,7 +38,7 @@ impl Platform for Headless {
     }
 }
 
-/// Slint keeps one platform per thread and every test runs on its own thread.
+/// Slint's platform is thread-local; each test has its own thread.
 fn window() -> Result<AppWindow, Box<dyn Error>> {
     set_platform(Box::new(Headless))?;
     Ok(AppWindow::new()?)
@@ -204,7 +203,6 @@ fn refresh_retains_identity_not_old_row_index() {
 fn window_rolls_a_stale_month_list_and_keeps_the_choice() -> Result<(), Box<dyn Error>> {
     let window = window()?;
     let mut model = ready_model();
-    // The list as built two months ago, shown with its third month chosen.
     model.months = months_before(Zoned::now().date().checked_sub(2.months())?);
     window.set_months(strings(model.months.iter().copied().map(month_label)));
     model.month_index = 2;
@@ -366,7 +364,7 @@ fn typed_report_dates_must_be_valid_and_not_in_the_future() -> Result<(), Box<dy
         model.pending.is_none(),
         "A future date must not become a report boundary"
     );
-    // A two-digit year would otherwise parse as year 0025, not 2025.
+    // `%Y` accepts "25" as year 0025.
     for typed in [
         "31.02.2025",
         "2025-10-20",
@@ -399,7 +397,6 @@ fn sorting_and_refresh_keep_the_selected_document() {
     model.sort_documents(0, false);
     assert_eq!(model.documents(), [other.clone(), selected.clone()]);
     assert_eq!(model.selected, Some(1));
-    // The worker refreshes in server order; the operator's order stays.
     model.set_documents(vec![selected.clone(), other], 1, false);
     assert_eq!(model.selected, Some(1));
     model.request(Action::QueueReceipt);
@@ -472,8 +469,7 @@ fn clicked_row_is_the_queued_document_after_sorting_and_refresh() -> Result<(), 
         sorts.borrow_mut().push(Clicked::Sort(column, descending));
     });
 
-    // Probe down the "Zlecenie" column for its header and both rows, so layout tweaks don't
-    // silently move the clicks off the table.
+    // Locate the header and rows dynamically so layout changes cannot misdirect clicks.
     let x = 300.0;
     let (mut header, mut second_row) = (None, None);
     for step in 0..205_u16 {
@@ -490,7 +486,7 @@ fn clicked_row_is_the_queued_document_after_sorting_and_refresh() -> Result<(), 
     }
     let header = header.ok_or("no column header under the documents table's first column")?;
     let second_row = second_row.ok_or("no second document row")?;
-    // Probing toggled the column's indicator; Rust's (unsorted) state restores it.
+    // Reset the sort indicator changed by probing.
     model.sync(&window);
     clicks.borrow_mut().clear();
 
@@ -514,7 +510,6 @@ fn clicked_row_is_the_queued_document_after_sorting_and_refresh() -> Result<(), 
         0,
         "Order 7 now leads and stays highlighted"
     );
-    // The worker refreshes in server order; the operator's order and selection stay.
     model.set_documents(vec![first, second.clone()], 1, false);
     model.sync(&window);
     assert_eq!(window.get_selected(), 0);

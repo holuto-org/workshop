@@ -7,7 +7,7 @@ pub(crate) fn reply(payload: &str) -> Vec<u8> {
 
 #[test]
 fn published_crc_vector() {
-    // Spec p. 13 worked example: the full frame for `trinit bm0`.
+    // Spec p. 13 worked example.
     assert_eq!(
         encode("trinit", &[("bm", "0".to_owned())]).unwrap(),
         b"\x02trinit\tbm0\t#4825\x03"

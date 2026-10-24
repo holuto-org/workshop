@@ -1,5 +1,3 @@
-//! Device state, preflight checks and journaled fiscal operations.
-
 use std::{
     io,
     sync::Arc,
@@ -18,30 +16,24 @@ use crate::{
 };
 
 const TEMO: &str = "POSNET TEMO ONLINE";
-/// A Temo answers `getrealid` well within this; a silent port costs no more during a scan.
+/// Bounds scan delays on silent ports; Temo answers `getrealid` within this.
 const SCAN_TIMEOUT: Duration = Duration::from_millis(500);
 const REPORT_TIMEOUT: Duration = Duration::from_secs(120);
 const PERIODIC_REPORT_TIMEOUT: Duration = Duration::from_secs(300);
-/// How long a printer executing a command may wait for an operator (paper, cover, a key) before
-/// the command counts as timed out.
+/// Maximum operator wait (paper, cover or key) while a command executes.
 const OPERATOR_WAIT: Duration = Duration::from_secs(600);
-/// How often a printer waiting for an operator is asked again.
 const WATCH_INTERVAL: Duration = Duration::from_secs(2);
-/// The rate the printer reserves for "zwolniona" (exempt): 100 %.
+/// The printer encodes VAT exemption as 100 %.
 const EXEMPT_BASIS_POINTS: u32 = 10_000;
 const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
-/// The zone of the printer's clock: Polish civil time.
 pub(crate) const PRINTER_ZONE: &str = "Europe/Warsaw";
 
-/// Durable evidence of an operation in progress, kept by the caller, who also hears what the
-/// printer waits for while it runs.
+/// Caller-owned durable operation journal and operator-wait notifications.
 pub trait Journal {
-    /// Persists that `command` is about to be sent. Called before every command of a fiscal
-    /// operation; an error stops the operation before that command reaches the printer.
+    /// Persists intent before each fiscal command; an error prevents that command's send.
     fn dispatching(&mut self, command: &'static str) -> io::Result<()>;
 
-    /// The printer, executing the last dispatched command, waits for an operator to fix `problem`
-    /// (paper, cover, a key), and the operation waits with it. `None`: fixed, it prints again.
+    /// The executing command needs operator intervention; `None` means printing resumed.
     fn waiting(&mut self, problem: Option<&str>);
 }
 
@@ -53,7 +45,7 @@ pub struct VatRate {
 }
 
 impl VatRate {
-    /// Rates above 99.99 % other than the exempt 100 % mark an unused slot.
+    /// Above 99.99 %, only the exempt 100 % slot is active.
     pub const fn active(self) -> bool {
         self.exempt() || self.basis_points <= MAX_ACTIVE_BASIS_POINTS
     }
@@ -62,7 +54,6 @@ impl VatRate {
         self.basis_points == EXEMPT_BASIS_POINTS
     }
 
-    /// `A · 23%`, `G · zwolniona`, `D · nieaktywna`: the slot letter and its rate.
     pub fn label(self) -> String {
         let letter = char::from(b'A'.saturating_add(self.slot));
         let rate = if self.exempt() {
@@ -81,7 +72,7 @@ pub struct Status {
     pub name: String,
     pub version: String,
     pub serial: String,
-    /// Why the printer refuses work; empty when it is ready.
+    /// Empty when ready.
     pub problems: Vec<String>,
     pub vat: Vec<VatRate>,
 }
@@ -119,7 +110,6 @@ impl Status {
     }
 }
 
-/// A fiscal report the operator prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Report {
@@ -146,13 +136,11 @@ impl Report {
     }
 }
 
-/// What a completed receipt left behind.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Printed {
-    /// The printer's receipt counter after printing; `None` when it could not be read.
+    /// Post-print counter; `None` if unreadable.
     pub receipt_number: Option<String>,
-    /// The printer's clock just before the receipt opened, to the minute: never later than the
-    /// time it prints.
+    /// Printer time just before opening the receipt, to the minute; never after printing.
     pub issued_at: Timestamp,
 }
 
@@ -171,15 +159,13 @@ impl Printer {
         &self.connection
     }
 
-    /// Identity, status and VAT table; read-only.
     pub fn probe(&self) -> Result<Status, Error> {
         read_status(&mut self.session()?)
     }
 
-    /// Probes the configured port; when it does not answer and `may_switch` allows it, tries every
-    /// other candidate port and adopts the first that identifies itself as a Temo Online. Only
-    /// `getrealid` reaches a device that does not, so a scan never disturbs another serial device.
-    /// The caller forbids switching while an operation is unresolved: the device must not change.
+    /// Probes the configured port, then other candidates if `may_switch` permits.
+    /// Adopts the first Temo Online; unidentified devices receive only `getrealid`.
+    /// Switching must be forbidden while an operation is unresolved.
     pub fn detect(&mut self, may_switch: bool) -> Result<Status, Error> {
         let error = match self.probe() {
             Ok(status) => return Ok(status),
@@ -218,8 +204,7 @@ impl Printer {
         }))
     }
 
-    /// The paired device, connected and ready: the precondition for an operator to confirm what
-    /// happened to an interrupted operation on it.
+    /// Requires the paired device to be ready before resolving an interrupted operation.
     pub fn verify(&self, serial: &str) -> Result<Status, Error> {
         let status = self.probe()?;
         status.require_ready()?;
@@ -227,8 +212,7 @@ impl Printer {
         Ok(status)
     }
 
-    /// Prints one receipt on the device `expected` describes. In the same session the printer must
-    /// still be that device, ready, with the VAT table the caller validated the receipt against.
+    /// Rechecks identity, readiness and expected VAT table in the printing session.
     pub fn print_receipt(
         &self,
         receipt: &Receipt,
@@ -261,7 +245,7 @@ impl Printer {
         let footer = (!header.contains(&receipt.brand().to_lowercase())).then_some(receipt.brand());
         let issued_at = clock(&mut session)?;
         dispatch(&mut session, &receipt.steps(footer), journal)?;
-        // The receipt is printed; a failure to read its number is reported, never retried.
+        // Printing succeeded; an unreadable counter must not trigger a retry.
         let receipt_number = session
             .command("scnt", &[], DEFAULT_TIMEOUT)
             .ok()
@@ -273,7 +257,6 @@ impl Printer {
         })
     }
 
-    /// Prints a fiscal report on the paired device `serial`.
     pub fn print_report(
         &self,
         report: Report,
@@ -294,7 +277,7 @@ impl Printer {
         let step = match report {
             Report::Daily => {
                 let clock = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
-                // `da` is `YYYY-MM-DD;HH:MM`; the report takes only the date.
+                // `da`: `YYYY-MM-DD;HH:MM`; reports take only the date.
                 let day = clock
                     .get("da")
                     .and_then(|value| BrokenDownTime::parse_prefix("%Y-%m-%d", value).ok())
@@ -336,11 +319,8 @@ impl Printer {
     }
 }
 
-/// Journals and sends each step once.
-///
-/// After the first journal entry any failure is uncertain: earlier commands may have changed the
-/// printer's state. The one exception is the printer refusing `trinit` itself: no transaction
-/// opened, and no receipt exists without one.
+/// After the first journal entry, failures are uncertain: earlier commands may have changed state.
+/// A refused `trinit` is certain: no transaction opened, so no receipt exists.
 fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) -> Result<(), Error> {
     for (index, step) in steps.iter().enumerate() {
         if let Err(error) = journal.dispatching(step.command) {
@@ -359,13 +339,11 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
     Ok(())
 }
 
-/// Whether `error` is the printer refusing `trinit` itself. It must name `trinit`: a late error
-/// reply to another command proves nothing about this one.
+/// A refusal must name `trinit`; late errors for other commands prove nothing about this one.
 fn refuses_trinit(error: &Error, sent: &str) -> bool {
     sent == "trinit" && refuses(error, sent)
 }
 
-/// Whether `error` is the printer's error reply to `sent`.
 fn refuses(error: &Error, sent: &str) -> bool {
     matches!(error, Error::Device { command, .. } if command == sent)
 }
@@ -374,12 +352,10 @@ fn uncertain(error: Error) -> Error {
     Error::Uncertain(Box::new(error))
 }
 
-/// Sends `step` once and waits for its reply; nothing is ever sent twice.
+/// Sends once. Replies follow execution (spec p. 15); on timeout, query operator-wait status.
 ///
-/// The printer replies only once it executed the command (spec p. 15), so when the step's time
-/// passes it is asked why. While it waits for an operator the step waits too, up to
-/// [`OPERATOR_WAIT`], and `journal` hears the problem; once it is fixed the step gets its full
-/// time again. A printer waiting for nothing, or not answering, timed out as before.
+/// Wait up to [`OPERATOR_WAIT`], notifying `journal`; after intervention, allow the full step time.
+/// Silence or no operator-wait state remains a timeout.
 fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Result<Reply, Error> {
     let command = step.command;
     let mut deadline = session.send(command, &step.params, step.timeout)?;
@@ -402,7 +378,7 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
                 }
                 deadline = Instant::now() + WATCH_INTERVAL;
             },
-            // Fixed: the printer is executing the command again, which may take its full time.
+            // After intervention, execution may need the full step timeout.
             Watch::Ready if since.take().is_some() => {
                 shown = None;
                 journal.waiting(None);
@@ -417,21 +393,17 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
     answered
 }
 
-/// What a printer still executing a command says about itself.
 enum Watch {
     /// The command's own reply arrived meanwhile.
     Answered(Result<Reply, Error>),
-    /// It waits for an operator to fix this.
     Waiting(String),
-    /// It waits for nothing.
     Ready,
-    /// It did not answer both status queries.
+    /// At least one status query went unanswered.
     Unanswered,
 }
 
-/// Asks a printer executing `command` for its state with `!sprn` and `!sdev`, which it answers at
-/// once (spec p. 15). Each carries a token its reply echoes (p. 11), so no reply is mistaken for
-/// another.
+/// `!sprn` and `!sdev` answer during execution (spec p. 15).
+/// Echoed tokens distinguish their replies (p. 11).
 fn watch(session: &mut Session, command: &'static str) -> Result<Watch, Error> {
     let mechanism_token = query(session, "!sprn")?;
     let device_token = query(session, "!sdev")?;
@@ -480,15 +452,13 @@ fn watch(session: &mut Session, command: &'static str) -> Result<Watch, Error> {
     })
 }
 
-/// Sends an asynchronous status query with a fresh token and returns the token.
 fn query(session: &mut Session, query: &'static str) -> Result<String, Error> {
     let token = session::token();
     let _deadline = session.send(query, &[("@", token.clone())], DEFAULT_TIMEOUT)?;
     Ok(token)
 }
 
-/// What a printer executing a command waits for an operator to fix: the lever, cover, paper,
-/// temperature or power, or a key on its keypad (spec pp. 384-385). `None` when nothing.
+/// Operator-fixable mechanism or keypad state (spec pp. 384-385); `None` when ready.
 fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<String> {
     let code = mechanism.get("pr").unwrap_or_default();
     if matches!(code, "1" | "3" | "5" | "6") {
@@ -497,7 +467,6 @@ fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<String> {
     matches!(device.get("ds"), Some("2" | "3")).then(|| "Drukarka oczekuje na operatora".to_owned())
 }
 
-/// `Some(status)` when the port answers as a Temo Online.
 fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Status>, Error> {
     let mut session = Session::open(link, connection)?;
     let identity = session.command("getrealid", &[], SCAN_TIMEOUT)?;
@@ -507,10 +476,8 @@ fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Status>, 
     read_status(&mut session).map(Some)
 }
 
-/// The printer's clock as an instant.
-///
-/// `rtcget` answers `da` as `YYYY-MM-DD;HH:MM` in Polish civil time; an hour the autumn change
-/// repeats is read as its earlier instant, so the result is never later than the printer's own.
+/// `rtcget` returns `da` as `YYYY-MM-DD;HH:MM` in Polish civil time.
+/// Choose the earlier instant in the repeated autumn hour, never later than printer time.
 fn clock(session: &mut Session) -> Result<Timestamp, Error> {
     let unreadable = |problem: String| {
         Error::Protocol(format!("Nie można odczytać zegara drukarki: {problem}."))
@@ -601,7 +568,7 @@ fn status(
     })
 }
 
-/// What the mechanism status `pr` (spec p. 384) says is wrong; `None` when nothing is.
+/// Mechanism `pr` codes (spec p. 384); `None` when ready.
 fn mechanism_problem(code: &str) -> Option<String> {
     Some(match code {
         "0" => return None,

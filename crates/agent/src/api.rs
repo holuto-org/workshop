@@ -1,8 +1,6 @@
-//! The Holuto `/agent` API, authenticated by the printer's permanent device token.
-//!
-//! Every response is decoded into typed values before anything acts on it; a body that does not
-//! match the contract is an error, never a partial success. Redirects are refused (they would
-//! carry the token elsewhere) and no request is retried here: the agent decides what is safe.
+//! Holuto `/agent` API using the permanent device token.
+//! Rejects malformed responses; refuses redirects to protect the token.
+//! Retry decisions belong to the agent.
 
 pub mod model;
 
@@ -23,44 +21,41 @@ use crate::{
 };
 use model::{Job, Page, PrinterStatus, QueueForm, ResultForm, Telemetry};
 
-/// The largest page `/agent/documents` serves.
+/// Backend page-size limit.
 pub const DOCUMENTS_LIMIT: usize = 100;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
 const MAX_SERIAL_LENGTH: usize = 32;
-/// The backend's `App-Version` gate parses `agent/<SemVer>`.
+/// Sent as `agent/<SemVer>` for the backend's `App-Version` gate.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
-    /// The token was rejected (rotated or revoked). Processing stops; there is no refresh.
+    /// Stops processing; tokens are never refreshed automatically.
     #[error("Holuto odrzuciło token drukarki (401). Wklej aktualny token w Ustawieniach.")]
     Unauthorized,
     #[error("Holuto odpowiedziało błędem {status}{}", problem(.detail.as_deref()))]
     Status { status: u16, detail: Option<String> },
     #[error("Brak połączenia z Holuto: {0}")]
     Transport(#[from] ureq::Error),
-    /// A response the contract does not allow; nothing acts on it.
     #[error("Nieprawidłowa odpowiedź Holuto ({0}).")]
     Response(String),
 }
 
-/// What the agent needs from Holuto; implemented over HTTP by [`Api`] and by test doubles.
 pub trait Holuto {
-    /// The physical serial this connection is bound to (`X-Device-Serial`).
+    /// Physical serial bound to `X-Device-Serial`.
     fn serial(&self) -> &str;
-    /// The paired printer, once a session or heartbeat answered.
+    /// Paired printer ID, available after session or heartbeat.
     fn printer_id(&self) -> Option<Uuid>;
-    /// Binds the device serial and replaces the backend's telemetry, VAT slots included.
+    /// Binds the serial and replaces backend telemetry, including VAT slots.
     fn session(&mut self, telemetry: &Telemetry) -> Result<(), ApiError>;
     fn heartbeat(&mut self, telemetry: &Telemetry) -> Result<(), ApiError>;
-    /// Claims the next queued job; `None` when the queue is empty.
+    /// Claims the next job; `None` if the queue is empty.
     fn take(&mut self) -> Result<Option<Job>, ApiError>;
-    /// The job's current state, for reconciliation; never prints.
     fn job(&mut self, id: Uuid) -> Result<Job, ApiError>;
-    /// Sends a result; succeeds only when Holuto echoes it back as stored.
+    /// Succeeds only when Holuto echoes the stored result.
     fn report(&mut self, id: Uuid, result: &ResultForm) -> Result<(), ApiError>;
-    /// One page of eligible documents, oldest first; pass the page's cursor back unchanged.
+    /// Oldest first; return the page cursor unchanged.
     fn documents(&mut self, cursor: Option<&str>) -> Result<Page, ApiError>;
     fn queue(&mut self, form: &QueueForm) -> Result<(), ApiError>;
 }
@@ -145,8 +140,7 @@ impl Api {
         Ok(())
     }
 
-    /// Bearer token, protocol version and language on every request; the device serial on every
-    /// request but session and heartbeat, which carry it in the body.
+    /// Session and heartbeat carry the serial in the body, not a header.
     fn headers<B>(&self, request: RequestBuilder<B>, path: &str) -> RequestBuilder<B> {
         let request = request
             .header("Authorization", &self.authorization)
@@ -180,7 +174,7 @@ fn decode<T: DeserializeOwned>(response: Response<Body>) -> Result<Option<T>, Ap
     }
 }
 
-/// The localized `detail` of an `application/problem+json` body.
+/// Localized `application/problem+json` detail.
 fn problem_detail(bytes: &[u8]) -> Option<String> {
     #[derive(Deserialize)]
     struct Problem {

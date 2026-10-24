@@ -1,5 +1,5 @@
-//! An offline Temo Online peer. Commands travel over a real local TCP socket through the same
-//! [`Session`](crate::session::Session) code as a serial port, one session at a time.
+//! Offline TCP Temo peer using the serial driver's [`Session`](crate::session::Session),
+//! with one session at a time.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -34,12 +34,12 @@ const DEFAULT_VAT: [&str; 7] = [
 
 pub type Params = BTreeMap<String, String>;
 
-/// How the simulated device answers a command instead of executing it.
+/// Replaces command execution with a simulated reply.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
-    /// The documented execution error form `<command>\t?2000\t`.
+    /// Execution error: `<command>\t?2000\t`.
     Error,
-    /// These parameters instead of the real answer; the command has no effect.
+    /// Custom reply parameters; no command effect.
     Reply(Vec<(String, String)>),
 }
 
@@ -64,7 +64,7 @@ struct Held {
     release: Receiver<()>,
 }
 
-/// The printer's clock zone: Polish civil time, like a real printer's whatever the host's zone.
+/// Polish civil time, independent of the host's zone.
 #[derive(Debug)]
 struct Clock(TimeZone);
 
@@ -96,11 +96,10 @@ struct State {
     faults: HashMap<String, Fault>,
     held: Option<Held>,
     paper_out: bool,
-    /// The command before which the paper runs out.
     out_of_paper_at: Option<String>,
 }
 
-/// A command the simulator holds until the test releases it.
+/// Blocks a command until the test releases it.
 #[derive(Debug)]
 pub struct Hold {
     reached: Receiver<()>,
@@ -108,7 +107,6 @@ pub struct Hold {
 }
 
 impl Hold {
-    /// Whether the held command arrived within `timeout`.
     pub fn reached(&self, timeout: Duration) -> bool {
         self.reached.recv_timeout(timeout).is_ok()
     }
@@ -127,8 +125,7 @@ pub struct Simulator {
 }
 
 impl Simulator {
-    /// # Panics
-    /// When no local socket, thread or zone database is available: a broken test environment.
+    /// Panics if local sockets, threads or the zone database are unavailable.
     #[expect(
         clippy::expect_used,
         reason = "test infrastructure: no socket means no test"
@@ -165,13 +162,12 @@ impl Simulator {
         &self.address
     }
 
-    /// A link whose only port is this simulator.
     pub fn link(&self) -> Arc<dyn Link> {
         self.link_with(vec![self.address.clone()], Vec::new())
     }
 
-    /// A link offering `candidates` during detection; ports in `denied` refuse to open as a port
-    /// without permission does. Any port other than the simulator's own does not exist.
+    /// Offers `candidates` for detection. `denied` ports refuse permission;
+    /// ports other than this simulator do not exist.
     pub fn link_with(&self, candidates: Vec<String>, denied: Vec<String>) -> Arc<dyn Link> {
         Arc::new(SimLink {
             address: self.address.clone(),
@@ -192,7 +188,6 @@ impl Simulator {
         self.state().footers.clone()
     }
 
-    /// Every command frame received, in order.
     pub fn frames(&self) -> Vec<Vec<u8>> {
         self.state().frames.clone()
     }
@@ -201,7 +196,7 @@ impl Simulator {
         self.state().transaction_open
     }
 
-    /// Opens or closes the transaction as an operator at the keypad would.
+    /// Simulates opening or closing a transaction at the keypad.
     pub fn set_transaction_open(&self, open: bool) {
         self.state().transaction_open = open;
     }
@@ -210,7 +205,7 @@ impl Simulator {
         header.clone_into(&mut self.state().header);
     }
 
-    /// The `vatget` table, `va` to `vg`, e.g. `"23,00"`; `"101,00"` is an unused slot.
+    /// `vatget` slots `va`–`vg`: e.g. `"23,00"`; `"101,00"` marks an unused slot.
     pub fn set_vat(&self, rates: [&str; 7]) {
         self.state().vat = rates.map(str::to_owned);
     }
@@ -223,18 +218,17 @@ impl Simulator {
         drop(self.state().faults.remove(command));
     }
 
-    /// Takes the paper out (`false`) or puts a roll in. Without paper the printer still answers
-    /// status queries, but a command that prints waits, unanswered, until the paper is back.
+    /// Without paper, status queries still answer; printing commands wait without replying.
     pub fn set_paper(&self, present: bool) {
         self.state().paper_out = !present;
     }
 
-    /// Runs out of paper just as the next `command` arrives, which then waits for paper.
+    /// The next matching command waits for paper before executing.
     pub fn run_out_of_paper_at(&self, command: &str) {
         self.state().out_of_paper_at = Some(command.to_owned());
     }
 
-    /// Holds the next `command` before executing it until [`Hold::release`].
+    /// Holds the next matching command before execution until [`Hold::release`].
     pub fn hold(&self, command: &str) -> Hold {
         let (reached, reached_receiver) = mpsc::channel();
         let (release_sender, release) = mpsc::channel();
@@ -257,7 +251,7 @@ impl Simulator {
 impl Drop for Simulator {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        // Wakes the blocking accept so the thread sees the stop flag.
+        // Wake accept so the thread sees the stop flag.
         drop(TcpStream::connect(&self.address));
         if let Some(thread) = self.thread.take() {
             drop(thread.join());
@@ -333,14 +327,12 @@ fn serve(listener: &TcpListener, state: &Mutex<State>, stop: &AtomicBool) {
     }
 }
 
-/// One session at a time, like a serial port: each driver session is a new connection.
 fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool) {
     if stream.set_read_timeout(Some(POLL)).is_err() {
         return;
     }
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 4096];
-    // Commands waiting for paper, in the order they arrived.
     let mut waiting = VecDeque::new();
     while !stop.load(Ordering::SeqCst) {
         match stream.read(&mut chunk) {
@@ -375,9 +367,8 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
     }
 }
 
-/// Whether `received` waits for paper: a command that prints while the paper is out, or any
-/// command queued behind one (commands execute in order, spec p. 15). Asynchronous `!` queries
-/// are answered at once.
+/// Printing commands wait for paper, blocking queued commands (spec p. 15).
+/// Asynchronous `!` queries bypass the queue.
 fn waits_for_paper(received: &[u8], state: &Mutex<State>, queued: bool) -> bool {
     let Ok((command, _)) = frame::decode(received) else {
         return false;
@@ -412,7 +403,7 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Vec<u8> {
         Some(Fault::Reply(reply)) => Ok(reply),
         None => state.handle(&command, &params),
     };
-    // A reply echoes the request's token (spec p. 92).
+    // Replies echo request tokens (spec p. 92).
     let mut payload = command;
     payload.push('\t');
     if let Some(token) = params.get("@") {
@@ -433,8 +424,7 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Vec<u8> {
     encoded(&payload)
 }
 
-/// Device replies may carry a line feed inside a value (the header), which the driver's outgoing
-/// check rightly rejects, so replies are framed here directly.
+/// Reply values allow line feeds (headers), unlike outgoing command values.
 fn encoded(payload: &str) -> Vec<u8> {
     frame::wrap(&text::encode(payload).unwrap_or_default())
 }
@@ -469,7 +459,6 @@ impl State {
             .collect()
     }
 
-    /// Read-only status queries; `None` for anything else.
     fn query(&self, command: &str) -> Option<Vec<(String, String)>> {
         Some(match command {
             "getrealid" => reply(&[
@@ -477,7 +466,7 @@ impl State {
                 ("vr", "32.01"),
                 ("nu", SERIAL),
             ]),
-            // `sdev` and `sprn` also run asynchronously, `!`-prefixed (spec pp. 384-385).
+            // `!`-prefixed queries run asynchronously (spec pp. 384-385).
             "sdev" | "!sdev" => reply(&[("ds", "0"), ("cp", "1"), ("qe", "1"), ("pe", "0")]),
             "sprn" | "!sprn" => reply(&[("pr", if self.paper_out { "5" } else { "0" })]),
             "scomm" => reply(&[
@@ -499,7 +488,6 @@ impl State {
                 .zip(&self.vat)
                 .map(|(key, rate)| ((*key).to_owned(), rate.clone()))
                 .collect(),
-            // A Polish printer keeps Polish time, whatever the host's zone.
             "rtcget" => vec![(
                 "da".to_owned(),
                 Timestamp::now()

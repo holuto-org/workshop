@@ -1,4 +1,4 @@
-//! Rows for the `StandardTableView`s: Slint draws them, Rust owns their order.
+//! Rust owns table ordering; Slint renders rows.
 
 use std::{cmp::Ordering, mem, rc::Rc};
 
@@ -10,17 +10,15 @@ use slint::{
     language::{SortOrder, StandardListViewItem, TableColumn},
 };
 
-/// Both tables show five columns; the `.slint` column lists match `Row::cells`.
+/// Must match the Slint column lists and `Row::cells`.
 const COLUMNS: usize = 5;
 
-/// One table row type: its cells and how a column orders it.
 pub(crate) trait Row: PartialEq {
     fn cells(&self) -> [SharedString; COLUMNS];
-    /// Orders by the underlying values (amounts, timestamps), not by the formatted text.
+    /// Compare raw values, not display text.
     fn compare(&self, other: &Self, column: usize) -> Ordering;
 }
 
-/// The column the operator sorted by, from a header click.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Sort {
     column: usize,
@@ -76,8 +74,7 @@ impl<T: Row> Table<T> {
         Rc::clone(&self.rows).into()
     }
 
-    /// Replaces the items in the operator's order; returns the items they replaced, so a
-    /// caller can find its selected record again.
+    /// Retain sort order; return old items for selection lookup.
     pub(crate) fn set(&mut self, mut items: Vec<T>) -> Vec<T> {
         if let Some(sort) = self.sort {
             items.sort_by(|a, b| sort.compare(a, b));
@@ -89,7 +86,7 @@ impl<T: Row> Table<T> {
         mem::replace(&mut self.items, items)
     }
 
-    /// Sorts stably; returns where the row at `selected` moved.
+    /// Stable sort; return the selected row's new index.
     pub(crate) fn sort(&mut self, sort: Sort, selected: Option<usize>) -> Option<usize> {
         self.sort = Some(sort);
         let mut tagged: Vec<_> = mem::take(&mut self.items).into_iter().enumerate().collect();
@@ -101,7 +98,7 @@ impl<T: Row> Table<T> {
         selected
     }
 
-    /// Marks only the sorted column, also in a window recreated from the tray.
+    /// Restore sort indicators, including after window recreation.
     pub(crate) fn sync_columns(&self, columns: &ModelRc<TableColumn>) {
         for index in 0..columns.row_count() {
             let order = match self.sort {
@@ -198,7 +195,6 @@ fn payments(entry: &HistoryEntry) -> impl Iterator<Item = (&'static str, Grosze)
         .map(|(form, amount)| (form.label(), *amount))
 }
 
-/// A missing value first, as `Option` orders it.
 fn option_order(a: Option<&str>, b: Option<&str>, order: fn(&str, &str) -> Ordering) -> Ordering {
     match (a, b) {
         (Some(a), Some(b)) => order(a, b),
@@ -206,7 +202,7 @@ fn option_order(a: Option<&str>, b: Option<&str>, order: fn(&str, &str) -> Order
     }
 }
 
-/// The printer's counter by value; a number staff typed as text after every counter.
+/// Sort printer counters numerically before manually entered text.
 fn receipt_order(a: &str, b: &str) -> Ordering {
     match (a.parse::<u64>(), b.parse::<u64>()) {
         (Ok(x), Ok(y)) => x.cmp(&y).then_with(|| a.cmp(b)),
@@ -216,8 +212,7 @@ fn receipt_order(a: &str, b: &str) -> Ordering {
     }
 }
 
-/// Polish alphabetical order, case-insensitive: each of ą ć ę ł ń ó ś ź ż follows its base letter.
-/// Texts equal under it fall back to code points, so the order stays total.
+/// Polish alphabetical order, ignoring case; code points break ties.
 fn text_order(a: &str, b: &str) -> Ordering {
     a.chars()
         .map(letter)
@@ -225,8 +220,6 @@ fn text_order(a: &str, b: &str) -> Ordering {
         .then_with(|| a.cmp(b))
 }
 
-/// A letter's place in the Polish alphabet: its lowercase base letter, then its rank among the
-/// letters sharing that base.
 fn letter(character: char) -> (char, u8) {
     let lower = character.to_lowercase().next().unwrap_or(character);
     match lower {

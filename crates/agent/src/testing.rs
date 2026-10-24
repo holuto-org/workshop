@@ -1,5 +1,3 @@
-//! Fixtures shared by the crate's tests: a Holuto double, a sample job and a state directory.
-
 use std::collections::{HashMap, VecDeque};
 
 use serde_json::{Value, json};
@@ -26,8 +24,7 @@ pub(crate) fn state_dir() -> (TempDir, StateDir) {
     (temporary, dir)
 }
 
-/// A taken sale job for the simulator's default VAT table: 2 × 100 zł at 23 % (slot A) and
-/// 50 zł at 8 % (slot B), paid by card.
+/// Matches the simulator's default VAT table.
 pub(crate) fn job_json() -> Value {
     json!({
         "id": JOB_ID,
@@ -62,7 +59,6 @@ pub(crate) fn job_json() -> Value {
     })
 }
 
-/// `value` with the top-level fields of `changes` replaced or added.
 pub(crate) fn with(mut value: Value, changes: &Value) -> Value {
     value
         .as_object_mut()
@@ -71,7 +67,6 @@ pub(crate) fn with(mut value: Value, changes: &Value) -> Value {
     value
 }
 
-/// `job_json` with top-level fields replaced.
 pub(crate) fn job_with(changes: &Value) -> Job {
     serde_json::from_value(with(job_json(), changes)).unwrap()
 }
@@ -80,7 +75,6 @@ pub(crate) fn job() -> Job {
     job_with(&json!({}))
 }
 
-/// An agent's listener for what the printer waits for, where no test looks.
 pub(crate) fn unheard(_problem: Option<&str>) {}
 
 pub(crate) fn printer_json() -> Value {
@@ -109,15 +103,14 @@ pub(crate) fn status_json() -> Value {
     })
 }
 
-/// Holuto as the backend behaves: jobs to hand out, each job's server state, and every
-/// heartbeat and result received. A reported result becomes the job's server state.
+/// Reported results update the job's simulated server state.
 #[derive(Debug)]
 pub(crate) struct FakeApi {
     pub(crate) jobs: VecDeque<Job>,
     pub(crate) remote: HashMap<Uuid, Job>,
     pub(crate) reports: Vec<ResultForm>,
     pub(crate) heartbeats: Vec<Telemetry>,
-    /// Every result request fails before the server stores it, as when the network is down.
+    /// Fails before storing the result, simulating a network outage.
     pub(crate) fail_report: bool,
     pub(crate) pages: HashMap<Option<String>, Page>,
     pub(crate) cursors: Vec<Option<String>>,

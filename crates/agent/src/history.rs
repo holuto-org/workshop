@@ -1,5 +1,4 @@
-//! Receipts printed on this computer: a display cache, not the fiscal record. Its errors are
-//! reported separately and never block settling a receipt.
+//! Display cache, not the fiscal record. Cache errors never block receipt settlement.
 
 use std::{
     fs::File,
@@ -24,14 +23,14 @@ const LIMIT: usize = 500;
 pub struct HistoryEntry {
     pub job_id: Uuid,
     pub printed_at: Timestamp,
-    /// The printer's receipt number, or the one staff supplied in Holuto.
+    /// Printer's number, or the number staff supplied in Holuto.
     pub receipt_number: Option<String>,
     pub total: Grosze,
     pub payments: Vec<(PaymentForm, Grosze)>,
     pub items: Vec<String>,
 }
 
-/// The newest receipts first, at most 500. A line torn by a crash is skipped.
+/// Up to 500 receipts, newest first; skips crash-torn lines.
 pub fn load(dir: &StateDir) -> Result<Vec<HistoryEntry>, Error> {
     let path = dir.file(FILE);
     let mut entries = store::read_optional(&path)
@@ -47,7 +46,6 @@ pub fn load(dir: &StateDir) -> Result<Vec<HistoryEntry>, Error> {
     Ok(entries)
 }
 
-/// Appends `entry` unless that job is already listed.
 pub(crate) fn append(dir: &StateDir, entry: &HistoryEntry) -> Result<(), Error> {
     let path = dir.file(FILE);
     let failed = |source| Error::Store {
@@ -66,7 +64,7 @@ pub(crate) fn append(dir: &StateDir, entry: &HistoryEntry) -> Result<(), Error> 
     }
     let mut line = Vec::new();
     if existing.last().is_some_and(|byte| *byte != b'\n') {
-        line.push(b'\n'); // a torn last line must not swallow this entry
+        line.push(b'\n'); // Keep a torn line from swallowing this entry.
     }
     serde_json::to_writer(&mut line, entry).map_err(|error| failed(io::Error::other(error)))?;
     line.push(b'\n');

@@ -1,7 +1,6 @@
-//! The one background thread that owns every printer operation and Holuto request.
-//!
-//! Commands from the GUI queue up and run between polls, so reports and receipts never interleave
-//! on the printer. Stopping is cooperative: the current operation always finishes first.
+//! Sole thread for printer I/O and Holuto requests.
+//! GUI commands run between polls; receipts and reports never interleave.
+//! Cooperative shutdown finishes the current operation before stopping.
 
 use std::{
     collections::VecDeque,
@@ -63,12 +62,12 @@ pub enum Event {
         text: String,
         tone: Tone,
     },
-    /// `port` is where the printer answered; detection may have moved it (and saved it).
+    /// Detection may change and persist `port`.
     Connected {
         serial: String,
         port: String,
     },
-    /// One page of eligible documents; `page` is 1-based.
+    /// `page` is 1-based.
     Documents {
         items: Vec<Document>,
         page: usize,
@@ -80,7 +79,7 @@ pub enum Event {
         report_unresolved: bool,
     },
     HistoryChanged,
-    /// The thread finished; join it now.
+    /// Safe to join the worker.
     Stopped,
 }
 
@@ -127,16 +126,16 @@ impl Worker {
     }
 
     pub fn submit(&self, command: Command) {
-        // A send fails only after the thread finished, which `Event::Stopped` already reported.
+        // Failed sends mean the worker finished and reported `Event::Stopped`.
         let _sent = self.messages.send(Message::Command(command));
     }
 
-    /// Asks the worker to stop once the current operation finished; `Event::Stopped` follows.
+    /// Stops after the current operation; emits `Event::Stopped`.
     pub fn stop(&self) {
         let _sent = self.messages.send(Message::Stop);
     }
 
-    /// Waits for the thread; call after `Event::Stopped`, when it returns at once.
+    /// Call only after `Event::Stopped` to avoid blocking the GUI.
     pub fn join(self) {
         let _finished = self.thread.join();
     }
@@ -153,7 +152,7 @@ fn run(
         text: "Łączenie z drukarką i Holuto…".to_owned(),
         tone: Tone::Info,
     });
-    // While an operation is unresolved the device must not change, so no other port is scanned.
+    // Unresolved operations forbid switching devices or scanning other ports.
     let may_switch = Journal::new(dir)
         .load()?
         .is_none_or(|operation| !operation.blocks());
@@ -241,7 +240,7 @@ impl<H: Holuto> Session<'_, H> {
         }
     }
 
-    /// Moves waiting messages into the queue; `true` when a stop was requested.
+    /// Drains commands; returns whether stop was requested.
     fn drain(&mut self, inbox: &Receiver<Message>) -> bool {
         while let Ok(message) = inbox.try_recv() {
             match message {
@@ -252,7 +251,6 @@ impl<H: Holuto> Session<'_, H> {
         false
     }
 
-    /// Queued commands, then one agent step and a documents refresh. `None` when stopping.
     fn poll(&mut self, inbox: &Receiver<Message>) -> Result<Option<Duration>, Error> {
         while let Some(command) = self.queue.pop_front() {
             let done = self.command(command);
@@ -267,7 +265,7 @@ impl<H: Holuto> Session<'_, H> {
         if self.drain(inbox) {
             return Ok(None);
         }
-        // Documents come from Holuto alone: a printer or settlement error must not freeze them.
+        // Printer and settlement errors must not prevent fetching Holuto documents.
         let refreshed = self
             .pager
             .refresh(self.agent.api())
@@ -323,13 +321,13 @@ impl<H: Holuto> Session<'_, H> {
         let report_unresolved = matches!(blocked, Ok(Some(Blocked::Report)));
         (self.sink)(Event::Device {
             status: self.agent.status().cloned(),
-            // An unreadable journal blocks as much as an unresolved operation.
+            // An unreadable journal also blocks printing.
             blocked: !matches!(blocked, Ok(None)),
             report_unresolved,
         });
     }
 
-    /// What the agent has to announce, even when the call that produced it failed.
+    /// Publish even if the call that produced the news failed.
     fn publish_news(&mut self) {
         let news = self.agent.take_news();
         for notice in news.notices {
@@ -345,10 +343,9 @@ impl<H: Holuto> Session<'_, H> {
     }
 }
 
-/// One bounded documents page per poll.
-///
-/// `pages` holds the cursor that opened each page up to the shown one (`None`: the first). A
-/// requested page replaces it only once it loaded, so a failed page keeps the previous one shown.
+/// Fetches one bounded page per poll.
+/// `pages` stores opening cursors through the shown page (`None` for the first).
+/// Failed requests preserve the shown page and its cursor.
 #[derive(Debug)]
 struct Pager {
     pages: Vec<Option<String>>,

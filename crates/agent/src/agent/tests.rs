@@ -1,5 +1,3 @@
-//! Receipt execution and durable recovery against the socket simulator.
-
 use std::{fs, thread, time::Duration};
 
 use jiff::{Timestamp, civil::date};
@@ -31,7 +29,6 @@ fn agent<'dir>(sim: &Simulator, dir: &'dir StateDir, api: FakeApi) -> Agent<'dir
     Agent::new(Printer::new(sim.link(), connection), api, dir, &unheard)
 }
 
-/// The same journal and Holuto after a process restart.
 fn restart<'dir>(
     sim: &Simulator,
     dir: &'dir StateDir,
@@ -40,7 +37,6 @@ fn restart<'dir>(
     agent(sim, dir, previous.api)
 }
 
-/// One poll whose outcome the test checks through the journal, the printer and Holuto.
 fn poll(agent: &mut Agent<'_, FakeApi>) {
     let _step = agent.step().unwrap();
 }
@@ -58,7 +54,6 @@ fn journal(dir: &StateDir, operation: ReceiptOperation) {
         .unwrap();
 }
 
-/// A claimed job in the given device state, as a crash would leave it.
 fn claimed(device: Device, result: Option<JobResult>) -> ReceiptOperation {
     ReceiptOperation {
         job_id: JOB_ID,
@@ -140,8 +135,7 @@ fn a_lost_result_is_resent_unchanged_after_restart() {
     }
 }
 
-/// The issue time comes from the printer, not from this computer's clock, which Holuto refuses
-/// once it runs ahead of the server.
+/// Holuto rejects timestamps ahead of its clock; the computer clock may be wrong.
 #[test]
 fn a_receipt_is_issued_at_the_printer_clock() {
     let sim = Simulator::start();
@@ -400,7 +394,7 @@ fn telemetry_reports_the_device_slot_table() {
             {"slot": 6, "vatRate": "zw"}
         ])
     );
-    // `Telemetry` in the backend's openapi/agent.json: all required, no other properties.
+    // Backend openapi/agent.json requires exactly these telemetry fields.
     let mut fields: Vec<&str> = telemetry
         .as_object()
         .unwrap()
@@ -593,7 +587,7 @@ fn a_device_swap_after_the_claim_is_unknown_and_prints_nothing() {
     let mut agent = agent(&sim, &dir, FakeApi::new(vec![job()]));
     thread::scope(|scope| {
         let worker = scope.spawn(|| agent.step());
-        // The step's own probe passes; swap the device before the execution probe.
+        // Swap after the poll probe, before the execution probe.
         assert!(hold.reached(Duration::from_secs(5)));
         sim.fault(
             "getrealid",

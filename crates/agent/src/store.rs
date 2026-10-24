@@ -1,6 +1,3 @@
-//! The state directory: settings, the operation journal and the receipt history, owned by one
-//! running instance at a time.
-
 #[cfg(not(windows))]
 use std::env;
 use std::{
@@ -15,20 +12,19 @@ use crate::Error;
 
 const LOCK: &str = "instance.lock";
 
-/// The state directory, locked for this process: a second instance is refused, so two
-/// processes can never drive the printer or the journal at once.
+/// Exclusive state-directory lock prevents concurrent printer or journal access.
 #[derive(Debug)]
 pub struct StateDir {
     path: PathBuf,
-    /// Held for the lifetime of the value; the OS releases it when the process exits.
+    /// Retained until drop; process exit also releases the lock.
     _lock: File,
 }
 
 impl StateDir {
-    /// `$XDG_STATE_HOME/holuto-fiscal` (default `~/.local/state/holuto-fiscal`) on Linux,
-    /// `~/Library/Application Support/holuto-fiscal` on macOS and `%LOCALAPPDATA%\holuto-fiscal`
-    /// on Windows. Relative or empty values are ignored rather than resolved against the working
-    /// directory, which would silently move the journal.
+    /// Linux: `$XDG_STATE_HOME/holuto-fiscal` or `~/.local/state/holuto-fiscal`.
+    /// macOS: `~/Library/Application Support/holuto-fiscal`.
+    /// Windows: `holuto-fiscal` in the Local AppData Known Folder.
+    /// Ignores empty or relative base paths to avoid silently moving the journal.
     pub fn default_path() -> Option<PathBuf> {
         base_dir().map(|base| base.join("holuto-fiscal"))
     }
@@ -40,7 +36,7 @@ impl StateDir {
             source,
         })?;
         let lock_path = path.join(LOCK);
-        // Read access: Windows cannot lock a handle opened for append only.
+        // Windows cannot lock an append-only handle.
         let lock = File::options()
             .read(true)
             .create(true)
@@ -74,8 +70,7 @@ impl StateDir {
     }
 }
 
-/// The Local AppData Known Folder, not the `%LOCALAPPDATA%` variable: a process environment may
-/// override it, and following the override would open a fresh journal beside the real one.
+/// Environment overrides must not open a fresh journal beside an unresolved one.
 #[cfg(windows)]
 fn base_dir() -> Option<PathBuf> {
     known_folders::get_known_folder_path(known_folders::KnownFolder::LocalAppData)
@@ -113,12 +108,9 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)
 }
 
-/// Replaces `path` atomically and durably.
-///
-/// The bytes are synced in a temporary file (mode 0600 on Unix) inside a private subdirectory
-/// next to the target, then renamed over it durably: a directory fsync on Unix,
-/// `MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows. A crash or power loss leaves either the old
-/// or the new content, never a torn file; on failure the temporary directory is deleted on drop.
+/// Syncs a temporary file (0600 on Unix) in a private sibling directory, then renames it.
+/// Durability uses directory fsync on Unix and `MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows.
+/// Crashes leave old or new content, never a torn file; drop removes failed temporary writes.
 pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
     AtomicFile::new(path, OverwriteBehavior::AllowOverwrite)
         .write_with_options(|file| file.write_all(bytes), private_new_file())
@@ -140,7 +132,6 @@ fn private_new_file() -> fs::OpenOptions {
     options
 }
 
-/// The file's bytes, or `None` when it does not exist.
 pub(crate) fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
     match fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),

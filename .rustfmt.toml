@@ -1,4 +1,4 @@
-# Needs the pinned nightly rustfmt (AGENTS.md › Verify); stable rustfmt ignores the unstable options.
+# Requires the pinned nightly rustfmt; see AGENTS.md.
 edition = "2024"
 hex_literal_case = "Upper"
 match_block_trailing_comma = true
@@ -12,8 +12,8 @@ float_literal_trailing_zero = "Always"
 imports_granularity = "Crate"
 reorder_impl_items = true
 
-# Deliberately off: they corrupt code or comments, or are not idempotent, on the pinned nightly.
-# wrap_comments (rustfmt#6586, #6339, #6426), normalize_comments (#6631),
+# Omitted: corrupt output or non-idempotent on the pinned nightly.
+# wrap_comments (#6586, #6339, #6426), normalize_comments (#6631),
 # normalize_doc_attributes (#3988), format_macro_matchers (#3960),
 # format_code_in_doc_comments (#6015, #6612), format_strings (#4471, #5138),
-# group_imports (#6195 with imports_granularity, which is the more valuable of the two).
+# group_imports (#6195; conflicts with imports_granularity).

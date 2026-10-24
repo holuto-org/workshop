@@ -42,9 +42,8 @@ fn state_is_private_to_the_user() {
     assert_eq!(mode(&file), 0o600);
 }
 
-/// An overridden `%LOCALAPPDATA%` must not move the state directory, or the app would open a fresh
-/// journal and lock beside the real ones and slip past an unresolved operation. The override is
-/// set on a child run of this test binary: the crate forbids the `unsafe` `set_var`.
+/// A fresh journal and lock would bypass unresolved operations.
+/// Set the override in a child process because `set_var` is unsafe and forbidden here.
 #[cfg(windows)]
 #[test]
 fn the_windows_state_directory_ignores_an_overridden_localappdata() {
@@ -65,7 +64,7 @@ fn the_windows_state_directory_ignores_an_overridden_localappdata() {
         .output()
         .unwrap();
     let report = String::from_utf8_lossy(&child.stdout);
-    // An unmatched filter also exits successfully, having checked nothing.
+    // An unmatched test filter also exits successfully.
     assert!(
         child.status.success() && report.contains("1 passed"),
         "the child saw a different state directory:\n{report}"

@@ -8,7 +8,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-# An in-process Temo peer over TCP, for tests and local smoke runs; never in release builds.
+# Offline TCP simulator for tests and local smoke runs; excluded from release builds.
 simulator = []
 
 [dependencies]

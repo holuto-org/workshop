@@ -1,8 +1,5 @@
-//! The durable record of the last fiscal operation.
-//!
-//! It is written before the first command reaches the printer, updated before every command, and
-//! kept until the outcome is settled. A journal that exists but cannot be read is never
-//! "nothing": printing stays blocked.
+//! Persisted before each printer command and retained until settlement.
+//! An unreadable journal blocks printing.
 
 use std::{io, path::PathBuf};
 
@@ -22,7 +19,7 @@ use crate::{
 };
 
 const FILE: &str = "operation.json";
-/// The backend's `Note` limit for a result text.
+/// Backend `Note` limit.
 const MAX_REASON_LENGTH: usize = 2000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,15 +29,14 @@ pub(crate) enum Operation {
     Report(ReportOperation),
 }
 
-/// How far the printer got.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Device {
-    /// Nothing was sent yet: the claim is recorded but preflight is still running.
+    /// Claim recorded; no command sent.
     NotStarted,
-    /// `stage` is about to be sent or was sent; what the printer did is unknown.
+    /// Command may have reached the printer; outcome unknown.
     Dispatching { stage: String },
-    /// Every command succeeded; the counter may not have been readable.
+    /// All commands succeeded; the counter may be unreadable.
     Completed { receipt_number: Option<String> },
 }
 
@@ -49,14 +45,14 @@ pub(crate) enum Device {
 pub(crate) struct ReceiptOperation {
     pub(crate) job_id: Uuid,
     pub(crate) attempt: Uuid,
-    /// The issue time a `done` result reports, resent unchanged: the claim time until the receipt
-    /// completes, then the printer's own clock (the server refuses times ahead of its own).
+    /// Claim time until completion, then printer time; resent unchanged.
+    /// The server rejects future timestamps.
     pub(crate) issued_at: Timestamp,
     pub(crate) device_serial: String,
     pub(crate) device: Device,
-    /// What was sent to the printer, for the local history.
+    /// Printed contents for local history.
     pub(crate) summary: Option<Summary>,
-    /// The result, persisted before it is sent and resent unchanged until accepted.
+    /// Persisted before sending; resent unchanged until accepted.
     pub(crate) result: Option<JobResult>,
     pub(crate) settled: Option<Settlement>,
 }
@@ -117,7 +113,7 @@ impl JobResult {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Settlement {
     pub(crate) at: Timestamp,
-    /// The backend state that settled it: the reported result, or a staff resolution.
+    /// Backend result or staff resolution.
     pub(crate) state: JobState,
 }
 
@@ -128,7 +124,7 @@ pub(crate) struct ReportOperation {
     pub(crate) device_serial: String,
     pub(crate) started_at: Timestamp,
     pub(crate) device: Device,
-    /// An operator confirmed, on the same ready device, what an interrupted report printed.
+    /// Operator confirmed the interrupted report's printout on the same ready device.
     pub(crate) acknowledged_at: Option<Timestamp>,
 }
 
@@ -160,7 +156,6 @@ impl ReportOperation {
 }
 
 impl Operation {
-    /// Whether this operation still blocks every new receipt and report.
     pub(crate) const fn blocks(&self) -> bool {
         match self {
             Self::Receipt(receipt) => receipt.settled.is_none(),
@@ -213,8 +208,7 @@ impl Journal {
     }
 }
 
-/// A result text the backend accepts: no control characters but tab and line feed, at most 2000
-/// characters, never empty.
+/// Backend result text: nonempty, at most 2000 characters; only tab and LF controls.
 fn note(reason: &str) -> String {
     let cleaned: String = reason
         .chars()

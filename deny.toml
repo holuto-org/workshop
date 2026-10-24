@@ -1,5 +1,5 @@
 [graph]
-# The release targets (`.github/workflows/release.yml`).
+# Keep aligned with release.yml.
 targets = [
     "x86_64-pc-windows-msvc",
     "aarch64-apple-darwin",
@@ -13,8 +13,8 @@ all-features = true
 yanked = "deny"
 unsound = "all"
 unused-ignored-advisory = "deny"
-# Unmaintained, not vulnerable: all arrive through Slint 1.18 (fonts, and zbus 5 for the Linux
-# tray, which the desktop's own D-Bus probe shares). Drop each once Slint moves past it.
+# Unmaintained, not vulnerable; required by Slint 1.18's fonts and Linux tray.
+# Remove as Slint upgrades. The desktop probe shares the tray's zbus 5.
 ignore = [
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser via Slint's font stack" },
     { id = "RUSTSEC-2026-0370", reason = "zvariant via zbus 5 (Slint tray)" },
@@ -32,12 +32,12 @@ allow = [
     "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
-    # File-level copyleft (serialport): unmodified use imposes nothing on this repository.
+    # serialport: file-level copyleft permits unmodified use.
     "MPL-2.0",
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
-    # Slint's terms for desktop applications; README carries the attribution badge it requires.
+    # Requires the attribution badge in README.
     "LicenseRef-Slint-Royalty-free-2.0",
 ]
 confidence-threshold = 1.0
@@ -48,9 +48,9 @@ unused-license-exception = "deny"
 ignore = true
 
 [bans]
-# Denying upstream duplicates would need a skip list that also hides future duplicates.
+# Duplicate skip lists would hide future duplicates.
 wildcards = "deny"
-# Workspace path dependencies have no version.
+# Workspace path dependencies are unversioned.
 allow-wildcard-paths = true
 deny = [
     { crate = "openssl-sys", use-instead = "rustls" },
@@ -60,10 +60,10 @@ deny = [
 ]
 workspace-default-features = "deny"
 
-# Empty tables still enable their checks; all fields keep their defaults.
+# Empty tables enable checks with default settings.
 [bans.workspace-dependencies]
 
-# Direct dependencies only: transitive hits are for upstream crates to drop.
+# Transitive replacements belong upstream.
 [bans.std-replacements]
 
 [bans.build]

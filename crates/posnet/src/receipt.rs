@@ -1,5 +1,4 @@
-//! A fiscal receipt: lines on VAT slots, advance deductions and split payments, validated
-//! before the printer is touched.
+//! Fiscal receipts validated before printer I/O.
 
 use std::{collections::BTreeMap, fmt, time::Duration};
 
@@ -11,7 +10,7 @@ use crate::{
     text::{self, MAX_BUYER_NIP_LENGTH, MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH},
 };
 
-/// The printer's VAT table has seven slots, A to G.
+/// VAT slots A–G.
 pub const VAT_SLOTS: u8 = 7;
 const QUANTITY_SCALE: usize = 8;
 const QUANTITY_UNIT: u64 = 100_000_000;
@@ -21,7 +20,7 @@ const END_TIMEOUT: Duration = Duration::from_secs(30);
 const ADVANCE_NAME: &str = "Zaliczka";
 const MOBILE_NAME: &str = "Płatność mobilna";
 
-/// A printer VAT slot, 0 (A) to 6 (G); not a rate.
+/// VAT slot 0 (A) through 6 (G), not a rate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VatSlot(u8);
 
@@ -77,19 +76,18 @@ pub struct Payment {
     pub amount: Grosze,
 }
 
-/// An advance already invoiced on `vat`, deducted from that slot's sales.
+/// Already-invoiced advance deducted from sales in the same VAT slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Advance {
     pub vat: VatSlot,
     pub amount: Grosze,
 }
 
-/// A line quantity in hundred-millionths: at most 8 decimal places, up to 9 999 999 999.
+/// Quantity in hundred-millionths, up to 9 999 999 999 with at most eight decimal places.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Quantity(u64);
 
 impl Quantity {
-    /// A plain decimal such as `"1.5"`.
     pub fn parse(text: &str) -> Result<Self, Error> {
         decimal::parse(text, QUANTITY_SCALE)
             .filter(|units| *units <= MAX_QUANTITY)
@@ -103,24 +101,22 @@ impl Quantity {
             })
     }
 
-    /// `self × grosze` rounded half up to whole grosze, as the printer rounds a line value;
-    /// `None` above `u64`.
+    /// Matches printer line rounding: half up to whole grosze; `None` on overflow.
     pub(crate) fn times(self, grosze: u64) -> Option<u64> {
-        // Below u128::MAX even for u64::MAX²: neither the product nor the half can overflow.
+        // u64::MAX² plus half a quantity unit fits u128.
         let exact = u128::from(self.0) * u128::from(grosze);
         let unit = u128::from(QUANTITY_UNIT);
         u64::try_from((exact + unit / 2) / unit).ok()
     }
 }
 
-/// The `il` text the printer takes: `1.5`, `2`.
 impl fmt::Display for Quantity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&decimal::format(self.0, QUANTITY_SCALE))
     }
 }
 
-/// One sale line. Prices are gross; the printer computes the VAT block.
+/// Gross prices; the printer computes VAT.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
     name: String,
@@ -131,9 +127,9 @@ pub struct Line {
 }
 
 impl Line {
-    /// `name` is printed exactly as given: at most 80 characters, all of them in
-    /// [`text::printable_characters`], not blank. The line value is quantity × price rounded half
-    /// up to grosze.
+    /// Prints `name` unchanged: nonblank, at most 80 characters, all in
+    /// [`text::printable_characters`].
+    /// Line value is quantity × price, rounded half up to grosze.
     pub fn new(
         name: &str,
         quantity: Quantity,
@@ -192,7 +188,6 @@ impl Line {
     }
 }
 
-/// One command of an operation, with the time the printer may take to answer it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Step {
     pub command: &'static str,
@@ -226,10 +221,9 @@ pub struct Receipt {
 }
 
 impl Receipt {
-    /// Validates the settlement: at most one advance per slot, none above that slot's sales, and
-    /// payments exactly covering the fiscal value (sales minus advances). `buyer_nip` is sent
-    /// unchanged. `brand`, the company name, is printed exactly as given as a footer when the
-    /// header lacks it, so it must fit one footer line of printable characters.
+    /// Requires at most one advance per slot, bounded by that slot's sales.
+    /// Payments must equal sales minus advances. `buyer_nip` is sent unchanged.
+    /// `brand` prints unchanged when absent from the header and must fit one printable footer line.
     pub fn new(
         lines: Vec<Line>,
         advances: Vec<Advance>,
@@ -294,7 +288,7 @@ impl Receipt {
                 ));
             }
         }
-        // At most one advance per slot, none above its slot's sales: this stays within `total`.
+        // Per-slot bounds above ensure deductions cannot exceed total sales.
         let deducted = advances
             .iter()
             .map(|advance| advance.amount)
@@ -333,7 +327,7 @@ impl Receipt {
         &self.brand
     }
 
-    /// Gross sales minus advances: what the payments cover.
+    /// Gross sales minus advances, covered by payments.
     pub const fn fiscal_total(&self) -> Grosze {
         self.fiscal_total
     }
@@ -342,9 +336,8 @@ impl Receipt {
         self.sales.keys().copied()
     }
 
-    /// `trinit`, optional `trnipset`, a `trline` per line, a `tradvance` per deduction, a
-    /// `trpayment` per nonzero payment, then `trend` (spec pp. 275-314). With a `footer` the
-    /// receipt closes through the footer commands so the company name prints under it.
+    /// Fiscal command order per spec pp. 275-314; zero payments send no command.
+    /// A footer requires footer commands after `trend`.
     pub fn steps(&self, footer: Option<&str>) -> Vec<Step> {
         let mut steps = vec![Step::new(
             "trinit",
@@ -393,7 +386,7 @@ impl Receipt {
                     Step::new("trpayment", params, LINE_TIMEOUT)
                 }),
         );
-        // `new` only accepts payments that sum exactly to the fiscal total.
+        // Validated payments equal the fiscal total.
         let mut end = vec![
             ("to", self.fiscal_total.get().to_string()),
             ("fp", self.fiscal_total.get().to_string()),

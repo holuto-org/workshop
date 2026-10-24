@@ -1,10 +1,9 @@
 //! Posnet Temo Online driver over a serial port.
 //!
-//! Every operation opens its own exclusive session, verifies the device (identity, fiscal mode,
-//! header, mechanism, command queue, transaction state, VAT table) and only then sends fiscal
-//! commands. No command is ever retried: a lost reply is an uncertain outcome for the caller to
-//! resolve, never a reason to send it again. Before each command reaches the printer the caller's
-//! [`printer::Journal`] persists it, so an interrupted operation is known after a restart.
+//! Each operation opens an exclusive session and verifies identity, fiscal mode, header,
+//! mechanism, command queue, transaction state and VAT table before fiscal commands.
+//! Commands are never retried. A lost reply leaves an uncertain outcome for the caller to resolve.
+//! The caller's [`printer::Journal`] persists intent before each command, surviving restarts.
 
 #![forbid(unsafe_code)]
 
@@ -47,16 +46,16 @@ pub enum Error {
         command: String,
         field: String,
     },
-    /// A reply the driver cannot trust: corrupt, incomplete or answering another command.
+    /// Corrupt, incomplete or mismatched reply.
     #[error("{0}")]
     Protocol(String),
-    /// The device refuses work until an operator fixes it (paper, cover, open transaction, ...).
+    /// Operator intervention required (paper, cover, open transaction, …).
     #[error("{0}")]
     NotReady(String),
-    /// The caller's journal could not record the next command, so it was not sent.
+    /// Journal write failed; the next command was not sent.
     #[error("Nie można zapisać rejestru operacji: {0}")]
     Journal(#[source] io::Error),
-    /// Commands of an operation already reached the printer; what it printed is unknown.
+    /// Commands reached the printer; the printed outcome is unknown.
     #[error(
         "{0}\nWynik operacji wymaga sprawdzenia. Nie wysyłaj jej ponownie przed sprawdzeniem \
          drukarki."
@@ -65,7 +64,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// The OS refused to open the port; on Linux the user usually lacks the `dialout` group.
+    /// Port permission denied; Linux usually requires membership in `dialout`.
     pub fn is_denied(&self) -> bool {
         let Self::Open { source, .. } = self else {
             return false;
@@ -82,8 +81,7 @@ fn parameter(field: &str) -> String {
     }
 }
 
-/// The documented reason for the errors that block sales in states the preflight cannot read
-/// (POT-I-DEV-37 v5978, "Opisy błędów"); staff resolving the job see why, not only a number.
+/// Errors preflight cannot detect (POT-I-DEV-37 v5978, "Opisy błędów").
 const fn explanation(code: u32) -> &'static str {
     match code {
         1039 | 2904 => " Pamięć chroniona zapełniona.",

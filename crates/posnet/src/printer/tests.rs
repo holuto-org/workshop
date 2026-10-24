@@ -14,7 +14,7 @@ use crate::{
     simulator::{Fault, SERIAL, Simulator},
 };
 
-/// Records every journaled command; fails from the `fail_at`-th entry on.
+/// Fails from the `fail_at`-th journal entry onward.
 #[derive(Default)]
 struct Recorder {
     stages: Vec<&'static str>,
@@ -33,7 +33,6 @@ impl Journal for Recorder {
     fn waiting(&mut self, _problem: Option<&str>) {}
 }
 
-/// An operator at the printer: whatever it waits for, they fix at once.
 struct Operator<'a> {
     sim: &'a Simulator,
     heard: Vec<Option<String>>,
@@ -52,7 +51,6 @@ impl Journal for Operator<'_> {
     }
 }
 
-/// A daily report the printer must answer within `timeout`, sent through its own session.
 fn report_within(sim: &Simulator, timeout: Duration) -> (Session, Step) {
     let session = Session::open(
         sim.link().as_ref(),
@@ -75,8 +73,7 @@ fn sent(sim: &Simulator, step: &Step) -> usize {
     sim.frames().iter().filter(|sent| **sent == frame).count()
 }
 
-/// The printer replies only after executing (spec p. 15): out of paper, it stays silent past the
-/// step's time, yet says why when asked, and the command completes once paper is back.
+/// Replies follow execution (spec p. 15); paper-out status remains queryable while printing waits.
 #[test]
 fn a_printer_out_of_paper_completes_the_command_once_paper_is_back() {
     let sim = Simulator::start();
@@ -175,7 +172,7 @@ fn brand_footer_only_when_the_header_lacks_the_company_name() {
 fn a_receipt_is_issued_at_the_printer_clock_never_later() {
     for (clock, issued_at) in [
         ("2026-07-01;12:34", "2026-07-01T10:34:00Z"),
-        // The autumn change repeats 02:00-02:59: the earlier instant.
+        // Repeated autumn hour: choose the earlier instant.
         ("2026-10-25;02:30", "2026-10-25T00:30:00Z"),
     ] {
         let sim = Simulator::start();
@@ -198,8 +195,7 @@ fn an_unreadable_printer_clock_fails_the_receipt_before_trinit() {
     assert!(!sim.frames().contains(&trinit));
 }
 
-/// The simulated printer, like a real one, keeps Polish time whatever the host's zone: run with
-/// e.g. `TZ=Asia/Tokyo` to see a host-local clock read as a time hours ahead.
+/// Run with `TZ=Asia/Tokyo` to catch host-local clock use.
 #[test]
 fn a_simulated_receipt_is_issued_now_on_any_host() {
     let sim = Simulator::start();
@@ -348,8 +344,7 @@ fn a_failure_mid_receipt_is_uncertain_and_journaled_at_the_failed_command() {
     }
 }
 
-/// The printer refuses a sale in states the preflight cannot read (`?3735` new certificates,
-/// `?2036` read-only): no transaction opened, so nothing about the outcome is uncertain.
+/// Preflight cannot read certificate (`?3735`) or read-only (`?2036`) failures.
 #[test]
 fn a_refused_trinit_is_a_certain_failure() {
     let sim = Simulator::start();
@@ -401,7 +396,7 @@ fn a_journal_failure_stops_the_command_it_would_have_recorded() {
     );
     assert_eq!(sim.receipts().len(), 0);
 }
-/// A command, the device's answer to it and the problem the status must name.
+
 type Case = (
     &'static str,
     Vec<(&'static str, &'static str)>,
@@ -660,7 +655,7 @@ fn reports_send_the_documented_commands_and_refuse_a_reversed_range() {
         .into_iter()
         .map(|report| (report.command, report.params))
         .collect();
-    // The daily report's date is the printer's own clock, not the PC's.
+    // Daily reports use printer time, not host time.
     let today = Timestamp::now()
         .in_tz(super::PRINTER_ZONE)
         .unwrap()

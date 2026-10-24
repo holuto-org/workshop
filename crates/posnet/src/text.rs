@@ -1,18 +1,16 @@
-//! Text at the device boundary: the printer speaks Windows-1250 (its required code page), every
-//! field is tab-separated, and an item name holds at most 80 characters.
+//! Required encoding: Windows-1250. Tabs separate protocol fields.
 
 use crate::Error;
 
-/// Temo Online capabilities the protocol cannot report, from Posnet POT-I-DEV-37 v5978
-/// (Online MR2021): an item name (`trline` `na`, p. 295) holds "Do 80 znaków".
+/// Undetectable device limit: `trline` `na`, Posnet POT-I-DEV-37 v5978 (Online MR2021), p. 295.
 pub const MAX_NAME_LENGTH: usize = 80;
-/// A started transaction (`trinit`, p. 275) takes "do 500 pozycji sprzedaży".
+/// Transaction limit: `trinit`, same spec, p. 275.
 pub const MAX_LINES: usize = 500;
 pub const MAX_BUYER_NIP_LENGTH: usize = 30;
-/// The footer line (`trftrln` `na`) carrying the company name when the printer header lacks it.
+/// Company footer limit: `trftrln` `na`, used when the header lacks the company name.
 pub const MAX_COMPANY_NAME_LENGTH: usize = 40;
 
-/// Windows-1250 bytes 0x80..=0xFF; the five bytes the code page leaves unassigned are `None`.
+/// Windows-1250 bytes 0x80–0xFF; `None` marks the five unassigned bytes.
 const HIGH_HALF: [Option<char>; 128] = [
     Some('\u{20AC}'),
     None,
@@ -144,7 +142,6 @@ const HIGH_HALF: [Option<char>; 128] = [
     Some('\u{02D9}'),
 ];
 
-/// The Windows-1250 byte for `character`, if the code page has one.
 fn encode_char(character: char) -> Option<u8> {
     if character.is_ascii() {
         return u8::try_from(character).ok();
@@ -163,29 +160,22 @@ fn decode_byte(byte: u8) -> Option<char> {
     }
 }
 
-/// `text` as Windows-1250 bytes, or `None` when a character has no byte.
 pub(crate) fn encode(text: &str) -> Option<Vec<u8>> {
     text.chars().map(encode_char).collect()
 }
 
-/// Device bytes as text, or `None` for an unassigned byte (a corrupt frame).
 pub(crate) fn decode(bytes: &[u8]) -> Option<String> {
     bytes.iter().map(|byte| decode_byte(*byte)).collect()
 }
 
-/// Whether `character` prints as itself: it has a Windows-1250 byte and is visible text. That
-/// excludes the control bytes, the no-break space and the soft hyphen.
 fn is_printable(character: char) -> bool {
     !character.is_control()
         && !matches!(character, '\u{A0}' | '\u{AD}')
         && encode_char(character).is_some()
 }
 
-/// Every character receipt text may hold.
-///
-/// The Windows-1250 bytes 0x20..=0xFF that have a character, except DEL, the no-break space and
-/// the soft hyphen. The agent reports this set so Holuto rejects unprintable text before
-/// queueing; the driver never rewrites text.
+/// Advertised to Holuto for validation before queueing; the driver never rewrites text.
+/// Assigned Windows-1250 bytes 0x20–0xFF, excluding DEL, no-break space and soft hyphen.
 pub fn printable_characters() -> String {
     (0x20..=0xFF_u8)
         .filter_map(decode_byte)
@@ -193,13 +183,11 @@ pub fn printable_characters() -> String {
         .collect()
 }
 
-/// Whether every character of `text` is in [`printable_characters`].
 pub(crate) fn is_printable_text(text: &str) -> bool {
     text.chars().all(is_printable)
 }
 
-/// Rejects text a frame cannot carry: control characters (a tab separates fields) or characters
-/// without a Windows-1250 byte.
+/// Controls would corrupt framing; all other characters need a Windows-1250 byte.
 pub(crate) fn check_printable(text: &str) -> Result<(), Error> {
     if text.chars().any(char::is_control) {
         return Err(Error::Invalid(
@@ -217,7 +205,7 @@ pub(crate) fn check_printable(text: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Header text as printed: `&&` is a literal `&`, any other `&x` is a formatting mark.
+/// Header escapes: `&&` prints `&`; other `&x` pairs are formatting marks.
 pub(crate) fn header_text(raw: &str) -> String {
     let mut text = String::with_capacity(raw.len());
     let mut characters = raw.chars();

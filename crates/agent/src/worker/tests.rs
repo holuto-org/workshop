@@ -61,7 +61,6 @@ fn shown(event: Event) -> (Vec<i64>, usize, bool) {
     )
 }
 
-/// Holuto serving these documents pages, keyed by the cursor that opens each.
 fn serving(pages: Vec<(Option<&str>, Page)>) -> FakeApi {
     let mut api = FakeApi::new(vec![]);
     api.pages = pages
@@ -71,7 +70,6 @@ fn serving(pages: Vec<(Option<&str>, Page)>) -> FakeApi {
     api
 }
 
-/// The cursors Holuto was asked for, in order.
 fn requested(api: &FakeApi) -> Vec<Option<&str>> {
     api.cursors.iter().map(Option::as_deref).collect()
 }
@@ -137,7 +135,6 @@ fn an_emptied_later_page_returns_to_the_first() {
     assert_eq!(requested(&api), [None, Some("after-1"), None]);
 }
 
-/// The worker's loop, with Holuto replaced, on its own thread as in the app.
 #[test]
 fn receipts_and_reports_run_on_one_thread_and_stop_waits_for_the_current_print() {
     let sim = Simulator::start();
@@ -210,7 +207,6 @@ fn receipts_and_reports_run_on_one_thread_and_stop_waits_for_the_current_print()
     );
 }
 
-/// A session on the simulator, as `run` leaves it once connected.
 fn session<'a>(
     sim: &Simulator,
     dir: &'a StateDir,
@@ -231,7 +227,6 @@ fn session<'a>(
     }
 }
 
-/// A printed receipt whose `done` result Holuto has not confirmed yet.
 fn unconfirmed_print(dir: &StateDir) {
     Journal::new(dir)
         .save(&Operation::Receipt(ReceiptOperation {

@@ -13,10 +13,8 @@ use crate::{
 
 const TIMEOUT: Duration = Duration::from_millis(300);
 
-/// A device that answers only with the bytes the test writes to it.
 trait Peer {
     fn send(&mut self, bytes: &[u8]);
-    /// Everything that arrived within `wait`.
     fn received(&mut self, wait: Duration) -> Vec<u8>;
 }
 
@@ -46,7 +44,6 @@ fn tcp_pair() -> (TcpStream, Session) {
     (peer, Session::new(Box::new(TcpPort(driver))))
 }
 
-/// A lost reply surfaces as a timeout; the fiscal command is never sent a second time.
 fn lost_reply_never_retries(peer: &mut dyn Peer, session: &mut Session) {
     let trinit = encode("trinit", &[("bm", "0".to_owned())]).unwrap();
     let result = session.command("trinit", &[("bm", "0".to_owned())], TIMEOUT);
@@ -57,7 +54,7 @@ fn lost_reply_never_retries(peer: &mut dyn Peer, session: &mut Session) {
     assert_eq!(peer.received(Duration::from_millis(200)), trinit);
 }
 
-/// Noise before a frame is skipped, but a late reply to another command is never a success.
+/// Line noise is ignored; a late reply cannot satisfy the next command.
 fn foreign_reply_is_not_a_success(peer: &mut dyn Peer, session: &mut Session) {
     let mut noisy = b"\x00\xFF".to_vec();
     noisy.extend(reply("getrealid\tnmX\t"));
@@ -89,7 +86,7 @@ fn socket_foreign_reply_is_not_a_success() {
     foreign_reply_is_not_a_success(&mut peer, &mut session);
 }
 
-/// The transport the printer actually uses: a terminal with termios timeouts and partial reads.
+/// Exercises termios timeouts and partial reads, as on the real serial transport.
 #[cfg(unix)]
 mod pty {
     use std::{
