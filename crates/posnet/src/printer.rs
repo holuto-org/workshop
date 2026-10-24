@@ -2,7 +2,7 @@
 
 use std::{io, sync::Arc, time::Duration};
 
-use jiff::civil::Date;
+use jiff::{civil::Date, fmt::strtime::BrokenDownTime};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -237,13 +237,9 @@ impl Printer {
                 "Wybrana stawka VAT jest nieaktywna na drukarce.".to_owned(),
             ));
         }
-        let footer = if receipt.brand().is_empty() {
-            None
-        } else {
-            let header = session.command("hdrget", &[], DEFAULT_TIMEOUT)?;
-            let header = text::header_text(header.get("tx").unwrap_or_default()).to_lowercase();
-            (!header.contains(&receipt.brand().to_lowercase())).then_some(receipt.brand())
-        };
+        let header = session.command("hdrget", &[], DEFAULT_TIMEOUT)?;
+        let header = text::header_text(header.get("tx").unwrap_or_default()).to_lowercase();
+        let footer = (!header.contains(&receipt.brand().to_lowercase())).then_some(receipt.brand());
         dispatch(&mut session, &receipt.steps(footer), journal)?;
         // The receipt is printed; a failure to read its number is reported, never retried.
         let receipt_number = session
@@ -275,10 +271,11 @@ impl Printer {
         let step = match report {
             Report::Daily => {
                 let clock = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
+                // `da` is `YYYY-MM-DD;HH:MM`; the report takes only the date.
                 let day = clock
                     .get("da")
-                    .map(|value| value.chars().take(10).collect::<String>())
-                    .and_then(|day| day.parse::<Date>().ok())
+                    .and_then(|value| BrokenDownTime::parse_prefix("%Y-%m-%d", value).ok())
+                    .and_then(|(time, _)| time.to_date().ok())
                     .ok_or_else(|| {
                         Error::Protocol("Nie można odczytać daty drukarki.".to_owned())
                     })?;

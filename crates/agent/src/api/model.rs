@@ -7,7 +7,7 @@ use jiff::Timestamp;
 use posnet::{
     printer::VatRate,
     receipt::{PaymentForm, VAT_SLOTS},
-    text::{MAX_LINES, MAX_NAME_LENGTH, printable_characters},
+    text::{MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH, printable_characters},
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -84,6 +84,7 @@ pub struct Telemetry {
     pub vat_slots: Vec<VatSlotRate>,
     pub max_item_name_length: usize,
     pub max_lines_per_receipt: usize,
+    pub max_company_name_length: usize,
     pub allowed_characters: String,
 }
 
@@ -97,6 +98,7 @@ impl Telemetry {
             vat_slots: Vec::new(),
             max_item_name_length: MAX_NAME_LENGTH,
             max_lines_per_receipt: MAX_LINES,
+            max_company_name_length: MAX_COMPANY_NAME_LENGTH,
             allowed_characters: printable_characters(),
         }
     }
@@ -131,6 +133,8 @@ pub struct PrinterInfo {
     #[serde(deserialize_with = "nullable")]
     pub max_lines_per_receipt: Option<u32>,
     #[serde(deserialize_with = "nullable")]
+    pub max_company_name_length: Option<u32>,
+    #[serde(deserialize_with = "nullable")]
     pub allowed_characters: Option<String>,
     pub vat_slots: Vec<VatSlotRate>,
 }
@@ -144,7 +148,13 @@ impl PrinterInfo {
         {
             return Err("token sparowany z inną drukarką".to_owned());
         }
-        if self.max_item_name_length == Some(0) || self.max_lines_per_receipt == Some(0) {
+        if [
+            self.max_item_name_length,
+            self.max_lines_per_receipt,
+            self.max_company_name_length,
+        ]
+        .contains(&Some(0))
+        {
             return Err("zerowy limit drukarki".to_owned());
         }
         if self

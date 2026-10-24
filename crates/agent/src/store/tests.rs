@@ -41,3 +41,19 @@ fn state_is_private_to_the_user() {
     assert_eq!(mode(dir.path()), 0o700);
     assert_eq!(mode(&file), 0o600);
 }
+
+/// An overridden `%LOCALAPPDATA%` must not move the state directory, or the app would open a fresh
+/// journal and lock beside the real ones and slip past an unresolved operation.
+#[cfg(windows)]
+#[test]
+#[expect(
+    unsafe_code,
+    reason = "the test overrides the variable it proves is ignored"
+)]
+fn the_windows_state_directory_ignores_an_overridden_localappdata() {
+    let known_folder = StateDir::default_path().unwrap();
+    // SAFETY: Windows serializes environment access inside the OS, and nextest gives this test its
+    // own process.
+    unsafe { std::env::set_var("LOCALAPPDATA", r"C:\overridden") };
+    assert_eq!(StateDir::default_path().unwrap(), known_folder);
+}

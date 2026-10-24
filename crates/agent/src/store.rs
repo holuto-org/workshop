@@ -1,11 +1,15 @@
 //! The state directory: settings, the operation journal and the receipt history, owned by one
 //! running instance at a time.
 
+#[cfg(not(windows))]
+use std::env;
 use std::{
     fs::{self, File, TryLockError},
     io::{self, Write as _},
     path::{Path, PathBuf},
 };
+
+use atomicwrites::{AtomicFile, OverwriteBehavior};
 
 use crate::Error;
 
@@ -21,12 +25,12 @@ pub struct StateDir {
 }
 
 impl StateDir {
-    /// `$XDG_STATE_HOME/holuto-fiscal` on Linux, `~/Library/Application Support/holuto-fiscal`
-    /// on macOS and `%LOCALAPPDATA%\holuto-fiscal` on Windows.
+    /// `$XDG_STATE_HOME/holuto-fiscal` (default `~/.local/state/holuto-fiscal`) on Linux,
+    /// `~/Library/Application Support/holuto-fiscal` on macOS and `%LOCALAPPDATA%\holuto-fiscal`
+    /// on Windows. Relative or empty values are ignored rather than resolved against the working
+    /// directory, which would silently move the journal.
     pub fn default_path() -> Option<PathBuf> {
-        dirs::state_dir()
-            .or_else(dirs::data_local_dir)
-            .map(|base| base.join("holuto-fiscal"))
+        base_dir().map(|base| base.join("holuto-fiscal"))
     }
 
     pub fn open(path: PathBuf) -> Result<Self, Error> {
@@ -70,6 +74,31 @@ impl StateDir {
     }
 }
 
+/// The Local AppData Known Folder, not the `%LOCALAPPDATA%` variable: a process environment may
+/// override it, and following the override would open a fresh journal beside the real one.
+#[cfg(windows)]
+fn base_dir() -> Option<PathBuf> {
+    known_folders::get_known_folder_path(known_folders::KnownFolder::LocalAppData)
+}
+
+#[cfg(target_os = "macos")]
+fn base_dir() -> Option<PathBuf> {
+    Some(absolute(env::home_dir()?)?.join("Library/Application Support"))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn base_dir() -> Option<PathBuf> {
+    env::var_os("XDG_STATE_HOME")
+        .and_then(absolute)
+        .or_else(|| Some(absolute(env::home_dir()?)?.join(".local/state")))
+}
+
+#[cfg(not(windows))]
+fn absolute(path: impl Into<PathBuf>) -> Option<PathBuf> {
+    let path = path.into();
+    path.is_absolute().then_some(path)
+}
+
 #[cfg(unix)]
 fn create_private_dir(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt as _;
@@ -86,20 +115,21 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
 
 /// Replaces `path` atomically and durably.
 ///
-/// The bytes are synced in a temporary file in the same directory (mode 0600 on Unix), then
-/// renamed over the target durably (directory fsync on Unix, `MOVEFILE_WRITE_THROUGH` on
-/// Windows), so a crash or power loss leaves either the old or the new content, never a torn file.
+/// The bytes are synced in a temporary file (mode 0600 on Unix) inside a private subdirectory
+/// next to the target, then renamed over it durably: a directory fsync on Unix,
+/// `MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows. A crash or power loss leaves either the old
+/// or the new content, never a torn file; on failure the temporary directory is deleted on drop.
 pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let directory = path
-        .parent()
-        .ok_or_else(|| io::Error::other("ścieżka bez katalogu"))?;
-    let mut temporary = tempfile::Builder::new()
-        .prefix(".tmp-")
-        .tempfile_in(directory)?;
-    temporary.write_all(bytes)?;
-    temporary.as_file().sync_all()?;
-    // On failure the temporary path is deleted on drop; after success nothing is left to delete.
-    atomicwrites::replace_atomic(&temporary.into_temp_path(), path)
+    let mut options = File::options();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    AtomicFile::new(path, OverwriteBehavior::AllowOverwrite)
+        .write_with_options(|file| file.write_all(bytes), options)
+        .map_err(io::Error::from)
 }
 
 /// The file's bytes, or `None` when it does not exist.

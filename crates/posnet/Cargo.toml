@@ -12,14 +12,11 @@ version.workspace = true
 simulator = []
 
 [dependencies]
-any_ascii.workspace = true
 jiff.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
 serialport.workspace = true
 thiserror.workspace = true
-unicode-general-category.workspace = true
-unicode-normalization.workspace = true
 
 [lints]
 workspace = true

@@ -1,9 +1,6 @@
 //! Text at the device boundary: the printer speaks Windows-1250 (its required code page), every
 //! field is tab-separated, and an item name holds at most 80 characters.
 
-use unicode_general_category::{GeneralCategory, get_general_category};
-use unicode_normalization::UnicodeNormalization as _;
-
 use crate::Error;
 
 /// Temo Online capabilities the protocol cannot report, from Posnet POT-I-DEV-37 v5978
@@ -12,8 +9,8 @@ pub const MAX_NAME_LENGTH: usize = 80;
 /// A started transaction (`trinit`, p. 275) takes "do 500 pozycji sprzedaży".
 pub const MAX_LINES: usize = 500;
 pub const MAX_BUYER_NIP_LENGTH: usize = 30;
-/// The footer line carrying the company name when the printer header lacks it.
-pub const MAX_BRAND_LENGTH: usize = 40;
+/// The footer line (`trftrln` `na`) carrying the company name when the printer header lacks it.
+pub const MAX_COMPANY_NAME_LENGTH: usize = 40;
 
 /// Windows-1250 bytes 0x80..=0xFF; the five bytes the code page leaves unassigned are `None`.
 const HIGH_HALF: [Option<char>; 128] = [
@@ -176,32 +173,29 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<String> {
     bytes.iter().map(|byte| decode_byte(*byte)).collect()
 }
 
-/// What a receipt can show as text: not controls, separators other than the ASCII space, format
-/// characters (soft hyphen, zero-width space), surrogates, private-use or unassigned code points.
+/// Whether `character` prints as itself: it has a Windows-1250 byte and is visible text. That
+/// excludes the control bytes, the no-break space and the soft hyphen.
 fn is_printable(character: char) -> bool {
-    if character == ' ' {
-        return true;
-    }
-    !matches!(
-        get_general_category(character),
-        GeneralCategory::Control
-            | GeneralCategory::Format
-            | GeneralCategory::Surrogate
-            | GeneralCategory::PrivateUse
-            | GeneralCategory::Unassigned
-            | GeneralCategory::LineSeparator
-            | GeneralCategory::ParagraphSeparator
-            | GeneralCategory::SpaceSeparator
-    )
+    !character.is_control()
+        && !matches!(character, '\u{A0}' | '\u{AD}')
+        && encode_char(character).is_some()
 }
 
-/// Every character the driver prints unchanged: the Windows-1250 bytes 0x20..=0xFF that have a
-/// character, except DEL, the no-break space and the soft hyphen, which are not printable text.
+/// Every character receipt text may hold.
+///
+/// The Windows-1250 bytes 0x20..=0xFF that have a character, except DEL, the no-break space and
+/// the soft hyphen. The agent reports this set so Holuto rejects unprintable text before
+/// queueing; the driver never rewrites text.
 pub fn printable_characters() -> String {
     (0x20..=0xFF_u8)
         .filter_map(decode_byte)
         .filter(|character| is_printable(*character))
         .collect()
+}
+
+/// Whether every character of `text` is in [`printable_characters`].
+pub(crate) fn is_printable_text(text: &str) -> bool {
+    text.chars().all(is_printable)
 }
 
 /// Rejects text a frame cannot carry: control characters (a tab separates fields) or characters
@@ -221,27 +215,6 @@ pub(crate) fn check_printable(text: &str) -> Result<(), Error> {
         ));
     }
     Ok(())
-}
-
-/// Coerces raw text into something the printer can print, never rejecting it.
-///
-/// Characters without a Windows-1250 byte are transliterated, invisible and control characters are
-/// dropped (other whitespace becomes a space), and the trimmed result is cut to `max_length`
-/// characters.
-pub fn sanitize(text: &str, max_length: usize) -> String {
-    let mut sanitized = String::with_capacity(text.len());
-    for character in text.nfc() {
-        if !is_printable(character) {
-            if character.is_whitespace() {
-                sanitized.push(' ');
-            }
-        } else if encode_char(character).is_some() {
-            sanitized.push(character);
-        } else {
-            sanitized.push_str(any_ascii::any_ascii_char(character));
-        }
-    }
-    sanitized.trim().chars().take(max_length).collect()
 }
 
 /// Header text as printed: `&&` is a literal `&`, any other `&x` is a formatting mark.

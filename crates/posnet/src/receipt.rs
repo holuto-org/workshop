@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Error,
     money::{self, Grosze},
-    text::{self, MAX_BRAND_LENGTH, MAX_BUYER_NIP_LENGTH, MAX_LINES, MAX_NAME_LENGTH},
+    text::{self, MAX_BUYER_NIP_LENGTH, MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH},
 };
 
 /// The printer's VAT table has seven slots, A to G.
@@ -112,18 +112,28 @@ pub struct Line {
 }
 
 impl Line {
-    /// `name` is sanitized for the printer (transliterated, controls removed, cut to 80
-    /// characters); the line value is quantity × price rounded half up to grosze.
+    /// `name` is printed exactly as given: at most 80 characters, all of them in
+    /// [`text::printable_characters`], not blank. The line value is quantity × price rounded half
+    /// up to grosze.
     pub fn new(
         name: &str,
         quantity: Decimal,
         unit_price: Decimal,
         vat: VatSlot,
     ) -> Result<Self, Error> {
-        let name = text::sanitize(name, MAX_NAME_LENGTH);
-        if name.is_empty() {
+        if name.trim().is_empty() {
             return Err(Error::Invalid(
                 "Nazwa usługi nie może być pusta.".to_owned(),
+            ));
+        }
+        if name.chars().count() > MAX_NAME_LENGTH {
+            return Err(Error::Invalid(
+                "Nazwa usługi może mieć najwyżej 80 znaków.".to_owned(),
+            ));
+        }
+        if !text::is_printable_text(name) {
+            return Err(Error::Invalid(
+                "Nazwa usługi zawiera znaki, których drukarka nie drukuje.".to_owned(),
             ));
         }
         if quantity <= Decimal::ZERO || unit_price <= Decimal::ZERO {
@@ -159,7 +169,7 @@ impl Line {
                 )
             })?;
         Ok(Self {
-            name,
+            name: name.to_owned(),
             quantity,
             vat,
             price,
@@ -216,7 +226,8 @@ pub struct Receipt {
 impl Receipt {
     /// Validates the settlement: at most one advance per slot, none above that slot's sales, and
     /// payments exactly covering the fiscal value (sales minus advances). `buyer_nip` is sent
-    /// unchanged; `brand` (the company name) is printed as a footer when the header lacks it.
+    /// unchanged. `brand`, the company name, is printed exactly as given as a footer when the
+    /// header lacks it, so it must fit one footer line of printable characters.
     pub fn new(
         lines: Vec<Line>,
         advances: Vec<Advance>,
@@ -224,6 +235,16 @@ impl Receipt {
         buyer_nip: Option<String>,
         brand: &str,
     ) -> Result<Self, Error> {
+        if brand.trim().is_empty()
+            || brand.chars().count() > MAX_COMPANY_NAME_LENGTH
+            || !text::is_printable_text(brand)
+        {
+            return Err(Error::Invalid(
+                "Nazwa firmy musi mieć od 1 do 40 znaków obsługiwanych przez drukarkę. Zmień ją \
+                 w profilu firmy w Holuto."
+                    .to_owned(),
+            ));
+        }
         if !(1..=MAX_LINES).contains(&lines.len()) {
             return Err(Error::Invalid(
                 "Paragon musi zawierać od 1 do 500 pozycji.".to_owned(),
@@ -289,7 +310,7 @@ impl Receipt {
             advances,
             payments,
             buyer_nip,
-            brand: text::sanitize(brand, MAX_BRAND_LENGTH),
+            brand: brand.to_owned(),
             sales,
             fiscal_total,
         })

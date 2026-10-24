@@ -6,7 +6,7 @@ use agent::{
     settings::{BAUD_RATES, Settings},
     worker::{Command, Tone},
 };
-use jiff::{Span, Timestamp, Zoned, civil::Date, tz::TimeZone};
+use jiff::{Timestamp, ToSpan, Zoned, civil::Date, tz::TimeZone};
 use posnet::printer::Status;
 use rust_decimal::Decimal;
 use slint::{ModelRc, VecModel};
@@ -45,7 +45,8 @@ pub(crate) struct Model {
     pub(crate) nip: String,
     pub(crate) message: String,
     pub(crate) tone: Tone,
-    pub(crate) months: Vec<(i16, i8, String)>,
+    /// The first day of each month offered for the monthly report, newest first.
+    pub(crate) months: Vec<Date>,
     pub(crate) month_index: usize,
     pub(crate) from: Date,
     pub(crate) to: Date,
@@ -56,20 +57,11 @@ pub(crate) struct Model {
 impl Model {
     pub(crate) fn new(settings: Settings) -> Self {
         let today = Zoned::now().date();
-        let months = (1..=24)
-            .filter_map(|back| {
-                today
-                    .first_of_month()
-                    .checked_sub(Span::new().months(back))
-                    .ok()
-            })
-            .map(|date| {
-                (
-                    date.year(),
-                    date.month(),
-                    format!("{} {}", month_name(date.month()), date.year()),
-                )
-            })
+        let months = today
+            .first_of_month()
+            .series(-1.month())
+            .skip(1)
+            .take(24)
             .collect();
         Self {
             settings,
@@ -93,7 +85,7 @@ impl Model {
             tone: Tone::Info,
             months,
             month_index: 0,
-            from: today.checked_sub(Span::new().days(7)).unwrap_or(today),
+            from: today.checked_sub(7.days()).unwrap_or(today),
             to: today,
             summary: false,
             pending: None,
@@ -128,7 +120,7 @@ impl Model {
 
     pub(crate) fn initialize(&self, window: &AppWindow) {
         window.set_baud_rates(strings(BAUD_RATES.iter().map(u32::to_string)));
-        window.set_months(strings(self.months.iter().map(|month| month.2.clone())));
+        window.set_months(strings(self.months.iter().copied().map(month_label)));
         window.set_documents(Rc::clone(&self.document_rows).into());
         window.set_history(Rc::clone(&self.history_rows).into());
         self.sync(window);
@@ -247,13 +239,13 @@ impl Model {
                 .months
                 .get(self.month_index)
                 .filter(|_| self.reports_enabled())
-                .map(|month| Confirmation {
+                .map(|&month| Confirmation {
                     command: Command::MonthlyReport {
-                        year: month.0,
-                        month: month.1,
+                        year: month.year(),
+                        month: month.month(),
                     },
                     title: "Raport miesięczny".into(),
-                    text: format!("Wydrukować raport miesięczny za {}?", month.2),
+                    text: format!("Wydrukować raport miesięczny za {}?", month_label(month)),
                     action: "Drukuj".into(),
                 }),
             Action::PeriodicReport => {
@@ -438,6 +430,9 @@ fn history_row(entry: &HistoryEntry) -> TableRow {
                 .into()
         },
     }
+}
+fn month_label(month: Date) -> String {
+    format!("{} {}", month_name(month.month()), month.year())
 }
 const fn month_name(month: i8) -> &'static str {
     match month {

@@ -127,8 +127,8 @@ fn report_commands_and_date_order() -> Result<(), Box<dyn Error>> {
         vec![
             Command::DailyReport,
             Command::MonthlyReport {
-                year: month.0,
-                month: month.1
+                year: month.year(),
+                month: month.month()
             }
         ]
     );
@@ -194,7 +194,7 @@ fn confirmation_does_not_submit_after_blocking_or_cancellation() {
 fn future_date_is_refused_without_changing_selected_range() -> Result<(), Box<dyn Error>> {
     let mut model = Model::new(Settings::default());
     let old = model.to;
-    let tomorrow = old.checked_add(Span::new().days(1))?;
+    let tomorrow = old.checked_add(1.day())?;
     model.change_date(false, &ui_date(tomorrow));
     assert_eq!(
         model.to, old,

@@ -1,5 +1,5 @@
 use super::{
-    MAX_NAME_LENGTH, check_printable, decode, encode, header_text, printable_characters, sanitize,
+    check_printable, decode, encode, header_text, is_printable_text, printable_characters,
 };
 
 #[test]
@@ -18,31 +18,7 @@ fn unassigned_code_page_bytes_are_not_text() {
 }
 
 #[test]
-fn raw_names_are_sanitized_instead_of_rejected() {
-    for (raw, expected) in [
-        ("Кузов", "Kuzov"),
-        ("Wymiana 🔧 oleju", "Wymiana :wrench: oleju"),
-        ("x\tnaInjected", "x naInjected"),
-        ("Olej\u{AD}", "Olej"),
-        ("Olej\u{A0}5W30", "Olej 5W30"),
-        ("a\u{200B}b", "ab"),
-    ] {
-        assert_eq!(sanitize(raw, MAX_NAME_LENGTH), expected, "{raw:?}");
-    }
-    assert_eq!(sanitize(&"x".repeat(100), MAX_NAME_LENGTH), "x".repeat(80));
-}
-
-#[test]
-fn names_are_normalized_before_the_length_limit() {
-    let raw = format!(" o\u{301}{} ", "ł".repeat(79));
-    assert_eq!(
-        sanitize(&raw, MAX_NAME_LENGTH),
-        format!("ó{}", "ł".repeat(79))
-    );
-}
-
-#[test]
-fn advertised_characters_are_exactly_what_prints_unchanged() {
+fn advertised_characters_are_exactly_what_receipt_text_accepts() {
     let characters = printable_characters();
     let unassigned = [0x81, 0x83, 0x88, 0x90, 0x98];
     let unprintable = [0x7F, 0xA0, 0xAD]; // DEL, no-break space, soft hyphen
@@ -56,10 +32,11 @@ fn advertised_characters_are_exactly_what_prints_unchanged() {
     }
     assert!(!characters.contains('\t') && !characters.contains('Ж'));
     check_printable(&characters).unwrap();
-    let all: Vec<char> = characters.chars().collect();
-    for chunk in all.chunks(MAX_NAME_LENGTH) {
-        let name: String = chunk.iter().collect::<String>().trim().to_owned();
-        assert_eq!(sanitize(&name, MAX_NAME_LENGTH), name);
+    assert!(is_printable_text(&characters));
+    for character in [
+        '\t', '\u{A0}', '\u{AD}', '\u{7F}', 'Ж', '🔧', '\u{200B}', '\u{301}',
+    ] {
+        assert!(!is_printable_text(&character.to_string()), "{character:?}");
     }
 }
 

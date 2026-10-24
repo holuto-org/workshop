@@ -125,21 +125,19 @@ wildcard_enum_match_arm = "warn"
 agent = { path = "crates/agent" }
 posnet = { path = "crates/posnet" }
 
-any_ascii = "0.3.3"
-# Durable rename: directory fsync on Unix, MOVEFILE_WRITE_THROUGH on Windows.
+# Durable atomic replace: directory fsync on Unix, `MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows.
 atomicwrites = "0.4.4"
-dirs = "7.0.0"
 jiff = { version = "0.2.38", features = ["serde"] }
+# Windows state directory: `SHGetKnownFolderPath`, never the overridable `%LOCALAPPDATA%`.
+known-folders = "1.4.2"
 rust_decimal = { version = "1.43.0", default-features = false, features = ["serde-str", "std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # No libudev: 4.9 enumerates Linux ports from sysfs, so the .deb needs no udev library.
 serialport = { version = "4.10.1", default-features = false }
-# The durable writer's temporary file: same directory, mode 0600 on Unix.
+# Test fixtures' temporary directories.
 tempfile = "3.27.0"
 thiserror = "2.0.21"
-unicode-general-category = "1.1.0"
-unicode-normalization = "0.1.26"
 # rustls with the platform verifier: workshop PCs may trust a corporate CA the OS knows about.
 ureq = { version = "3.5.0", default-features = false, features = ["json", "platform-verifier", "rustls"] }
 url = "2.5.8"

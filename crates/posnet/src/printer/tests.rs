@@ -8,7 +8,7 @@ use crate::{
     frame::encode,
     receipt::{
         Advance, PaymentForm, Receipt, VatSlot,
-        tests::{line, pay},
+        tests::{BRAND, line, pay},
     },
     session::{Connection, Link},
     simulator::{Fault, SERIAL, Simulator},
@@ -118,7 +118,7 @@ fn receipt_preserves_line_slots_buyer_nip_and_each_payment_form() {
                 vec![],
                 vec![pay(form, 2000)],
                 nip.map(str::to_owned),
-                "",
+                BRAND,
             )
             .unwrap();
             let mut recorder = Recorder::default();
@@ -188,11 +188,11 @@ fn buyer_nip_does_not_leak_into_the_next_receipt() {
         vec![],
         vec![pay(PaymentForm::Cash, 100)],
         Some("5222628262".to_owned()),
-        "",
+        BRAND,
     )
     .unwrap();
     let _first = print(&sim, &with_nip).unwrap();
-    let _second = print(&sim, &simple_receipt("")).unwrap();
+    let _second = print(&sim, &simple_receipt(BRAND)).unwrap();
     let nips: Vec<_> = sim
         .receipts()
         .into_iter()
@@ -211,7 +211,7 @@ fn a_failure_mid_receipt_is_uncertain_and_journaled_at_the_failed_command() {
             vec![],
             vec![pay(PaymentForm::Cash, 10_000)],
             Some("5222628262".to_owned()),
-            "",
+            BRAND,
         )
         .unwrap();
         let printer = printer(&sim);
@@ -237,7 +237,7 @@ fn a_journal_failure_stops_the_command_it_would_have_recorded() {
         ..Recorder::default()
     };
     let error = printer
-        .print_receipt(&simple_receipt(""), &status, &mut first)
+        .print_receipt(&simple_receipt(BRAND), &status, &mut first)
         .unwrap_err();
     assert!(
         matches!(error, Error::Journal(_)),
@@ -251,7 +251,7 @@ fn a_journal_failure_stops_the_command_it_would_have_recorded() {
         ..Recorder::default()
     };
     let error = printer
-        .print_receipt(&simple_receipt(""), &status, &mut later)
+        .print_receipt(&simple_receipt(BRAND), &status, &mut later)
         .unwrap_err();
     assert!(
         matches!(error, Error::Uncertain(_)),
@@ -313,7 +313,7 @@ fn preflight_refuses_every_documented_device_problem() {
             "{command}: {status:?}"
         );
         let error = printer
-            .print_receipt(&simple_receipt(""), &status, &mut Recorder::default())
+            .print_receipt(&simple_receipt(BRAND), &status, &mut Recorder::default())
             .unwrap_err();
         assert!(
             matches!(&error, Error::NotReady(message) if message.contains(problem)),
@@ -355,7 +355,7 @@ fn receipt_refuses_an_inactive_rate_and_one_that_changed_since_the_probe() {
         vec![],
         vec![pay(PaymentForm::Cash, 200)],
         None,
-        "",
+        BRAND,
     )
     .unwrap();
     let error = printer
@@ -367,7 +367,7 @@ fn receipt_refuses_an_inactive_rate_and_one_that_changed_since_the_probe() {
         "8,00", "8,00", "0,00", "101,00", "101,00", "101,00", "100,00",
     ]);
     let error = printer
-        .print_receipt(&simple_receipt(""), &status, &mut Recorder::default())
+        .print_receipt(&simple_receipt(BRAND), &status, &mut Recorder::default())
         .unwrap_err();
     assert!(error.to_string().contains("zmieniła się"), "{error}");
     assert_eq!(sim.receipts().len(), 0);
@@ -380,7 +380,7 @@ fn a_different_device_on_the_port_is_refused() {
     let mut paired = printer.probe().unwrap();
     paired.serial = "OTHER".to_owned();
     let error = printer
-        .print_receipt(&simple_receipt(""), &paired, &mut Recorder::default())
+        .print_receipt(&simple_receipt(BRAND), &paired, &mut Recorder::default())
         .unwrap_err();
     assert!(error.to_string().contains("OTHER"), "{error}");
     assert!(printer.verify("OTHER").is_err());
@@ -418,7 +418,7 @@ fn advances_and_split_payments_use_the_exact_wire_frames() {
             pay(PaymentForm::Credit, 300),
         ],
         None,
-        "",
+        BRAND,
     )
     .unwrap();
     let printed = print(&sim, &receipt).unwrap();

@@ -287,6 +287,10 @@ fn a_malformed_or_foreign_printer_session_is_rejected() {
         ),
         with(
             status_json(),
+            &json!({"printer": with(printer.clone(), &json!({"maxCompanyNameLength": 0}))}),
+        ),
+        with(
+            status_json(),
             &json!({"printer": with(printer, &json!({"allowedCharacters": ""}))}),
         ),
         {
@@ -329,7 +333,8 @@ fn a_session_for_another_printer_than_before_is_rejected() {
 fn nullable_printer_metadata_is_accepted() {
     let nulls = json!({
         "deviceSerial": null, "model": null, "firmware": null, "appVersion": null,
-        "maxItemNameLength": null, "maxLinesPerReceipt": null, "allowedCharacters": null
+        "maxItemNameLength": null, "maxLinesPerReceipt": null, "maxCompanyNameLength": null,
+        "allowedCharacters": null
     });
     let status = with(
         status_json(),

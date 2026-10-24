@@ -125,8 +125,9 @@ printer VAT slot. Supported rates are `23`, `8`, `5`, `0` and `zw`; there is no
 highest-rate or whole-receipt fallback. Zero-price lines are omitted. Missing
 VAT-slot mappings reject queueing rather than silently changing the tax rate.
 Buyer NIP, advance deductions and payment amounts are carried through the job to
-the device. Receipt text is sanitized at the driver boundary (transliteration,
-control-character removal and device length limits).
+the device. Receipt text prints exactly as Holuto sends it: a line name or company name
+the printer cannot print in full fails the job before any fiscal command, never
+transliterated or truncated.
 
 ## Fiscal safety
 
@@ -167,21 +168,23 @@ and `Accept-Language: pl` (error details from Holuto are shown in Polish).
   "vatSlots": [{"slot": 0, "vatRate": "23"}, {"slot": 1, "vatRate": "8"}],
   "maxItemNameLength": 80,
   "maxLinesPerReceipt": 500,
+  "maxCompanyNameLength": 40,
   "allowedCharacters": " !\"#$%&'()*+,-./0123…"
 }
 ```
 
 `vatSlots` reports the actual device table, not a set of rates: slots are integers
 0–15 and `vatRate` is one of `"23"`, `"8"`, `"5"`, `"0"`, `"zw"`. Every session and
-heartbeat replaces the backend's slot mapping. `maxItemNameLength`, `maxLinesPerReceipt` and
-`allowedCharacters` (every printable character, in NFC) are required; the backend queues no
-receipt until it has them. The protocol cannot report them, so the driver states the documented
-Temo Online values once, in `posnet::text`: an 80-character item name (`trline`), 500 lines per
-receipt (`trinit`) and the CP1250 characters from 0x20 to 0xFF the driver prints unchanged (all
-but DEL, the no-break space and the soft hyphen). Session/heartbeat bind and verify the
-physical serial; a serial already paired to another live printer is refused (409). Other
-requests include the unchanged `X-Device-Serial` header; a device swap is rejected before a
-job is taken or printed.
+heartbeat replaces the backend's slot mapping. `maxItemNameLength`, `maxLinesPerReceipt`,
+`maxCompanyNameLength` and `allowedCharacters` (every printable character, in NFC) are required;
+the backend queues no receipt until it has them, and rejects a line name or company name that
+exceeds them. The protocol cannot report them, so the driver states the documented Temo Online
+values once, in `posnet::text`: an 80-character item name (`trline`), 500 lines per receipt
+(`trinit`), a 40-character company footer line (`trftrln`) and the CP1250 characters from 0x20
+to 0xFF the driver prints (all but DEL, the no-break space and the soft hyphen).
+Session/heartbeat bind and verify the physical serial; a serial already paired to another live
+printer is refused (409). Other requests include the unchanged `X-Device-Serial` header; a device
+swap is rejected before a job is taken or printed.
 
 | Endpoint | Purpose |
 | --- | --- |

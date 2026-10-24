@@ -379,6 +379,7 @@ fn telemetry_reports_the_device_slot_table() {
             "allowedCharacters",
             "appVersion",
             "firmware",
+            "maxCompanyNameLength",
             "maxItemNameLength",
             "maxLinesPerReceipt",
             "model",
@@ -389,9 +390,10 @@ fn telemetry_reports_the_device_slot_table() {
     assert_eq!(
         (
             telemetry["maxItemNameLength"].as_u64(),
-            telemetry["maxLinesPerReceipt"].as_u64()
+            telemetry["maxLinesPerReceipt"].as_u64(),
+            telemetry["maxCompanyNameLength"].as_u64()
         ),
-        (Some(80), Some(500))
+        (Some(80), Some(500), Some(40))
     );
     assert_eq!(telemetry["serial"], SERIAL);
 }
@@ -705,7 +707,7 @@ fn settlement_with_advances_and_credit_reaches_the_printer() {
 }
 
 #[test]
-fn an_invalid_settlement_fails_the_job_without_fiscal_commands() {
+fn an_invalid_job_fails_without_fiscal_commands() {
     let one = |slot: u8, rate: &str, amount: &str| json!({"vatSlot": slot, "vatRate": rate, "amount": amount});
     let cash = |amount: &str| json!([{"form": "cash", "amount": amount}]);
     let cases = [
@@ -726,6 +728,8 @@ fn an_invalid_settlement_fails_the_job_without_fiscal_commands() {
         json!({"total": "100000000.00"}),
         json!({"lines": [line(&json!({"unitPrice": "100.001", "total": "200.00"})), job_json()["lines"][1].clone()]}),
         json!({"lines": [line(&json!({"vatSlot": 1}))]}),
+        json!({"lines": [line(&json!({"name": "Кузов"})), job_json()["lines"][1].clone()]}),
+        json!({"companyName": "ООО Ромашка"}),
     ];
     for changes in cases {
         let sim = Simulator::start();
@@ -766,6 +770,11 @@ fn failure_reasons_name_the_problem() {
             json!({"lines": [line(&json!({"total": "199.99"})), line(&json!({"name": "x", "quantity": "1", "unitPrice": "50.00", "total": "50.01", "vatRate": "8", "vatSlot": 1}))]}),
             "Wartość pozycji",
         ),
+        (
+            json!({"lines": [line(&json!({"name": "Wymiana 🔧 oleju"})), job_json()["lines"][1].clone()]}),
+            "nie drukuje",
+        ),
+        (json!({"companyName": "x".repeat(41)}), "Nazwa firmy"),
     ] {
         let sim = Simulator::start();
         let (_temporary, dir) = state_dir();

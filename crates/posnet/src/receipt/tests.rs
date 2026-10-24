@@ -17,6 +17,9 @@ fn grosze(amount: u64) -> Grosze {
     Grosze::new(amount).unwrap()
 }
 
+/// The simulator's header names this company, so receipts carrying it print no footer.
+pub(crate) const BRAND: &str = "Warsztat Kowalski";
+
 pub(crate) fn line(name: &str, quantity: &str, price: &str, vat: u8) -> Line {
     Line::new(name, decimal(quantity), decimal(price), slot(vat)).unwrap()
 }
@@ -70,12 +73,51 @@ fn quantity_price_and_slot_must_fit_the_printer() {
 }
 
 #[test]
-fn a_name_that_sanitizes_to_nothing_is_rejected() {
-    for name in ["", " \t", "\u{AD}"] {
-        assert_eq!(
-            invalid(Line::new(name, Decimal::ONE, Decimal::TEN, slot(0))),
-            "Nazwa usługi nie może być pusta."
-        );
+fn names_print_exactly_as_given_or_are_rejected() {
+    for name in ["Zażółć gęślą jaźń €", " Olej ", &"ł".repeat(80)] {
+        assert_eq!(line(name, "1", "1.00", 0).name(), name);
+    }
+    let cases = [
+        ("", "pusta"),
+        ("   ", "pusta"),
+        (&"ł".repeat(81), "najwyżej 80"),
+        ("Кузов", "nie drukuje"),
+        ("Wymiana 🔧 oleju", "nie drukuje"),
+        ("x\tnaInjected", "nie drukuje"),
+        ("Olej\u{AD}", "nie drukuje"),
+        ("Olej\u{A0}5W30", "nie drukuje"),
+        ("a\u{200B}b", "nie drukuje"),
+        ("o\u{301}", "nie drukuje"),
+    ];
+    for (name, problem) in cases {
+        let message = invalid(Line::new(name, Decimal::ONE, Decimal::TEN, slot(0)));
+        assert!(message.contains(problem), "{name:?}: {message}");
+    }
+}
+
+#[test]
+fn the_company_name_must_fit_one_printable_footer_line() {
+    let receipt = |brand: &str| {
+        Receipt::new(
+            vec![line("Olej", "1", "1.00", 0)],
+            vec![],
+            vec![pay(PaymentForm::Cash, 100)],
+            None,
+            brand,
+        )
+    };
+    for brand in ["Łódź „Serwis” – Kowalski", &"ł".repeat(40)] {
+        assert_eq!(receipt(brand).unwrap().brand(), brand);
+    }
+    for brand in [
+        "",
+        "  ",
+        &"ł".repeat(41),
+        "Кузов",
+        "Firma\u{A0}X",
+        "Firma\tX",
+    ] {
+        assert!(invalid(receipt(brand)).contains("Nazwa firmy"), "{brand:?}");
     }
 }
 
@@ -94,7 +136,7 @@ fn receipt_arguments_are_checked() {
         ),
     ];
     for (lines, payments, problem) in cases {
-        let message = invalid(Receipt::new(lines, vec![], payments, None, ""));
+        let message = invalid(Receipt::new(lines, vec![], payments, None, BRAND));
         assert!(message.contains(problem), "{message}");
     }
 }
@@ -107,7 +149,7 @@ fn invalid_buyer_nip_is_rejected() {
             vec![],
             vec![pay(PaymentForm::Cash, 100)],
             Some(nip.to_owned()),
-            "",
+            BRAND,
         );
         assert!(invalid(result).contains("NIP"), "{nip:?}");
     }
@@ -128,7 +170,7 @@ fn settlement_must_balance_per_slot_and_overall() {
         (vec![], vec![pay(PaymentForm::Cash, 101)]),
     ] {
         assert!(
-            Receipt::new(lines(), advances.clone(), payments, None, "").is_err(),
+            Receipt::new(lines(), advances.clone(), payments, None, BRAND).is_err(),
             "{advances:?}"
         );
     }
@@ -137,7 +179,7 @@ fn settlement_must_balance_per_slot_and_overall() {
         vec![advance(0, 40), advance(0, 10)],
         vec![],
         None,
-        "",
+        BRAND,
     ));
     assert!(
         message.contains("Powtórzony slot VAT zaliczki"),
@@ -148,10 +190,8 @@ fn settlement_must_balance_per_slot_and_overall() {
 #[test]
 fn fully_prepaid_receipt_closes_at_zero_without_payment_commands() {
     let lines = vec![line("Usługa", "1", "10.00", 0)];
-    for brand in ["", "Inna firma"] {
-        let receipt =
-            Receipt::new(lines.clone(), vec![advance(0, 1000)], vec![], None, brand).unwrap();
-        let footer = (!brand.is_empty()).then_some(brand);
+    let receipt = Receipt::new(lines, vec![advance(0, 1000)], vec![], None, BRAND).unwrap();
+    for footer in [None, Some("Inna firma")] {
         let steps = receipt.steps(footer);
         assert!(steps.iter().all(|step| step.command != "trpayment"));
         let end = steps.iter().find(|step| step.command == "trend").unwrap();
@@ -170,7 +210,7 @@ fn zero_payments_send_no_command_and_mobile_payments_carry_their_name() {
         vec![],
         vec![pay(PaymentForm::Cash, 0), pay(PaymentForm::Mobile, 1000)],
         Some("5222628262".to_owned()),
-        "",
+        BRAND,
     )
     .unwrap();
     let steps = receipt.steps(None);

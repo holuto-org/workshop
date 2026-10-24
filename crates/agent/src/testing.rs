@@ -89,6 +89,7 @@ pub(crate) fn printer_json() -> Value {
         "vatSlots": [],
         "maxItemNameLength": 80,
         "maxLinesPerReceipt": 500,
+        "maxCompanyNameLength": 40,
         "allowedCharacters": "ABCabc 0123456789.,-ĄąĘęŁłŃńÓóŚśŹźŻżĆć"
     })
 }
