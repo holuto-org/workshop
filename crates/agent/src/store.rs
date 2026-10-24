@@ -23,7 +23,7 @@ pub struct StateDir {
 impl StateDir {
     /// Linux: `$XDG_STATE_HOME/holuto-fiscal` or `~/.local/state/holuto-fiscal`.
     /// macOS: `~/Library/Application Support/holuto-fiscal`.
-    /// Windows: `holuto-fiscal` in the Local AppData Known Folder.
+    /// Windows: `holuto-fiscal` in the Local `AppData` Known Folder.
     /// Ignores empty or relative base paths to avoid silently moving the journal.
     pub fn default_path() -> Option<PathBuf> {
         base_dir().map(|base| base.join("holuto-fiscal"))
@@ -109,6 +109,7 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
 }
 
 /// Syncs a temporary file (0600 on Unix) in a private sibling directory, then renames it.
+///
 /// Durability uses directory fsync on Unix and `MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows.
 /// Crashes leave old or new content, never a torn file; drop removes failed temporary writes.
 pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {

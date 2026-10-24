@@ -1,4 +1,5 @@
 //! `/agent` bodies from backend `openapi/agent.json`.
+//!
 //! Decimal strings let malformed amounts fail individual jobs, not entire responses.
 //! `Option::deserialize` requires nullable fields to be present; plain `Option` does not.
 
