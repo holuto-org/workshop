@@ -212,9 +212,7 @@ impl<H: Holuto> Session<'_, H> {
             let delay = match self.poll(inbox) {
                 Ok(Some(delay)) => delay,
                 Ok(None) => return Ok(()),
-                Err(Error::Api(ApiError::Unauthorized)) => {
-                    return Err(Error::Api(ApiError::Unauthorized));
-                },
+                Err(error @ Error::Api(ApiError::Unauthorized)) => return Err(error),
                 Err(error) => {
                     self.say(format!("Błąd: {error}"), Tone::Error);
                     self.publish_device();
@@ -358,7 +356,7 @@ impl Pager {
 
     fn refresh(&mut self, api: &mut impl Holuto) -> Result<Event, ApiError> {
         let mut pages = self.requested.take().unwrap_or_else(|| self.pages.clone());
-        let mut page = api.documents(pages.last().cloned().flatten().as_deref())?;
+        let mut page = api.documents(pages.last().and_then(Option::as_deref))?;
         if page.items.is_empty() && pages.len() > 1 {
             // Everything from this page on was printed or queued: start over.
             pages = vec![None];

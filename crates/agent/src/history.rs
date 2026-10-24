@@ -4,7 +4,6 @@
 use std::{
     fs::File,
     io::{self, Write as _},
-    path::Path,
 };
 
 use jiff::Timestamp;
@@ -35,11 +34,14 @@ pub struct HistoryEntry {
 /// The newest receipts first, at most 500. A line torn by a crash is skipped.
 pub fn load(dir: &StateDir) -> Result<Vec<HistoryEntry>, Error> {
     let path = dir.file(FILE);
-    let mut entries = read(&path).map_err(|source| Error::Store {
-        action: "Nie można odczytać historii",
-        path,
-        source,
-    })?;
+    let mut entries = store::read_optional(&path)
+        .map_err(|source| Error::Store {
+            action: "Nie można odczytać historii",
+            path,
+            source,
+        })?
+        .map(|bytes| parse(&bytes))
+        .unwrap_or_default();
     entries.reverse();
     entries.truncate(LIMIT);
     Ok(entries)
@@ -76,12 +78,6 @@ pub(crate) fn append(dir: &StateDir, entry: &HistoryEntry) -> Result<(), Error> 
     file.write_all(&line)
         .and_then(|()| file.sync_all())
         .map_err(failed)
-}
-
-fn read(path: &Path) -> io::Result<Vec<HistoryEntry>> {
-    Ok(store::read_optional(path)?
-        .map(|bytes| parse(&bytes))
-        .unwrap_or_default())
 }
 
 fn parse(bytes: &[u8]) -> Vec<HistoryEntry> {

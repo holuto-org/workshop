@@ -260,12 +260,12 @@ impl Job {
         if self.kind == ReceiptKind::Advance && !self.advances.is_empty() {
             return Err("zaliczka nie może odliczać zaliczek".to_owned());
         }
-        let slots = self
+        let mut slots = self
             .lines
             .iter()
             .map(|line| line.vat_slot)
             .chain(self.advances.iter().map(|advance| advance.vat_slot));
-        if slots.into_iter().any(|slot| slot >= MAX_BACKEND_SLOTS) {
+        if slots.any(|slot| slot >= MAX_BACKEND_SLOTS) {
             return Err("nieprawidłowy slot VAT".to_owned());
         }
         if self

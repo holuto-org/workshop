@@ -1,17 +1,21 @@
-*                       text=auto
-*.*ignore               text
+*               text=auto eol=lf
 
-*.lock                  text            -diff
-*.md                    text            diff=markdown
-*.rs                    text            eol=lf
-*.slint                 text            eol=lf
-*.sh                    text            eol=lf
-*.svg                   text
-*.toml                  text            eol=lf
-*.yml                   text
-*.png                   binary
-*.ico                   binary
-*.icns                  binary
+*.md            diff=markdown
+*.rs            diff=rust
+*.sh            diff=bash
+*.toml          diff=ini
+*.desktop       diff=ini
 
-.gitattributes          text
-LICENSE                 text
+*.in            text
+*.plist         text
+*.slint         text
+*.svg           text
+*.yml           text
+.gitattributes  text
+.gitignore      text
+LICENSE         text
+
+*.lock          -diff
+*.png           binary
+*.ico           binary
+*.icns          binary
