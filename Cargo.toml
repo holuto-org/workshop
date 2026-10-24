@@ -143,7 +143,8 @@ url = "2.5.8"
 uuid = { version = "1.29.0", features = ["serde"] }
 
 # The software renderer runs without a GPU or OpenGL driver (RDP, VMs, old workshop PCs) and
-# keeps the resident footprint lowest; `system-tray` provides SystemTrayIcon.
+# keeps the resident footprint lowest: FemtoVG on WGPU measured ~4× the memory with the window
+# open and ~2.3× while hidden in the tray. `system-tray` provides SystemTrayIcon.
 slint = { version = "1.18.1", default-features = false, features = [
     "accessibility",
     "backend-winit",
@@ -156,10 +157,6 @@ winresource = "0.1.34"
 # Linux tray-availability probe (StatusNotifierWatcher); Slint already builds it for its ksni tray
 # and AccessKit AT-SPI backends, on the same async-io runtime.
 zbus = { version = "5.14.0", default-features = false, features = ["async-io"] }
-
-# Test-only.
-i-slint-backend-testing = "=1.18.1"
-tiny_http = "0.12.0"
 
 [profile.dev]
 debug = "line-tables-only"

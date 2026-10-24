@@ -96,7 +96,10 @@ fn short_clusters_answer_with_their_first_flag() {
 
 #[test]
 fn double_dash_ends_the_options_and_nothing_may_follow() -> Result<(), Box<dyn Error>> {
-    assert!(run(&["--probe", "--"])?.probe, "options before `--` still apply");
+    assert!(
+        run(&["--probe", "--"])?.probe,
+        "options before `--` still apply"
+    );
     let parsed = parse_strs(&["--", "--probe"]);
     assert!(matches!(parsed, Err(UsageError::Unknown(_))), "{parsed:?}");
     Ok(())
@@ -106,7 +109,11 @@ fn double_dash_ends_the_options_and_nothing_may_follow() -> Result<(), Box<dyn E
 fn an_empty_value_is_a_port_but_not_a_directory_or_baud_rate() -> Result<(), Box<dyn Error>> {
     for args in [&["--serial="][..], &["--serial", ""]] {
         let arguments = run(args)?;
-        assert_eq!(arguments.serial.as_deref(), Some(""), "{args:?}: {arguments:?}");
+        assert_eq!(
+            arguments.serial.as_deref(),
+            Some(""),
+            "{args:?}: {arguments:?}"
+        );
     }
     for args in [&["--data-dir="][..], &["--data-dir", ""]] {
         let parsed = parse_strs(args);
@@ -116,7 +123,10 @@ fn an_empty_value_is_a_port_but_not_a_directory_or_baud_rate() -> Result<(), Box
         );
     }
     let parsed = parse_strs(&["--baudrate="]);
-    assert!(matches!(parsed, Err(UsageError::Baudrate { .. })), "{parsed:?}");
+    assert!(
+        matches!(parsed, Err(UsageError::Baudrate { .. })),
+        "{parsed:?}"
+    );
     Ok(())
 }
 

@@ -3,11 +3,18 @@
     reason = "Tests assert behavior while propagating fallible fixture and UI setup"
 )]
 
-use std::error::Error;
+use std::{cell::RefCell, error::Error, rc::Rc};
 
 use super::*;
 use agent::documents::ReceiptKind;
 use jiff::Timestamp;
+use slint::{
+    ComponentHandle as _, LogicalPosition, LogicalSize, PlatformError,
+    platform::{
+        Platform, PointerEventButton, WindowAdapter, WindowEvent, set_platform,
+        software_renderer::{MinimalSoftwareWindow, RepaintBufferType},
+    },
+};
 use uuid::Uuid;
 
 fn document() -> Document {
@@ -22,10 +29,24 @@ fn document() -> Document {
     }
 }
 
+/// A windowless platform, so tests drive `AppWindow` properties without a display server.
+struct Headless;
+
+impl Platform for Headless {
+    fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+        Ok(MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer))
+    }
+}
+
+/// Slint keeps one platform per thread and every test runs on its own thread.
+fn window() -> Result<AppWindow, Box<dyn Error>> {
+    set_platform(Box::new(Headless))?;
+    Ok(AppWindow::new()?)
+}
+
 #[test]
 fn controls_follow_connection_selection_readiness_and_blocking() -> Result<(), Box<dyn Error>> {
-    i_slint_backend_testing::init_no_event_loop();
-    let window = AppWindow::new()?;
+    let window = window()?;
     let mut model = Model::new(Settings::default());
     model.set_documents(vec![document()], 1, false);
     model.selected = Some(0);
@@ -106,7 +127,6 @@ fn queue_confirmation_captures_document_and_validated_nip() {
     );
 }
 
-#[test]
 fn ready_model() -> Model {
     let mut model = Model::new(Settings::default());
     model.connected = true;
@@ -252,8 +272,7 @@ fn sorting_and_refresh_keep_the_selected_document() {
 
 #[test]
 fn running_worker_settings_ignore_window_edits() -> Result<(), Box<dyn Error>> {
-    i_slint_backend_testing::init_no_event_loop();
-    let window = AppWindow::new()?;
+    let window = window()?;
     let mut model = Model::new(Settings::default());
     model.running = true;
     model.sync(&window);
@@ -264,6 +283,108 @@ fn running_worker_settings_ignore_window_edits() -> Result<(), Box<dyn Error>> {
         model.settings,
         Settings::default(),
         "Settings change only while the worker is stopped"
+    );
+    Ok(())
+}
+
+fn click(window: &AppWindow, x: f32, y: f32) {
+    let position = LogicalPosition::new(x, y);
+    let button = PointerEventButton::Left;
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerMoved { position });
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerPressed { position, button });
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerReleased { position, button });
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Clicked {
+    Row(i32),
+    Sort(i32, bool),
+}
+
+#[test]
+fn clicked_row_is_the_queued_document_after_sorting_and_refresh() -> Result<(), Box<dyn Error>> {
+    let window = window()?;
+    window.window().set_size(LogicalSize::new(1180.0, 820.0));
+    let mut model = Model::new(Settings::default());
+    model.connected = true;
+    model.tab = Tab::Documents;
+    let first = document();
+    let mut second = document();
+    second.order_id = Uuid::from_u128(1);
+    second.order_number = 7;
+    model.set_documents(vec![first.clone(), second.clone()], 1, false);
+    model.initialize(&window);
+    let clicks = Rc::new(RefCell::new(Vec::new()));
+    let rows = Rc::clone(&clicks);
+    window.on_selected_document(move |row| rows.borrow_mut().push(Clicked::Row(row)));
+    let sorts = Rc::clone(&clicks);
+    window.on_sort_documents(move |column, descending| {
+        sorts.borrow_mut().push(Clicked::Sort(column, descending));
+    });
+
+    // Probe down the "Zlecenie" column for its header and both rows, so layout tweaks don't
+    // silently move the clicks off the table.
+    let x = 300.0;
+    let (mut header, mut second_row) = (None, None);
+    for step in 0..205_u16 {
+        let y = f32::from(step) * 4.0;
+        click(&window, x, y);
+        match clicks.borrow_mut().pop() {
+            Some(Clicked::Sort(..)) => header = header.or(Some(y)),
+            Some(Clicked::Row(1)) => {
+                second_row = Some(y);
+                break;
+            },
+            Some(Clicked::Row(_)) | None => {},
+        }
+    }
+    let header = header.ok_or("no column header under the documents table's first column")?;
+    let second_row = second_row.ok_or("no second document row")?;
+    // Probing toggled the column's indicator; Rust's (unsorted) state restores it.
+    model.sync(&window);
+    clicks.borrow_mut().clear();
+
+    click(&window, x, second_row);
+    assert_eq!(
+        *clicks.borrow(),
+        [Clicked::Row(1)],
+        "A row click reports its visible index"
+    );
+    model.selected = Some(1);
+    click(&window, x, header);
+    assert_eq!(
+        clicks.borrow().last(),
+        Some(&Clicked::Sort(0, false)),
+        "The first header click sorts by order number, ascending"
+    );
+    model.sort_documents(0, false);
+    model.sync(&window);
+    assert_eq!(
+        window.get_selected(),
+        0,
+        "Order 7 now leads and stays highlighted"
+    );
+    // The worker refreshes in server order; the operator's order and selection stay.
+    model.set_documents(vec![first, second.clone()], 1, false);
+    model.sync(&window);
+    assert_eq!(window.get_selected(), 0);
+
+    model.request(Action::QueueReceipt);
+    let mut commands = Vec::new();
+    model.confirm(true, |command| commands.push(command));
+    assert_eq!(
+        commands,
+        vec![Command::Queue {
+            document: second,
+            buyer_nip: None
+        }],
+        "The queued receipt is the document the operator clicked"
     );
     Ok(())
 }

@@ -25,7 +25,6 @@ zbus.workspace = true
 winresource.workspace = true
 
 [dev-dependencies]
-i-slint-backend-testing.workspace = true
 uuid.workspace = true
 
 [lints]

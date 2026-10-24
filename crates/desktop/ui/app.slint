@@ -13,7 +13,9 @@ component Table inherits Rectangle {
     in property <string> empty-text;
     callback current-row-changed(int);
     callback sort(int, bool);
-    StandardTableView {
+    view := StandardTableView {
+        width: 100%;
+        height: 100%;
         columns <=> root.columns;
         rows: root.rows;
         current-row <=> root.current-row;
@@ -21,6 +23,8 @@ component Table inherits Rectangle {
         sort-ascending(column) => { root.sort(column, false); }
         sort-descending(column) => { root.sort(column, true); }
     }
+    min-width: view.min-width;
+    min-height: view.min-height;
     if root.rows.length == 0: Text { width: 100%; height: 100%; text: root.empty-text; color: #8c8c8c; horizontal-alignment: center; vertical-alignment: center; }
 }
 component PortInput inherits Rectangle {
@@ -84,14 +88,14 @@ export component AppWindow inherits Window {
     in property <[[StandardListViewItem]]> history;
     // Column order matches `Row::cells` in model/table.rs.
     in-out property <[TableColumn]> document-columns: [
-        { title: "Zlecenie", horizontal-stretch: 1 },
+        { title: "Zlecenie", min-width: 100px, horizontal-stretch: 1 },
         { title: "Rodzaj", min-width: 140px },
         { title: "Klient", min-width: 155px },
         { title: "Kwota", min-width: 110px },
         { title: "Data", min-width: 140px },
     ];
     in-out property <[TableColumn]> history-columns: [
-        { title: "Pozycje", horizontal-stretch: 1 },
+        { title: "Pozycje", min-width: 200px, horizontal-stretch: 1 },
         { title: "Data", min-width: 140px },
         { title: "Nr paragonu", min-width: 155px },
         { title: "Kwota", min-width: 110px },

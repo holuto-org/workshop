@@ -100,12 +100,14 @@ holuto-fiscal --serial /dev/ttyACM0 --probe
   Listing preserves documents above the printer's amount limit; execution still
   enforces that limit. The list shows one page of up to 100 documents, oldest first,
   refreshed on each poll; **Następna strona**/**Poprzednia strona** move between pages.
+  Clicking a column header sorts the current page; the selection stays on the same document.
 - **Raporty** — daily, monthly and periodic fiscal reports, with confirmation before
-  printing. Reports and queued receipts run on the **same worker thread**, so they cannot
-  interleave commands.
+  printing. The periodic range is typed as `dd.mm.rrrr` and is checked (valid, not in the
+  future, start not after end) only when printing is requested. Reports and queued receipts
+  run on the **same worker thread**, so they cannot interleave commands.
 - **Historia** — receipts printed on this computer, including printer-assigned receipt numbers
   (or the number staff entered in Holuto when the printer's could not be read). It is a
-  convenience log, not a replacement for the printer's fiscal memory.
+  convenience log, not a replacement for the printer's fiscal memory. Column headers sort it.
 - **Ustawienia** — API URL/token and printer port/speed, plus processing controls.
 
 The background loop polls every **3 seconds** (15 seconds after an error or while blocked).

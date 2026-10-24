@@ -1,14 +1,14 @@
 //! Real HTTP exchanges with a local server.
 
 use std::{
+    io::{BufRead, BufReader, Read, Write},
     mem,
+    net::{SocketAddr, TcpListener, TcpStream},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
-    time::Duration,
 };
 
 use serde_json::{Value, json};
-use tiny_http::{Header, Response, Server};
 use uuid::Uuid;
 
 use super::{Api, ApiError, Holuto, queue_form};
@@ -38,52 +38,88 @@ impl Recorded {
     }
 }
 
-/// Answers each request with the next reply, then stops.
+/// Reads one request; only `Content-Length` bodies, as the agent always knows its body size.
+fn read_request(stream: &TcpStream) -> Recorded {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    let _length = reader.read_line(&mut line).unwrap();
+    let mut parts = line.split_ascii_whitespace();
+    let (method, url) = (parts.next().unwrap(), parts.next().unwrap());
+    let (method, url) = (method.to_owned(), url.to_owned());
+    let mut headers = Vec::new();
+    loop {
+        line.clear();
+        let _length = reader.read_line(&mut line).unwrap();
+        let Some((field, value)) = line.trim_end().split_once(':') else {
+            break;
+        };
+        headers.push((field.to_owned(), value.trim().to_owned()));
+    }
+    let mut recorded = Recorded {
+        method,
+        url,
+        headers,
+        body: None,
+    };
+    assert_eq!(recorded.header("Transfer-Encoding"), None, "{recorded:?}");
+    let length = recorded
+        .header("Content-Length")
+        .map_or(0, |length| length.parse().unwrap());
+    let mut body = vec![0; length];
+    reader.read_exact(&mut body).unwrap();
+    recorded.body = (length > 0).then(|| serde_json::from_slice(&body).unwrap());
+    recorded
+}
+
+/// Answers each request with the next reply, one connection each, until `finish`.
+///
+/// Requests beyond the replies are recorded and dropped unanswered, so retries show up.
 struct Fake {
     url: String,
+    addr: SocketAddr,
     requests: Arc<Mutex<Vec<Recorded>>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Fake {
     fn start(replies: Vec<(u16, Value)>) -> Self {
-        let server = Server::http("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", server.server_addr().to_ip().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&requests);
         let thread = thread::Builder::new()
             .name("fake Holuto".to_owned())
             .spawn(move || {
-                for (status, reply) in replies {
-                    let Ok(Some(mut request)) = server.recv_timeout(Duration::from_secs(5)) else {
+                let mut replies = replies.into_iter();
+                loop {
+                    let (mut stream, _peer) = listener.accept().unwrap();
+                    // `finish` wakes the server with a connection that sends nothing.
+                    if stream.peek(&mut [0]).unwrap() == 0 {
                         return;
+                    }
+                    recorded.lock().unwrap().push(read_request(&stream));
+                    let Some((status, reply)) = replies.next() else {
+                        continue;
                     };
-                    let mut body = String::new();
-                    let _length = request.as_reader().read_to_string(&mut body).unwrap();
-                    recorded.lock().unwrap().push(Recorded {
-                        method: request.method().to_string(),
-                        url: request.url().to_owned(),
-                        headers: request
-                            .headers()
-                            .iter()
-                            .map(|header| (header.field.to_string(), header.value.to_string()))
-                            .collect(),
-                        body: (!body.is_empty()).then(|| serde_json::from_str(&body).unwrap()),
-                    });
-                    let response = Response::from_string(if reply.is_null() {
+                    let body = if reply.is_null() {
                         String::new()
                     } else {
                         reply.to_string()
-                    })
-                    .with_status_code(status)
-                    .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
-                    .with_header(Header::from_bytes("Location", "/steal-credential").unwrap());
-                    request.respond(response).unwrap();
+                    };
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status} Fake\r\nContent-Type: application/json\r\n\
+                         Location: /steal-credential\r\nContent-Length: {}\r\n\
+                         Connection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .unwrap();
                 }
             });
         let thread = thread.unwrap();
         Self {
-            url,
+            url: format!("http://{addr}"),
+            addr,
             requests,
             thread: Some(thread),
         }
@@ -95,6 +131,8 @@ impl Fake {
 
     /// Every request the server received.
     fn finish(mut self) -> Vec<Recorded> {
+        // An empty connection releases a server still awaiting a request the client never sent.
+        drop(TcpStream::connect(self.addr));
         self.thread.take().unwrap().join().unwrap();
         mem::take(&mut *self.requests.lock().unwrap())
     }

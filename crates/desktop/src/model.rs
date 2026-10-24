@@ -23,7 +23,12 @@ pub(crate) enum Tab {
 }
 
 impl Tab {
-    const ALL: [Self; 4] = [Self::Documents, Self::Reports, Self::History, Self::Settings];
+    const ALL: [Self; 4] = [
+        Self::Documents,
+        Self::Reports,
+        Self::History,
+        Self::Settings,
+    ];
 
     fn from_index(index: i32) -> Option<Self> {
         usize::try_from(index)
@@ -345,22 +350,13 @@ impl Model {
     }
 
     fn periodic_confirmation(&mut self) -> Option<Confirmation> {
-        let range = report_date("początkowa", &self.from)
-            .and_then(|from| Ok((from, report_date("końcowa", &self.to)?)));
-        let (from, to) = match range {
+        let (from, to) = match report_range(&self.from, &self.to) {
             Ok(range) => range,
-            Err(message) => {
-                self.say(message, Tone::Error);
+            Err(error) => {
+                self.say(error.to_string(), Tone::Error);
                 return None;
             },
         };
-        if from > to {
-            self.say(
-                "Data początkowa nie może być późniejsza niż końcowa.".into(),
-                Tone::Error,
-            );
-            return None;
-        }
         Some(Confirmation {
             command: Command::PeriodicReport {
                 from,
@@ -402,16 +398,36 @@ impl Model {
     }
 }
 
-/// Parses a typed report boundary; `which` names it in the Polish error.
-fn report_date(which: &str, text: &str) -> Result<Date, String> {
-    let date = Date::strptime("%d.%m.%Y", text)
-        .map_err(|_| format!("Data {which} musi mieć postać dd.mm.rrrr."))?;
-    if date > Zoned::now().date() {
-        return Err(format!(
-            "Data {which} nie może być późniejsza niż dzisiejsza."
-        ));
+/// Why a typed periodic report range cannot be printed.
+#[derive(Debug, thiserror::Error)]
+enum RangeError {
+    #[error("Data {which} musi mieć postać dd.mm.rrrr.")]
+    Format {
+        which: &'static str,
+        source: jiff::Error,
+    },
+    #[error("Data {which} nie może być późniejsza niż dzisiejsza.")]
+    Future { which: &'static str },
+    #[error("Data początkowa nie może być późniejsza niż końcowa.")]
+    Reversed,
+}
+
+fn report_range(from: &str, to: &str) -> Result<(Date, Date), RangeError> {
+    let today = Zoned::now().date();
+    let date = |which, text: &str| {
+        let date = Date::strptime("%d.%m.%Y", text)
+            .map_err(|source| RangeError::Format { which, source })?;
+        if date > today {
+            return Err(RangeError::Future { which });
+        }
+        Ok(date)
+    };
+    let from = date("początkowa", from)?;
+    let to = date("końcowa", to)?;
+    if from > to {
+        return Err(RangeError::Reversed);
     }
-    Ok(date)
+    Ok((from, to))
 }
 const fn tone_number(tone: Tone) -> i32 {
     match tone {
@@ -424,7 +440,12 @@ fn date_label(date: Date) -> String {
     date.strftime("%d.%m.%Y").to_string()
 }
 pub(crate) fn strings<I: IntoIterator<Item = String>>(values: I) -> ModelRc<SharedString> {
-    ModelRc::new(values.into_iter().map(SharedString::from).collect::<VecModel<_>>())
+    ModelRc::new(
+        values
+            .into_iter()
+            .map(SharedString::from)
+            .collect::<VecModel<_>>(),
+    )
 }
 fn month_label(month: Date) -> String {
     format!("{} {}", month_name(month.month()), month.year())

@@ -74,6 +74,10 @@ impl<T: Row> Table<T> {
         &self.items
     }
 
+    pub(crate) fn rows(&self) -> ModelRc<ModelRc<StandardListViewItem>> {
+        Rc::clone(&self.rows).into()
+    }
+
     /// Replaces the items in the operator's order; returns where the record at `selected` is now.
     pub(crate) fn set(&mut self, mut items: Vec<T>, selected: Option<usize>) -> Option<usize> {
         if let Some(sort) = self.sort {
@@ -92,10 +96,7 @@ impl<T: Row> Table<T> {
     /// Sorts stably; returns where the row at `selected` moved.
     pub(crate) fn sort(&mut self, sort: Sort, selected: Option<usize>) -> Option<usize> {
         self.sort = Some(sort);
-        let mut tagged: Vec<_> = mem::take(&mut self.items)
-            .into_iter()
-            .enumerate()
-            .collect();
+        let mut tagged: Vec<_> = mem::take(&mut self.items).into_iter().enumerate().collect();
         tagged.sort_by(|(_, a), (_, b)| sort.compare(a, b));
         let selected = selected.and_then(|old| tagged.iter().position(|(index, _)| *index == old));
         self.items = tagged.into_iter().map(|(_, item)| item).collect();

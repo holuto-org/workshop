@@ -24,7 +24,6 @@ known-folders.workspace = true
 [dev-dependencies]
 posnet = { workspace = true, features = ["simulator"] }
 tempfile.workspace = true
-tiny_http.workspace = true
 
 [lints]
 workspace = true
