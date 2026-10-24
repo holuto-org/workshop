@@ -21,7 +21,7 @@ pub(crate) trait Row: PartialEq {
 }
 
 /// The column the operator sorted by, from a header click.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct Sort {
     column: usize,
     descending: bool,

@@ -131,24 +131,20 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             .map_err(Error::from)
             .and_then(|status| self.describe(status));
         self.api.heartbeat(&self.telemetry)?;
-        let blocked = self.settle(&mut step)?;
-        match blocked {
-            Some(Blocked::Receipt) => {
-                step.notices.push(
-                    "Niepotwierdzony wynik. Sprawdź wydruk i rozstrzygnij zadanie w Holuto."
-                        .to_owned(),
-                );
-                step.delay = RETRY;
-                return Ok(step);
-            },
-            Some(Blocked::Report) => {
-                step.notices.push(
-                    "Przerwany raport. Sprawdź wydruk i kliknij „Wyjaśnij raport”.".to_owned(),
-                );
-                step.delay = RETRY;
-                return Ok(step);
-            },
-            None => {},
+        if let Some(blocked) = self.settle(&mut step)? {
+            step.notices.push(
+                match blocked {
+                    Blocked::Receipt => {
+                        "Niepotwierdzony wynik. Sprawdź wydruk i rozstrzygnij zadanie w Holuto."
+                    },
+                    Blocked::Report => {
+                        "Przerwany raport. Sprawdź wydruk i kliknij „Wyjaśnij raport”."
+                    },
+                }
+                .to_owned(),
+            );
+            step.delay = RETRY;
+            return Ok(step);
         }
         step.notices.extend(probe?);
         if let Some(status) = self.status.as_ref().filter(|status| !status.ready()) {
@@ -167,19 +163,14 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
 
     /// Prints a fiscal report. Refused while any operation is unresolved.
     pub(crate) fn run_report(&mut self, report: Report) -> Result<(), Error> {
-        let mut step = Step::default();
-        match self.settle(&mut step)? {
-            Some(Blocked::Receipt) => {
-                return Err(Error::Blocked(
-                    "Najpierw rozstrzygnij niepotwierdzony paragon w Holuto.".to_owned(),
-                ));
-            },
-            Some(Blocked::Report) => {
-                return Err(Error::Blocked(
-                    "Najpierw wyjaśnij przerwany raport.".to_owned(),
-                ));
-            },
-            None => {},
+        if let Some(blocked) = self.settle(&mut Step::default())? {
+            return Err(Error::Blocked(
+                match blocked {
+                    Blocked::Receipt => "Najpierw rozstrzygnij niepotwierdzony paragon w Holuto.",
+                    Blocked::Report => "Najpierw wyjaśnij przerwany raport.",
+                }
+                .to_owned(),
+            ));
         }
         let serial = self.api.serial().to_owned();
         let mut operation = ReportOperation {
@@ -204,19 +195,14 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     ///
     /// The device it ran on must be connected and ready, so the check was possible. Never prints.
     pub(crate) fn resolve_report(&self) -> Result<(), Error> {
-        let Some(operation) = self.journal.load()? else {
-            return Err(Error::Invalid(
-                "Brak przerwanego raportu do wyjaśnienia.".to_owned(),
-            ));
-        };
-        let mut report = match operation {
-            Operation::Receipt(_) => {
+        let mut report = match self.journal.load()? {
+            Some(Operation::Receipt(_)) => {
                 return Err(Error::Invalid(
                     "Wynik paragonu rozstrzyga personel w aplikacji Holuto.".to_owned(),
                 ));
             },
-            Operation::Report(report) if report.unresolved() => report,
-            Operation::Report(_) => {
+            Some(Operation::Report(report)) if report.unresolved() => report,
+            Some(Operation::Report(_)) | None => {
                 return Err(Error::Invalid(
                     "Brak przerwanego raportu do wyjaśnienia.".to_owned(),
                 ));

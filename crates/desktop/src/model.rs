@@ -14,7 +14,7 @@ use table::{Sort, Table};
 use crate::ui::{Action, AppWindow};
 
 /// The `AppWindow` tabs, in the order of its `TabWidget`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Tab {
     Documents,
     Reports,

@@ -275,7 +275,6 @@ impl Receipt {
         if total > Grosze::MAX {
             return Err(receipt_too_large());
         }
-        let mut deducted = Grosze::ZERO;
         for (index, advance) in advances.iter().enumerate() {
             if advances
                 .iter()
@@ -294,8 +293,12 @@ impl Receipt {
                     "Zaliczki przekraczają sprzedaż w slocie VAT.".to_owned(),
                 ));
             }
-            deducted = deducted.checked_add(advance.amount)?;
         }
+        // At most one advance per slot, none above its slot's sales: this stays within `total`.
+        let deducted = advances
+            .iter()
+            .map(|advance| advance.amount)
+            .sum::<Grosze>();
         let fiscal_total = total.checked_sub(deducted).ok_or_else(receipt_too_large)?;
         if payments
             .iter()

@@ -30,7 +30,7 @@ component Table inherits Rectangle {
 component PortInput inherits Rectangle {
     in-out property <string> text;
     in property <[string]> model;
-    in property <bool> enabled: true;
+    in property <bool> enabled;
     height: 34px;
     horizontal-stretch: 1;
     accessible-role: combobox;
@@ -80,9 +80,9 @@ export component AppWindow inherits Window {
     in property <bool> previous-enabled;
     in property <bool> next-enabled;
     in property <bool> report-unresolved;
-    in property <string> connection-text: "Niepołączono";
+    in property <string> connection-text;
     in property <int> connection-tone;
-    in property <string> status: "Zaloguj się tokenem drukarki z Holuto.";
+    in property <string> status;
     in property <int> status-tone;
     in property <[[StandardListViewItem]]> documents;
     in property <[[StandardListViewItem]]> history;
@@ -101,7 +101,7 @@ export component AppWindow inherits Window {
         { title: "Kwota", min-width: 110px },
         { title: "Płatność", min-width: 200px },
     ];
-    in property <string> page-label: "Strona 1";
+    in property <string> page-label;
     in-out property <int> selected: -1;
     in-out property <string> nip;
     in-out property <string> api-url;
@@ -118,7 +118,7 @@ export component AppWindow inherits Window {
     in-out property <bool> summary;
     in property <string> confirm-title;
     in property <string> confirm-text;
-    in property <string> confirm-action: "Drukuj";
+    in property <string> confirm-action;
     in property <bool> confirming;
     callback action(Action);
     callback selected-document(int);

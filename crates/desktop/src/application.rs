@@ -100,8 +100,7 @@ impl Application {
         window.on_action(|action| {
             with_app(|app| {
                 app.capture();
-                app.action(action);
-                Ok(())
+                app.action(action)
             });
         });
         window.on_selected_document(|index| {
@@ -160,7 +159,7 @@ impl Application {
         }
     }
 
-    fn action(&mut self, action: Action) {
+    fn action(&mut self, action: Action) -> Result<(), slint::PlatformError> {
         match action {
             Action::Save => {
                 if self.worker.is_none() {
@@ -168,16 +167,8 @@ impl Application {
                 }
             },
             Action::Start => self.start(),
-            Action::Stop => {
-                if let Err(error) = self.stop(false) {
-                    self.model.say(error.to_string(), Tone::Error);
-                }
-            },
-            Action::Quit => {
-                if let Err(error) = self.stop(true) {
-                    self.model.say(error.to_string(), Tone::Error);
-                }
-            },
+            Action::Stop => return self.stop(false),
+            Action::Quit => return self.stop(true),
             Action::PreviousPage => {
                 if self.model.connected && self.model.page > 1 {
                     self.submit(Command::PreviousPage);
@@ -194,6 +185,7 @@ impl Application {
             | Action::PeriodicReport
             | Action::ResolveReport => self.model.request(action),
         }
+        Ok(())
     }
 
     fn start(&mut self) {

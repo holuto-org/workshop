@@ -118,7 +118,6 @@ pub(crate) struct FakeApi {
     pub(crate) fail_report: bool,
     pub(crate) pages: HashMap<Option<String>, Page>,
     pub(crate) cursors: Vec<Option<String>>,
-    pub(crate) queued: Vec<QueueForm>,
 }
 
 impl FakeApi {
@@ -131,7 +130,6 @@ impl FakeApi {
             fail_report: false,
             pages: HashMap::new(),
             cursors: Vec::new(),
-            queued: Vec::new(),
         }
     }
 
@@ -193,8 +191,7 @@ impl Holuto for FakeApi {
             .ok_or(ApiError::Response("page lost".to_owned()))
     }
 
-    fn queue(&mut self, form: &QueueForm) -> Result<(), ApiError> {
-        self.queued.push(form.clone());
+    fn queue(&mut self, _form: &QueueForm) -> Result<(), ApiError> {
         Ok(())
     }
 }
