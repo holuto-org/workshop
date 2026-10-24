@@ -205,6 +205,26 @@ fn an_unknown_result_is_stable_and_never_automatically_failed() {
 }
 
 #[test]
+fn a_refused_receipt_fails_the_job_without_blocking() {
+    let sim = Simulator::start();
+    sim.fault("trinit", Fault::Error);
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, FakeApi::new(vec![job()]));
+    poll(&mut agent);
+    let report = &agent.api.reports[0];
+    assert_eq!(report.state, Outcome::Failed);
+    assert!(
+        report
+            .result
+            .as_deref()
+            .is_some_and(|result| result.contains("2000")),
+        "{report:?}"
+    );
+    assert_eq!(agent.blocked().unwrap(), None);
+    assert_eq!(sim.receipts().len(), 0);
+}
+
+#[test]
 fn a_terminal_server_state_settles_without_printing_or_reporting_again() {
     for terminal in [JobState::Done, JobState::Failed, JobState::Expired] {
         let sim = Simulator::start();

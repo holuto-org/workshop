@@ -70,10 +70,11 @@ pub fn serial_ports() -> Vec<String> {
 pub(crate) struct SerialStream<P>(pub(crate) P);
 
 impl<P: SerialPort> Port for SerialStream<P> {
+    /// No `flush`: `tcdrain`/`FlushFileBuffers` wait without a deadline for a device that stopped
+    /// reading. The reply the session waits for already proves the bytes arrived.
     fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
         self.0.set_timeout(timeout)?;
-        self.0.write_all(bytes)?;
-        self.0.flush()
+        self.0.write_all(bytes)
     }
 
     fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {

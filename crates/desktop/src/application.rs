@@ -277,9 +277,7 @@ impl Application {
                 if let Some(worker) = self.worker.take() {
                     worker.join();
                 }
-                self.model.running = false;
-                self.model.stopping = false;
-                self.model.connected = false;
+                self.model.stopped();
                 self.reload_history();
                 if self.quitting
                     && let Err(error) = slint::quit_event_loop()

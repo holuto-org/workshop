@@ -227,6 +227,24 @@ fn a_failure_mid_receipt_is_uncertain_and_journaled_at_the_failed_command() {
     }
 }
 
+/// The printer refuses a sale in states the preflight cannot read (`?3735` new certificates,
+/// `?2036` read-only): no transaction opened, so nothing about the outcome is uncertain.
+#[test]
+fn a_refused_trinit_is_a_certain_failure() {
+    let sim = Simulator::start();
+    sim.fault("trinit", Fault::Error);
+    let printer = printer(&sim);
+    let status = printer.probe().unwrap();
+    let mut recorder = Recorder::default();
+    let error = printer
+        .print_receipt(&simple_receipt(BRAND), &status, &mut recorder)
+        .unwrap_err();
+    assert!(matches!(error, Error::Device { code: 2000, .. }), "{error:?}");
+    assert_eq!(recorder.stages, ["trinit"]);
+    assert!(!sim.transaction_open());
+    assert_eq!(sim.receipts().len(), 0);
+}
+
 #[test]
 fn a_journal_failure_stops_the_command_it_would_have_recorded() {
     let sim = Simulator::start();

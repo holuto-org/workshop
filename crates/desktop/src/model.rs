@@ -86,12 +86,7 @@ pub(crate) struct Model {
 impl Model {
     pub(crate) fn new(settings: Settings) -> Self {
         let today = Zoned::now().date();
-        let months = today
-            .first_of_month()
-            .series((-1).month())
-            .skip(1)
-            .take(24)
-            .collect();
+        let months = months_before(today);
         Self {
             settings,
             documents: Table::new(),
@@ -148,6 +143,31 @@ impl Model {
         let _previous = self.history.set(history);
     }
 
+    /// The worker thread finished: nothing runs until the operator starts it again.
+    pub(crate) fn stopped(&mut self) {
+        self.running = false;
+        self.stopping = false;
+        self.connected = false;
+        // Readiness is read again on the next connection; blocking stays, as on disk.
+        self.device = None;
+    }
+
+    /// Offers the months before `today`'s, keeping the operator's month while it is offered.
+    /// `false` when the list did not change.
+    fn roll_months(&mut self, today: Date) -> bool {
+        let newest = today.first_of_month().checked_sub(1.month()).ok();
+        if self.months.first().copied() == newest {
+            return false;
+        }
+        let months = months_before(today);
+        let chosen = self.months.get(self.month_index);
+        self.month_index = chosen
+            .and_then(|chosen| months.iter().position(|month| month == chosen))
+            .unwrap_or_default();
+        self.months = months;
+        true
+    }
+
     pub(crate) fn sort_documents(&mut self, column: i32, descending: bool) {
         if let Some(sort) = Sort::new(column, descending) {
             self.selected = self.documents.sort(sort, self.selected);
@@ -160,7 +180,8 @@ impl Model {
         }
     }
 
-    pub(crate) fn initialize(&self, window: &AppWindow) {
+    pub(crate) fn initialize(&mut self, window: &AppWindow) {
+        let _rolled = self.roll_months(Zoned::now().date());
         window.set_baud_rates(strings(BAUD_RATES.iter().map(u32::to_string)));
         window.set_months(strings(self.months.iter().copied().map(month_label)));
         window.set_documents(self.documents.rows());
@@ -189,6 +210,10 @@ impl Model {
         }
         self.nip = window.get_nip().to_string();
         self.month_index = usize::try_from(window.get_month_index()).unwrap_or_default();
+        // The app runs for weeks in the tray; the month that just ended must be offered.
+        if self.roll_months(Zoned::now().date()) {
+            window.set_months(strings(self.months.iter().copied().map(month_label)));
+        }
         self.summary = window.get_summary();
         window.get_from_date().trim().clone_into(&mut self.from);
         window.get_to_date().trim().clone_into(&mut self.to);
@@ -202,11 +227,11 @@ impl Model {
         window.set_running(self.running);
         window.set_stopping(self.stopping);
         window.set_connected(self.connected);
-        window.set_queue_enabled(self.connected && self.selected.is_some() && !self.blocked);
+        window.set_queue_enabled(self.queue_enabled() && self.selected.is_some());
         window.set_reports_enabled(self.reports_enabled());
         window.set_previous_enabled(self.connected && self.page > 1);
         window.set_next_enabled(self.connected && self.has_next);
-        window.set_report_unresolved(self.report_unresolved);
+        window.set_report_unresolved(self.resolve_enabled());
         window.set_status(self.message.as_str().into());
         window.set_status_tone(tone_number(self.tone));
         window.set_connection_text(self.connection_text().into());
@@ -248,8 +273,21 @@ impl Model {
         self.history.sync_columns(&window.get_history_columns());
     }
 
+    /// The worker takes commands: connected, and not asked to stop (it discards later ones).
+    const fn accepting(&self) -> bool {
+        self.connected && !self.stopping
+    }
+
+    const fn queue_enabled(&self) -> bool {
+        self.accepting() && !self.blocked
+    }
+
     fn reports_enabled(&self) -> bool {
-        self.connected && !self.blocked && self.device.as_ref().is_some_and(Status::ready)
+        self.queue_enabled() && self.device.as_ref().is_some_and(Status::ready)
+    }
+
+    const fn resolve_enabled(&self) -> bool {
+        self.accepting() && self.report_unresolved
     }
 
     fn connection_text(&self) -> String {
@@ -269,7 +307,7 @@ impl Model {
     pub(crate) fn request(&mut self, action: Action) {
         self.pending = match action {
             Action::QueueReceipt => {
-                if self.connected && !self.blocked {
+                if self.queue_enabled() {
                     self.queue_confirmation()
                 } else {
                     None
@@ -305,7 +343,7 @@ impl Model {
                     None
                 }
             },
-            Action::ResolveReport => self.report_unresolved.then(|| Confirmation {
+            Action::ResolveReport => self.resolve_enabled().then(|| Confirmation {
                 command: Command::ResolveReport,
                 title: "Wyjaśnij raport".into(),
                 text: concat!(
@@ -389,11 +427,11 @@ impl Model {
         {
             // Readiness may have changed while the confirmation was open.
             let allowed = match &pending.command {
-                Command::Queue { .. } => self.connected && !self.blocked,
+                Command::Queue { .. } => self.queue_enabled(),
                 Command::DailyReport
                 | Command::MonthlyReport { .. }
                 | Command::PeriodicReport { .. } => self.reports_enabled(),
-                Command::ResolveReport => self.report_unresolved,
+                Command::ResolveReport => self.resolve_enabled(),
                 Command::NextPage | Command::PreviousPage => false,
             };
             if allowed {
@@ -443,6 +481,15 @@ const fn tone_number(tone: Tone) -> i32 {
 }
 fn date_label(date: Date) -> String {
     date.strftime("%d.%m.%Y").to_string()
+}
+/// The 24 months before `today`'s, newest first.
+fn months_before(today: Date) -> Vec<Date> {
+    today
+        .first_of_month()
+        .series((-1).month())
+        .skip(1)
+        .take(24)
+        .collect()
 }
 pub(crate) fn strings<I: IntoIterator<Item = String>>(values: I) -> ModelRc<SharedString> {
     ModelRc::new(
