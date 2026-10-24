@@ -6,7 +6,7 @@
 
 pub mod model;
 
-use std::{fmt::Write as _, time::Duration};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use ureq::{
@@ -39,7 +39,7 @@ pub enum ApiError {
     #[error("Holuto odpowiedziało błędem {status}{}", problem(.detail.as_deref()))]
     Status { status: u16, detail: Option<String> },
     #[error("Brak połączenia z Holuto: {0}")]
-    Transport(#[source] ureq::Error),
+    Transport(#[from] ureq::Error),
     /// A response the contract does not allow; nothing acts on it.
     #[error("Nieprawidłowa odpowiedź Holuto ({0}).")]
     Response(String),
@@ -106,32 +106,33 @@ impl Api {
         })
     }
 
-    fn send<T: DeserializeOwned>(
+    fn get<T: DeserializeOwned>(
         &self,
-        method: Method,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<Option<T>, ApiError> {
+        let request = self.headers(self.agent.get(self.url(path)), path);
+        decode(request.query_pairs(query.iter().copied()).call()?)
+    }
+
+    fn post<T: DeserializeOwned>(
+        &self,
         path: &str,
         body: Option<&impl Serialize>,
     ) -> Result<Option<T>, ApiError> {
-        let url = format!("{}/agent/{path}", self.base_url);
-        let bound = !matches!(path, "session" | "heartbeat");
-        let response = match method {
-            Method::Get => self.headers(self.agent.get(&url), bound).call(),
-            Method::Post => {
-                let request = self.headers(self.agent.post(&url), bound);
-                match body {
-                    Some(body) => request.send_json(body),
-                    None => request.send_empty(),
-                }
-            },
-        }
-        .map_err(ApiError::Transport)?;
-        decode(response)
+        let request = self.headers(self.agent.post(self.url(path)), path);
+        decode(match body {
+            Some(body) => request.send_json(body),
+            None => request.send_empty(),
+        }?)
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}/agent/{path}", self.base_url)
     }
 
     fn telemetry(&mut self, path: &str, telemetry: &Telemetry) -> Result<PrinterInfo, ApiError> {
-        let status: PrinterStatus = self
-            .send(Method::Post, path, Some(telemetry))?
-            .ok_or_else(empty)?;
+        let status: PrinterStatus = self.post(path, Some(telemetry))?.ok_or_else(empty)?;
         let printer = status.printer;
         printer.check(&self.serial).map_err(ApiError::Response)?;
         if self.printer_id.is_some_and(|id| id != printer.id) {
@@ -145,23 +146,17 @@ impl Api {
 
     /// Bearer token, protocol version and language on every request; the device serial on every
     /// request but session and heartbeat, which carry it in the body.
-    fn headers<B>(&self, request: RequestBuilder<B>, bound: bool) -> RequestBuilder<B> {
+    fn headers<B>(&self, request: RequestBuilder<B>, path: &str) -> RequestBuilder<B> {
         let request = request
             .header("Authorization", &self.authorization)
             .header("App-Version", format!("agent/{APP_VERSION}"))
             .header("Accept-Language", "pl");
-        if bound {
-            request.header("X-Device-Serial", &self.serial)
-        } else {
+        if matches!(path, "session" | "heartbeat") {
             request
+        } else {
+            request.header("X-Device-Serial", &self.serial)
         }
     }
-}
-
-#[derive(Clone, Copy)]
-enum Method {
-    Get,
-    Post,
 }
 
 fn decode<T: DeserializeOwned>(response: Response<Body>) -> Result<Option<T>, ApiError> {
@@ -170,8 +165,7 @@ fn decode<T: DeserializeOwned>(response: Response<Body>) -> Result<Option<T>, Ap
         .into_body()
         .with_config()
         .limit(MAX_RESPONSE)
-        .read_to_vec()
-        .map_err(ApiError::Transport)?;
+        .read_to_vec()?;
     match status {
         StatusCode::NO_CONTENT => Ok(None),
         StatusCode::OK | StatusCode::CREATED => serde_json::from_slice(&bytes)
@@ -207,19 +201,6 @@ fn empty() -> ApiError {
     ApiError::Response("pusta odpowiedź".to_owned())
 }
 
-/// Percent-encodes everything but RFC 3986 unreserved characters, so an opaque cursor survives.
-fn encode_component(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            encoded.push(char::from(byte));
-        } else {
-            let _infallible = write!(encoded, "%{byte:02X}");
-        }
-    }
-    encoded
-}
-
 impl Holuto for Api {
     fn serial(&self) -> &str {
         &self.serial
@@ -238,13 +219,11 @@ impl Holuto for Api {
     }
 
     fn take(&mut self) -> Result<Option<Job>, ApiError> {
-        self.send(Method::Post, "jobs/take", None::<&()>)
+        self.post("jobs/take", None::<&()>)
     }
 
     fn job(&mut self, id: Uuid) -> Result<Job, ApiError> {
-        let job: Job = self
-            .send(Method::Get, &format!("jobs/{id}"), None::<&()>)?
-            .ok_or_else(empty)?;
+        let job: Job = self.get(&format!("jobs/{id}"), &[])?.ok_or_else(empty)?;
         if job.id != id {
             return Err(ApiError::Response("stan innego zadania".to_owned()));
         }
@@ -253,7 +232,7 @@ impl Holuto for Api {
 
     fn report(&mut self, id: Uuid, result: &ResultForm) -> Result<Job, ApiError> {
         let job: Job = self
-            .send(Method::Post, &format!("jobs/{id}/result"), Some(result))?
+            .post(&format!("jobs/{id}/result"), Some(result))?
             .ok_or_else(empty)?;
         let echoed = job.id == id
             && job.attempt == Some(result.attempt)
@@ -269,24 +248,21 @@ impl Holuto for Api {
     }
 
     fn documents(&mut self, cursor: Option<&str>) -> Result<Page, ApiError> {
-        let mut path = format!("documents?limit={DOCUMENTS_LIMIT}");
+        let limit = DOCUMENTS_LIMIT.to_string();
+        let mut query = vec![("limit", limit.as_str())];
         if let Some(cursor) = cursor {
             if cursor.is_empty() {
                 return Err(ApiError::Response("pusty kursor strony".to_owned()));
             }
-            path.push_str("&cursor=");
-            path.push_str(&encode_component(cursor));
+            query.push(("cursor", cursor));
         }
-        let page: Page = self
-            .send(Method::Get, &path, None::<&()>)?
-            .ok_or_else(empty)?;
+        let page: Page = self.get("documents", &query)?.ok_or_else(empty)?;
         page.check().map_err(ApiError::Response)?;
         Ok(page)
     }
 
     fn queue(&mut self, form: &QueueForm) -> Result<Job, ApiError> {
-        self.send(Method::Post, "jobs", Some(form))?
-            .ok_or_else(empty)
+        self.post("jobs", Some(form))?.ok_or_else(empty)
     }
 }
 

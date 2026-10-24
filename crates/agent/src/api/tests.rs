@@ -17,6 +17,7 @@ use crate::{
     documents::{BuyerNip, Document, ReceiptKind},
     testing::{
         ALLOCATION_ID, ATTEMPT, JOB_ID, ORDER_ID, PRINTER_ID, job_json, printer_json, status_json,
+        with,
     },
 };
 
@@ -115,13 +116,6 @@ fn done_body() -> ResultForm {
         issued_at: Some("2026-10-16T10:02:00Z".parse().unwrap()),
         result: None,
     }
-}
-
-fn with(mut value: Value, changes: &Value) -> Value {
-    for (key, change) in changes.as_object().unwrap() {
-        value[key] = change.clone();
-    }
-    value
 }
 
 #[test]

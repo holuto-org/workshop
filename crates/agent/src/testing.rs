@@ -62,15 +62,18 @@ pub(crate) fn job_json() -> Value {
     })
 }
 
+/// `value` with the top-level fields of `changes` replaced or added.
+pub(crate) fn with(mut value: Value, changes: &Value) -> Value {
+    value
+        .as_object_mut()
+        .unwrap()
+        .extend(changes.as_object().unwrap().clone());
+    value
+}
+
 /// `job_json` with top-level fields replaced.
 pub(crate) fn job_with(changes: &Value) -> Job {
-    let mut job = job_json();
-    if let (Some(job), Some(changes)) = (job.as_object_mut(), changes.as_object()) {
-        for (key, value) in changes {
-            drop(job.insert(key.clone(), value.clone()));
-        }
-    }
-    serde_json::from_value(job).unwrap()
+    serde_json::from_value(with(job_json(), changes)).unwrap()
 }
 
 pub(crate) fn job() -> Job {

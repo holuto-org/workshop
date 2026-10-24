@@ -138,7 +138,9 @@ fn start(arguments: &Arguments) -> Result<bool, Box<dyn Error>> {
             },
         )
         .probe()?;
-        print_probe(&serde_json::to_string_pretty(&status)?);
+        let mut stdout = io::stdout().lock();
+        serde_json::to_writer_pretty(&mut stdout, &status)?;
+        writeln!(stdout)?;
         return Ok(status.ready());
     }
     slint::BackendSelector::new()
@@ -146,14 +148,6 @@ fn start(arguments: &Arguments) -> Result<bool, Box<dyn Error>> {
         .select()?;
     application::run(dir, settings, link)?;
     Ok(true)
-}
-
-#[expect(
-    clippy::print_stdout,
-    reason = "The explicit read-only --probe command exposes status JSON on stdout"
-)]
-fn print_probe(json: &str) {
-    println!("{json}");
 }
 
 fn show_error(message: &str) -> Result<(), slint::PlatformError> {

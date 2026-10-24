@@ -155,8 +155,9 @@ slint = { version = "1.18.1", default-features = false, features = [
 slint-build = "1.18.1"
 winresource = "0.1.34"
 clap = { version = "4.6.7", features = ["derive"] }
-# Linux tray-availability probe (StatusNotifierWatcher); the version Slint's winit backend already uses.
-zbus = { version = "5.14.0", default-features = false, features = ["async-io", "blocking-api"] }
+# Linux tray-availability probe (StatusNotifierWatcher); Slint already builds it for its ksni tray
+# and AccessKit AT-SPI backends, on the same async-io runtime.
+zbus = { version = "5.14.0", default-features = false, features = ["async-io"] }
 
 # Test-only.
 i-slint-backend-testing = "=1.18.1"

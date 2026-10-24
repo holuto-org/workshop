@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serialport::SerialPort;
+use serialport::{SerialPort, SerialPortType};
 
 use crate::{
     Error,
@@ -57,17 +57,13 @@ impl Link for SerialLink {
     }
 }
 
-/// Serial ports a printer could be on, USB CDC ports (`ttyACM`) first. macOS lists every device
-/// twice; only the call-out `/dev/cu.*` node opens without waiting for a carrier.
+/// Serial ports a printer could be on, USB-attached ports first. macOS lists every device twice;
+/// only the call-out `/dev/cu.*` node opens without waiting for a carrier.
 pub fn serial_ports() -> Vec<String> {
-    let mut ports: Vec<String> = serialport::available_ports()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|port| port.port_name)
-        .filter(|name| !name.starts_with("/dev/tty.") || cfg!(not(target_os = "macos")))
-        .collect();
-    ports.sort_by_key(|name| !name.contains("ttyACM"));
-    ports
+    let mut ports = serialport::available_ports().unwrap_or_default();
+    ports.retain(|port| !port.port_name.starts_with("/dev/tty.") || cfg!(not(target_os = "macos")));
+    ports.sort_by_key(|port| !matches!(port.port_type, SerialPortType::UsbPort(_)));
+    ports.into_iter().map(|port| port.port_name).collect()
 }
 
 /// A native port (`TTYPort`/`COMPort`), so a session holds one trait object, not two.

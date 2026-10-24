@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, io, sync::Arc};
 
 use jiff::civil::date;
+use serde_json::json;
 
 use super::{Journal, Printed, Printer, Report, Status};
 use crate::{
@@ -94,6 +95,19 @@ fn brand_footer_only_when_the_header_lacks_the_company_name() {
 
 fn probe_is_ready(sim: &Simulator) -> bool {
     printer(sim).probe().unwrap().ready()
+}
+
+#[test]
+fn probe_json_keeps_rates_as_two_place_percent_strings() {
+    let sim = Simulator::start();
+    sim.set_vat(["23,00", "8,00", "5,50", "0,00", "101,00", "99,99", "100,00"]);
+    let status = serde_json::to_value(printer(&sim).probe().unwrap()).unwrap();
+    let rates = ["23.00", "8.00", "5.50", "0.00", "101.00", "99.99", "100.00"];
+    let expected: Vec<_> = (0..)
+        .zip(rates)
+        .map(|(slot, percent)| json!({"slot": slot, "percent": percent}))
+        .collect();
+    assert_eq!(status["vat"], json!(expected));
 }
 
 #[test]

@@ -3739,6 +3739,7 @@ version = "0.2.0"
 dependencies = [
  "jiff",
  "serde",
+ "serde_json",
  "serialport",
  "thiserror 2.0.21",
 ]

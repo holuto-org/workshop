@@ -19,6 +19,7 @@ use crate::{
     store::StateDir,
     testing::{
         ALLOCATION_ID, ATTEMPT, FakeApi, JOB_ID, PRINTER_ID, job, job_json, job_with, state_dir,
+        with,
     },
 };
 
@@ -72,11 +73,7 @@ fn claimed(device: Device, result: Option<JobResult>) -> ReceiptOperation {
 }
 
 fn line(changes: &Value) -> Value {
-    let mut line = job_json()["lines"][0].clone();
-    for (key, value) in changes.as_object().unwrap() {
-        line[key] = value.clone();
-    }
-    line
+    with(job_json()["lines"][0].clone(), changes)
 }
 
 #[test]
