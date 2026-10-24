@@ -212,7 +212,10 @@ pub(crate) fn check_printable(text: &str) -> Result<(), Error> {
             "Tekst nie może zawierać znaków sterujących.".to_owned(),
         ));
     }
-    if encode(text).is_none() {
+    if !text
+        .chars()
+        .all(|character| encode_char(character).is_some())
+    {
         return Err(Error::Invalid(
             "Drukarka nie obsługuje niektórych znaków w tekście.".to_owned(),
         ));

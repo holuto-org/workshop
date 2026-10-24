@@ -80,14 +80,6 @@ fn a_name_that_sanitizes_to_nothing_is_rejected() {
 }
 
 #[test]
-fn quantity_prints_without_trailing_zeros() {
-    assert_eq!(
-        line("Olej", "2.500", "1.00", 0).quantity().to_string(),
-        "2.5"
-    );
-}
-
-#[test]
 fn receipt_arguments_are_checked() {
     let one = line("Olej", "1", "1.00", 0);
     let biggest = line("Olej", "1", "99999999.99", 0);

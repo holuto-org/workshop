@@ -171,10 +171,6 @@ impl Line {
         &self.name
     }
 
-    pub const fn quantity(&self) -> Decimal {
-        self.quantity
-    }
-
     pub const fn total(&self) -> Grosze {
         self.total
     }
@@ -371,14 +367,10 @@ impl Receipt {
                     Step::new("trpayment", params, LINE_TIMEOUT)
                 }),
         );
-        let paid = self
-            .payments
-            .iter()
-            .map(|payment| payment.amount)
-            .sum::<Grosze>();
+        // `new` only accepts payments that sum exactly to the fiscal total.
         let mut end = vec![
             ("to", self.fiscal_total.get().to_string()),
-            ("fp", paid.get().to_string()),
+            ("fp", self.fiscal_total.get().to_string()),
         ];
         if let Some(footer) = footer {
             end.push(("fe", "0".to_owned()));

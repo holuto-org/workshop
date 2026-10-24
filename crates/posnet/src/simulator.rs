@@ -66,7 +66,7 @@ struct Held {
     release: Receiver<()>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct State {
     header: String,
     vat: [String; 7],
@@ -126,18 +126,7 @@ impl Simulator {
         let state = Arc::new(Mutex::new(State {
             header: "&c&1Warsztat Kowalski&1&c\nul. Testowa 1\n00-001 Warszawa".to_owned(),
             vat: DEFAULT_VAT.map(str::to_owned),
-            transaction_open: false,
-            footer_open: false,
-            lines: Vec::new(),
-            advances: Vec::new(),
-            payments: Vec::new(),
-            buyer_nip: None,
-            receipts: Vec::new(),
-            reports: Vec::new(),
-            footers: Vec::new(),
-            frames: Vec::new(),
-            faults: HashMap::new(),
-            held: None,
+            ..State::default()
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let thread = thread::Builder::new()
@@ -357,18 +346,7 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Option<Vec<u8>> {
     let Ok((command, params)) = frame::decode(received) else {
         return Some(encoded("ERR\t?2000\t"));
     };
-    let held = {
-        let mut state = lock(state);
-        if state
-            .held
-            .as_ref()
-            .is_some_and(|held| held.command == command)
-        {
-            state.held.take()
-        } else {
-            None
-        }
-    };
+    let held = lock(state).held.take_if(|held| held.command == command);
     if let Some(held) = held {
         let _sent = held.reached.send(());
         let _released = held.release.recv();

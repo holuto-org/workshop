@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    rc::{Rc, Weak},
-    sync::Arc,
-};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use agent::{
     history,
@@ -50,10 +46,8 @@ pub(crate) fn run(
     }));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     let tray = TrayIcon::new()?;
-    let weak = Rc::downgrade(&app);
-    tray.on_open(move || with_app(&weak, Application::open));
-    let weak = Rc::downgrade(&app);
-    tray.on_quit(move || with_app(&weak, |app| app.stop(true)));
+    tray.on_open(|| with_app(Application::open));
+    tray.on_quit(|| with_app(|app| app.stop(true)));
     match tray.show() {
         Ok(()) => app.borrow_mut().tray = Some(tray),
         Err(error) => app.borrow_mut().model.say(
@@ -68,11 +62,11 @@ pub(crate) fn run(
     result
 }
 
-fn with_app<F>(weak: &Weak<RefCell<Application>>, callback: F)
+fn with_app<F>(callback: F)
 where
     F: FnOnce(&mut Application) -> Result<(), slint::PlatformError>,
 {
-    if let Some(app) = weak.upgrade() {
+    if let Some(app) = APPLICATION.with(|slot| slot.borrow().as_ref().map(Rc::clone)) {
         let mut app = app.borrow_mut();
         if let Err(error) = callback(&mut app) {
             app.model.say(error.to_string(), Tone::Error);
@@ -103,20 +97,15 @@ impl Application {
             return Ok(());
         }
         let window = AppWindow::new()?;
-        let weak = APPLICATION
-            .with(|slot| slot.borrow().as_ref().map(Rc::downgrade))
-            .unwrap_or_default();
-        let action_weak = Weak::clone(&weak);
-        window.on_action(move |action| {
-            with_app(&action_weak, |app| {
+        window.on_action(|action| {
+            with_app(|app| {
                 app.capture();
                 app.action(action);
                 Ok(())
             });
         });
-        let select_weak = Weak::clone(&weak);
-        window.on_selected_document(move |index| {
-            with_app(&select_weak, |app| {
+        window.on_selected_document(|index| {
+            with_app(|app| {
                 app.capture();
                 app.model.selected = usize::try_from(index)
                     .ok()
@@ -124,9 +113,8 @@ impl Application {
                 Ok(())
             });
         });
-        let tab_weak = Weak::clone(&weak);
-        window.on_tab_changed(move |tab| {
-            with_app(&tab_weak, |app| {
+        window.on_tab_changed(|tab| {
+            with_app(|app| {
                 app.capture();
                 app.model.tab = tab;
                 if tab == Tab::History {
@@ -135,16 +123,15 @@ impl Application {
                 Ok(())
             });
         });
-        let date_weak = Weak::clone(&weak);
-        window.on_date_changed(move |from, date| {
-            with_app(&date_weak, |app| {
+        window.on_date_changed(|from, date| {
+            with_app(|app| {
                 app.capture();
                 app.model.change_date(from, &date);
                 Ok(())
             });
         });
-        window.on_confirm(move |accepted| {
-            with_app(&weak, |app| {
+        window.on_confirm(|accepted| {
+            with_app(|app| {
                 app.capture();
                 let worker = app.worker.as_ref();
                 app.model.confirm(accepted, |command| {
@@ -218,13 +205,10 @@ impl Application {
         }
         let sink = |event| {
             let _event_loop_closed = slint::invoke_from_event_loop(move || {
-                APPLICATION.with(|slot| {
-                    if let Some(app) = slot.borrow().as_ref() {
-                        let mut app = app.borrow_mut();
-                        app.capture();
-                        app.event(event);
-                        app.sync();
-                    }
+                with_app(|app| {
+                    app.capture();
+                    app.event(event);
+                    Ok(())
                 });
             });
         };
@@ -322,38 +306,32 @@ fn request_close() -> CloseRequestResponse {
     // D-Bus is asynchronous; the window stays visible until a tray host is confirmed.
     let check = slint::spawn_local(async {
         let available = tray::available().await;
-        APPLICATION.with(|slot| {
-            if let Some(app) = slot.borrow().as_ref() {
-                let mut app = app.borrow_mut();
-                app.capture();
-                if available && app.tray.is_some() {
-                    if let Some(window) = app.window.take()
-                        && let Err(error) = window.hide()
-                    {
-                        app.model.say(error.to_string(), Tone::Error);
-                        app.window = Some(window);
-                    }
-                } else {
-                    app.model.say(
-                        concat!(
-                            "Zasobnik systemowy jest niedostępny. ",
-                            "Aby zakończyć aplikację, kliknij Zakończ."
-                        )
-                        .into(),
-                        Tone::Error,
-                    );
+        with_app(|app| {
+            app.capture();
+            if available && app.tray.is_some() {
+                if let Some(window) = app.window.take()
+                    && let Err(error) = window.hide()
+                {
+                    app.model.say(error.to_string(), Tone::Error);
+                    app.window = Some(window);
                 }
-                app.sync();
+            } else {
+                app.model.say(
+                    concat!(
+                        "Zasobnik systemowy jest niedostępny. ",
+                        "Aby zakończyć aplikację, kliknij Zakończ."
+                    )
+                    .into(),
+                    Tone::Error,
+                );
             }
+            Ok(())
         });
     });
     if let Err(error) = check {
-        APPLICATION.with(|slot| {
-            if let Some(app) = slot.borrow().as_ref() {
-                let mut app = app.borrow_mut();
-                app.model.say(error.to_string(), Tone::Error);
-                app.sync();
-            }
+        with_app(|app| {
+            app.model.say(error.to_string(), Tone::Error);
+            Ok(())
         });
     }
     CloseRequestResponse::KeepWindowShown

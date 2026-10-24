@@ -225,7 +225,6 @@ impl Model {
     }
 
     pub(crate) fn request(&mut self, action: Action) {
-        self.pending = None;
         self.pending = match action {
             Action::QueueReceipt => {
                 if self.connected && !self.blocked {
