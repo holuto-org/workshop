@@ -19,7 +19,7 @@ use crate::{
     store::StateDir,
     testing::{
         ALLOCATION_ID, ATTEMPT, FakeApi, JOB_ID, PRINTER_ID, job, job_json, job_with, state_dir,
-        with,
+        unheard, with,
     },
 };
 
@@ -28,7 +28,7 @@ fn agent<'dir>(sim: &Simulator, dir: &'dir StateDir, api: FakeApi) -> Agent<'dir
         port: sim.address().to_owned(),
         baud_rate: 9600,
     };
-    Agent::new(Printer::new(sim.link(), connection), api, dir)
+    Agent::new(Printer::new(sim.link(), connection), api, dir, &unheard)
 }
 
 /// The same journal and Holuto after a process restart.

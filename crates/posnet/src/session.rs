@@ -2,6 +2,7 @@
 
 use std::{
     fmt, io,
+    sync::atomic::{AtomicU16, Ordering},
     time::{Duration, Instant},
 };
 
@@ -117,19 +118,61 @@ impl Session {
         }
     }
 
-    /// Sends one command once and waits up to `timeout` for its reply. A reply to a different
-    /// command (a late answer) is an error, never this command's success.
+    /// Sends one command once and waits up to `timeout` for its reply.
     pub fn command(
         &mut self,
         command: &'static str,
         params: &[(&str, String)],
         timeout: Duration,
     ) -> Result<Reply, Error> {
+        let deadline = self.send(command, params, timeout)?;
+        self.receive(command, deadline)
+    }
+
+    /// The reply to `command`, due by `deadline`. A reply to a different command (a late answer)
+    /// is an error, never this command's success.
+    pub(crate) fn receive(
+        &mut self,
+        command: &'static str,
+        deadline: Instant,
+    ) -> Result<Reply, Error> {
+        loop {
+            let (answered, reply) = self.next_frame(command, deadline)?;
+            // Only status queries carry a token: this reply answers an earlier one, not `command`.
+            if reply.get("@").is_some() {
+                continue;
+            }
+            if answered != command {
+                return Err(Error::Protocol(format!(
+                    "Oczekiwano odpowiedzi {command}, otrzymano {answered}."
+                )));
+            }
+            return Ok(reply);
+        }
+    }
+
+    /// Writes one command frame; its reply is due by the returned deadline.
+    pub(crate) fn send(
+        &mut self,
+        command: &'static str,
+        params: &[(&str, String)],
+        timeout: Duration,
+    ) -> Result<Instant, Error> {
         let frame = frame::encode(command, params)?;
         let deadline = Instant::now() + timeout;
         self.port
             .write_all(&frame, timeout)
             .map_err(|error| io_error(command, error))?;
+        Ok(deadline)
+    }
+
+    /// The next frame the printer sends, whichever command it answers; an error reply is an
+    /// `Err`. Nothing by `deadline` is a timeout of `command`.
+    pub(crate) fn next_frame(
+        &mut self,
+        command: &'static str,
+        deadline: Instant,
+    ) -> Result<(String, Reply), Error> {
         let mut chunk = [0_u8; READ_CHUNK];
         loop {
             if let Some(end) = self.pending.iter().position(|byte| *byte == ETX) {
@@ -138,13 +181,7 @@ impl Session {
                 let Some(start) = raw.iter().rposition(|byte| *byte == STX) else {
                     continue;
                 };
-                let (answered, reply) = frame::decode(raw.get(start..).unwrap_or_default())?;
-                if answered != command {
-                    return Err(Error::Protocol(format!(
-                        "Oczekiwano odpowiedzi {command}, otrzymano {answered}."
-                    )));
-                }
-                return Ok(reply);
+                return frame::decode(raw.get(start..).unwrap_or_default());
             }
             if self.pending.len() >= MAX_FRAME {
                 return Err(Error::Protocol("Zbyt długa odpowiedź drukarki.".to_owned()));
@@ -161,6 +198,12 @@ impl Session {
                 .extend_from_slice(chunk.get(..read).unwrap_or_default());
         }
     }
+}
+
+/// A fresh request token, `0000` to `9999` (spec p. 11); the printer echoes it in its reply.
+pub(crate) fn token() -> String {
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    format!("{:04}", NEXT.fetch_add(1, Ordering::Relaxed) % 10_000)
 }
 
 fn io_error(command: &'static str, error: io::Error) -> Error {

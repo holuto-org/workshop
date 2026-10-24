@@ -19,7 +19,7 @@ use crate::{
     api::model::{Outcome, Page},
     documents::Document,
     journal::{Journal, Operation},
-    testing::{FakeApi, job, state_dir},
+    testing::{FakeApi, job, state_dir, unheard},
 };
 
 fn document(number: i64) -> Document {
@@ -155,7 +155,12 @@ fn receipts_and_reports_run_on_one_thread_and_stop_waits_for_the_current_print()
                 port: simulator.address().to_owned(),
                 baud_rate: 9600,
             };
-            let mut agent = Agent::new(Printer::new(simulator.link(), connection), api, state);
+            let mut agent = Agent::new(
+                Printer::new(simulator.link(), connection),
+                api,
+                state,
+                &unheard,
+            );
             let _notices = agent.describe(printer_status(simulator)).unwrap();
             let pager = Pager::default();
             Session {

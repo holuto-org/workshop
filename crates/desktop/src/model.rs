@@ -445,10 +445,7 @@ impl Model {
 #[derive(Debug, thiserror::Error)]
 enum RangeError {
     #[error("Data {which} musi mieć postać dd.mm.rrrr.")]
-    Format {
-        which: &'static str,
-        source: jiff::Error,
-    },
+    Format { which: &'static str },
     #[error("Data {which} nie może być późniejsza niż dzisiejsza.")]
     Future { which: &'static str },
     #[error("Data początkowa nie może być późniejsza niż końcowa.")]
@@ -458,8 +455,14 @@ enum RangeError {
 fn report_range(from: &str, to: &str) -> Result<(Date, Date), RangeError> {
     let today = Zoned::now().date();
     let date = |which, text: &str| {
+        // `%Y` also reads "25" as the year 25: the year must be written in full.
+        let full_year = text.rsplit_once('.').is_some_and(|(_, year)| {
+            year.len() == 4 && year.bytes().all(|byte| byte.is_ascii_digit())
+        });
         let date = Date::strptime("%d.%m.%Y", text)
-            .map_err(|source| RangeError::Format { which, source })?;
+            .ok()
+            .filter(|_| full_year)
+            .ok_or(RangeError::Format { which })?;
         if date > today {
             return Err(RangeError::Future { which });
         }

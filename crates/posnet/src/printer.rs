@@ -1,6 +1,10 @@
 //! Device state, preflight checks and journaled fiscal operations.
 
-use std::{io, sync::Arc, time::Duration};
+use std::{
+    io,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use jiff::{civil::Date, fmt::strtime::BrokenDownTime};
 use serde::{Deserialize, Serialize};
@@ -9,7 +13,7 @@ use crate::{
     Error, decimal,
     frame::Reply,
     receipt::{Receipt, Step, VAT_SLOTS},
-    session::{Connection, DEFAULT_TIMEOUT, Link, Session},
+    session::{self, Connection, DEFAULT_TIMEOUT, Link, Session},
     text,
 };
 
@@ -18,15 +22,25 @@ const TEMO: &str = "POSNET TEMO ONLINE";
 const SCAN_TIMEOUT: Duration = Duration::from_millis(500);
 const REPORT_TIMEOUT: Duration = Duration::from_secs(120);
 const PERIODIC_REPORT_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long a printer executing a command may wait for an operator (paper, cover, a key) before
+/// the command counts as timed out.
+const OPERATOR_WAIT: Duration = Duration::from_secs(600);
+/// How often a printer waiting for an operator is asked again.
+const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 /// The rate the printer reserves for "zwolniona" (exempt): 100 %.
 const EXEMPT_BASIS_POINTS: u32 = 10_000;
 const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
 
-/// Durable evidence of an operation in progress, kept by the caller.
+/// Durable evidence of an operation in progress, kept by the caller, who also hears what the
+/// printer waits for while it runs.
 pub trait Journal {
     /// Persists that `command` is about to be sent. Called before every command of a fiscal
     /// operation; an error stops the operation before that command reaches the printer.
     fn dispatching(&mut self, command: &'static str) -> io::Result<()>;
+
+    /// The printer, executing the last dispatched command, waits for an operator to fix `problem`
+    /// (paper, cover, a key), and the operation waits with it. `None`: fixed, it prints again.
+    fn waiting(&mut self, problem: Option<&str>);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,8 +327,11 @@ impl Printer {
     }
 }
 
-/// Journals and sends each step once. After the first journal entry any failure is uncertain:
-/// earlier commands may have changed the printer's state.
+/// Journals and sends each step once.
+///
+/// After the first journal entry any failure is uncertain: earlier commands may have changed the
+/// printer's state. The one exception is the printer refusing `trinit` itself: no transaction
+/// opened, and no receipt exists without one.
 fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) -> Result<(), Error> {
     for (index, step) in steps.iter().enumerate() {
         if let Err(error) = journal.dispatching(step.command) {
@@ -324,15 +341,151 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
                 uncertain(Error::Journal(error))
             });
         }
-        let _reply = session
-            .command(step.command, &step.params, step.timeout)
-            .map_err(uncertain)?;
+        match execute(session, step, journal) {
+            Ok(_reply) => {},
+            Err(error) if index == 0 && refuses_trinit(&error, step.command) => return Err(error),
+            Err(error) => return Err(uncertain(error)),
+        }
     }
     Ok(())
 }
 
+/// Whether `error` is the printer refusing `trinit` itself. It must name `trinit`: a late error
+/// reply to another command proves nothing about this one.
+fn refuses_trinit(error: &Error, sent: &str) -> bool {
+    sent == "trinit" && refuses(error, sent)
+}
+
+/// Whether `error` is the printer's error reply to `sent`.
+fn refuses(error: &Error, sent: &str) -> bool {
+    matches!(error, Error::Device { command, .. } if command == sent)
+}
+
 fn uncertain(error: Error) -> Error {
     Error::Uncertain(Box::new(error))
+}
+
+/// Sends `step` once and waits for its reply; nothing is ever sent twice.
+///
+/// The printer replies only once it executed the command (spec p. 15), so when the step's time
+/// passes it is asked why. While it waits for an operator the step waits too, up to
+/// [`OPERATOR_WAIT`], and `journal` hears the problem; once it is fixed the step gets its full
+/// time again. A printer waiting for nothing, or not answering, timed out as before.
+fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Result<Reply, Error> {
+    let command = step.command;
+    let mut deadline = session.send(command, &step.params, step.timeout)?;
+    let mut since: Option<Instant> = None;
+    let mut shown: Option<String> = None;
+    let answered = loop {
+        match session.receive(command, deadline) {
+            Err(Error::Timeout(_)) => {},
+            answered => break answered,
+        }
+        match watch(session, command)? {
+            Watch::Answered(answered) => break answered,
+            Watch::Waiting(problem) => {
+                if since.get_or_insert_with(Instant::now).elapsed() >= OPERATOR_WAIT {
+                    return Err(Error::Timeout(command));
+                }
+                if shown.as_ref() != Some(&problem) {
+                    journal.waiting(Some(&problem));
+                    shown = Some(problem);
+                }
+                deadline = Instant::now() + WATCH_INTERVAL;
+            },
+            // Fixed: the printer is executing the command again, which may take its full time.
+            Watch::Ready if since.take().is_some() => {
+                shown = None;
+                journal.waiting(None);
+                deadline = Instant::now() + step.timeout;
+            },
+            Watch::Ready | Watch::Unanswered => return Err(Error::Timeout(command)),
+        }
+    };
+    if shown.is_some() {
+        journal.waiting(None);
+    }
+    answered
+}
+
+/// What a printer still executing a command says about itself.
+enum Watch {
+    /// The command's own reply arrived meanwhile.
+    Answered(Result<Reply, Error>),
+    /// It waits for an operator to fix this.
+    Waiting(String),
+    /// It waits for nothing.
+    Ready,
+    /// It did not answer both status queries.
+    Unanswered,
+}
+
+/// Asks a printer executing `command` for its state with `!sprn` and `!sdev`, which it answers at
+/// once (spec p. 15). Each carries a token its reply echoes (p. 11), so no reply is mistaken for
+/// another.
+fn watch(session: &mut Session, command: &'static str) -> Result<Watch, Error> {
+    let mechanism_token = query(session, "!sprn")?;
+    let device_token = query(session, "!sdev")?;
+    let deadline = Instant::now() + DEFAULT_TIMEOUT;
+    let (mut mechanism, mut device, mut answered) = (None, None, None);
+    let mut outstanding = 2_u8;
+    while outstanding > 0 {
+        let (name, reply) = match session.next_frame(command, deadline) {
+            Ok(frame) => frame,
+            Err(Error::Timeout(_)) => break,
+            Err(error @ Error::Device { .. }) if refuses(&error, command) => {
+                answered = Some(Err(error));
+                continue;
+            },
+            // A refused query: one state fewer to judge by.
+            Err(Error::Device { .. }) => {
+                outstanding = outstanding.saturating_sub(1);
+                continue;
+            },
+            Err(error) => return Err(error),
+        };
+        let token = reply.get("@");
+        if token == Some(mechanism_token.as_str()) {
+            mechanism = Some(reply);
+            outstanding = outstanding.saturating_sub(1);
+        } else if token == Some(device_token.as_str()) {
+            device = Some(reply);
+            outstanding = outstanding.saturating_sub(1);
+        } else if name == command {
+            answered = Some(Ok(reply));
+        } else if token.is_none() {
+            return Err(Error::Protocol(format!(
+                "Oczekiwano odpowiedzi {command}, otrzymano {name}."
+            )));
+        }
+        // Any other token: a late answer to an earlier query.
+    }
+    if let Some(answered) = answered {
+        return Ok(Watch::Answered(answered));
+    }
+    Ok(match (mechanism, device) {
+        (Some(mechanism), Some(device)) => {
+            operator_problem(&mechanism, &device).map_or(Watch::Ready, Watch::Waiting)
+        },
+        _ => Watch::Unanswered,
+    })
+}
+
+/// Sends an asynchronous status query with a fresh token and returns the token.
+fn query(session: &mut Session, query: &'static str) -> Result<String, Error> {
+    let token = session::token();
+    let _deadline = session.send(query, &[("@", token.clone())], DEFAULT_TIMEOUT)?;
+    Ok(token)
+}
+
+/// What a printer executing a command waits for an operator to fix: the lever, cover, paper,
+/// temperature or power, or a key on its keypad (spec pp. 384-385). `None` when nothing.
+fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<String> {
+    let code = mechanism.get("pr").unwrap_or_default();
+    if matches!(code, "1" | "3" | "5" | "6") {
+        return mechanism_problem(code);
+    }
+    matches!(device.get("ds"), Some("2" | "3")).then(|| "Drukarka oczekuje na operatora".to_owned())
 }
 
 /// `Some(status)` when the port answers as a Temo Online.
@@ -401,14 +554,7 @@ fn status(
     if !queue_empty {
         problems.push("Drukarka ma oczekujące polecenia".to_owned());
     }
-    match mechanism.require("pr")? {
-        "0" => {},
-        "1" => problems.push("Podniesiona dźwignia".to_owned()),
-        "3" => problems.push("Otwarta pokrywa".to_owned()),
-        "5" => problems.push("Brak papieru".to_owned()),
-        "6" => problems.push("Nieprawidłowa temperatura lub zasilanie".to_owned()),
-        other => problems.push(format!("Błąd mechanizmu: {other}")),
-    }
+    problems.extend(mechanism_problem(mechanism.require("pr")?));
     if transaction_open || common.require("ts")? != "0" {
         problems.push("Otwarta transakcja. Dokończ lub anuluj ją na drukarce".to_owned());
     }
@@ -421,6 +567,18 @@ fn status(
         serial,
         problems,
         vat: rates,
+    })
+}
+
+/// What the mechanism status `pr` (spec p. 384) says is wrong; `None` when nothing is.
+fn mechanism_problem(code: &str) -> Option<String> {
+    Some(match code {
+        "0" => return None,
+        "1" => "Podniesiona dźwignia".to_owned(),
+        "3" => "Otwarta pokrywa".to_owned(),
+        "5" => "Brak papieru".to_owned(),
+        "6" => "Nieprawidłowa temperatura lub zasilanie".to_owned(),
+        other => format!("Błąd mechanizmu: {other}"),
     })
 }
 

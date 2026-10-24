@@ -137,7 +137,11 @@ impl Row for Document {
         match column {
             0 => self.order_number.cmp(&other.order_number),
             1 => self.kind.label().cmp(other.kind.label()),
-            2 => self.customer_name.cmp(&other.customer_name),
+            2 => option_order(
+                self.customer_name.as_deref(),
+                other.customer_name.as_deref(),
+                text_order,
+            ),
             3 => self.amount.cmp(&other.amount),
             4 => self.occurred_at.cmp(&other.occurred_at),
             _ => Ordering::Equal,
@@ -167,9 +171,19 @@ impl Row for HistoryEntry {
 
     fn compare(&self, other: &Self, column: usize) -> Ordering {
         match column {
-            0 => self.items.cmp(&other.items),
+            0 => self
+                .items
+                .iter()
+                .zip(&other.items)
+                .map(|(a, b)| text_order(a, b))
+                .find(|order| order.is_ne())
+                .unwrap_or_else(|| self.items.len().cmp(&other.items.len())),
             1 => self.printed_at.cmp(&other.printed_at),
-            2 => self.receipt_number.cmp(&other.receipt_number),
+            2 => option_order(
+                self.receipt_number.as_deref(),
+                other.receipt_number.as_deref(),
+                receipt_order,
+            ),
             3 => self.total.cmp(&other.total),
             4 => payments(self).cmp(payments(other)),
             _ => Ordering::Equal,
@@ -182,6 +196,51 @@ fn payments(entry: &HistoryEntry) -> impl Iterator<Item = (&'static str, Grosze)
         .payments
         .iter()
         .map(|(form, amount)| (form.label(), *amount))
+}
+
+/// A missing value first, as `Option` orders it.
+fn option_order(a: Option<&str>, b: Option<&str>, order: fn(&str, &str) -> Ordering) -> Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => order(a, b),
+        _ => a.is_some().cmp(&b.is_some()),
+    }
+}
+
+/// The printer's counter by value; a number staff typed as text after every counter.
+fn receipt_order(a: &str, b: &str) -> Ordering {
+    match (a.parse::<u64>(), b.parse::<u64>()) {
+        (Ok(x), Ok(y)) => x.cmp(&y).then_with(|| a.cmp(b)),
+        (Ok(_), Err(_)) => Ordering::Less,
+        (Err(_), Ok(_)) => Ordering::Greater,
+        (Err(_), Err(_)) => text_order(a, b),
+    }
+}
+
+/// Polish alphabetical order, case-insensitive: each of ą ć ę ł ń ó ś ź ż follows its base letter.
+/// Texts equal under it fall back to code points, so the order stays total.
+fn text_order(a: &str, b: &str) -> Ordering {
+    a.chars()
+        .map(letter)
+        .cmp(b.chars().map(letter))
+        .then_with(|| a.cmp(b))
+}
+
+/// A letter's place in the Polish alphabet: its lowercase base letter, then its rank among the
+/// letters sharing that base.
+fn letter(character: char) -> (char, u8) {
+    let lower = character.to_lowercase().next().unwrap_or(character);
+    match lower {
+        'ą' => ('a', 1),
+        'ć' => ('c', 1),
+        'ę' => ('e', 1),
+        'ł' => ('l', 1),
+        'ń' => ('n', 1),
+        'ó' => ('o', 1),
+        'ś' => ('s', 1),
+        'ź' => ('z', 1),
+        'ż' => ('z', 2),
+        _ => (lower, 0),
+    }
 }
 
 fn timestamp_label(timestamp: Timestamp) -> String {

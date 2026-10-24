@@ -54,7 +54,6 @@ pub(crate) enum Blocked {
     Report,
 }
 
-#[derive(Debug)]
 pub(crate) struct Agent<'dir, H> {
     printer: Printer,
     api: H,
@@ -63,10 +62,17 @@ pub(crate) struct Agent<'dir, H> {
     telemetry: Telemetry,
     /// The status the telemetry describes: the paired device as last probed.
     status: Option<Status>,
+    /// Hears what the printer waits for an operator to fix mid-operation; `None` once fixed.
+    waiting: &'dir (dyn Fn(Option<&str>) + Sync),
 }
 
 impl<'dir, H: Holuto> Agent<'dir, H> {
-    pub(crate) fn new(printer: Printer, api: H, dir: &'dir StateDir) -> Self {
+    pub(crate) fn new(
+        printer: Printer,
+        api: H,
+        dir: &'dir StateDir,
+        waiting: &'dir (dyn Fn(Option<&str>) + Sync),
+    ) -> Self {
         let telemetry = Telemetry::new(api.serial());
         Self {
             printer,
@@ -75,6 +81,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             journal: Journal::new(dir),
             telemetry,
             status: None,
+            waiting,
         }
     }
 
@@ -187,6 +194,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         let mut dispatch = ReportDispatch {
             journal: &self.journal,
             operation: &mut operation,
+            waiting: self.waiting,
         };
         self.printer.print_report(report, &serial, &mut dispatch)?;
         operation.device = Device::Completed {
@@ -333,6 +341,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         let mut dispatch = ReceiptDispatch {
             journal: &self.journal,
             operation: &mut operation,
+            waiting: self.waiting,
         };
         let printed = self.printer.print_receipt(&receipt, &status, &mut dispatch);
         match printed {
@@ -490,6 +499,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
 struct ReceiptDispatch<'a> {
     journal: &'a Journal,
     operation: &'a mut ReceiptOperation,
+    waiting: &'a dyn Fn(Option<&str>),
 }
 
 impl DeviceJournal for ReceiptDispatch<'_> {
@@ -502,6 +512,10 @@ impl DeviceJournal for ReceiptDispatch<'_> {
         *self.operation = next;
         Ok(())
     }
+
+    fn waiting(&mut self, problem: Option<&str>) {
+        (self.waiting)(problem);
+    }
 }
 
 /// Journals each report command before it is sent; the report is journaled only once a command
@@ -509,6 +523,7 @@ impl DeviceJournal for ReceiptDispatch<'_> {
 struct ReportDispatch<'a> {
     journal: &'a Journal,
     operation: &'a mut ReportOperation,
+    waiting: &'a dyn Fn(Option<&str>),
 }
 
 impl DeviceJournal for ReportDispatch<'_> {
@@ -520,6 +535,10 @@ impl DeviceJournal for ReportDispatch<'_> {
         self.journal.write(&Operation::Report(next.clone()))?;
         *self.operation = next;
         Ok(())
+    }
+
+    fn waiting(&mut self, problem: Option<&str>) {
+        (self.waiting)(problem);
     }
 }
 

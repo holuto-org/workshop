@@ -37,7 +37,11 @@ pub enum Error {
     Io(#[source] io::Error),
     #[error("Brak odpowiedzi na {0}. Polecenie nie zostało ponowione.")]
     Timeout(&'static str),
-    #[error("Drukarka zwróciła błąd {code} ({command}{}).", parameter(.field))]
+    #[error(
+        "Drukarka zwróciła błąd {code} ({command}{}).{}",
+        parameter(.field),
+        explanation(*.code)
+    )]
     Device {
         code: u32,
         command: String,
@@ -75,5 +79,21 @@ fn parameter(field: &str) -> String {
         String::new()
     } else {
         format!(", parametr {field}")
+    }
+}
+
+/// The documented reason for the errors that block sales in states the preflight cannot read
+/// (POT-I-DEV-37 v5978, "Opisy błędów"); staff resolving the job see why, not only a number.
+const fn explanation(code: u32) -> &'static str {
+    match code {
+        1039 | 2904 => " Pamięć chroniona zapełniona.",
+        2036 => " Urządzenie w stanie tylko do odczytu.",
+        2098 => " Pamięć fiskalna zapełniona.",
+        3728 => " Upłynął termin ważności certyfikatu.",
+        3733 => " Sprzedaż zablokowana. Brak przekazanych kluczy do Repozytorium.",
+        3735 => " Sprzedaż zablokowana. Wgraj nowe certyfikaty.",
+        3903 => " Operacja w toku. Spróbuj ponownie.",
+        3929 => " Sprzedaż zablokowana. Brak klucza współdzielonego.",
+        _ => "",
     }
 }

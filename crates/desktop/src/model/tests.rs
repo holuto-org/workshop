@@ -8,6 +8,7 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 use super::*;
 use agent::documents::ReceiptKind;
 use jiff::Timestamp;
+use posnet::money::Grosze;
 use slint::{
     ComponentHandle as _, LogicalPosition, LogicalSize, Model as _, PlatformError,
     platform::{
@@ -365,7 +366,15 @@ fn typed_report_dates_must_be_valid_and_not_in_the_future() -> Result<(), Box<dy
         model.pending.is_none(),
         "A future date must not become a report boundary"
     );
-    for typed in ["31.02.2025", "2025-10-20", "20.10", ""] {
+    // A two-digit year would otherwise parse as year 0025, not 2025.
+    for typed in [
+        "31.02.2025",
+        "2025-10-20",
+        "20.10",
+        "",
+        "20.10.25",
+        "1.1.25",
+    ] {
         model.from = typed.into();
         model.request(Action::PeriodicReport);
         assert_eq!(
@@ -522,4 +531,78 @@ fn clicked_row_is_the_queued_document_after_sorting_and_refresh() -> Result<(), 
         "The queued receipt is the document the operator clicked"
     );
     Ok(())
+}
+
+fn printed(receipt_number: Option<&str>, items: &[&str]) -> HistoryEntry {
+    HistoryEntry {
+        job_id: Uuid::nil(),
+        printed_at: Timestamp::UNIX_EPOCH,
+        receipt_number: receipt_number.map(str::to_owned),
+        total: Grosze::ZERO,
+        payments: vec![],
+        items: items.iter().copied().map(str::to_owned).collect(),
+    }
+}
+
+#[test]
+fn receipt_numbers_sort_by_value() {
+    let mut model = Model::new(Settings::default());
+    model.set_history(
+        [Some("10"), Some("staff-7"), Some("9"), None, Some("2")]
+            .map(|number| printed(number, &[]))
+            .into(),
+    );
+    model.sort_history(2, false);
+    let numbers: Vec<_> = model
+        .history
+        .items()
+        .iter()
+        .map(|entry| entry.receipt_number.as_deref())
+        .collect();
+    assert_eq!(
+        numbers,
+        [None, Some("2"), Some("9"), Some("10"), Some("staff-7")],
+        "The printer's counter orders numerically; staff text follows"
+    );
+}
+
+#[test]
+fn names_sort_in_polish_alphabetical_order() {
+    let mut model = Model::new(Settings::default());
+    let customers = ["Żak", "Zenon", "adam", "Łukasz", "Lz", "Bartek"];
+    model.set_documents(
+        (0..)
+            .zip(customers)
+            .map(|(id, name)| Document {
+                order_id: Uuid::from_u128(id),
+                customer_name: Some(name.into()),
+                ..document()
+            })
+            .collect(),
+        1,
+        false,
+    );
+    model.sort_documents(2, false);
+    let sorted: Vec<_> = model
+        .documents()
+        .iter()
+        .map(|document| document.customer_name.as_deref())
+        .collect();
+    assert_eq!(
+        sorted,
+        ["adam", "Bartek", "Lz", "Łukasz", "Zenon", "Żak"].map(Some)
+    );
+    model.set_history(
+        [["Tarcza"], ["Śruba"], ["olej"], ["Sprężyna"]]
+            .map(|items| printed(None, &items))
+            .into(),
+    );
+    model.sort_history(0, false);
+    let sorted: Vec<_> = model
+        .history
+        .items()
+        .iter()
+        .map(|entry| entry.items.as_slice())
+        .collect();
+    assert_eq!(sorted, [["olej"], ["Sprężyna"], ["Śruba"], ["Tarcza"]]);
 }

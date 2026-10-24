@@ -103,7 +103,7 @@ impl Worker {
         sink: S,
     ) -> Result<Self, Error>
     where
-        S: Fn(Event) + Send + 'static,
+        S: Fn(Event) + Send + Sync + 'static,
     {
         let (messages, inbox) = mpsc::channel();
         let path = dir.path().to_owned();
@@ -147,7 +147,7 @@ fn run(
     settings: &Settings,
     link: Arc<dyn Link>,
     inbox: &Receiver<Message>,
-    sink: &dyn Fn(Event),
+    sink: &(dyn Fn(Event) + Sync),
 ) -> Result<(), Error> {
     sink(Event::Status {
         text: "Łączenie z drukarką i Holuto…".to_owned(),
@@ -170,7 +170,21 @@ fn run(
         Settings::remember_port(dir, &port)?;
     }
     let api = Api::new(&settings.api_url, &settings.token, &status.serial)?;
-    let mut agent = Agent::new(printer, api, dir);
+    let waiting = |problem: Option<&str>| {
+        sink(problem.map_or_else(
+            || Event::Status {
+                text: "Drukowanie wznowione.".to_owned(),
+                tone: Tone::Info,
+            },
+            |problem| Event::Status {
+                text: format!(
+                    "Drukarka czeka: {problem}. Usuń problem, a drukowanie będzie kontynuowane."
+                ),
+                tone: Tone::Error,
+            },
+        ));
+    };
+    let mut agent = Agent::new(printer, api, dir, &waiting);
     let notices = agent.describe(status.clone())?;
     agent.session()?;
     sink(Event::Connected {

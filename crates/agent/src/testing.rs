@@ -80,6 +80,9 @@ pub(crate) fn job() -> Job {
     job_with(&json!({}))
 }
 
+/// An agent's listener for what the printer waits for, where no test looks.
+pub(crate) fn unheard(_problem: Option<&str>) {}
+
 pub(crate) fn printer_json() -> Value {
     json!({
         "id": PRINTER_ID,

@@ -127,11 +127,19 @@ transliterated or truncated.
 - Journal intent **before the first command reaches the printer**: a taken job is claimed in
   `operation.json` before preflight, and every printer command is journaled before it is sent.
   Never retry a device command and never reprint a receipt.
+- The printer replies to a command only after executing it. When a command's time passes in
+  silence, the asynchronous `!sprn`/`!sdev` status queries ask why: while the printer waits for an
+  operator (paper, cover, lever, temperature or power, a key) the operation waits too, up to
+  10 minutes, and the app says what to fix. Nothing is resent. A printer waiting for nothing,
+  or not answering, leaves the outcome **unknown** as below.
 - An uncertain result, including a process death during dispatch, is **unknown** and
   blocks receipts and reports across restarts. Inspect the paper and printer state,
   then resolve the job in the **web app**. Resolution unblocks; it never reissues a receipt.
   A completed print without a readable receipt number also remains **unknown**
   until staff supply the number in Holuto; completed journal evidence is retained.
+- A printer that refuses `trinit` with an error code (new certificates, read-only mode, full
+  memory) opened no transaction, so nothing is uncertain: the job fails with the device's reason
+  and nothing blocks. A refusal of any later command, or of a report, stays **unknown**.
 - An interrupted **report** blocks the same way; after checking the printout, an operator
   confirms it with **Wyjaśnij raport**, which requires the same printer connected and ready
   and never prints anything.

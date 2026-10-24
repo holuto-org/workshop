@@ -1,16 +1,16 @@
-use std::{collections::BTreeMap, io, sync::Arc};
+use std::{collections::BTreeMap, io, sync::Arc, time::Duration};
 
 use jiff::civil::date;
 
-use super::{Journal, Printed, Printer, Report, Status};
+use super::{Journal, Printed, Printer, Report, Status, execute};
 use crate::{
     Error,
     frame::encode,
     receipt::{
-        Advance, PaymentForm, Receipt, VatSlot,
+        Advance, PaymentForm, Receipt, Step, VatSlot,
         tests::{BRAND, line, pay},
     },
-    session::{Connection, Link},
+    session::{Connection, Link, Session},
     simulator::{Fault, SERIAL, Simulator},
 };
 
@@ -29,6 +29,85 @@ impl Journal for Recorder {
         self.stages.push(command);
         Ok(())
     }
+
+    fn waiting(&mut self, _problem: Option<&str>) {}
+}
+
+/// An operator at the printer: whatever it waits for, they fix at once.
+struct Operator<'a> {
+    sim: &'a Simulator,
+    heard: Vec<Option<String>>,
+}
+
+impl Journal for Operator<'_> {
+    fn dispatching(&mut self, _command: &'static str) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn waiting(&mut self, problem: Option<&str>) {
+        self.heard.push(problem.map(str::to_owned));
+        if problem.is_some() {
+            self.sim.set_paper(true);
+        }
+    }
+}
+
+/// A daily report the printer must answer within `timeout`, sent through its own session.
+fn report_within(sim: &Simulator, timeout: Duration) -> (Session, Step) {
+    let session = Session::open(
+        sim.link().as_ref(),
+        &Connection {
+            port: sim.address().to_owned(),
+            baud_rate: 9600,
+        },
+    )
+    .unwrap();
+    let step = Step {
+        command: "dailyrep",
+        params: vec![("da", "2026-08-01".to_owned())],
+        timeout,
+    };
+    (session, step)
+}
+
+fn sent(sim: &Simulator, step: &Step) -> usize {
+    let frame = encode(step.command, &step.params).unwrap();
+    sim.frames().iter().filter(|sent| **sent == frame).count()
+}
+
+/// The printer replies only after executing (spec p. 15): out of paper, it stays silent past the
+/// step's time, yet says why when asked, and the command completes once paper is back.
+#[test]
+fn a_printer_out_of_paper_completes_the_command_once_paper_is_back() {
+    let sim = Simulator::start();
+    sim.run_out_of_paper_at("dailyrep");
+    let (mut session, step) = report_within(&sim, Duration::from_millis(200));
+    let mut operator = Operator {
+        sim: &sim,
+        heard: Vec::new(),
+    };
+    let _reply = execute(&mut session, &step, &mut operator).unwrap();
+    assert_eq!(operator.heard, [Some("Brak papieru".to_owned()), None]);
+    assert_eq!(sim.reports().len(), 1);
+    assert_eq!(sent(&sim, &step), 1, "never sent twice");
+}
+
+#[test]
+fn a_silent_printer_still_times_out_without_a_second_send() {
+    let sim = Simulator::start();
+    let _hold = sim.hold("dailyrep");
+    let (mut session, step) = report_within(&sim, Duration::from_millis(200));
+    let mut operator = Operator {
+        sim: &sim,
+        heard: Vec::new(),
+    };
+    let result = execute(&mut session, &step, &mut operator);
+    assert!(
+        matches!(result, Err(Error::Timeout("dailyrep"))),
+        "{result:?}"
+    );
+    assert_eq!(operator.heard, []);
+    assert_eq!(sent(&sim, &step), 1);
 }
 
 fn printer(sim: &Simulator) -> Printer {
@@ -239,7 +318,10 @@ fn a_refused_trinit_is_a_certain_failure() {
     let error = printer
         .print_receipt(&simple_receipt(BRAND), &status, &mut recorder)
         .unwrap_err();
-    assert!(matches!(error, Error::Device { code: 2000, .. }), "{error:?}");
+    assert!(
+        matches!(error, Error::Device { code: 2000, .. }),
+        "{error:?}"
+    );
     assert_eq!(recorder.stages, ["trinit"]);
     assert!(!sim.transaction_open());
     assert_eq!(sim.receipts().len(), 0);

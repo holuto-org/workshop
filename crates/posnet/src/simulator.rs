@@ -2,7 +2,7 @@
 //! [`Session`](crate::session::Session) code as a serial port, one session at a time.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     io::{self, Read as _, Write as _},
     mem,
     net::{TcpListener, TcpStream},
@@ -77,6 +77,9 @@ struct State {
     frames: Vec<Vec<u8>>,
     faults: HashMap<String, Fault>,
     held: Option<Held>,
+    paper_out: bool,
+    /// The command before which the paper runs out.
+    out_of_paper_at: Option<String>,
 }
 
 /// A command the simulator holds until the test releases it.
@@ -202,6 +205,17 @@ impl Simulator {
         drop(self.state().faults.remove(command));
     }
 
+    /// Takes the paper out (`false`) or puts a roll in. Without paper the printer still answers
+    /// status queries, but a command that prints waits, unanswered, until the paper is back.
+    pub fn set_paper(&self, present: bool) {
+        self.state().paper_out = !present;
+    }
+
+    /// Runs out of paper just as the next `command` arrives, which then waits for paper.
+    pub fn run_out_of_paper_at(&self, command: &str) {
+        self.state().out_of_paper_at = Some(command.to_owned());
+    }
+
     /// Holds the next `command` before executing it until [`Hold::release`].
     pub fn hold(&self, command: &str) -> Hold {
         let (reached, reached_receiver) = mpsc::channel();
@@ -308,6 +322,8 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
     }
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 4096];
+    // Commands waiting for paper, in the order they arrived.
+    let mut waiting = VecDeque::new();
     while !stop.load(Ordering::SeqCst) {
         match stream.read(&mut chunk) {
             Ok(0) => return,
@@ -316,10 +332,7 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
                 if matches!(
                     error.kind(),
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                continue;
-            },
+                ) => {},
             Err(_) => return,
         }
         if buffer.len() > MAX_FRAME {
@@ -327,11 +340,42 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
         }
         while let Some(end) = buffer.iter().position(|byte| *byte == ETX) {
             let received: Vec<u8> = buffer.drain(..=end).collect();
+            if waits_for_paper(&received, state, !waiting.is_empty()) {
+                waiting.push_back(received);
+            } else if stream.write_all(&answer(&received, state)).is_err() {
+                return;
+            }
+        }
+        while !waiting.is_empty() && !lock(state).paper_out {
+            let Some(received) = waiting.pop_front() else {
+                break;
+            };
             if stream.write_all(&answer(&received, state)).is_err() {
                 return;
             }
         }
     }
+}
+
+/// Whether `received` waits for paper: a command that prints while the paper is out, or any
+/// command queued behind one (commands execute in order, spec p. 15). Asynchronous `!` queries
+/// are answered at once.
+fn waits_for_paper(received: &[u8], state: &Mutex<State>, queued: bool) -> bool {
+    let Ok((command, _)) = frame::decode(received) else {
+        return false;
+    };
+    if command.starts_with('!') {
+        return false;
+    }
+    if queued {
+        return true;
+    }
+    let mut state = lock(state);
+    if state.out_of_paper_at.as_deref() == Some(command.as_str()) {
+        state.out_of_paper_at = None;
+        state.paper_out = true;
+    }
+    state.paper_out && state.query(&command).is_none()
 }
 
 fn answer(received: &[u8], state: &Mutex<State>) -> Vec<u8> {
@@ -350,19 +394,25 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Vec<u8> {
         Some(Fault::Reply(reply)) => Ok(reply),
         None => state.handle(&command, &params),
     };
+    // A reply echoes the request's token (spec p. 92).
+    let mut payload = command;
+    payload.push('\t');
+    if let Some(token) = params.get("@") {
+        payload.push('@');
+        payload.push_str(token);
+        payload.push('\t');
+    }
     match outcome {
         Ok(reply) => {
-            let mut payload = command;
-            payload.push('\t');
             for (key, value) in reply {
                 payload.push_str(&key);
                 payload.push_str(&value);
                 payload.push('\t');
             }
-            encoded(&payload)
         },
-        Err(()) => encoded(&format!("{command}\t?2000\t")),
+        Err(()) => payload.push_str("?2000\t"),
     }
+    encoded(&payload)
 }
 
 /// Device replies may carry a line feed inside a value (the header), which the driver's outgoing
@@ -409,8 +459,9 @@ impl State {
                 ("vr", "32.01"),
                 ("nu", SERIAL),
             ]),
-            "sdev" => reply(&[("ds", "0"), ("cp", "1"), ("qe", "1"), ("pe", "0")]),
-            "sprn" => reply(&[("pr", "0")]),
+            // `sdev` and `sprn` also run asynchronously, `!`-prefixed (spec pp. 384-385).
+            "sdev" | "!sdev" => reply(&[("ds", "0"), ("cp", "1"), ("qe", "1"), ("pe", "0")]),
+            "sprn" | "!sprn" => reply(&[("pr", if self.paper_out { "5" } else { "0" })]),
             "scomm" => reply(&[
                 ("fs", "1"),
                 ("tz", "0"),
