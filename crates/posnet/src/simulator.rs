@@ -15,9 +15,12 @@ use std::{
     time::Duration,
 };
 
+use jiff::{Timestamp, tz::TimeZone};
+
 use crate::{
     Error, decimal,
     frame::{self, ETX, MAX_FRAME, Reply},
+    printer::PRINTER_ZONE,
     receipt::Quantity,
     session::{Link, Port},
     text,
@@ -61,10 +64,25 @@ struct Held {
     release: Receiver<()>,
 }
 
+/// The printer's clock zone: Polish civil time, like a real printer's whatever the host's zone.
+#[derive(Debug)]
+struct Clock(TimeZone);
+
+impl Default for Clock {
+    #[expect(
+        clippy::expect_used,
+        reason = "test infrastructure: no zone database means no printer clock"
+    )]
+    fn default() -> Self {
+        Self(TimeZone::get(PRINTER_ZONE).expect("the printer's zone in the zone database"))
+    }
+}
+
 #[derive(Debug, Default)]
 struct State {
     header: String,
     vat: [String; 7],
+    clock: Clock,
     transaction_open: bool,
     footer_open: bool,
     lines: Vec<Params>,
@@ -110,7 +128,7 @@ pub struct Simulator {
 
 impl Simulator {
     /// # Panics
-    /// When no local socket or thread is available: a broken test environment.
+    /// When no local socket, thread or zone database is available: a broken test environment.
     #[expect(
         clippy::expect_used,
         reason = "test infrastructure: no socket means no test"
@@ -481,9 +499,13 @@ impl State {
                 .zip(&self.vat)
                 .map(|(key, rate)| ((*key).to_owned(), rate.clone()))
                 .collect(),
+            // A Polish printer keeps Polish time, whatever the host's zone.
             "rtcget" => vec![(
                 "da".to_owned(),
-                jiff::Zoned::now().strftime("%Y-%m-%d;%H:%M").to_string(),
+                Timestamp::now()
+                    .to_zoned(self.clock.0.clone())
+                    .strftime("%Y-%m-%d;%H:%M")
+                    .to_string(),
             )],
             _ => return None,
         })

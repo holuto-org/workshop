@@ -6,7 +6,7 @@
 //! unsettled receipt is reconciled with the job's server state and its saved result is resent
 //! unchanged. A terminal server state (staff resolution) is authoritative.
 
-use std::{io, time::Duration};
+use std::{io, mem, time::Duration};
 
 use jiff::Timestamp;
 use posnet::{
@@ -36,10 +36,10 @@ const INTERRUPTED: &str = "Przerwano w trakcie drukowania. Sprawdź drukarkę.";
 const UNNUMBERED: &str = "Wydruk zakończony, ale nie odczytano numeru paragonu. Sprawdź wydruk i \
                           rozstrzygnij zadanie w Holuto.";
 
-/// What one poll did and when the next one should run.
+/// What the operator should hear about. The agent keeps it until the worker takes it, so a
+/// receipt settled by a call that fails afterwards (or by a report) is still announced.
 #[derive(Debug, Default)]
-pub(crate) struct Step {
-    pub(crate) delay: Duration,
+pub(crate) struct News {
     /// Warnings for the operator; none of them stop processing.
     pub(crate) notices: Vec<String>,
     pub(crate) history_changed: bool,
@@ -64,6 +64,7 @@ pub(crate) struct Agent<'dir, H> {
     status: Option<Status>,
     /// Hears what the printer waits for an operator to fix mid-operation; `None` once fixed.
     waiting: &'dir (dyn Fn(Option<&str>) + Sync),
+    news: News,
 }
 
 impl<'dir, H: Holuto> Agent<'dir, H> {
@@ -82,6 +83,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             telemetry,
             status: None,
             waiting,
+            news: News::default(),
         }
     }
 
@@ -91,6 +93,11 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
 
     pub(crate) const fn status(&self) -> Option<&Status> {
         self.status.as_ref()
+    }
+
+    /// Everything to announce since the last call.
+    pub(crate) fn take_news(&mut self) -> News {
+        mem::take(&mut self.news)
     }
 
     /// Adopts a fresh probe of the paired device into the telemetry. Returns notices for active
@@ -130,20 +137,17 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     }
 
     /// One poll: probe, heartbeat (even when the probe failed, so Holuto sees the device alive),
-    /// settle the last operation, and take and execute one job when nothing blocks.
-    pub(crate) fn step(&mut self) -> Result<Step, Error> {
-        let mut step = Step {
-            delay: POLL,
-            ..Step::default()
-        };
+    /// settle the last operation, and take and execute one job when nothing blocks. Returns when
+    /// the next poll should run.
+    pub(crate) fn step(&mut self) -> Result<Duration, Error> {
         let probe = self
             .printer
             .probe()
             .map_err(Error::from)
             .and_then(|status| self.describe(status));
         self.api.heartbeat(&self.telemetry)?;
-        if let Some(blocked) = self.settle(&mut step)? {
-            step.notices.push(
+        if let Some(blocked) = self.settle()? {
+            self.news.notices.push(
                 match blocked {
                     Blocked::Receipt => {
                         "Niepotwierdzony wynik. Sprawdź wydruk i rozstrzygnij zadanie w Holuto."
@@ -154,27 +158,25 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 }
                 .to_owned(),
             );
-            step.delay = RETRY;
-            return Ok(step);
+            return Ok(RETRY);
         }
-        step.notices.extend(probe?);
+        self.news.notices.extend(probe?);
         if let Some(status) = self.status.as_ref().filter(|status| !status.ready()) {
-            step.notices
+            self.news
+                .notices
                 .push(format!("Drukarka niegotowa: {}", status.description()));
-            step.delay = RETRY;
-            return Ok(step);
+            return Ok(RETRY);
         }
         let Some(job) = self.api.take()? else {
-            return Ok(step);
+            return Ok(POLL);
         };
-        self.execute(&job, &mut step)?;
-        step.delay = Duration::ZERO;
-        Ok(step)
+        self.execute(&job)?;
+        Ok(Duration::ZERO)
     }
 
     /// Prints a fiscal report. Refused while any operation is unresolved.
     pub(crate) fn run_report(&mut self, report: Report) -> Result<(), Error> {
-        if let Some(blocked) = self.settle(&mut Step::default())? {
+        if let Some(blocked) = self.settle()? {
             return Err(Error::Blocked(
                 match blocked {
                     Blocked::Receipt => "Najpierw rozstrzygnij niepotwierdzony paragon w Holuto.",
@@ -226,7 +228,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     }
 
     /// Reconciles the journaled operation; `Some` while it still blocks new work.
-    fn settle(&mut self, step: &mut Step) -> Result<Option<Blocked>, Error> {
+    fn settle(&mut self) -> Result<Option<Blocked>, Error> {
         let mut operation = match self.journal.load()?.filter(Operation::blocks) {
             None => return Ok(None),
             Some(Operation::Report(_)) => return Ok(Some(Blocked::Report)),
@@ -253,7 +255,6 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 &mut operation,
                 remote.state,
                 remote.receipt_number.as_deref(),
-                step,
             )?;
             return Ok(None);
         }
@@ -287,11 +288,11 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             .result
             .as_ref()
             .map_or(JobState::Unknown, |result| result.outcome().into());
-        self.finish(&mut operation, state, None, step)?;
+        self.finish(&mut operation, state, None)?;
         Ok(None)
     }
 
-    fn execute(&mut self, job: &Job, step: &mut Step) -> Result<(), Error> {
+    fn execute(&mut self, job: &Job) -> Result<(), Error> {
         job.check(self.api.printer_id())
             .map_err(|problem| invalid_job(job.id, &problem))?;
         let (JobState::Taken, Some(attempt)) = (job.state, job.attempt) else {
@@ -329,12 +330,13 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         // is reported as UNKNOWN, never retried.
         self.journal.save(&Operation::Receipt(operation.clone()))?;
         let status = self.printer.probe()?;
-        step.notices.extend(self.describe(status.clone())?);
+        let notices = self.describe(status.clone())?;
+        self.news.notices.extend(notices);
         let receipt = match self.receipt(job) {
             Ok(receipt) => receipt,
             Err(reason) => {
                 self.report(&mut operation, JobResult::failed(&reason))?;
-                return self.finish(&mut operation, JobState::Failed, None, step);
+                return self.finish(&mut operation, JobState::Failed, None);
             },
         };
         operation.summary = Some(Summary::of(&receipt));
@@ -349,10 +351,11 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 operation.device = Device::Completed {
                     receipt_number: printed.receipt_number.clone(),
                 };
+                operation.issued_at = printed.issued_at;
                 self.journal.save(&Operation::Receipt(operation.clone()))?;
                 self.report(&mut operation, done(printed.receipt_number))?;
                 if matches!(operation.result, Some(JobResult::Done { .. })) {
-                    self.finish(&mut operation, JobState::Done, None, step)?;
+                    self.finish(&mut operation, JobState::Done, None)?;
                 }
                 Ok(())
             },
@@ -362,7 +365,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             },
             Err(error) => {
                 self.report(&mut operation, JobResult::failed(&error.to_string()))?;
-                self.finish(&mut operation, JobState::Failed, None, step)
+                self.finish(&mut operation, JobState::Failed, None)
             },
         }
     }
@@ -459,11 +462,10 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     /// Settles the operation with the backend `state`; a printed receipt enters the history, with
     /// the number staff supplied in Holuto when the printer's could not be read.
     fn finish(
-        &self,
+        &mut self,
         operation: &mut ReceiptOperation,
         state: JobState,
         staff_number: Option<&str>,
-        step: &mut Step,
     ) -> Result<(), Error> {
         if let (Device::Completed { receipt_number }, Some(summary)) =
             (&operation.device, &operation.summary)
@@ -483,8 +485,8 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 items: summary.items.clone(),
             };
             match history::append(self.dir, &entry) {
-                Ok(()) => step.history_changed = true,
-                Err(error) => step.notices.push(error.to_string()),
+                Ok(()) => self.news.history_changed = true,
+                Err(error) => self.news.notices.push(error.to_string()),
             }
         }
         operation.settled = Some(Settlement {

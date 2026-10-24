@@ -255,25 +255,27 @@ impl<H: Holuto> Session<'_, H> {
     /// Queued commands, then one agent step and a documents refresh. `None` when stopping.
     fn poll(&mut self, inbox: &Receiver<Message>) -> Result<Option<Duration>, Error> {
         while let Some(command) = self.queue.pop_front() {
-            self.command(command)?;
+            let done = self.command(command);
+            self.publish_news();
+            done?;
             if self.drain(inbox) {
                 return Ok(None);
             }
         }
-        let step = self.agent.step()?;
-        for notice in step.notices {
-            self.say(notice, Tone::Error);
-        }
-        if step.history_changed {
-            (self.sink)(Event::HistoryChanged);
-        }
+        let delay = self.agent.step();
+        self.publish_news();
         if self.drain(inbox) {
             return Ok(None);
         }
-        let page = self.pager.refresh(self.agent.api())?;
-        (self.sink)(page);
+        // Documents come from Holuto alone: a printer or settlement error must not freeze them.
+        let refreshed = self
+            .pager
+            .refresh(self.agent.api())
+            .map(|page| (self.sink)(page));
+        let delay = delay?;
+        refreshed?;
         self.publish_device();
-        Ok(Some(step.delay))
+        Ok(Some(delay))
     }
 
     fn command(&mut self, command: Command) -> Result<(), Error> {
@@ -325,6 +327,17 @@ impl<H: Holuto> Session<'_, H> {
             blocked: !matches!(blocked, Ok(None)),
             report_unresolved,
         });
+    }
+
+    /// What the agent has to announce, even when the call that produced it failed.
+    fn publish_news(&mut self) {
+        let news = self.agent.take_news();
+        for notice in news.notices {
+            self.say(notice, Tone::Error);
+        }
+        if news.history_changed {
+            (self.sink)(Event::HistoryChanged);
+        }
     }
 
     fn say(&self, text: String, tone: Tone) {

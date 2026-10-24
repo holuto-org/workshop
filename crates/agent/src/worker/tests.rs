@@ -6,9 +6,10 @@ use std::{
 };
 
 use posnet::{
+    money::Grosze,
     printer::{Printer, Status},
     session::Connection,
-    simulator::{SimReport, Simulator},
+    simulator::{Fault, SERIAL, SimReport, Simulator},
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -18,8 +19,10 @@ use crate::{
     agent::Agent,
     api::model::{Outcome, Page},
     documents::Document,
-    journal::{Journal, Operation},
-    testing::{FakeApi, job, state_dir, unheard},
+    history,
+    journal::{Device, JobResult, Journal, Operation, ReceiptOperation, Summary},
+    store::StateDir,
+    testing::{ATTEMPT, FakeApi, JOB_ID, job, state_dir, unheard},
 };
 
 fn document(number: i64) -> Document {
@@ -205,6 +208,122 @@ fn receipts_and_reports_run_on_one_thread_and_stop_waits_for_the_current_print()
         operation.result_form().map(|form| form.state),
         Some(Outcome::Done)
     );
+}
+
+/// A session on the simulator, as `run` leaves it once connected.
+fn session<'a>(
+    sim: &Simulator,
+    dir: &'a StateDir,
+    api: FakeApi,
+    sink: &'a dyn Fn(Event),
+) -> Session<'a, FakeApi> {
+    let connection = Connection {
+        port: sim.address().to_owned(),
+        baud_rate: 9600,
+    };
+    let mut agent = Agent::new(Printer::new(sim.link(), connection), api, dir, &unheard);
+    let _notices = agent.describe(printer_status(sim)).unwrap();
+    Session {
+        agent,
+        pager: Pager::default(),
+        queue: VecDeque::new(),
+        sink,
+    }
+}
+
+/// A printed receipt whose `done` result Holuto has not confirmed yet.
+fn unconfirmed_print(dir: &StateDir) {
+    Journal::new(dir)
+        .save(&Operation::Receipt(ReceiptOperation {
+            job_id: JOB_ID,
+            attempt: ATTEMPT,
+            issued_at: "2026-10-16T10:01:30+02:00".parse().unwrap(),
+            device_serial: SERIAL.to_owned(),
+            device: Device::Completed {
+                receipt_number: Some("41".to_owned()),
+            },
+            summary: Some(Summary {
+                total: Grosze::parse("250.00").unwrap(),
+                payments: Vec::new(),
+                items: vec!["Wymiana oleju".to_owned()],
+            }),
+            result: Some(JobResult::Done {
+                receipt_number: "41".to_owned(),
+            }),
+            settled: None,
+        }))
+        .unwrap();
+}
+
+fn history_changed(events: &Mutex<Vec<Event>>) -> bool {
+    events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(event, Event::HistoryChanged))
+}
+
+#[test]
+fn a_receipt_settled_while_the_printer_is_unreachable_refreshes_the_history() {
+    let sim = Simulator::start();
+    let (_temporary, dir) = state_dir();
+    unconfirmed_print(&dir);
+    let events = Mutex::new(Vec::new());
+    let sink = |event: Event| events.lock().unwrap().push(event);
+    let api = serving(vec![(None, page(vec![], None))]);
+    let mut session = session(&sim, &dir, api, &sink);
+    sim.fault("getrealid", Fault::Error);
+    let (_messages, inbox) = mpsc::channel();
+    assert!(session.poll(&inbox).is_err(), "the printer is unreachable");
+    assert_eq!(history::load(&dir).unwrap().len(), 1);
+    assert!(history_changed(&events));
+}
+
+#[test]
+fn a_receipt_settled_before_a_report_refreshes_the_history() {
+    let sim = Simulator::start();
+    let (_temporary, dir) = state_dir();
+    unconfirmed_print(&dir);
+    let events = Mutex::new(Vec::new());
+    let sink = |event: Event| events.lock().unwrap().push(event);
+    let api = serving(vec![(None, page(vec![], None))]);
+    let mut session = session(&sim, &dir, api, &sink);
+    session.queue.push_back(Command::DailyReport);
+    let (_messages, inbox) = mpsc::channel();
+    let _delay = session.poll(&inbox).unwrap();
+    assert_eq!(sim.reports().len(), 1);
+    assert_eq!(history::load(&dir).unwrap().len(), 1);
+    assert!(history_changed(&events));
+}
+
+#[test]
+fn documents_page_through_while_the_printer_is_unreachable() {
+    let sim = Simulator::start();
+    let (_temporary, dir) = state_dir();
+    let events = Mutex::new(Vec::new());
+    let sink = |event: Event| events.lock().unwrap().push(event);
+    let api = serving(vec![
+        (None, page(vec![document(1)], Some("after-1"))),
+        (Some("after-1"), page(vec![document(2)], None)),
+    ]);
+    let mut session = session(&sim, &dir, api, &sink);
+    let (_messages, inbox) = mpsc::channel();
+    let _delay = session.poll(&inbox).unwrap();
+    sim.fault("getrealid", Fault::Error);
+    session.queue.push_back(Command::NextPage);
+    assert!(
+        session.poll(&inbox).is_err(),
+        "the printer error is still reported"
+    );
+    let last_shown = events
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|event| matches!(event, Event::Documents { .. }))
+        .cloned()
+        .map(shown);
+    assert_eq!(last_shown, Some((vec![2], 2, false)));
 }
 
 fn printer_status(sim: &Simulator) -> Status {

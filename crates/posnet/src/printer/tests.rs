@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, io, sync::Arc, time::Duration};
 
-use jiff::civil::date;
+use jiff::{SignedDuration, Timestamp, civil::date};
 
 use super::{Journal, Printed, Printer, Report, Status, execute};
 use crate::{
@@ -169,6 +169,48 @@ fn brand_footer_only_when_the_header_lacks_the_company_name() {
     );
     assert!(!sim.transaction_open());
     assert!(probe_is_ready(&sim), "the footer was closed");
+}
+
+#[test]
+fn a_receipt_is_issued_at_the_printer_clock_never_later() {
+    for (clock, issued_at) in [
+        ("2026-07-01;12:34", "2026-07-01T10:34:00Z"),
+        // The autumn change repeats 02:00-02:59: the earlier instant.
+        ("2026-10-25;02:30", "2026-10-25T00:30:00Z"),
+    ] {
+        let sim = Simulator::start();
+        sim.fault(
+            "rtcget",
+            Fault::Reply(vec![("da".to_owned(), clock.to_owned())]),
+        );
+        let printed = print(&sim, &simple_receipt(BRAND)).unwrap();
+        assert_eq!(printed.issued_at, issued_at.parse().unwrap(), "{clock}");
+    }
+}
+
+#[test]
+fn an_unreadable_printer_clock_fails_the_receipt_before_trinit() {
+    let sim = Simulator::start();
+    sim.fault("rtcget", Fault::Error);
+    let error = print(&sim, &simple_receipt(BRAND)).unwrap_err();
+    assert!(!matches!(error, Error::Uncertain(_)), "{error:?}");
+    let trinit = encode("trinit", &[("bm", "0".to_owned())]).unwrap();
+    assert!(!sim.frames().contains(&trinit));
+}
+
+/// The simulated printer, like a real one, keeps Polish time whatever the host's zone: run with
+/// e.g. `TZ=Asia/Tokyo` to see a host-local clock read as a time hours ahead.
+#[test]
+fn a_simulated_receipt_is_issued_now_on_any_host() {
+    let sim = Simulator::start();
+    let before = Timestamp::now();
+    let printed = print(&sim, &simple_receipt(BRAND)).unwrap();
+    let after = Timestamp::now();
+    assert!(
+        before - SignedDuration::from_mins(1) <= printed.issued_at && printed.issued_at <= after,
+        "{before} .. {after}: {}",
+        printed.issued_at
+    );
 }
 
 fn probe_is_ready(sim: &Simulator) -> bool {
@@ -619,7 +661,11 @@ fn reports_send_the_documented_commands_and_refuse_a_reversed_range() {
         .map(|report| (report.command, report.params))
         .collect();
     // The daily report's date is the printer's own clock, not the PC's.
-    let today = jiff::Zoned::now().date().to_string();
+    let today = Timestamp::now()
+        .in_tz(super::PRINTER_ZONE)
+        .unwrap()
+        .date()
+        .to_string();
     assert_eq!(
         reports,
         [

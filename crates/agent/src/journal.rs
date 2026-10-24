@@ -49,7 +49,8 @@ pub(crate) enum Device {
 pub(crate) struct ReceiptOperation {
     pub(crate) job_id: Uuid,
     pub(crate) attempt: Uuid,
-    /// The execution start; a `done` result reports it as the issue time, resent unchanged.
+    /// The issue time a `done` result reports, resent unchanged: the claim time until the receipt
+    /// completes, then the printer's own clock (the server refuses times ahead of its own).
     pub(crate) issued_at: Timestamp,
     pub(crate) device_serial: String,
     pub(crate) device: Device,

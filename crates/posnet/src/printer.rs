@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use jiff::{civil::Date, fmt::strtime::BrokenDownTime};
+use jiff::{Timestamp, civil::Date, fmt::strtime::BrokenDownTime, tz::TimeZone};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -30,6 +30,8 @@ const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 /// The rate the printer reserves for "zwolniona" (exempt): 100 %.
 const EXEMPT_BASIS_POINTS: u32 = 10_000;
 const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
+/// The zone of the printer's clock: Polish civil time.
+pub(crate) const PRINTER_ZONE: &str = "Europe/Warsaw";
 
 /// Durable evidence of an operation in progress, kept by the caller, who also hears what the
 /// printer waits for while it runs.
@@ -149,6 +151,9 @@ impl Report {
 pub struct Printed {
     /// The printer's receipt counter after printing; `None` when it could not be read.
     pub receipt_number: Option<String>,
+    /// The printer's clock just before the receipt opened, to the minute: never later than the
+    /// time it prints.
+    pub issued_at: Timestamp,
 }
 
 #[derive(Debug)]
@@ -254,6 +259,7 @@ impl Printer {
         let header = session.command("hdrget", &[], DEFAULT_TIMEOUT)?;
         let header = text::header_text(header.get("tx").unwrap_or_default()).to_lowercase();
         let footer = (!header.contains(&receipt.brand().to_lowercase())).then_some(receipt.brand());
+        let issued_at = clock(&mut session)?;
         dispatch(&mut session, &receipt.steps(footer), journal)?;
         // The receipt is printed; a failure to read its number is reported, never retried.
         let receipt_number = session
@@ -261,7 +267,10 @@ impl Printer {
             .ok()
             .and_then(|counters| counters.get("bt").map(str::to_owned))
             .filter(|number| !number.is_empty());
-        Ok(Printed { receipt_number })
+        Ok(Printed {
+            receipt_number,
+            issued_at,
+        })
     }
 
     /// Prints a fiscal report on the paired device `serial`.
@@ -496,6 +505,28 @@ fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Status>, 
         return Ok(None);
     }
     read_status(&mut session).map(Some)
+}
+
+/// The printer's clock as an instant.
+///
+/// `rtcget` answers `da` as `YYYY-MM-DD;HH:MM` in Polish civil time; an hour the autumn change
+/// repeats is read as its earlier instant, so the result is never later than the printer's own.
+fn clock(session: &mut Session) -> Result<Timestamp, Error> {
+    let unreadable = |problem: String| {
+        Error::Protocol(format!("Nie można odczytać zegara drukarki: {problem}."))
+    };
+    let reply = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
+    let value = reply
+        .get("da")
+        .ok_or_else(|| unreadable("brak parametru da".to_owned()))?;
+    let (time, _rest) = BrokenDownTime::parse_prefix("%Y-%m-%d;%H:%M", value)
+        .map_err(|error| unreadable(error.to_string()))?;
+    let time = time
+        .to_datetime()
+        .map_err(|error| unreadable(error.to_string()))?;
+    TimeZone::get(PRINTER_ZONE)
+        .and_then(|zone| zone.to_ambiguous_timestamp(time).earlier())
+        .map_err(|error| unreadable(error.to_string()))
 }
 
 fn read_status(session: &mut Session) -> Result<Status, Error> {

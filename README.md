@@ -144,9 +144,12 @@ transliterated or truncated.
   confirms it with **Wyjaśnij raport**, which requires the same printer connected and ready
   and never prints anything.
 - The journal persists the job, attempt and execution-start timestamp before dispatch, and the
-  result before sending it. Re-sending a saved API result is not reprinting: it keeps the same
-  attempt and timestamp. Restart recovery reconciles durable evidence with the job's server
-  state without issuing printer commands again.
+  result before sending it. The issue time a `done` result reports is the printer's clock
+  (`rtcget`, Polish time, to the minute) read just before `trinit`, never this computer's clock,
+  which Holuto refuses once it runs ahead; an unreadable printer clock fails the job before any
+  fiscal command. Re-sending a saved API result is not reprinting: it keeps the same attempt and
+  issue time. Restart recovery reconciles durable evidence with the job's server state without
+  issuing printer commands again.
 - A terminal server resolution is authoritative. A corrupt or unreadable journal fails
   closed; deleting it is not a recovery procedure.
 - Local history is only a display cache: its read or write errors are reported

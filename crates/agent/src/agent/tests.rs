@@ -82,8 +82,8 @@ fn prints_once_with_brand_footer_and_receipt_number() {
     sim.set_header("&c&1Firma Inna&1&c\nul. Testowa 1");
     let (_temporary, dir) = state_dir();
     let mut agent = agent(&sim, &dir, FakeApi::new(vec![job()]));
-    let step = agent.step().unwrap();
-    assert!(step.history_changed);
+    let _delay = agent.step().unwrap();
+    assert!(agent.take_news().history_changed);
     let [receipt] = sim.receipts().try_into().unwrap();
     assert_eq!(receipt.total, 25_000);
     assert_eq!(
@@ -140,6 +140,27 @@ fn a_lost_result_is_resent_unchanged_after_restart() {
     }
 }
 
+/// The issue time comes from the printer, not from this computer's clock, which Holuto refuses
+/// once it runs ahead of the server.
+#[test]
+fn a_receipt_is_issued_at_the_printer_clock() {
+    let sim = Simulator::start();
+    sim.fault(
+        "rtcget",
+        Fault::Reply(vec![("da".to_owned(), "2026-10-16;12:34".to_owned())]),
+    );
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, FakeApi::new(vec![job()]));
+    poll(&mut agent);
+    let issued_at: Timestamp = "2026-10-16T10:34:00Z".parse().unwrap();
+    assert_eq!(agent.api.reports[0].issued_at, Some(issued_at));
+    assert_eq!(
+        receipt_operation(&dir).issued_at,
+        issued_at,
+        "journaled, so a resend carries the same time"
+    );
+}
+
 #[test]
 fn a_crash_after_printing_reports_done_with_the_journaled_issue_time() {
     let sim = Simulator::start();
@@ -171,8 +192,7 @@ fn a_crash_after_the_claim_is_unknown_and_never_replayed() {
         let (_temporary, dir) = state_dir();
         journal(&dir, claimed(device, None));
         let mut agent = agent(&sim, &dir, FakeApi::new(vec![job()]));
-        let step = agent.step().unwrap();
-        assert_eq!(step.delay, super::RETRY);
+        assert_eq!(agent.step().unwrap(), super::RETRY);
         assert_eq!(agent.api.reports[0].state, Outcome::Unknown);
         assert_eq!(agent.api.jobs.len(), 1, "no new job while unresolved");
         assert_eq!(sim.receipts().len(), 0);
@@ -320,13 +340,11 @@ fn an_unready_printer_sends_fresh_telemetry_without_claiming() {
     );
     let (_temporary, dir) = state_dir();
     let mut agent = agent(&sim, &dir, FakeApi::new(vec![job()]));
-    let step = agent.step().unwrap();
+    let _delay = agent.step().unwrap();
+    let notices = agent.take_news().notices;
     assert!(
-        step.notices
-            .iter()
-            .any(|notice| notice.contains("Brak papieru")),
-        "{:?}",
-        step.notices
+        notices.iter().any(|notice| notice.contains("Brak papieru")),
+        "{notices:?}"
     );
     assert_eq!(agent.api.jobs.len(), 1);
     assert_eq!(agent.api.heartbeats[0].model, "POSNET TEMO ONLINE");
@@ -839,13 +857,11 @@ fn a_history_failure_never_blocks_settlement() {
     let (_temporary, dir) = state_dir();
     fs::create_dir(dir.path().join("history.jsonl")).unwrap();
     let mut agent = agent(&sim, &dir, FakeApi::new(vec![job()]));
-    let step = agent.step().unwrap();
+    let _delay = agent.step().unwrap();
+    let notices = agent.take_news().notices;
     assert!(
-        step.notices
-            .iter()
-            .any(|notice| notice.contains("historii")),
-        "{:?}",
-        step.notices
+        notices.iter().any(|notice| notice.contains("historii")),
+        "{notices:?}"
     );
     assert_eq!(agent.api.reports.len(), 1);
     assert_eq!(agent.blocked().unwrap(), None);
@@ -883,9 +899,9 @@ fn an_interrupted_report_blocks_until_confirmed_on_the_same_ready_device() {
         Err(Error::Printer(posnet::Error::Uncertain(_)))
     ));
     assert_eq!(agent.blocked().unwrap(), Some(Blocked::Report));
-    let step = agent.step().unwrap();
+    let delay = agent.step().unwrap();
     assert_eq!(
-        (step.delay, agent.api.jobs.len()),
+        (delay, agent.api.jobs.len()),
         (super::RETRY, 1),
         "no receipt while unresolved"
     );

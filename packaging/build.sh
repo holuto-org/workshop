@@ -69,10 +69,11 @@ PY
     # X11/X11-xcb/Xcursor/Xi: winit; xcb: softbuffer; xkbcommon[-x11]: keyboard maps.
     # wayland-client: winit/softbuffer's Wayland transport (cursor parsing is pure Rust).
     # ca-certificates: HTTPS trust roots. zbus/tray is pure Rust: no libdbus/GTK/GL.
+    # tzdata: the printer clock is Europe/Warsaw time; jiff reads /usr/share/zoneinfo.
     # Most window libraries are dlopened, so dpkg-shlibdeps/ldd alone miss them.
     glibc_version=$(getconf GNU_LIBC_VERSION)
     glibc_version=${glibc_version#glibc }
-    depends="libc6 (>= $glibc_version), libgcc-s1, libfontconfig1, fonts-dejavu-core, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, ca-certificates"
+    depends="libc6 (>= $glibc_version), libgcc-s1, libfontconfig1, fonts-dejavu-core, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, ca-certificates, tzdata"
     VERSION="$version" ARCH="$deb_arch" DEPENDS="$depends" python3 - "$package/DEBIAN/control" <<'PY'
 import os
 import pathlib
