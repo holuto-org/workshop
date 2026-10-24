@@ -13,7 +13,6 @@ simulator = []
 
 [dependencies]
 jiff.workspace = true
-rust_decimal.workspace = true
 serde.workspace = true
 serialport.workspace = true
 thiserror.workspace = true

@@ -3,11 +3,10 @@
 use std::{io, sync::Arc, time::Duration};
 
 use jiff::{civil::Date, fmt::strtime::BrokenDownTime};
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error,
+    Error, decimal,
     frame::Reply,
     receipt::{Receipt, Step, VAT_SLOTS},
     session::{Connection, DEFAULT_TIMEOUT, Link, Session},
@@ -19,9 +18,9 @@ const TEMO: &str = "POSNET TEMO ONLINE";
 const SCAN_TIMEOUT: Duration = Duration::from_millis(500);
 const REPORT_TIMEOUT: Duration = Duration::from_secs(120);
 const PERIODIC_REPORT_TIMEOUT: Duration = Duration::from_secs(300);
-/// The rate the printer reserves for "zwolniona" (exempt).
-const EXEMPT_PERCENT: Decimal = Decimal::ONE_HUNDRED;
-const MAX_ACTIVE_PERCENT: Decimal = Decimal::from_parts(9999, 0, 0, false, 2);
+/// The rate the printer reserves for "zwolniona" (exempt): 100 %.
+const EXEMPT_BASIS_POINTS: u32 = 10_000;
+const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
 
 /// Durable evidence of an operation in progress, kept by the caller.
 pub trait Journal {
@@ -30,29 +29,30 @@ pub trait Journal {
     fn dispatching(&mut self, command: &'static str) -> io::Result<()>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct VatRate {
     pub slot: u8,
-    pub percent: Decimal,
+    /// Hundredths of a percent: `2300` is 23 %.
+    pub basis_points: u32,
 }
 
 impl VatRate {
     /// Rates above 99.99 % other than the exempt 100 % mark an unused slot.
-    pub fn active(&self) -> bool {
-        self.exempt() || (Decimal::ZERO..=MAX_ACTIVE_PERCENT).contains(&self.percent)
+    pub const fn active(self) -> bool {
+        self.exempt() || self.basis_points <= MAX_ACTIVE_BASIS_POINTS
     }
 
-    pub fn exempt(&self) -> bool {
-        self.percent == EXEMPT_PERCENT
+    pub const fn exempt(self) -> bool {
+        self.basis_points == EXEMPT_BASIS_POINTS
     }
 
     /// `A · 23%`, `G · zwolniona`, `D · nieaktywna`: the slot letter and its rate.
-    pub fn label(&self) -> String {
+    pub fn label(self) -> String {
         let letter = char::from(b'A'.saturating_add(self.slot));
         let rate = if self.exempt() {
             "zwolniona".to_owned()
         } else if self.active() {
-            format!("{}%", self.percent.normalize()).replace('.', ",")
+            format!("{}%", decimal::format(self.basis_points.into(), 2)).replace('.', ",")
         } else {
             "nieaktywna".to_owned()
         };
@@ -379,10 +379,10 @@ fn status(
         .map(|slot| {
             let key = format!("v{}", char::from(b'a'.saturating_add(slot)));
             let raw = vat.require(&key)?;
-            let percent = raw.replace(',', ".").parse::<Decimal>().map_err(|parse| {
-                Error::Protocol(format!("nieprawidłowa stawka VAT {raw:?} ({parse})"))
-            })?;
-            Ok(VatRate { slot, percent })
+            let basis_points = decimal::parse(&raw.replace(',', "."), 2)
+                .and_then(|units| u32::try_from(units).ok())
+                .ok_or_else(|| Error::Protocol(format!("nieprawidłowa stawka VAT {raw:?}")))?;
+            Ok(VatRate { slot, basis_points })
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let mut problems = Vec::new();
@@ -412,7 +412,7 @@ fn status(
     if transaction_open || common.require("ts")? != "0" {
         problems.push("Otwarta transakcja. Dokończ lub anuluj ją na drukarce".to_owned());
     }
-    if !rates.iter().any(VatRate::active) {
+    if !rates.iter().any(|rate| rate.active()) {
         problems.push("Brak aktywnych stawek VAT".to_owned());
     }
     Ok(Status {

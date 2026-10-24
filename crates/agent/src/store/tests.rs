@@ -43,17 +43,31 @@ fn state_is_private_to_the_user() {
 }
 
 /// An overridden `%LOCALAPPDATA%` must not move the state directory, or the app would open a fresh
-/// journal and lock beside the real ones and slip past an unresolved operation.
+/// journal and lock beside the real ones and slip past an unresolved operation. The override is
+/// set on a child run of this test binary: the crate forbids the `unsafe` `set_var`.
 #[cfg(windows)]
 #[test]
-#[expect(
-    unsafe_code,
-    reason = "the test overrides the variable it proves is ignored"
-)]
 fn the_windows_state_directory_ignores_an_overridden_localappdata() {
-    let known_folder = StateDir::default_path().unwrap();
-    // SAFETY: Windows serializes environment access inside the OS, and nextest gives this test its
-    // own process.
-    unsafe { std::env::set_var("LOCALAPPDATA", r"C:\overridden") };
-    assert_eq!(StateDir::default_path().unwrap(), known_folder);
+    use std::{env, process::Command};
+
+    const EXPECTED: &str = "HOLUTO_TEST_EXPECTED_STATE_DIR";
+    if let Some(expected) = env::var_os(EXPECTED) {
+        assert_eq!(StateDir::default_path().unwrap(), Path::new(&expected));
+        return;
+    }
+    let child = Command::new(env::current_exe().unwrap())
+        .args([
+            "store::tests::the_windows_state_directory_ignores_an_overridden_localappdata",
+            "--exact",
+        ])
+        .env(EXPECTED, StateDir::default_path().unwrap())
+        .env("LOCALAPPDATA", r"C:\overridden")
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&child.stdout);
+    // An unmatched filter also exits successfully, having checked nothing.
+    assert!(
+        child.status.success() && report.contains("1 passed"),
+        "the child saw a different state directory:\n{report}"
+    );
 }

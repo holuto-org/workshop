@@ -455,7 +455,7 @@ fn documents_and_queue_follow_the_contract() {
         let [item]: [Document; 1] = listed.items.try_into().unwrap();
         assert_eq!((item.order_number, item.allocation_id), (10, allocation));
         let nip = BuyerNip::parse("5260250274").unwrap();
-        let _job = api.queue(&queue_form(&item, Some(&nip)).unwrap()).unwrap();
+        let _job = api.queue(&queue_form(&item, Some(nip)).unwrap()).unwrap();
         let requests = fake.finish();
         assert_eq!(requests[0].url, "/agent/documents?limit=100");
         assert_eq!(
@@ -486,8 +486,7 @@ fn an_opaque_cursor_is_passed_back_unchanged_and_encoded() {
     let page = api.documents(None).unwrap();
     assert_eq!(page.next_cursor.as_deref(), Some(cursor));
     assert_eq!(
-        page.items[0].amount.to_string(),
-        "100000000.00",
+        page.items[0].amount, 10_000_000_000,
         "listed even above the printer limit"
     );
     assert!(api.documents(Some(cursor)).unwrap().next_cursor.is_none());

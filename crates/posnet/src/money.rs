@@ -2,10 +2,9 @@
 
 use std::{fmt, iter::Sum};
 
-use rust_decimal::{Decimal, RoundingStrategy, prelude::ToPrimitive as _};
 use serde::{Deserialize, Serialize};
 
-use crate::Error;
+use crate::{Error, decimal};
 
 /// A nonnegative amount within the printer's range: 9 999 999 999 grosze.
 #[derive(
@@ -25,15 +24,14 @@ impl Grosze {
         Ok(Self(grosze))
     }
 
-    /// A decimal amount in złoty that is a whole number of grosze, e.g. `"12.50"`.
-    pub fn from_zloty(zloty: Decimal) -> Result<Self, Error> {
-        let grosze = zloty
-            .checked_mul(Decimal::ONE_HUNDRED)
-            .ok_or_else(out_of_range)?;
-        if !grosze.fract().is_zero() || grosze.is_sign_negative() {
-            return Err(out_of_range());
-        }
-        Self::new(grosze.to_u64().ok_or_else(out_of_range)?)
+    /// A plain złoty amount with at most two decimal places, e.g. `"12.50"`.
+    pub fn parse(zloty: &str) -> Result<Self, Error> {
+        let grosze = decimal::parse(zloty, 2).ok_or_else(|| {
+            Error::Invalid(
+                "Kwota musi być zapisana cyframi, z najwyżej 2 miejscami po przecinku.".to_owned(),
+            )
+        })?;
+        Self::new(grosze)
     }
 
     pub const fn get(self) -> u64 {
@@ -73,24 +71,23 @@ impl Sum for Grosze {
     }
 }
 
-/// `1 234 567,89 zł`, the way a Polish receipt writes it.
 impl fmt::Display for Grosze {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let whole = (self.0 / 100).to_string();
-        let mut grouped = String::with_capacity(whole.len() + whole.len() / 3);
-        for (index, digit) in whole.chars().enumerate() {
-            if index > 0 && (whole.len() - index).is_multiple_of(3) {
-                grouped.push(' ');
-            }
-            grouped.push(digit);
-        }
-        write!(f, "{grouped},{:02} zł", self.0 % 100)
+        f.write_str(&zloty(self.0))
     }
 }
 
-/// Rounds to whole units, halves away from zero: how the printer rounds a line value.
-pub fn half_up(value: Decimal) -> Decimal {
-    value.round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
+/// `1 234 567,89 zł`, the way a Polish receipt writes it; also beyond [`Grosze::MAX`].
+pub fn zloty(grosze: u64) -> String {
+    let whole = (grosze / 100).to_string();
+    let mut grouped = String::with_capacity(whole.len() + whole.len() / 3);
+    for (index, digit) in whole.chars().enumerate() {
+        if index > 0 && (whole.len() - index).is_multiple_of(3) {
+            grouped.push(' ');
+        }
+        grouped.push(digit);
+    }
+    format!("{grouped},{:02} zł", grosze % 100)
 }
 
 fn out_of_range() -> Error {

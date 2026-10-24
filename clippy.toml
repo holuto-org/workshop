@@ -14,8 +14,6 @@ check-incompatible-msrv-in-tests = true
 disallowed-methods = [
     { path = "std::thread::spawn", reason = "unnamed and panics when the OS refuses a thread; use `std::thread::Builder::new().name(..).spawn`, keep the handle and join it" },
     { path = "std::thread::sleep", reason = "a fixed delay hides races and blocks a stop request; wait on the worker's command channel with `recv_timeout`" },
-    { path = "rust_decimal::Decimal::round", reason = "banker's rounding; fiscal amounts round half up through `posnet::money::half_up`" },
-    { path = "rust_decimal::Decimal::round_dp", reason = "banker's rounding; fiscal amounts round half up through `posnet::money::half_up`" },
     { path = "std::process::Command::new", reason = "the app never shells out" },
 ]
 

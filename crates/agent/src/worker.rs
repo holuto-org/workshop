@@ -268,7 +268,7 @@ impl<H: Holuto> Session<'_, H> {
                 document,
                 buyer_nip,
             } => {
-                let form = queue_form(&document, buyer_nip.as_ref())?;
+                let form = queue_form(&document, buyer_nip)?;
                 let _job = self.agent.api().queue(&form)?;
                 self.say(
                     "Zlecenie dodano do kolejki Holuto.".to_owned(),

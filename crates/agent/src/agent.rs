@@ -12,9 +12,8 @@ use jiff::Timestamp;
 use posnet::{
     money::Grosze,
     printer::{Journal as DeviceJournal, Printer, Report, Status},
-    receipt::{Advance, Line, Payment, Receipt, VatSlot},
+    receipt::{Advance, Line, Payment, Quantity, Receipt, VatSlot},
 };
-use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::{
@@ -401,12 +400,12 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         for item in &job.lines {
             let line = Line::new(
                 &item.name,
-                decimal(&item.quantity)?,
-                decimal(&item.unit_price)?,
+                quantity(&item.quantity)?,
+                amount("Cena", &item.unit_price)?,
                 slot(item.vat_slot)?,
             )
             .map_err(|error| error.to_string())?;
-            if line.total() != grosze(&item.total)? {
+            if line.total() != amount("Wartość pozycji", &item.total)? {
                 return Err(
                     "Wartość pozycji nie zgadza się z zaokrąglonym iloczynem ilości i ceny."
                         .to_owned(),
@@ -414,7 +413,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             }
             lines.push(line);
         }
-        if lines.iter().map(Line::total).sum::<Grosze>() != grosze(&job.total)? {
+        if lines.iter().map(Line::total).sum::<Grosze>() != amount("Suma zadania", &job.total)? {
             return Err("Suma pozycji nie odpowiada wartości zadania.".to_owned());
         }
         let advances = job
@@ -423,7 +422,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             .map(|advance| {
                 Ok(Advance {
                     vat: slot(advance.vat_slot)?,
-                    amount: grosze(&advance.amount)?,
+                    amount: amount("Zaliczka", &advance.amount)?,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -433,7 +432,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             .map(|payment| {
                 Ok(Payment {
                     form: payment.form,
-                    amount: grosze(&payment.amount)?,
+                    amount: amount("Płatność", &payment.amount)?,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -546,13 +545,13 @@ fn done(receipt_number: Option<String>) -> JobResult {
     )
 }
 
-fn decimal(text: &str) -> Result<Decimal, String> {
-    text.parse()
-        .map_err(|_unparsable| format!("Nieprawidłowa liczba w zadaniu: {text:?}."))
+fn quantity(text: &str) -> Result<Quantity, String> {
+    Quantity::parse(text).map_err(|error| format!("{error} ({text:?})"))
 }
 
-fn grosze(text: &str) -> Result<Grosze, String> {
-    Grosze::from_zloty(decimal(text)?).map_err(|error| format!("{error} ({text})"))
+/// `field` names the amount in the failure reason.
+fn amount(field: &str, text: &str) -> Result<Grosze, String> {
+    Grosze::parse(text).map_err(|error| format!("{field}: {error} ({text:?})"))
 }
 
 fn slot(slot: u8) -> Result<VatSlot, String> {

@@ -1,7 +1,8 @@
 //! `/agent` request and response bodies (backend `openapi/agent.json`).
 //!
 //! Decimals stay strings until the agent converts them, so a malformed amount fails its job with
-//! a reason instead of rejecting the whole response.
+//! a reason instead of rejecting the whole response. A field the contract requires but allows to
+//! be `null` is `deserialize_with = "Option::deserialize"`: a plain `Option` may also be missing.
 
 use jiff::Timestamp;
 use posnet::{
@@ -9,12 +10,11 @@ use posnet::{
     receipt::{PaymentForm, VAT_SLOTS},
     text::{MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH, printable_characters},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{APP_VERSION, DOCUMENTS_LIMIT, nullable};
-use crate::documents::{Document, ReceiptKind};
+use super::{APP_VERSION, DOCUMENTS_LIMIT};
+use crate::documents::{BuyerNip, Document, ReceiptKind};
 
 /// Slots the backend accepts; the printer itself has seven.
 const MAX_BACKEND_SLOTS: u8 = 16;
@@ -36,18 +36,18 @@ pub enum VatCode {
 
 impl VatCode {
     /// The code for a printer rate; `None` for a rate Holuto does not use.
-    pub fn of(rate: &VatRate) -> Option<Self> {
+    pub fn of(rate: VatRate) -> Option<Self> {
         if rate.exempt() {
             return Some(Self::Exempt);
         }
         [
-            (23, Self::Standard),
-            (8, Self::Reduced),
-            (5, Self::SuperReduced),
+            (2300, Self::Standard),
+            (800, Self::Reduced),
+            (500, Self::SuperReduced),
             (0, Self::Zero),
         ]
         .into_iter()
-        .find(|(percent, _)| rate.percent == Decimal::from(*percent))
+        .find(|(basis_points, _)| rate.basis_points == *basis_points)
         .map(|(_, code)| code)
     }
 
@@ -109,7 +109,7 @@ impl Telemetry {
 pub struct PrinterStatus {
     pub printer: PrinterInfo,
     pub is_online: bool,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub last_seen_at: Option<Timestamp>,
     pub updated_at: Timestamp,
 }
@@ -120,21 +120,21 @@ pub struct PrinterInfo {
     pub id: Uuid,
     pub branch_id: Uuid,
     pub name: String,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub device_serial: Option<String>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub model: Option<String>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub firmware: Option<String>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub app_version: Option<String>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub max_item_name_length: Option<u32>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub max_lines_per_receipt: Option<u32>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub max_company_name_length: Option<u32>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub allowed_characters: Option<String>,
     pub vat_slots: Vec<VatSlotRate>,
 }
@@ -230,9 +230,9 @@ pub struct Job {
     pub printer_id: Uuid,
     pub state: JobState,
     pub kind: ReceiptKind,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub allocation_id: Option<Uuid>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub buyer_nip: Option<String>,
     pub company_name: String,
     pub total: String,
@@ -240,16 +240,16 @@ pub struct Job {
     pub advances: Vec<JobAdvance>,
     pub payments: Vec<JobPayment>,
     /// Immutable once taken; every result names it.
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub attempt: Option<Uuid>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub receipt_number: Option<String>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub result: Option<String>,
     pub created_at: Timestamp,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub taken_at: Option<Timestamp>,
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub resolved_at: Option<Timestamp>,
 }
 
@@ -325,7 +325,7 @@ pub struct QueueForm {
     pub kind: ReceiptKind,
     pub order_id: Uuid,
     pub allocation_id: Option<Uuid>,
-    pub buyer_nip: Option<String>,
+    pub buyer_nip: Option<BuyerNip>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -333,7 +333,7 @@ pub struct QueueForm {
 pub struct Page {
     pub items: Vec<Document>,
     /// Opaque; `None` on the last page.
-    #[serde(deserialize_with = "nullable")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub next_cursor: Option<String>,
 }
 
@@ -358,7 +358,7 @@ pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatSlotRate>, Vec<String>
         .iter()
         .filter(|rate| rate.active() && rate.slot < VAT_SLOTS)
     {
-        match VatCode::of(rate) {
+        match VatCode::of(*rate) {
             Some(vat_rate) => slots.push(VatSlotRate {
                 slot: rate.slot,
                 vat_rate,

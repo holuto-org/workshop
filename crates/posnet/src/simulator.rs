@@ -15,12 +15,10 @@ use std::{
     time::Duration,
 };
 
-use rust_decimal::Decimal;
-
 use crate::{
-    Error,
+    Error, decimal,
     frame::{self, ETX, MAX_FRAME, Reply},
-    money,
+    receipt::Quantity,
     session::{Link, Port},
     text,
 };
@@ -403,9 +401,7 @@ impl State {
             .iter()
             .enumerate()
             .filter(|(_, rate)| {
-                rate.replace(',', ".")
-                    .parse::<Decimal>()
-                    .is_ok_and(|percent| percent <= Decimal::ONE_HUNDRED)
+                decimal::parse(&rate.replace(',', "."), 2).is_some_and(|units| units <= 10_000)
             })
             .map(|(slot, _)| slot.to_string())
             .collect()
@@ -473,16 +469,11 @@ impl State {
             "trline" if self.transaction_open => {
                 let quantity = params
                     .get("il")
-                    .and_then(|value| value.parse::<Decimal>().ok())
+                    .and_then(|value| Quantity::parse(value).ok())
                     .ok_or(())?;
-                let value = quantity
-                    .checked_mul(Decimal::from(number(&params, "pr")?))
-                    .ok_or(())?;
-                let value = money::half_up(value);
+                let value = quantity.times(number(&params, "pr")?).ok_or(())?;
                 let slot = params.get("vt").ok_or(())?;
-                if Decimal::from(number(&params, "wa")?) != value
-                    || !self.active_slots().contains(slot)
-                {
+                if number(&params, "wa")? != value || !self.active_slots().contains(slot) {
                     return Err(());
                 }
                 self.lines.push(params);

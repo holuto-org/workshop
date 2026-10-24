@@ -120,16 +120,24 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
 /// `MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows. A crash or power loss leaves either the old
 /// or the new content, never a torn file; on failure the temporary directory is deleted on drop.
 pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut options = File::options();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
     AtomicFile::new(path, OverwriteBehavior::AllowOverwrite)
-        .write_with_options(|file| file.write_all(bytes), options)
+        .write_with_options(|file| file.write_all(bytes), private_new_file())
         .map_err(io::Error::from)
+}
+
+#[cfg(unix)]
+fn private_new_file() -> fs::OpenOptions {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut options = File::options();
+    _ = options.write(true).create_new(true).mode(0o600);
+    options
+}
+
+#[cfg(not(unix))]
+fn private_new_file() -> fs::OpenOptions {
+    let mut options = File::options();
+    _ = options.write(true).create_new(true);
+    options
 }
 
 /// The file's bytes, or `None` when it does not exist.

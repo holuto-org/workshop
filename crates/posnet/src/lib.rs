@@ -8,6 +8,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod decimal;
 pub mod frame;
 pub mod money;
 pub mod printer;

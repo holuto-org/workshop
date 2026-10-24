@@ -123,10 +123,7 @@ mod pty {
 
     fn pair() -> (TTYPort, Session) {
         let (master, slave) = TTYPort::pair().unwrap();
-        (
-            master,
-            Session::new(Box::new(SerialStream(Box::new(slave)))),
-        )
+        (master, Session::new(Box::new(SerialStream(slave))))
     }
 
     #[test]

@@ -7,8 +7,7 @@ use agent::{
     worker::{Command, Tone},
 };
 use jiff::{Timestamp, ToSpan, Zoned, civil::Date, tz::TimeZone};
-use posnet::printer::Status;
-use rust_decimal::Decimal;
+use posnet::{money::zloty, printer::Status};
 use slint::{ModelRc, VecModel};
 
 use crate::ui::{Action, AppWindow, Date as PickerDate, Tab, TableRow};
@@ -59,7 +58,7 @@ impl Model {
         let today = Zoned::now().date();
         let months = today
             .first_of_month()
-            .series(-1.month())
+            .series((-1).month())
             .skip(1)
             .take(24)
             .collect();
@@ -295,7 +294,7 @@ impl Model {
                 "{} · zlecenie {} · {}\nNIP: {}\nZatwierdzenie wystawi paragon fiskalny.",
                 document.kind.label(),
                 document.order_number,
-                amount(document.amount),
+                zloty(document.amount),
                 if text.is_empty() { "—" } else { text }
             ),
             action: "Dodaj do wydruku".into(),
@@ -394,9 +393,6 @@ fn timestamp_label(timestamp: Timestamp) -> String {
         .strftime("%d.%m.%Y %H:%M")
         .to_string()
 }
-fn amount(value: Decimal) -> String {
-    format!("{value:.2} zł").replace('.', ",")
-}
 pub(crate) fn strings<I: IntoIterator<Item = String>>(values: I) -> ModelRc<slint::SharedString> {
     Rc::new(VecModel::from(
         values.into_iter().map(Into::into).collect::<Vec<_>>(),
@@ -408,7 +404,7 @@ fn document_row(document: &Document) -> TableRow {
         a: document.order_number.to_string().into(),
         b: document.kind.label().into(),
         c: document.customer_name.as_deref().unwrap_or("—").into(),
-        d: amount(document.amount).into(),
+        d: zloty(document.amount).into(),
         e: timestamp_label(document.occurred_at).into(),
     }
 }

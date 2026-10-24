@@ -1,10 +1,12 @@
+use serde_json::json;
+
 use super::BuyerNip;
 
 #[test]
 fn a_buyer_nip_is_exactly_ten_digits() {
     assert_eq!(
-        BuyerNip::parse(" 5260250274 ").unwrap().as_str(),
-        "5260250274"
+        serde_json::to_value(BuyerNip::parse(" 5260250274 ").unwrap()).unwrap(),
+        json!("5260250274")
     );
     for invalid in [
         "",

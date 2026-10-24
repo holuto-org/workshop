@@ -1,12 +1,14 @@
 use std::fmt::Debug;
 
-use rust_decimal::Decimal;
-
-use super::{Advance, Line, Payment, PaymentForm, Receipt, VatSlot};
+use super::{Advance, Line, Payment, PaymentForm, Quantity, Receipt, VatSlot};
 use crate::{Error, money::Grosze};
 
-fn decimal(text: &str) -> Decimal {
-    text.parse().unwrap()
+fn quantity(text: &str) -> Quantity {
+    Quantity::parse(text).unwrap()
+}
+
+fn price(zloty: &str) -> Grosze {
+    Grosze::parse(zloty).unwrap()
 }
 
 fn slot(slot: u8) -> VatSlot {
@@ -20,8 +22,8 @@ fn grosze(amount: u64) -> Grosze {
 /// The simulator's header names this company, so receipts carrying it print no footer.
 pub(crate) const BRAND: &str = "Warsztat Kowalski";
 
-pub(crate) fn line(name: &str, quantity: &str, price: &str, vat: u8) -> Line {
-    Line::new(name, decimal(quantity), decimal(price), slot(vat)).unwrap()
+pub(crate) fn line(name: &str, quantity_text: &str, zloty: &str, vat: u8) -> Line {
+    Line::new(name, quantity(quantity_text), price(zloty), slot(vat)).unwrap()
 }
 
 pub(crate) fn pay(form: PaymentForm, amount: u64) -> Payment {
@@ -54,21 +56,23 @@ fn fractional_quantity_rounds_the_line_half_up() {
 
 #[test]
 fn quantity_price_and_slot_must_fit_the_printer() {
-    for quantity in ["0", "-1", "0.000000001", "10000000000"] {
-        assert!(
-            Line::new("Naprawa", decimal(quantity), Decimal::TEN, slot(0)).is_err(),
-            "{quantity}"
-        );
+    for text in ["-1", "0.000000001", "10000000000", "1e3", "NaN"] {
+        assert!(Quantity::parse(text).is_err(), "{text}");
     }
-    for price in ["0", "-1", "1.001", "100000000"] {
-        let message = invalid(Line::new("Naprawa", Decimal::ONE, decimal(price), slot(0)));
-        assert!(
-            message.contains("Cena") || message.contains("dodatnimi"),
-            "{price}: {message}"
-        );
+    assert_eq!(quantity("1.50000000").to_string(), "1.5");
+    assert_eq!(quantity("9999999999").to_string(), "9999999999");
+    let ten = price("10");
+    for (count, unit) in [(quantity("0"), ten), (quantity("1"), Grosze::ZERO)] {
+        let message = invalid(Line::new("Naprawa", count, unit, slot(0)));
+        assert!(message.contains("dodatnimi"), "{message}");
     }
-    assert!(Line::new("Naprawa", decimal("9999999999"), Decimal::TEN, slot(0)).is_err());
-    assert!(Line::new("Naprawa", decimal("0.001"), decimal("0.01"), slot(0)).is_err());
+    for (count, unit) in [
+        (quantity("9999999999"), ten),
+        (quantity("0.001"), price("0.01")),
+    ] {
+        let message = invalid(Line::new("Naprawa", count, unit, slot(0)));
+        assert!(message.contains("Wartość pozycji"), "{message}");
+    }
     assert!(VatSlot::new(7).is_err());
 }
 
@@ -90,7 +94,7 @@ fn names_print_exactly_as_given_or_are_rejected() {
         ("o\u{301}", "nie drukuje"),
     ];
     for (name, problem) in cases {
-        let message = invalid(Line::new(name, Decimal::ONE, Decimal::TEN, slot(0)));
+        let message = invalid(Line::new(name, quantity("1"), price("10"), slot(0)));
         assert!(message.contains(problem), "{name:?}: {message}");
     }
 }

@@ -15,7 +15,7 @@ fn document() -> Document {
         order_id: Uuid::nil(),
         order_number: 42,
         allocation_id: None,
-        amount: Decimal::new(25000, 2),
+        amount: 25_000,
         customer_name: Some("Jan Kowalski".into()),
         occurred_at: Timestamp::UNIX_EPOCH,
     }

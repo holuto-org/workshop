@@ -1,23 +1,21 @@
 //! A fiscal receipt: lines on VAT slots, advance deductions and split payments, validated
 //! before the printer is touched.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, fmt, time::Duration};
 
-use rust_decimal::{Decimal, prelude::ToPrimitive as _};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error,
-    money::{self, Grosze},
+    Error, decimal,
+    money::Grosze,
     text::{self, MAX_BUYER_NIP_LENGTH, MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH},
 };
 
 /// The printer's VAT table has seven slots, A to G.
 pub const VAT_SLOTS: u8 = 7;
-const MAX_QUANTITY: Decimal = Decimal::from_parts(1_410_065_407, 2, 0, false, 0); // 9 999 999 999
-const MAX_UNIT_PRICE: Decimal = Decimal::from_parts(1_410_065_407, 2, 0, false, 2); // 99 999 999.99
-const QUANTITY_DECIMALS: u32 = 8;
-const PRICE_DECIMALS: u32 = 2;
+const QUANTITY_SCALE: usize = 8;
+const QUANTITY_UNIT: u64 = 100_000_000;
+const MAX_QUANTITY: u64 = 9_999_999_999 * QUANTITY_UNIT;
 const LINE_TIMEOUT: Duration = Duration::from_secs(10);
 const END_TIMEOUT: Duration = Duration::from_secs(30);
 const ADVANCE_NAME: &str = "Zaliczka";
@@ -101,11 +99,47 @@ pub struct Advance {
     pub amount: Grosze,
 }
 
+/// A line quantity in hundred-millionths: at most 8 decimal places, up to 9 999 999 999.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Quantity(u64);
+
+impl Quantity {
+    /// A plain decimal such as `"1.5"`.
+    pub fn parse(text: &str) -> Result<Self, Error> {
+        decimal::parse(text, QUANTITY_SCALE)
+            .filter(|units| *units <= MAX_QUANTITY)
+            .map(Self)
+            .ok_or_else(|| {
+                Error::Invalid(
+                    "Ilość musi być zapisana cyframi, z najwyżej 8 miejscami po przecinku, i \
+                     wynosić najwyżej 9 999 999 999."
+                        .to_owned(),
+                )
+            })
+    }
+
+    /// `self × grosze` rounded half up to whole grosze, as the printer rounds a line value;
+    /// `None` above `u64`.
+    pub(crate) fn times(self, grosze: u64) -> Option<u64> {
+        // Below u128::MAX even for u64::MAX²: neither the product nor the half can overflow.
+        let exact = u128::from(self.0) * u128::from(grosze);
+        let unit = u128::from(QUANTITY_UNIT);
+        u64::try_from((exact + unit / 2) / unit).ok()
+    }
+}
+
+/// The `il` text the printer takes: `1.5`, `2`.
+impl fmt::Display for Quantity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&decimal::format(self.0, QUANTITY_SCALE))
+    }
+}
+
 /// One sale line. Prices are gross; the printer computes the VAT block.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Line {
     name: String,
-    quantity: Decimal,
+    quantity: Quantity,
     vat: VatSlot,
     price: Grosze,
     total: Grosze,
@@ -117,8 +151,8 @@ impl Line {
     /// up to grosze.
     pub fn new(
         name: &str,
-        quantity: Decimal,
-        unit_price: Decimal,
+        quantity: Quantity,
+        unit_price: Grosze,
         vat: VatSlot,
     ) -> Result<Self, Error> {
         if name.trim().is_empty() {
@@ -136,30 +170,13 @@ impl Line {
                 "Nazwa usługi zawiera znaki, których drukarka nie drukuje.".to_owned(),
             ));
         }
-        if quantity <= Decimal::ZERO || unit_price <= Decimal::ZERO {
+        if quantity.0 == 0 || unit_price == Grosze::ZERO {
             return Err(Error::Invalid(
                 "Ilość i cena muszą być dodatnimi liczbami.".to_owned(),
             ));
         }
-        let quantity = quantity.normalize();
-        if quantity > MAX_QUANTITY || quantity.scale() > QUANTITY_DECIMALS {
-            return Err(Error::Invalid(
-                "Ilość może mieć najwyżej 8 miejsc po przecinku.".to_owned(),
-            ));
-        }
-        let unit_price = unit_price.normalize();
-        if unit_price > MAX_UNIT_PRICE || unit_price.scale() > PRICE_DECIMALS {
-            return Err(Error::Invalid(
-                "Cena może mieć najwyżej 2 miejsca po przecinku i wynosić do 99 999 999,99 zł."
-                    .to_owned(),
-            ));
-        }
-        let price = Grosze::from_zloty(unit_price)?;
         let total = quantity
-            .checked_mul(unit_price)
-            .and_then(|value| value.checked_mul(Decimal::ONE_HUNDRED))
-            .map(money::half_up)
-            .and_then(|grosze| grosze.to_u64())
+            .times(unit_price.get())
             .and_then(|grosze| Grosze::new(grosze).ok())
             .filter(|total| *total > Grosze::ZERO)
             .ok_or_else(|| {
@@ -172,7 +189,7 @@ impl Line {
             name: name.to_owned(),
             quantity,
             vat,
-            price,
+            price: unit_price,
             total,
         })
     }

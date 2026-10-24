@@ -15,7 +15,6 @@ agent.workspace = true
 posnet.workspace = true
 clap.workspace = true
 jiff.workspace = true
-rust_decimal.workspace = true
 serde_json.workspace = true
 slint.workspace = true
 

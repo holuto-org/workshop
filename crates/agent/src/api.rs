@@ -8,7 +8,7 @@ pub mod model;
 
 use std::{fmt::Write as _, time::Duration};
 
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use ureq::{
     Agent, Body, RequestBuilder,
     http::{Response, StatusCode},
@@ -290,18 +290,8 @@ impl Holuto for Api {
     }
 }
 
-/// A field the contract requires to be present, possibly `null`. serde treats a missing
-/// `Option` as `None`; a field with `deserialize_with` must be present.
-pub(crate) fn nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
-
 /// Builds the queue request, refusing a document whose identity is inconsistent.
-pub fn queue_form(document: &Document, buyer_nip: Option<&BuyerNip>) -> Result<QueueForm, Error> {
+pub fn queue_form(document: &Document, buyer_nip: Option<BuyerNip>) -> Result<QueueForm, Error> {
     document
         .check()
         .map_err(|problem| Error::Invalid(format!("Nieprawidłowy dokument: {problem}.")))?;
@@ -309,7 +299,7 @@ pub fn queue_form(document: &Document, buyer_nip: Option<&BuyerNip>) -> Result<Q
         kind: document.kind,
         order_id: document.order_id,
         allocation_id: document.allocation_id,
-        buyer_nip: buyer_nip.map(|nip| nip.as_str().to_owned()),
+        buyer_nip,
     })
 }
 

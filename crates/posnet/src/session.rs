@@ -1,8 +1,7 @@
 //! One exclusive connection to the printer. No command is ever retried automatically.
 
 use std::{
-    fmt,
-    io::{self, Read as _, Write as _},
+    fmt, io,
     time::{Duration, Instant},
 };
 
@@ -45,7 +44,7 @@ impl Link for SerialLink {
     fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, Error> {
         let opened = serialport::new(port, baud_rate)
             .timeout(DEFAULT_TIMEOUT)
-            .open()
+            .open_native()
             .map_err(|source| Error::Open {
                 port: port.to_owned(),
                 source: source.into(),
@@ -71,9 +70,10 @@ pub fn serial_ports() -> Vec<String> {
     ports
 }
 
-pub(crate) struct SerialStream(pub(crate) Box<dyn SerialPort>);
+/// A native port (`TTYPort`/`COMPort`), so a session holds one trait object, not two.
+pub(crate) struct SerialStream<P>(pub(crate) P);
 
-impl Port for SerialStream {
+impl<P: SerialPort> Port for SerialStream<P> {
     fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
         self.0.set_timeout(timeout)?;
         self.0.write_all(bytes)?;

@@ -202,7 +202,8 @@ per VAT rate, each with quantity 1.
 `total` is the gross sum of line totals. `advances` contains `{vatSlot, vatRate, amount}`
 deductions (always empty for advance jobs), with at most one deduction per VAT slot;
 duplicate slots fail validation before fiscal commands. `payments` contains `{form, amount}`.
-Forms are `cash`, `card`, `transfer`, `mobile` and `credit`. Decimals are strings.
+Forms are `cash`, `card`, `transfer`, `mobile` and `credit`. Decimals are plain strings such as
+`12.50`: digits with an optional `.` fraction, no sign, exponent or digit grouping.
 Deploy the app with the matching backend; older protocol shapes are unsupported.
 
 The driver sends `trinit`, optional `trnipset`, `trline` for each line, `tradvance`
