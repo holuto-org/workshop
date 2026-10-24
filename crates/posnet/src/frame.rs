@@ -14,7 +14,7 @@ const CORRUPT: &str = "Uszkodzona odpowiedź drukarki (CRC lub kodowanie).";
 
 /// Reply parameters in device order, with unique keys.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Reply(Vec<(String, String)>);
+pub struct Reply(Vec<(String, String)>, Option<u32>);
 
 impl Reply {
     pub fn get(&self, key: &str) -> Option<&str> {
@@ -34,6 +34,20 @@ impl Reply {
 
     pub fn fields(&self) -> &[(String, String)] {
         &self.0
+    }
+
+    /// Correlate the envelope (including `@`) before attributing a device error.
+    pub(crate) fn into_result(self, command: &str) -> Result<Self, Error> {
+        if let Some(code) = self.1 {
+            let named = self.get("cm").unwrap_or(command);
+            return Err(Error::Device {
+                code,
+                command: named.to_owned(),
+                field: self.get("fd").unwrap_or_default().to_owned(),
+                rejected: command == "ERR",
+            });
+        }
+        Ok(self)
     }
 }
 
@@ -104,8 +118,15 @@ pub(crate) fn encode(command: &str, params: &[(&str, String)]) -> Result<Vec<u8>
     Ok(frame)
 }
 
+#[cfg(any(test, feature = "simulator"))]
 /// Error codes yield [`Error::Device`]; `ERR` without a code is a protocol error.
 pub(crate) fn decode(frame: &[u8]) -> Result<(String, Reply), Error> {
+    let (command, reply) = decode_response(frame)?;
+    reply.into_result(&command).map(|reply| (command, reply))
+}
+
+/// Keeps query tokens attached to errors until the session has correlated them.
+pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
     let body = frame
         .strip_prefix(&[STX])
         .and_then(|rest| rest.strip_suffix(&[ETX]))
@@ -132,10 +153,20 @@ pub(crate) fn decode(frame: &[u8]) -> Result<(String, Reply), Error> {
     let mut error = None;
     for field in fields.filter(|field| !field.is_empty()) {
         if let Some(code) = field.strip_prefix('?') {
+            if error.is_some() {
+                return Err(Error::Protocol(
+                    "Powtórzony kod błędu w odpowiedzi drukarki.".to_owned(),
+                ));
+            }
             error = Some(code.parse::<u32>().map_err(|parse| {
                 Error::Protocol(format!("Nieprawidłowy kod błędu drukarki: {parse}."))
             })?);
         } else if let Some(value) = field.strip_prefix('@') {
+            if reply.iter().any(|(key, _)| key == "@") {
+                return Err(Error::Protocol(
+                    "Powtórzony parametr w odpowiedzi drukarki.".to_owned(),
+                ));
+            }
             reply.push(("@".to_owned(), value.to_owned()));
         } else {
             let split = field.char_indices().nth(KEY_LENGTH - 1);
@@ -153,15 +184,8 @@ pub(crate) fn decode(frame: &[u8]) -> Result<(String, Reply), Error> {
             reply.push((key.to_owned(), value.to_owned()));
         }
     }
-    let reply = Reply(reply);
-    if let Some(code) = error {
-        return Err(Error::Device {
-            code,
-            command: reply.get("cm").unwrap_or(&command).to_owned(),
-            field: reply.get("fd").unwrap_or_default().to_owned(),
-        });
-    }
-    if command == "ERR" {
+    let reply = Reply(reply, error);
+    if command == "ERR" && error.is_none() {
         return Err(Error::Protocol(
             "Drukarka odrzuciła ramkę bez kodu błędu.".to_owned(),
         ));

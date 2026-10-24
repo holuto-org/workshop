@@ -3,6 +3,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
+    fmt::Write as _,
     io::{self, Read as _, Write as _},
     mem,
     net::{TcpListener, TcpStream},
@@ -27,20 +28,34 @@ use crate::{
 };
 
 pub const SERIAL: &str = "DEMO0000001";
-const POLL: Duration = Duration::from_millis(50);
+const POLL: Duration = Duration::from_millis(1);
 const DEFAULT_VAT: [&str; 7] = [
     "23,00", "8,00", "0,00", "101,00", "101,00", "101,00", "100,00",
 ];
 
 pub type Params = BTreeMap<String, String>;
 
-/// Replaces command execution with a simulated reply.
+/// Scripted command refusals, effects and reply failures.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
-    /// Execution error: `<command>\t?2000\t`.
+    /// Documented `ERR\t?2000\tcm<command>\tfd\t` refusal; no command effect.
     Error,
     /// Custom reply parameters; no command effect.
     Reply(Vec<(String, String)>),
+    /// Execute successfully, then discard the reply.
+    LoseReply,
+    /// Execute successfully, then return a reply with a bad CRC.
+    CorruptReply,
+    /// Execute successfully, then close the connection.
+    Disconnect,
+    /// Execute successfully, then emit `<command>\t?2000\t` (not an `ERR` rejection).
+    ExecutionError,
+    /// Documented error form, optionally naming a different command.
+    Device {
+        code: u32,
+        command: String,
+        field: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,6 +98,8 @@ struct State {
     header: String,
     vat: [String; 7],
     clock: Clock,
+    timestamp: Option<Timestamp>,
+    status: BTreeMap<String, String>,
     transaction_open: bool,
     footer_open: bool,
     lines: Vec<Params>,
@@ -95,6 +112,7 @@ struct State {
     frames: Vec<Vec<u8>>,
     faults: HashMap<String, Fault>,
     held: Option<Held>,
+    holding: Option<String>,
     paper_out: bool,
     out_of_paper_at: Option<String>,
 }
@@ -121,6 +139,7 @@ pub struct Simulator {
     address: String,
     state: Arc<Mutex<State>>,
     stop: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -154,6 +173,7 @@ impl Simulator {
             address,
             state,
             stop,
+            connected: Arc::new(AtomicBool::new(false)),
             thread: Some(thread),
         }
     }
@@ -173,6 +193,8 @@ impl Simulator {
             address: self.address.clone(),
             candidates,
             denied,
+            connected: Arc::clone(&self.connected),
+            state: Arc::clone(&self.state),
         })
     }
 
@@ -208,6 +230,20 @@ impl Simulator {
     /// `vatget` slots `va`–`vg`: e.g. `"23,00"`; `"101,00"` marks an unused slot.
     pub fn set_vat(&self, rates: [&str; 7]) {
         self.state().vat = rates.map(str::to_owned);
+    }
+
+    /// Freezes the printer clock, independently of host time and timezone.
+    pub fn set_clock(&self, timestamp: Timestamp) {
+        self.state().timestamp = Some(timestamp);
+    }
+
+    /// Overrides a status field in `sdev`, `sprn`, `scomm` or `strns`.
+    pub fn set_status(&self, field: &str, value: &str) {
+        drop(
+            self.state()
+                .status
+                .insert(field.to_owned(), value.to_owned()),
+        );
     }
 
     pub fn fault(&self, command: &str, fault: Fault) {
@@ -264,6 +300,8 @@ struct SimLink {
     address: String,
     candidates: Vec<String>,
     denied: Vec<String>,
+    connected: Arc<AtomicBool>,
+    state: Arc<Mutex<State>>,
 }
 
 impl Link for SimLink {
@@ -278,15 +316,60 @@ impl Link for SimLink {
         if port != self.address {
             return Err(refuse(io::ErrorKind::NotFound));
         }
-        let stream = TcpStream::connect(port).map_err(|source| Error::Open {
-            port: port.to_owned(),
-            source,
+        if self.connected.swap(true, Ordering::SeqCst) {
+            return Err(refuse(io::ErrorKind::PermissionDenied));
+        }
+        let stream = TcpStream::connect(port).map_err(|source| {
+            self.connected.store(false, Ordering::SeqCst);
+            Error::Open {
+                port: port.to_owned(),
+                source,
+            }
         })?;
-        Ok(Box::new(TcpPort(stream)))
+        stream.set_nodelay(true).map_err(Error::Io)?;
+        Ok(Box::new(SimPort {
+            inner: TcpPort(stream),
+            connected: Arc::clone(&self.connected),
+            state: Arc::clone(&self.state),
+        }))
     }
 
     fn candidates(&self) -> Vec<String> {
         self.candidates.clone()
+    }
+
+    fn time_scale(&self) -> u32 {
+        1000
+    }
+}
+
+struct SimPort {
+    inner: TcpPort,
+    connected: Arc<AtomicBool>,
+    state: Arc<Mutex<State>>,
+}
+
+impl Drop for SimPort {
+    fn drop(&mut self) {
+        self.connected.store(false, Ordering::SeqCst);
+    }
+}
+
+impl Port for SimPort {
+    fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
+        self.inner.write_all(bytes, timeout)
+    }
+
+    fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
+        self.inner.read(buffer, timeout)
+    }
+
+    fn operator_wait_limit(&self, scaled: Duration) -> Duration {
+        if lock(&self.state).holding.is_some() {
+            Duration::from_secs(600)
+        } else {
+            scaled
+        }
     }
 }
 
@@ -323,17 +406,18 @@ fn serve(listener: &TcpListener, state: &Mutex<State>, stop: &AtomicBool) {
         }
         if let Ok(stream) = stream {
             serve_session(stream, state, stop);
+            lock(state).holding = None;
         }
     }
 }
 
 fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool) {
-    if stream.set_read_timeout(Some(POLL)).is_err() {
+    if stream.set_read_timeout(Some(POLL)).is_err() || stream.set_nodelay(true).is_err() {
         return;
     }
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 4096];
-    let mut waiting = VecDeque::new();
+    let mut waiting = VecDeque::<(Vec<u8>, Option<Held>)>::new();
     while !stop.load(Ordering::SeqCst) {
         match stream.read(&mut chunk) {
             Ok(0) => return,
@@ -341,7 +425,9 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
             Err(error)
                 if matches!(
                     error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
                 ) => {},
             Err(_) => return,
         }
@@ -350,78 +436,128 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
         }
         while let Some(end) = buffer.iter().position(|byte| *byte == ETX) {
             let received: Vec<u8> = buffer.drain(..=end).collect();
-            if waits_for_paper(&received, state, !waiting.is_empty()) {
-                waiting.push_back(received);
-            } else if stream.write_all(&answer(&received, state)).is_err() {
+            lock(state).frames.push(received.clone());
+            let command = frame::decode(&received)
+                .ok()
+                .map(|(command, _)| command)
+                .unwrap_or_default();
+            let held = lock(state).held.take_if(|held| held.command == command);
+            if let Some(held) = &held {
+                lock(state).holding = Some(command.clone());
+                let _sent = held.reached.send(());
+            }
+            if !command.starts_with('!')
+                && (held.is_some() || waits_for_paper(&command, state, !waiting.is_empty()))
+            {
+                waiting.push_back((received, held));
+            } else if !deliver(&mut stream, answer(&received, state)) {
                 return;
             }
         }
-        while !waiting.is_empty() && !lock(state).paper_out {
-            let Some(received) = waiting.pop_front() else {
+        while let Some((_, held)) = waiting.front_mut() {
+            if let Some(gate) = held {
+                match gate.release.try_recv() {
+                    Ok(()) | Err(mpsc::TryRecvError::Disconnected) => {
+                        *held = None;
+                        lock(state).holding = None;
+                    },
+                    Err(mpsc::TryRecvError::Empty) => break,
+                }
+            }
+            if lock(state).paper_out {
+                break;
+            }
+            let Some((received, _)) = waiting.pop_front() else {
                 break;
             };
-            if stream.write_all(&answer(&received, state)).is_err() {
+            if !deliver(&mut stream, answer(&received, state)) {
                 return;
             }
         }
     }
 }
 
-/// Printing commands wait for paper, blocking queued commands (spec p. 15).
-/// Asynchronous `!` queries bypass the queue.
-fn waits_for_paper(received: &[u8], state: &Mutex<State>, queued: bool) -> bool {
-    let Ok((command, _)) = frame::decode(received) else {
-        return false;
-    };
-    if command.starts_with('!') {
-        return false;
-    }
+/// Printing commands wait for paper; asynchronous queries bypass the queue (spec p. 15).
+fn waits_for_paper(command: &str, state: &Mutex<State>, queued: bool) -> bool {
     if queued {
         return true;
     }
     let mut state = lock(state);
-    if state.out_of_paper_at.as_deref() == Some(command.as_str()) {
+    if state.out_of_paper_at.as_deref() == Some(command) {
         state.out_of_paper_at = None;
         state.paper_out = true;
     }
-    state.paper_out && state.query(&command).is_none()
+    state.paper_out && state.query(command).is_none()
 }
 
-fn answer(received: &[u8], state: &Mutex<State>) -> Vec<u8> {
-    lock(state).frames.push(received.to_vec());
-    let Ok((command, params)) = frame::decode(received) else {
-        return encoded("ERR\t?2000\t");
-    };
-    let held = lock(state).held.take_if(|held| held.command == command);
-    if let Some(held) = held {
-        let _sent = held.reached.send(());
-        let _released = held.release.recv();
+enum Answer {
+    Reply(Vec<u8>),
+    Silent,
+    Disconnect,
+}
+
+fn deliver(stream: &mut TcpStream, answer: Answer) -> bool {
+    match answer {
+        Answer::Reply(bytes) => stream.write_all(&bytes).is_ok(),
+        Answer::Silent => true,
+        Answer::Disconnect => false,
     }
-    let mut state = lock(state);
-    let outcome = match state.faults.get(&command).cloned() {
-        Some(Fault::Error) => Err(()),
-        Some(Fault::Reply(reply)) => Ok(reply),
-        None => state.handle(&command, &params),
+}
+
+fn answer(received: &[u8], state: &Mutex<State>) -> Answer {
+    let Ok((command, params)) = frame::decode(received) else {
+        return Answer::Reply(encoded("ERR\t?2000\t"));
     };
-    // Replies echo request tokens (spec p. 92).
-    let mut payload = command;
+    let mut state = lock(state);
+    let fault = state.faults.get(&command).cloned();
+    let outcome = match &fault {
+        Some(Fault::Error | Fault::Device { .. }) => Err(()),
+        Some(Fault::Reply(reply)) => Ok(reply.clone()),
+        _ => state.handle(&command, &params),
+    };
+    let execution_error = fault == Some(Fault::ExecutionError);
+    let mut payload = if outcome.is_err() && !execution_error {
+        "ERR".to_owned()
+    } else {
+        command.clone()
+    };
     payload.push('\t');
     if let Some(token) = params.get("@") {
         payload.push('@');
         payload.push_str(token);
         payload.push('\t');
     }
-    match outcome {
-        Ok(reply) => {
-            for (key, value) in reply {
-                payload.push_str(&key);
-                payload.push_str(&value);
-                payload.push('\t');
-            }
-        },
-        Err(()) => payload.push_str("?2000\t"),
+    if execution_error {
+        payload.push_str("?2000\t");
+    } else if let Ok(reply) = outcome {
+        for (key, value) in reply {
+            payload.push_str(&key);
+            payload.push_str(&value);
+            payload.push('\t');
+        }
+    } else {
+        let (code, named, field) = match &fault {
+            Some(Fault::Device {
+                code,
+                command,
+                field,
+            }) => (*code, command.as_str(), field.as_str()),
+            _ => (2000, command.as_str(), ""),
+        };
+        let _written = write!(payload, "?{code:04}\tcm{named}\tfd{field}\t");
     }
-    encoded(&payload)
+    match fault {
+        Some(Fault::LoseReply) => Answer::Silent,
+        Some(Fault::Disconnect) => Answer::Disconnect,
+        Some(Fault::CorruptReply) => {
+            let mut bytes = encoded(&payload);
+            if let Some(byte) = bytes.get_mut(1) {
+                *byte ^= 1;
+            }
+            Answer::Reply(bytes)
+        },
+        _ => Answer::Reply(encoded(&payload)),
+    }
 }
 
 /// Reply values allow line feeds (headers), unlike outgoing command values.
@@ -460,20 +596,27 @@ impl State {
     }
 
     fn query(&self, command: &str) -> Option<Vec<(String, String)>> {
-        Some(match command {
+        let mut fields = match command {
             "getrealid" => reply(&[
                 ("nm", "POSNET TEMO ONLINE"),
                 ("vr", "32.01"),
                 ("nu", SERIAL),
             ]),
             // `!`-prefixed queries run asynchronously (spec pp. 384-385).
-            "sdev" | "!sdev" => reply(&[("ds", "0"), ("cp", "1"), ("qe", "1"), ("pe", "0")]),
+            "sdev" | "!sdev" => reply(&[
+                ("ds", if self.holding.is_some() { "2" } else { "0" }),
+                ("cp", "1"),
+                ("qe", "1"),
+                ("pe", "0"),
+                ("tl", "0"),
+            ]),
             "sprn" | "!sprn" => reply(&[("pr", if self.paper_out { "5" } else { "0" })]),
             "scomm" => reply(&[
                 ("fs", "1"),
                 ("tz", "0"),
                 ("ts", if self.transaction_open { "16" } else { "0" }),
                 ("hr", "1"),
+                ("td", "0"),
                 ("nu", SERIAL),
             ]),
             "strns" => reply(&[
@@ -488,15 +631,27 @@ impl State {
                 .zip(&self.vat)
                 .map(|(key, rate)| ((*key).to_owned(), rate.clone()))
                 .collect(),
-            "rtcget" => vec![(
-                "da".to_owned(),
-                Timestamp::now()
-                    .to_zoned(self.clock.0.clone())
-                    .strftime("%Y-%m-%d;%H:%M")
-                    .to_string(),
-            )],
+            "rtcget" => {
+                let time = self
+                    .timestamp
+                    .unwrap_or_else(Timestamp::now)
+                    .to_zoned(self.clock.0.clone());
+                vec![
+                    ("da".to_owned(), time.strftime("%Y-%m-%d;%H:%M").to_string()),
+                    (
+                        "tm".to_owned(),
+                        time.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+                    ),
+                ]
+            },
             _ => return None,
-        })
+        };
+        for (key, value) in &mut fields {
+            if let Some(override_value) = self.status.get(key) {
+                value.clone_from(override_value);
+            }
+        }
+        Some(fields)
     }
 
     fn handle(&mut self, command: &str, reply_params: &Reply) -> Result<Vec<(String, String)>, ()> {
@@ -621,3 +776,6 @@ impl State {
         Ok(Vec::new())
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,72 +1,411 @@
-use std::{fs, path::Path};
-
-use tempfile::TempDir;
+#[cfg(target_os = "linux")]
+use std::ffi::OsStr;
+use std::{
+    env,
+    error::Error as StdError,
+    fs::{self, File},
+    io::{self, BufRead as _, BufReader, Read as _, Write as _},
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 use super::{StateDir, write_durably};
 use crate::Error;
 
-#[test]
-fn a_second_instance_is_refused_until_the_first_is_gone() {
-    let temporary = TempDir::new().unwrap();
-    let path = temporary.path().join("state");
-    let first = StateDir::open(path.clone()).unwrap();
-    assert!(
-        matches!(StateDir::open(path.clone()), Err(Error::Blocked(message)) if message.contains("już działa"))
-    );
-    drop(first);
-    let _second = StateDir::open(path).unwrap();
+type TestResult = Result<(), Box<dyn StdError>>;
+
+fn child(test: &str) -> Result<Command, Box<dyn StdError>> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "State-path and lock tests isolate environment in the current test binary."
+    )]
+    let mut command = Command::new(env::current_exe()?);
+    let _command = command.args([test, "--exact", "--nocapture"]);
+    Ok(command)
+}
+
+fn assert_child(command: &mut Command) -> TestResult {
+    let output = command.output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() && stdout.contains("1 passed") {
+        Ok(())
+    } else {
+        Err(format!("child test failed or filter matched nothing:\n{stdout}\n{stderr}").into())
+    }
 }
 
 #[test]
-fn a_durable_write_replaces_the_whole_file() {
-    let temporary = TempDir::new().unwrap();
-    let path = temporary.path().join("file.json");
-    write_durably(&path, b"first, longer content").unwrap();
-    write_durably(&path, b"second").unwrap();
-    assert_eq!(fs::read(&path).unwrap(), b"second");
-    let leftovers = fs::read_dir(temporary.path()).unwrap().count();
-    assert_eq!(leftovers, 1, "no temporary file stays behind");
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn another_process_cannot_open_state_until_the_holder_releases_it() -> TestResult {
+    const PATH: &str = "HOLUTO_TEST_LOCK_PATH";
+    const BLOCKED: &str = "HOLUTO_TEST_LOCK_BLOCKED";
+    if let Some(path) = env::var_os(PATH) {
+        let path = PathBuf::from(path);
+        if env::var_os(BLOCKED).is_some() {
+            let expected = format!(
+                "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
+                path.display()
+            );
+            assert!(
+                matches!(StateDir::open(path), Err(Error::Blocked(message)) if message == expected),
+                "a competing process must receive the exact lock refusal"
+            );
+        } else {
+            let _dir = StateDir::open(path)?;
+        }
+        return Ok(());
+    }
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("Zażółć gęślą jaźń");
+    let dir = StateDir::open(path.clone())?;
+    let mut blocked =
+        child("store::tests::another_process_cannot_open_state_until_the_holder_releases_it")?;
+    let _command = blocked.env(PATH, &path).env(BLOCKED, "1");
+    assert_child(&mut blocked)?;
+    drop(dir);
+    let mut released =
+        child("store::tests::another_process_cannot_open_state_until_the_holder_releases_it")?;
+    let _command = released.env(PATH, &path).env_remove(BLOCKED);
+    assert_child(&mut released)
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn atomic_replacement_keeps_an_open_reader_on_the_previous_complete_file() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("Zażółć – ustawienia.json");
+    write_durably(&path, b"first, longer content")?;
+    let mut reader = File::open(&path)?;
+    write_durably(&path, b"second")?;
+    let mut previous = Vec::new();
+    #[expect(
+        clippy::verbose_file_reads,
+        reason = "This test must read the already-open old handle, not reopen the replaced path."
+    )]
+    let _bytes = reader.read_to_end(&mut previous)?;
+    assert_eq!(
+        previous, b"first, longer content",
+        "an already-open reader never sees torn replacement content"
+    );
+    assert_eq!(
+        fs::read(&path)?,
+        b"second",
+        "new readers see the complete replacement"
+    );
+    let names = fs::read_dir(temporary.path())?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        names,
+        [path.file_name().ok_or("missing filename")?.to_os_string()],
+        "successful replacement leaves no staging files"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn failed_replacement_preserves_the_original_target() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("settings.json");
+    fs::create_dir(&path)?;
+    fs::write(path.join("evidence"), b"keep this")?;
+    assert!(
+        write_durably(&path, b"replacement").is_err(),
+        "replacing a directory must fail without permission tricks"
+    );
+    assert_eq!(
+        fs::read(path.join("evidence"))?,
+        b"keep this",
+        "failed writes preserve the previous target"
+    );
+    assert_eq!(
+        fs::read_dir(temporary.path())?.count(),
+        1,
+        "failed writes clean their staging directory"
+    );
+    Ok(())
 }
 
 #[cfg(unix)]
 #[test]
-fn state_is_private_to_the_user() {
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn existing_state_and_lock_are_tightened_before_use() -> TestResult {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let temporary = TempDir::new().unwrap();
-    let dir = StateDir::open(temporary.path().join("state")).unwrap();
-    let file = dir.file("settings.json");
-    write_durably(&file, b"{}").unwrap();
-    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode(dir.path()), 0o700);
-    assert_eq!(mode(&file), 0o600);
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("state");
+    fs::create_dir(&path)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
+    fs::write(path.join("instance.lock"), b"")?;
+    fs::set_permissions(
+        path.join("instance.lock"),
+        fs::Permissions::from_mode(0o644),
+    )?;
+    let dir = StateDir::open(path)?;
+    write_durably(&dir.file("settings.json"), b"{}")?;
+    assert_eq!(
+        fs::metadata(dir.path())?.permissions().mode() & 0o777,
+        0o700,
+        "existing state must become private too"
+    );
+    assert_eq!(
+        fs::metadata(dir.file("instance.lock"))?
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600,
+        "existing instance lock must become private"
+    );
+    assert_eq!(
+        fs::metadata(dir.file("settings.json"))?
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600,
+        "atomic files remain private"
+    );
+    Ok(())
 }
 
-/// A fresh journal and lock would bypass unresolved operations.
-/// Set the override in a child process because `set_var` is unsafe and forbidden here.
-#[cfg(windows)]
+#[cfg(unix)]
 #[test]
-fn the_windows_state_directory_ignores_an_overridden_localappdata() {
-    use std::{env, process::Command};
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn newly_created_state_and_instance_lock_are_private() -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
 
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("nested/stan"))?;
+    assert_eq!(
+        fs::metadata(dir.path())?.permissions().mode() & 0o777,
+        0o700,
+        "new state directory is owner-only"
+    );
+    assert_eq!(
+        fs::metadata(dir.file("instance.lock"))?
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600,
+        "new lock is owner-only regardless of umask"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn linux_uses_absolute_xdg_state_or_falls_back_to_home() -> TestResult {
     const EXPECTED: &str = "HOLUTO_TEST_EXPECTED_STATE_DIR";
     if let Some(expected) = env::var_os(EXPECTED) {
-        assert_eq!(StateDir::default_path().unwrap(), Path::new(&expected));
-        return;
+        assert_eq!(
+            StateDir::default_path(),
+            Some(PathBuf::from(expected)),
+            "Linux must not open a second journal through relative overrides"
+        );
+        return Ok(());
     }
-    let child = Command::new(env::current_exe().unwrap())
-        .args([
-            "store::tests::the_windows_state_directory_ignores_an_overridden_localappdata",
-            "--exact",
-        ])
-        .env(EXPECTED, StateDir::default_path().unwrap())
-        .env("LOCALAPPDATA", r"C:\overridden")
-        .output()
-        .unwrap();
-    let report = String::from_utf8_lossy(&child.stdout);
-    // An unmatched test filter also exits successfully.
+    let temporary = tempfile::tempdir()?;
+    let home = temporary.path().join("Dom – Łódź");
+    let xdg = temporary.path().join("Stan – Żółć");
+    for (override_value, expected) in [
+        (Some(xdg.as_os_str()), xdg.join("workshop")),
+        (
+            Some(OsStr::new("relative")),
+            home.join(".local/state/workshop"),
+        ),
+        (Some(OsStr::new("")), home.join(".local/state/workshop")),
+        (None, home.join(".local/state/workshop")),
+    ] {
+        let mut command =
+            child("store::tests::linux_uses_absolute_xdg_state_or_falls_back_to_home")?;
+        let _command = command.env("HOME", &home).env(EXPECTED, expected);
+        if let Some(value) = override_value {
+            let _command = command.env("XDG_STATE_HOME", value);
+        } else {
+            let _command = command.env_remove("XDG_STATE_HOME");
+        }
+        assert_child(&mut command)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn macos_uses_home_application_support_and_ignores_xdg() -> TestResult {
+    const EXPECTED: &str = "HOLUTO_TEST_EXPECTED_STATE_DIR";
+    if let Some(expected) = env::var_os(EXPECTED) {
+        assert_eq!(
+            StateDir::default_path(),
+            Some(PathBuf::from(expected)),
+            "macOS state belongs in Application Support"
+        );
+        return Ok(());
+    }
+    let temporary = tempfile::tempdir()?;
+    let home = temporary.path().join("Dom – Łódź");
+    let mut command = child("store::tests::macos_uses_home_application_support_and_ignores_xdg")?;
+    let _command = command
+        .env("HOME", &home)
+        .env("XDG_STATE_HOME", temporary.path().join("ignored"))
+        .env(EXPECTED, home.join("Library/Application Support/workshop"));
+    assert_child(&mut command)
+}
+
+#[cfg(windows)]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn windows_uses_the_known_folder_and_ignores_localappdata() -> TestResult {
+    const EXPECTED: &str = "HOLUTO_TEST_EXPECTED_STATE_DIR";
+    if let Some(expected) = env::var_os(EXPECTED) {
+        assert_eq!(
+            StateDir::default_path(),
+            Some(PathBuf::from(expected)),
+            "environment overrides cannot move the Windows fiscal journal"
+        );
+        return Ok(());
+    }
+    let expected = known_folders::get_known_folder_path(known_folders::KnownFolder::LocalAppData)
+        .ok_or("LocalAppData Known Folder unavailable")?
+        .join("workshop");
+    let temporary = tempfile::tempdir()?;
+    let mut command =
+        child("store::tests::windows_uses_the_known_folder_and_ignores_localappdata")?;
+    let _command = command
+        .env("LOCALAPPDATA", temporary.path().join("Fałszywy katalog"))
+        .env(EXPECTED, expected);
+    assert_child(&mut command)
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn a_process_exit_releases_its_instance_lock() -> TestResult {
+    const PATH: &str = "HOLUTO_TEST_EXIT_LOCK_PATH";
+    if let Some(path) = env::var_os(PATH) {
+        let _dir = StateDir::open(PathBuf::from(path))?;
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(b"HOLUTO_LOCK_HELD\n")?;
+        stdout.flush()?;
+        let mut byte = [0];
+        let _read = io::stdin().read(&mut byte)?;
+        return Ok(());
+    }
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("Stan – Łódź");
+    let mut command = child("store::tests::a_process_exit_releases_its_instance_lock")?;
+    let _command = command
+        .env(PATH, &path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    let mut holder = command.spawn()?;
+    let stdout = holder.stdout.take().ok_or("child stdout unavailable")?;
+    let mut output = BufReader::new(stdout);
+    let mut line = String::new();
+    loop {
+        if output.read_line(&mut line)? == 0 {
+            let _status = holder.wait()?;
+            return Err("lock holder exited before its readiness signal".into());
+        }
+        if line.contains("HOLUTO_LOCK_HELD") {
+            break;
+        }
+        line.clear();
+    }
+    let blocked = StateDir::open(path.clone());
+    holder.kill()?;
+    let status = holder.wait()?;
     assert!(
-        child.status.success() && report.contains("1 passed"),
-        "the child saw a different state directory:\n{report}"
+        !status.success(),
+        "the holder must exit abruptly, without dropping StateDir normally"
     );
+    assert!(
+        matches!(blocked, Err(Error::Blocked(_))),
+        "a lock held by another process must exclude this process"
+    );
+    let _recovered = StateDir::open(path)?;
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn a_second_open_in_the_same_process_cannot_bypass_the_instance_lock() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("state");
+    let dir = StateDir::open(path.clone())?;
+    assert!(StateDir::is_locked(&path)?);
+    let expected = format!(
+        "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
+        path.display()
+    );
+    assert!(
+        matches!(StateDir::open(path.clone()), Err(Error::Blocked(message)) if message == expected),
+        "opening a second handle must not bypass the lock"
+    );
+    drop(dir);
+    assert!(!StateDir::is_locked(&path)?);
+    let _reopened = StateDir::open(path)?;
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "boundary assertions panic while setup uses Result"
+)]
+fn lock_status_does_not_create_missing_state_or_lock() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("absent");
+    assert!(!StateDir::is_locked(&path)?);
+    assert!(!path.exists());
+    fs::create_dir(&path)?;
+    assert!(!StateDir::is_locked(&path)?);
+    assert!(!path.join("instance.lock").exists());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "boundary assertions panic while setup uses Result"
+)]
+fn simulator_and_production_default_paths_are_distinct() -> TestResult {
+    let production = StateDir::default_path().ok_or("no default state directory")?;
+    assert_eq!(StateDir::default_path_for(false), Some(production.clone()));
+    assert_eq!(
+        StateDir::default_path_for(true),
+        Some(production.with_file_name("workshop-simulator"))
+    );
+    Ok(())
 }

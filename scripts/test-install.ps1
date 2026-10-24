@@ -1,0 +1,150 @@
+# Run with Windows PowerShell 5.1 or pwsh; no Pester dependency or installation.
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 2.0
+$installer = Join-Path $PSScriptRoot 'install.ps1'
+. $installer
+
+function Assert-True {
+    param([bool]$Condition, [string]$Message)
+    if (-not $Condition) { throw $Message }
+}
+
+function Assert-Throws {
+    param([scriptblock]$Action, [string]$Pattern)
+    try { & $Action } catch {
+        if ($_.Exception.Message -notmatch $Pattern) {
+            throw "Unexpected failure: $($_.Exception.Message)"
+        }
+        return
+    }
+    throw "Expected failure matching: $Pattern"
+}
+
+# Only external platform discovery is replaced; platform decisions stay real.
+$script:fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('holuto-dry-run-test-' + [Guid]::NewGuid().ToString('N'))
+$script:platform = @{
+    Platform = [PlatformID]::Win32NT
+    Version = [Version]'10.0.19045'
+    NativeArchitectures = @(9)
+    ProcessorArchitecture = 'AMD64'
+    Wow64Architecture = ''
+    IsAdministrator = $false
+    LocalAppData = Join-Path $script:fixtureRoot 'LocalAppData'
+    Programs = Join-Path $script:fixtureRoot 'Programs'
+}
+function Get-HolutoPlatform { return $script:platform }
+$script:latestRequests = 0
+function Get-HolutoLatestRelease { $script:latestRequests++; return 'v1.2.3' }
+function Invoke-WebRequest { throw 'Unexpected download during dry-run' }
+function Get-Process { throw 'Unexpected process inspection during dry-run' }
+function New-Item { throw 'Unexpected write during dry-run' }
+function Copy-Item { throw 'Unexpected write during dry-run' }
+function Set-Content { throw 'Unexpected write during dry-run' }
+
+# A wrong branch here would download, write, or choose a different asset/tag.
+$userPathBefore = [Environment]::GetEnvironmentVariable('Path', 'User')
+$processPathBefore = [Environment]::GetEnvironmentVariable('Path', 'Process')
+$output = (Invoke-HolutoInstall -Release 'v1.2.3' -DryRun | Out-String)
+Assert-True ($output.Contains('https://github.com/holuto-org/workshop/releases/download/v1.2.3/workshop-win-x64.exe')) 'Dry-run did not pin the exact asset URL'
+Assert-True ($output.Contains('SHA256SUMS.txt')) 'Dry-run omitted checksum verification'
+Assert-True ($output.Contains('--signer-workflow holuto-org/workshop/.github/workflows/release.yml')) 'Dry-run omitted signer restriction'
+Assert-True ($output.Contains('workshop.exe')) 'Dry-run omitted install target'
+Assert-True ($output.Contains('Holuto Workshop.lnk')) 'Dry-run omitted renamed shortcut'
+Assert-True ($output.Contains('user PATH')) 'Dry-run omitted user PATH mutation'
+Assert-True ($output.Contains('Zone.Identifier')) 'Dry-run omitted retained Internet zone'
+Assert-True (-not (Test-Path -LiteralPath $script:fixtureRoot)) 'Dry-run wrote its install directory'
+Assert-True ($script:latestRequests -eq 0) 'Pinned dry-run resolved latest'
+$output = (Invoke-HolutoInstall -DryRun | Out-String)
+Assert-True ($script:latestRequests -eq 1) 'Default release must resolve latest exactly once'
+Assert-True ($output.Contains('/download/v1.2.3/workshop-win-x64.exe')) 'Latest was not pinned'
+Assert-True ([Environment]::GetEnvironmentVariable('Path', 'User') -ceq $userPathBefore) 'Dry-run changed user PATH'
+Assert-True ([Environment]::GetEnvironmentVariable('Path', 'Process') -ceq $processPathBefore) 'Dry-run changed process PATH'
+
+foreach ($release in @('', 'latest', '1.2.3', 'V1.2.3', 'v1.2', 'v01.2.3', 'v1.02.3', 'v1.2.03', 'v1.2.3/other', 'v1.2.3?x=1', 'v1.2.3-rc1', "v1.2.3`n")) {
+    Assert-Throws { & $installer -Release $release -DryRun } 'Release|pattern|validate'
+}
+Assert-Throws { & $installer -UnknownOption -DryRun } 'parameter|argument'
+Assert-Throws { & $installer 'v1.2.3' -DryRun } 'positional|parameter|argument'
+
+# Each fixture changes one native safety condition, including ARM x64 emulation.
+foreach ($case in @(
+    @{ Key = 'Platform'; Value = [PlatformID]::Unix; Error = 'Windows' },
+    @{ Key = 'Version'; Value = [Version]'6.3.9600'; Error = 'Windows 10' },
+    @{ Key = 'NativeArchitectures'; Value = @(12); Error = 'x64' },
+    @{ Key = 'NativeArchitectures'; Value = @(0); Error = 'x64' },
+    @{ Key = 'NativeArchitectures'; Value = @(); Error = 'x64' },
+    @{ Key = 'Wow64Architecture'; Value = 'ARM64'; Error = 'x64' },
+    @{ Key = 'ProcessorArchitecture'; Value = 'ARM64'; Error = 'x64' }
+)) {
+    $saved = $script:platform[$case.Key]
+    try {
+        $script:platform[$case.Key] = $case.Value
+        Assert-Throws { Invoke-HolutoInstall -Release 'v1.2.3' -DryRun } $case.Error
+    } finally { $script:platform[$case.Key] = $saved }
+}
+$script:platform.ProcessorArchitecture = 'x86'
+$script:platform.Wow64Architecture = 'AMD64'
+Invoke-HolutoInstall -Release 'v1.2.3' -DryRun | Out-Null
+$script:platform.ProcessorArchitecture = 'AMD64'
+$script:platform.Wow64Architecture = ''
+Assert-True (-not (Test-Path -LiteralPath $script:fixtureRoot)) 'Platform tests wrote installation files'
+$script:platform.IsAdministrator = $true
+try {
+    Assert-Throws { Invoke-HolutoInstall -Release 'v1.2.3' } 'administrator|elevated'
+    $output = (Invoke-HolutoInstall -Release 'v0.0.0' -DryRun | Out-String)
+    Assert-True ($output.Contains('actual installation requires a non-elevated PowerShell')) 'Elevated dry-run omitted non-admin requirement'
+} finally { $script:platform.IsAdministrator = $false }
+
+$asset = 'workshop-win-x64.exe'
+$digest = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+Assert-True ((Get-HolutoExpectedHash -ManifestText "$digest  $asset`n" -Asset $asset) -ceq $digest) 'Valid manifest entry was rejected'
+Assert-True ((Get-HolutoExpectedHash -ManifestText "$($digest.ToUpperInvariant()) *$asset`r`n" -Asset $asset) -ceq $digest) 'Binary CRLF manifest entry was rejected'
+foreach ($manifest in @(
+    "$digest  other.exe`n",
+    "$digest  $asset`n$digest  $asset`n",
+    "$($digest.Substring(1))  $asset`n",
+    "$('z' * 64)  $asset`n",
+    "$digest  ./$asset`n",
+    "$digest  $asset.extra`n",
+    "$digest  $asset`ninvalid  $asset`n"
+)) {
+    Assert-Throws { Get-HolutoExpectedHash -ManifestText $manifest -Asset $asset } 'manifest|SHA256SUMS'
+}
+
+# Exercise redirect validation without network: only an exact repository tag is trusted.
+Assert-True ((Get-HolutoReleaseFromRedirect -Location '/holuto-org/workshop/releases/tag/v2.3.4') -ceq 'v2.3.4') 'Relative GitHub redirect rejected'
+Assert-True ((Get-HolutoReleaseFromRedirect -Location 'https://github.com/holuto-org/workshop/releases/tag/v2.3.4') -ceq 'v2.3.4') 'Absolute GitHub redirect rejected'
+foreach ($location in @(
+    'https://evil.example/holuto-org/workshop/releases/tag/v2.3.4',
+    'http://github.com/holuto-org/workshop/releases/tag/v2.3.4',
+    '/other/workshop/releases/tag/v2.3.4',
+    '/holuto-org/workshop/releases/tag/v2.3.4?extra=1',
+    '/holuto-org/workshop/releases/tag/v2.3.4-rc1'
+)) {
+    Assert-Throws { Get-HolutoReleaseFromRedirect -Location $location } 'redirect|release'
+}
+
+# PATH changes preserve the original spelling/order and are idempotent.
+$directory = 'C:\Users\Alice\AppData\Local\Programs\Holuto Workshop'
+Assert-True ((Get-HolutoPathWithDirectory -Path '' -Directory $directory) -ceq $directory) 'Empty PATH was not initialized'
+$original = 'C:\Tools;;C:\Other\;'
+Assert-True ((Get-HolutoPathWithDirectory -Path $original -Directory $directory) -ceq ($original + $directory)) 'Existing PATH entries were not preserved'
+$existing = 'C:\Tools;"c:\USERS\alice\AppData\Local\Programs\HOLUTO WORKSHOP\";C:\Other'
+Assert-True ((Get-HolutoPathWithDirectory -Path $existing -Directory $directory) -ceq $existing) 'Equivalent PATH directory was duplicated'
+$once = Get-HolutoPathWithDirectory -Path 'C:\Tools' -Directory $directory
+Assert-True ((Get-HolutoPathWithDirectory -Path $once -Directory $directory) -ceq 'C:\Tools;C:\Users\Alice\AppData\Local\Programs\Holuto Workshop') 'Repeated PATH update was not idempotent'
+
+# Both the renamed binary and the previous app must be shut down, never killed.
+$script:processes = @()
+function Get-Process { return $script:processes }
+foreach ($name in @('workshop', 'workshop-win-x64')) {
+    $script:processes = @([pscustomobject]@{ ProcessName = $name })
+    Assert-Throws { Assert-HolutoNotRunning } 'running.*Quit'
+}
+$script:processes = @([pscustomobject]@{ ProcessName = 'unrelated' })
+Assert-HolutoNotRunning
+
+Write-Output 'PowerShell installer tests passed (no application run, network, or install writes).'

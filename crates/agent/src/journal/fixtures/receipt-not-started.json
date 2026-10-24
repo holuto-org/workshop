@@ -1,0 +1,12 @@
+{
+  "receipt": {
+    "job_id": "00000000-0000-0000-0000-000000000001",
+    "attempt": "00000000-0000-0000-0000-000000000002",
+    "issued_at": "2026-10-16T10:00:00Z",
+    "device_serial": "POSNET-123456",
+    "device": "not_started",
+    "summary": null,
+    "result": null,
+    "settled": null
+  }
+}

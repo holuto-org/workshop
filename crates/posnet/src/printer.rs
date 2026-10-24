@@ -213,6 +213,7 @@ impl Printer {
     }
 
     /// Rechecks identity, readiness and expected VAT table in the printing session.
+    #[tracing::instrument(skip_all, fields(sentry.op = "device.receipt"))]
     pub fn print_receipt(
         &self,
         receipt: &Receipt,
@@ -251,12 +252,14 @@ impl Printer {
             .ok()
             .and_then(|counters| counters.get("bt").map(str::to_owned))
             .filter(|number| !number.is_empty());
+        tracing::info!("Receipt printed");
         Ok(Printed {
             receipt_number,
             issued_at,
         })
     }
 
+    #[tracing::instrument(skip_all, fields(sentry.op = "device.report", report = report.label()))]
     pub fn print_report(
         &self,
         report: Report,
@@ -311,7 +314,9 @@ impl Printer {
                 timeout: PERIODIC_REPORT_TIMEOUT,
             },
         };
-        dispatch(&mut session, &[step], journal)
+        dispatch(&mut session, &[step], journal)?;
+        tracing::info!("Report printed");
+        Ok(())
     }
 
     fn session(&self) -> Result<Session, Error> {
@@ -319,8 +324,7 @@ impl Printer {
     }
 }
 
-/// After the first journal entry, failures are uncertain: earlier commands may have changed state.
-/// A refused `trinit` is certain: no transaction opened, so no receipt exists.
+/// After dispatch, failures are uncertain unless no fiscal record can have been issued.
 fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) -> Result<(), Error> {
     for (index, step) in steps.iter().enumerate() {
         if let Err(error) = journal.dispatching(step.command) {
@@ -332,16 +336,23 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
         }
         match execute(session, step, journal) {
             Ok(_reply) => {},
-            Err(error) if index == 0 && refuses_trinit(&error, step.command) => return Err(error),
+            Err(error) if index == 0 && refusal_is_certain(&error, step.command) => {
+                return Err(error);
+            },
             Err(error) => return Err(uncertain(error)),
         }
     }
     Ok(())
 }
 
-/// A refusal must name `trinit`; late errors for other commands prove nothing about this one.
-fn refuses_trinit(error: &Error, sent: &str) -> bool {
-    sent == "trinit" && refuses(error, sent)
+fn refusal_is_certain(error: &Error, sent: &str) -> bool {
+    // A trinit error cannot have issued a receipt: only trend makes the fiscal record.
+    // Any transaction left open is refused by the next preflight; never reissue this command.
+    // Reports ARE the fiscal record, so only an ERR frame rejection (spec pp. 13–15) is certain.
+    refuses(error, sent)
+        && (sent == "trinit"
+            || (matches!(sent, "dailyrep" | "monthlyrep" | "periodicrepbydates")
+                && matches!(error, Error::Device { rejected: true, .. })))
 }
 
 fn refuses(error: &Error, sent: &str) -> bool {
@@ -349,6 +360,7 @@ fn refuses(error: &Error, sent: &str) -> bool {
 }
 
 fn uncertain(error: Error) -> Error {
+    tracing::error!("Printer operation has an uncertain outcome");
     Error::Uncertain(Box::new(error))
 }
 
@@ -359,36 +371,54 @@ fn uncertain(error: Error) -> Error {
 fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Result<Reply, Error> {
     let command = step.command;
     let mut deadline = session.send(command, &step.params, step.timeout)?;
-    let mut since: Option<Instant> = None;
+    let mut since: Option<(Instant, Duration)> = None;
     let mut shown: Option<String> = None;
-    let answered = loop {
-        match session.receive(command, deadline) {
-            Err(Error::Timeout(_)) => {},
-            answered => break answered,
-        }
-        match watch(session, command)? {
-            Watch::Answered(answered) => break answered,
-            Watch::Waiting(problem) => {
-                if since.get_or_insert_with(Instant::now).elapsed() >= OPERATOR_WAIT {
+    let answered = (|| {
+        loop {
+            let cap = since.map(|(since, limit)| since + limit);
+            if let Some(cap) = cap {
+                if Instant::now() >= cap {
                     return Err(Error::Timeout(command));
                 }
-                if shown.as_ref() != Some(&problem) {
-                    journal.waiting(Some(&problem));
-                    shown = Some(problem);
-                }
-                deadline = Instant::now() + WATCH_INTERVAL;
-            },
-            // After intervention, execution may need the full step timeout.
-            Watch::Ready if since.take().is_some() => {
-                shown = None;
-                journal.waiting(None);
-                deadline = Instant::now() + step.timeout;
-            },
-            Watch::Ready | Watch::Unanswered => return Err(Error::Timeout(command)),
+                deadline = deadline.min(cap);
+            }
+            match session.receive(command, deadline) {
+                Err(Error::Timeout(_)) => {
+                    tracing::debug!(command, "Printer reply deadline elapsed");
+                },
+                answered => break answered,
+            }
+            match watch(session, command, cap)? {
+                Watch::Answered(answered) => break answered,
+                Watch::Waiting(problem) => {
+                    let (since, limit) = since.get_or_insert_with(|| {
+                        (Instant::now(), session.operator_wait_limit(OPERATOR_WAIT))
+                    });
+                    if since.elapsed() >= *limit {
+                        return Err(Error::Timeout(command));
+                    }
+                    if shown.as_ref() != Some(&problem) {
+                        tracing::warn!(command, "Printer needs operator intervention");
+                        journal.waiting(Some(&problem));
+                        shown = Some(problem);
+                    }
+                    deadline = Instant::now() + session.timeout(WATCH_INTERVAL);
+                },
+                Watch::Ready if shown.is_some() => {
+                    shown = None;
+                    journal.waiting(None);
+                    tracing::info!(command, "Printer resumed after operator intervention");
+                    deadline = Instant::now() + session.timeout(step.timeout);
+                },
+                Watch::Ready | Watch::Unanswered => return Err(Error::Timeout(command)),
+            }
         }
-    };
+    })();
     if shown.is_some() {
         journal.waiting(None);
+    }
+    if let Err(Error::Device { code, .. }) = &answered {
+        tracing::warn!(command, device_error_code = code, "Printer refused command");
     }
     answered
 }
@@ -404,42 +434,41 @@ enum Watch {
 
 /// `!sprn` and `!sdev` answer during execution (spec p. 15).
 /// Echoed tokens distinguish their replies (p. 11).
-fn watch(session: &mut Session, command: &'static str) -> Result<Watch, Error> {
+fn watch(
+    session: &mut Session,
+    command: &'static str,
+    cap: Option<Instant>,
+) -> Result<Watch, Error> {
     let mechanism_token = query(session, "!sprn")?;
     let device_token = query(session, "!sdev")?;
-    let deadline = Instant::now() + DEFAULT_TIMEOUT;
+    let deadline = Instant::now() + session.timeout(DEFAULT_TIMEOUT);
+    let deadline = cap.map_or(deadline, |cap| deadline.min(cap));
     let (mut mechanism, mut device, mut answered) = (None, None, None);
     let mut outstanding = 2_u8;
     while outstanding > 0 {
         let (name, reply) = match session.next_frame(command, deadline) {
             Ok(frame) => frame,
             Err(Error::Timeout(_)) => break,
-            Err(error @ Error::Device { .. }) if refuses(&error, command) => {
-                answered = Some(Err(error));
-                continue;
-            },
-            // A refused query: one state fewer to judge by.
-            Err(Error::Device { .. }) => {
-                outstanding = outstanding.saturating_sub(1);
-                continue;
-            },
             Err(error) => return Err(error),
         };
         let token = reply.get("@");
         if token == Some(mechanism_token.as_str()) {
-            mechanism = Some(reply);
+            mechanism = reply.into_result(&name).ok();
             outstanding = outstanding.saturating_sub(1);
         } else if token == Some(device_token.as_str()) {
-            device = Some(reply);
+            device = reply.into_result(&name).ok();
             outstanding = outstanding.saturating_sub(1);
-        } else if name == command {
-            answered = Some(Ok(reply));
         } else if token.is_none() {
-            return Err(Error::Protocol(format!(
-                "Oczekiwano odpowiedzi {command}, otrzymano {name}."
-            )));
+            let result = reply.into_result(&name);
+            if name == command || result.as_ref().is_err_and(|error| refuses(error, command)) {
+                answered = Some(result);
+            } else {
+                let _reply = result?;
+                return Err(Error::Protocol(format!(
+                    "Oczekiwano odpowiedzi {command}, otrzymano {name}."
+                )));
+            }
         }
-        // Any other token: a late answer to an earlier query.
     }
     if let Some(answered) = answered {
         return Ok(Watch::Answered(answered));
@@ -476,13 +505,20 @@ fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Status>, 
     read_status(&mut session).map(Some)
 }
 
-/// `rtcget` returns `da` as `YYYY-MM-DD;HH:MM` in Polish civil time.
-/// Choose the earlier instant in the repeated autumn hour, never later than printer time.
+/// Prefer ISO8601 `tm` (spec p. 17), preserving the autumn-hour offset; seconds round down.
+/// Older replies with only civil `da` choose the earlier repeated instant.
 fn clock(session: &mut Session) -> Result<Timestamp, Error> {
     let unreadable = |problem: String| {
         Error::Protocol(format!("Nie można odczytać zegara drukarki: {problem}."))
     };
     let reply = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
+    if let Some(value) = reply.get("tm") {
+        let timestamp = value
+            .parse::<Timestamp>()
+            .map_err(|error| unreadable(error.to_string()))?;
+        return Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
+            .map_err(|error| unreadable(error.to_string()));
+    }
     let value = reply
         .get("da")
         .ok_or_else(|| unreadable("brak parametru da".to_owned()))?;
@@ -553,6 +589,12 @@ fn status(
         problems.push("Drukarka ma oczekujące polecenia".to_owned());
     }
     problems.extend(mechanism_problem(mechanism.require("pr")?));
+    if boolean(common.require("td")?)? {
+        problems.push("Drukarka jest w trybie tylko do odczytu".to_owned());
+    }
+    if device.require("tl")? != "0" {
+        problems.push("Zasoby transakcji są zajęte przez inny interfejs".to_owned());
+    }
     if transaction_open || common.require("ts")? != "0" {
         problems.push("Otwarta transakcja. Dokończ lub anuluj ją na drukarce".to_owned());
     }

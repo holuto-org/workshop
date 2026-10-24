@@ -1,6 +1,31 @@
+[test-groups.session_bus]
+max-threads = 1
+
+[test-groups.com_pair]
+max-threads = 1
+
 [profile.default]
-slow-timeout = { period = "30s", terminate-after = 4 }
+default-filter = 'not test(com_pair)'
+# Simulator waits are scaled; a blocked operation must not stall the suite for minutes.
+slow-timeout = { period = "10s", terminate-after = 3, grace-period = "2s" }
 retries = 0
 
+[[profile.default.overrides]]
+filter = 'test(session_bus)'
+test-group = 'session_bus'
+
+[[profile.default.overrides]]
+filter = 'test(com_pair)'
+test-group = 'com_pair'
+
 [profile.ci]
+default-filter = 'all()'
 fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.mutants]
+default-filter = 'not test(com_pair)'
+fail-fast = true
+slow-timeout = { period = "10s", terminate-after = 2, grace-period = "2s" }

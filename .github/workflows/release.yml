@@ -21,7 +21,7 @@ jobs:
       tag: ${{ steps.v.outputs.tag }}
       new: ${{ steps.v.outputs.new }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -75,72 +75,46 @@ jobs:
     needs: version
     if: needs.version.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/checks.yml
+    with:
+      build-packages: false
 
   build:
     needs: [version, test]
     if: needs.version.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: win-x64, os: windows-latest }
-          - { name: mac-arm64, os: macos-latest }
-          - { name: mac-x64, os: macos-26-intel }
-          - { name: linux-x64, os: ubuntu-latest }
-          - { name: linux-arm64, os: ubuntu-24.04-arm }
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Install pinned Rust toolchain
-        run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-${{ matrix.name }}
-      - name: Install Linux build and smoke-test dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq pkg-config libfontconfig1-dev xvfb xauth dbus-x11
-      - name: Build native package
-        run: bash packaging/build.sh
-        shell: bash
-      - if: runner.os == 'Linux'
-        name: Install the package and make sure the app comes up
-        shell: bash
-        run: |
-          sudo apt-get install -y -qq ./release/*.deb
-          # Empty state means no configured printer or pending print.
-          status=0
-          dbus-run-session -- xvfb-run -a timeout 10 holuto-fiscal || status=$?
-          test "$status" -eq 124
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.name }}
-          path: release/*
-          if-no-files-found: error
-          retention-days: 7
+    uses: ./.github/workflows/package.yml
+    with:
+      production: true
+    secrets:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
   checksums:
     needs: [version, build]
     if: needs.version.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: package-*
           path: release
           merge-multiple: true
+      - name: Stage version-matched installation instructions
+        run: cp scripts/install.sh scripts/install.ps1 docs/install-with-ai.md release/
       - name: Checksums
         working-directory: release
         run: |
-          sha256sum holuto-fiscal-* > SHA256SUMS.txt
+          sha256sum workshop-* install.sh install.ps1 install-with-ai.md > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: checksums
-          path: release/SHA256SUMS.txt
+          path: |
+            release/SHA256SUMS.txt
+            release/install.sh
+            release/install.ps1
+            release/install-with-ai.md
           if-no-files-found: error
           retention-days: 7
 
@@ -150,14 +124,44 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
+          pattern: package-*
           path: release
           merge-multiple: true
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: checksums
+          path: release
       - name: Verify checksums
         working-directory: release
         run: sha256sum -c SHA256SUMS.txt
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          path: source
+      - name: Finalize Sentry release with commits
+        working-directory: source
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          npm install --global @sentry/cli@3.8.2
+          release="workshop@${TAG#v}"
+          sentry-cli releases new "$release"
+          sentry-cli releases set-commits "$release" --auto
+          sentry-cli releases finalize "$release"
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: release/*
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}

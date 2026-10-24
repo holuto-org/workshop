@@ -133,12 +133,49 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # sysfs enumeration avoids a libudev dependency.
 serialport = { version = "4.10.1", default-features = false }
-tempfile = "3.27.0"
+# Desktop telemetry. The transport reuses our ureq agent (OS trust roots); no reqwest or tokio.
+sentry = { version = "0.49.3", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "debug-images",
+    "logs",
+    "minidump",
+    "panic",
+    "release-health",
+    "tracing",
+    "ureq",
+] }
+# Agent reads trace propagation headers from the same Hub; no transports or integrations.
+sentry-core = { version = "0.49.3", default-features = false, features = ["client"] }
 thiserror = "2.0.21"
+# The only instrumentation API; the desktop forwards it to Sentry.
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "registry"] }
 # Use OS trust roots, including corporate CAs.
 ureq = { version = "3.5.0", default-features = false, features = ["json", "platform-verifier", "rustls"] }
 url = "2.5.8"
 uuid = { version = "1.29.0", features = ["serde"] }
+
+# Build-time JSON Schema → Rust wire types; schemars is typify's input model.
+typify = { version = "0.8.0", default-features = false }
+schemars = { version = "0.8.22", default-features = false }
+# Fix typify's serde helper-attribute ordering structurally, at build time only.
+syn = { version = "2.0.119", features = ["full"] }
+quote = "1.0.47"
+# The feature-gated loopback fake validates the vendored OpenAPI 3.1 contract offline.
+jsonschema = { version = "0.60.1", default-features = false }
+
+# Tests only.
+# Slint's headless testing backend; unstable API, must equal the slint version.
+i-slint-backend-testing = "=1.18.1"
+insta = { version = "1.49.0", default-features = false }
+proptest = "1.12.0"
+proptest-state-machine = "0.9.0"
+tempfile = "3.27.0"
+# NFC as the backend applies to notes, for `agent::testing` only (already in the tree via url/idna).
+icu_normalizer = { version = "2.4.0", default-features = false, features = ["compiled_data"] }
+# Loopback Holuto fake for `agent::testing`, answered through the production ureq client.
+tiny_http = "0.12.0"
 
 # Software rendering needs no GPU/OpenGL (RDP, VMs, old PCs). FemtoVG/WGPU used
 # ~4× the memory with the window open and ~2.3× in the tray.
@@ -151,6 +188,12 @@ slint = { version = "1.18.1", default-features = false, features = [
     "system-tray",
 ] }
 winresource = "0.1.34"
+# One windowless GUI/CLI executable and native per-user Windows login registration.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_Registry"] }
+# macOS only: hook `applicationShouldTerminate:` so Dock/Cmd+Q quit waits for the worker.
+# Versions match the ones winit already pulls in.
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
 # Probe StatusNotifierWatcher using Slint's existing async-io zbus dependency.
 zbus = { version = "5.14.0", default-features = false, features = ["async-io"] }
 
@@ -162,8 +205,11 @@ debug = false
 opt-level = 1
 
 [profile.release]
+debug = 2
+split-debuginfo = "packed"
 codegen-units = 1
 lto = "fat"
 # Overflow must stop fiscal operations, never wrap amounts.
 overflow-checks = true
-strip = "symbols"
+# Packaging separates native debug files before stripping only the shipped copy.
+strip = "none"

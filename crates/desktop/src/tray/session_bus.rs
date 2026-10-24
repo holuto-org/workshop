@@ -1,0 +1,89 @@
+#![cfg(test)]
+
+use std::{
+    env,
+    error::Error,
+    process::Command as ProcessCommand,
+    sync::Arc,
+    task::{Context, Poll, Wake, Waker},
+    thread::{self, Thread},
+};
+use zbus::Connection;
+
+use super::available;
+
+struct ThreadWake(Thread);
+impl Wake for ThreadWake {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
+}
+fn run<F: Future>(future: F) -> F::Output {
+    let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(value) => return value,
+            Poll::Pending => thread::park(),
+        }
+    }
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn tray_availability_tracks_status_notifier_watcher_ownership() -> Result<(), Box<dyn Error>> {
+    if env::var_os("WORKSHOP_PRIVATE_TEST_BUS").is_none() {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "The platform test needs a private D-Bus daemon, not the operator's tray host"
+        )]
+        let child = ProcessCommand::new("dbus-run-session")
+            .arg("--")
+            .arg(env::current_exe()?)
+            .args([
+                "--exact",
+                "tray::session_bus::tray_availability_tracks_status_notifier_watcher_ownership",
+                "--nocapture",
+            ])
+            .env("WORKSHOP_PRIVATE_TEST_BUS", "1")
+            .output()?;
+        assert!(
+            child.status.success(),
+            "isolated bus test failed: {}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+        return Ok(());
+    }
+    let _address = env::var("DBUS_SESSION_BUS_ADDRESS")?;
+    run(async {
+        assert!(
+            !available().await,
+            "a bus without StatusNotifierWatcher must keep the application visible"
+        );
+        let watcher = Connection::session().await?;
+        watcher
+            .request_name("org.kde.StatusNotifierWatcher")
+            .await?;
+        assert!(
+            available().await,
+            "a live StatusNotifierWatcher makes tray hiding safe"
+        );
+        let released = watcher
+            .release_name("org.kde.StatusNotifierWatcher")
+            .await?;
+        assert!(released, "the fake watcher relinquishes its bus name");
+        assert!(
+            !available().await,
+            "a vanished host must no longer allow hiding"
+        );
+        Ok::<(), Box<dyn Error>>(())
+    })
+}

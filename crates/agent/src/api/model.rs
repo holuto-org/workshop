@@ -3,135 +3,91 @@
 //! Decimal strings let malformed amounts fail individual jobs, not entire responses.
 //! `Option::deserialize` requires nullable fields to be present; plain `Option` does not.
 
-use jiff::Timestamp;
 use posnet::{
     printer::VatRate,
-    receipt::{PaymentForm, VAT_SLOTS},
+    receipt::VAT_SLOTS,
     text::{MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH, printable_characters},
 };
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{APP_VERSION, DOCUMENTS_LIMIT};
-use crate::documents::{BuyerNip, Document, ReceiptKind};
+use crate::documents::{Document, ReceiptKind};
+
+type AppVersion = &'static str;
+
+#[expect(
+    unused_qualifications,
+    unreachable_pub,
+    unnameable_types,
+    clippy::absolute_paths,
+    clippy::renamed_function_params,
+    clippy::needless_raw_strings,
+    reason = "typify's generated paths, helper visibility and raw doc strings"
+)]
+mod wire {
+    include!(concat!(env!("OUT_DIR"), "/agent-wire.rs"));
+}
+
+pub type VatCode = wire::VatCode;
+pub type VatSlotRate = wire::VatSlotRate;
+pub type Telemetry = wire::Telemetry;
+pub type PrinterStatus = wire::PrinterStatus;
+pub type PrinterInfo = wire::PrinterInfo;
+pub type JobState = wire::JobState;
+pub type Job = wire::Job;
+pub type JobLine = wire::JobLine;
+pub type JobAdvance = wire::JobAdvance;
+pub type JobPayment = wire::JobPayment;
+pub type Outcome = wire::Outcome;
+pub type ResultForm = wire::ResultForm;
+pub type QueueForm = wire::QueueForm;
+pub type Page = wire::Page;
+pub type Pairing = wire::Pairing;
+pub type PairForm = wire::PairForm;
 
 /// Backend slot limit; the printer has seven.
 const MAX_BACKEND_SLOTS: u8 = 16;
-
-/// `KSeF` VAT codes; `zw` means exempt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum VatCode {
-    #[serde(rename = "23")]
-    Standard,
-    #[serde(rename = "8")]
-    Reduced,
-    #[serde(rename = "5")]
-    SuperReduced,
-    #[serde(rename = "0")]
-    Zero,
-    #[serde(rename = "zw")]
-    Exempt,
-}
 
 impl VatCode {
     /// `None` for printer rates Holuto does not support.
     pub const fn of(rate: VatRate) -> Option<Self> {
         if rate.exempt() {
-            return Some(Self::Exempt);
+            return Some(Self::Zw);
         }
         match rate.basis_points {
-            2300 => Some(Self::Standard),
-            800 => Some(Self::Reduced),
-            500 => Some(Self::SuperReduced),
-            0 => Some(Self::Zero),
+            2300 => Some(Self::X23),
+            800 => Some(Self::X8),
+            500 => Some(Self::X5),
+            0 => Some(Self::X0),
             _ => None,
         }
     }
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Standard => "23%",
-            Self::Reduced => "8%",
-            Self::SuperReduced => "5%",
-            Self::Zero => "0%",
-            Self::Exempt => "zw",
+            Self::X23 => "23%",
+            Self::X8 => "8%",
+            Self::X5 => "5%",
+            Self::X0 => "0%",
+            Self::Zw => "zw",
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VatSlotRate {
-    pub slot: u8,
-    pub vat_rate: VatCode,
-}
-
-/// Session and heartbeat telemetry. The backend requires limits before queueing receipts.
-/// Limits use documented Temo Online values because the protocol cannot report them.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Telemetry {
-    pub serial: String,
-    pub model: String,
-    pub firmware: String,
-    pub app_version: &'static str,
-    /// Actual slot assignments, not a set of rates.
-    pub vat_slots: Vec<VatSlotRate>,
-    pub max_item_name_length: usize,
-    pub max_lines_per_receipt: usize,
-    pub max_company_name_length: usize,
-    pub allowed_characters: String,
 }
 
 impl Telemetry {
     pub fn new(serial: &str) -> Self {
         Self {
-            serial: serial.to_owned(),
-            model: String::new(),
-            firmware: String::new(),
+            allowed_characters: printable_characters(),
             app_version: APP_VERSION,
-            vat_slots: Vec::new(),
+            firmware: String::new(),
+            max_company_name_length: MAX_COMPANY_NAME_LENGTH,
             max_item_name_length: MAX_NAME_LENGTH,
             max_lines_per_receipt: MAX_LINES,
-            max_company_name_length: MAX_COMPANY_NAME_LENGTH,
-            allowed_characters: printable_characters(),
+            model: String::new(),
+            serial: serial.to_owned(),
+            vat_slots: Vec::new(),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrinterStatus {
-    pub printer: PrinterInfo,
-    pub is_online: bool,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub last_seen_at: Option<Timestamp>,
-    pub updated_at: Timestamp,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrinterInfo {
-    pub id: Uuid,
-    pub branch_id: Uuid,
-    pub name: String,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub device_serial: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub model: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub firmware: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub app_version: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub max_item_name_length: Option<u32>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub max_lines_per_receipt: Option<u32>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub max_company_name_length: Option<u32>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub allowed_characters: Option<String>,
-    pub vat_slots: Vec<VatSlotRate>,
 }
 
 impl PrinterInfo {
@@ -141,7 +97,7 @@ impl PrinterInfo {
             .as_deref()
             .is_some_and(|paired| paired != serial)
         {
-            return Err("token sparowany z inną drukarką".to_owned());
+            return Err("sparowano z inną drukarką".to_owned());
         }
         if [
             self.max_item_name_length,
@@ -171,81 +127,11 @@ impl PrinterInfo {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum JobState {
-    Queued,
-    Taken,
-    Done,
-    Failed,
-    Expired,
-    Unknown,
-}
-
 impl JobState {
     /// Authoritative staff or backend resolution.
     pub const fn terminal(self) -> bool {
         matches!(self, Self::Done | Self::Failed | Self::Expired)
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JobLine {
-    pub name: String,
-    pub quantity: String,
-    pub unit_price: String,
-    pub total: String,
-    pub vat_rate: VatCode,
-    pub vat_slot: u8,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JobAdvance {
-    pub vat_slot: u8,
-    pub vat_rate: VatCode,
-    pub amount: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JobPayment {
-    pub form: PaymentForm,
-    pub amount: String,
-}
-
-/// Holuto supplies the lines, totals and payments; printing must not alter them.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Job {
-    pub id: Uuid,
-    pub order_id: Uuid,
-    pub order_number: i64,
-    pub printer_id: Uuid,
-    pub state: JobState,
-    pub kind: ReceiptKind,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub allocation_id: Option<Uuid>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub buyer_nip: Option<String>,
-    pub company_name: String,
-    pub total: String,
-    pub lines: Vec<JobLine>,
-    pub advances: Vec<JobAdvance>,
-    pub payments: Vec<JobPayment>,
-    /// Immutable after claim; required in every result.
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub attempt: Option<Uuid>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub receipt_number: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub result: Option<String>,
-    pub created_at: Timestamp,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub taken_at: Option<Timestamp>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub resolved_at: Option<Timestamp>,
 }
 
 impl Job {
@@ -282,14 +168,6 @@ impl Job {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Outcome {
-    Done,
-    Failed,
-    Unknown,
-}
-
 impl From<Outcome> for JobState {
     fn from(value: Outcome) -> Self {
         match value {
@@ -298,35 +176,6 @@ impl From<Outcome> for JobState {
             Outcome::Unknown => Self::Unknown,
         }
     }
-}
-
-/// Only `done` carries a receipt number and issue time; otherwise both are null.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResultForm {
-    pub attempt: Uuid,
-    pub state: Outcome,
-    pub receipt_number: Option<String>,
-    pub issued_at: Option<Timestamp>,
-    pub result: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueueForm {
-    pub kind: ReceiptKind,
-    pub order_id: Uuid,
-    pub allocation_id: Option<Uuid>,
-    pub buyer_nip: Option<BuyerNip>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Page {
-    pub items: Vec<Document>,
-    /// Opaque; `None` on the last page.
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub next_cursor: Option<String>,
 }
 
 impl Page {

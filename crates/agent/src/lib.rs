@@ -7,6 +7,9 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(all(feature = "testing", not(debug_assertions)))]
+compile_error!("The testing feature must never be enabled in release builds.");
+
 pub mod api;
 pub mod documents;
 pub mod history;
@@ -16,14 +19,14 @@ pub mod worker;
 
 mod agent;
 mod journal;
-#[cfg(test)]
-mod testing;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
-use std::{io, path::PathBuf};
+use std::{fmt, io, path::PathBuf};
 
 use api::ApiError;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Printer(#[from] posnet::Error),
@@ -42,4 +45,19 @@ pub enum Error {
     /// Requires human resolution before fiscal operations can continue.
     #[error("{0}")]
     Blocked(String),
+}
+
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Printer(_) => f.write_str("Printer([REDACTED])"),
+            Self::Api(error) => f.debug_tuple("Api").field(error).finish(),
+            Self::Store { source, .. } => f
+                .debug_struct("Store")
+                .field("kind", &source.kind())
+                .finish_non_exhaustive(),
+            Self::Invalid(_) => f.write_str("Invalid([REDACTED])"),
+            Self::Blocked(_) => f.write_str("Blocked([REDACTED])"),
+        }
+    }
 }

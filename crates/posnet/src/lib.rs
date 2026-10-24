@@ -45,6 +45,8 @@ pub enum Error {
         code: u32,
         command: String,
         field: String,
+        /// `ERR` rejects a frame before execution; command-named errors may follow effects.
+        rejected: bool,
     },
     /// Corrupt, incomplete or mismatched reply.
     #[error("{0}")]
@@ -95,3 +97,6 @@ const fn explanation(code: u32) -> &'static str {
         _ => "",
     }
 }
+
+#[cfg(test)]
+mod tests;

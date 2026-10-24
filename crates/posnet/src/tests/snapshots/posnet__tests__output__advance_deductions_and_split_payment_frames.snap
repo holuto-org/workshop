@@ -1,0 +1,21 @@
+---
+source: crates/posnet/src/tests/output.rs
+expression: "receipt_stream(&receipt,BRAND)"
+---
+\x02getrealid\t#69AE\x03
+\x02sdev\t#233A\x03
+\x02sprn\t#BE45\x03
+\x02scomm\t#C42B\x03
+\x02strns\t#FCA8\x03
+\x02vatget\t#86AC\x03
+\x02hdrget\t#0DDB\x03
+\x02rtcget\t#7D61\x03
+\x02trinit\tbm0\t#4825\x03
+\x02trline\tnaOlej\tvt0\tpr100\til2\twa200\t#C116\x03
+\x02trline\tnaUs\xb3uga\tvt1\tpr300\til1\twa300\t#1DBA\x03
+\x02tradvance\tnaZaliczka\tvt0\tpr100\twa200\t#82BD\x03
+\x02tradvance\tnaZaliczka\tvt1\tpr150\twa300\t#F8A4\x03
+\x02trpayment\tty0\twa100\t#C52B\x03
+\x02trpayment\tty2\twa150\t#A17D\x03
+\x02trend\tto250\tfp250\t#13EE\x03
+\x02scnt\t#E484\x03

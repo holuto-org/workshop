@@ -1,5 +1,11 @@
 //! Recovery reconciles the journal with Holuto without replaying printer commands.
 //! Saved results are resent unchanged; terminal server states are authoritative.
+//!
+//! A journal proving no fiscal command was sent reports FAILED while Holuto still
+//! says TAKEN. If that attempt expired to UNKNOWN, staff must resolve it as failed:
+//! backend `receipts.rs:174-177` intentionally refuses automatic UNKNOWN → FAILED.
+//! Completed evidence conflicting with FAILED/EXPIRED stays blocked until an
+//! operator explicitly acknowledges it locally on the same ready printer.
 
 use std::{io, mem, time::Duration};
 
@@ -14,7 +20,7 @@ use uuid::Uuid;
 use crate::{
     Error,
     api::{
-        Holuto,
+        Api, ApiError,
         model::{Job, JobState, Telemetry, printer_slots},
     },
     history::{self, HistoryEntry},
@@ -36,7 +42,7 @@ const UNNUMBERED: &str = "Wydruk zakończony, ale nie odczytano numeru paragonu.
 pub(crate) struct News {
     /// Non-blocking operator warnings.
     pub(crate) notices: Vec<String>,
-    pub(crate) history_changed: bool,
+    pub(crate) history: Option<Vec<HistoryEntry>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,11 +51,13 @@ pub(crate) enum Blocked {
     Receipt,
     /// Interrupted report; the operator confirms its printout on the same device.
     Report,
+    /// A physical receipt conflicts with a terminal server decision.
+    OrphanedReceipt,
 }
 
-pub(crate) struct Agent<'dir, H> {
+pub(crate) struct Agent<'dir> {
     printer: Printer,
-    api: H,
+    api: Api,
     dir: &'dir StateDir,
     journal: Journal,
     telemetry: Telemetry,
@@ -58,12 +66,13 @@ pub(crate) struct Agent<'dir, H> {
     /// Operator intervention needed mid-operation; `None` when cleared.
     waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     news: News,
+    orphaned_receipt: bool,
 }
 
-impl<'dir, H: Holuto> Agent<'dir, H> {
+impl<'dir> Agent<'dir> {
     pub(crate) fn new(
         printer: Printer,
-        api: H,
+        api: Api,
         dir: &'dir StateDir,
         waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     ) -> Self {
@@ -77,10 +86,11 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             status: None,
             waiting,
             news: News::default(),
+            orphaned_receipt: false,
         }
     }
 
-    pub(crate) const fn api(&mut self) -> &mut H {
+    pub(crate) const fn api(&mut self) -> &mut Api {
         &mut self.api
     }
 
@@ -121,6 +131,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             .load()?
             .filter(Operation::blocks)
             .map(|operation| match operation {
+                Operation::Receipt(_) if self.orphaned_receipt => Blocked::OrphanedReceipt,
                 Operation::Receipt(_) => Blocked::Receipt,
                 Operation::Report(_) => Blocked::Report,
             }))
@@ -137,7 +148,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         if let Some(blocked) = self.settle()? {
             self.news.notices.push(
                 match blocked {
-                    Blocked::Receipt => {
+                    Blocked::Receipt | Blocked::OrphanedReceipt => {
                         "Niepotwierdzony wynik. Sprawdź wydruk i rozstrzygnij zadanie w Holuto."
                     },
                     Blocked::Report => {
@@ -163,10 +174,18 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     }
 
     pub(crate) fn run_report(&mut self, report: Report) -> Result<(), Error> {
+        let span = tracing::info_span!(
+            "fiscal.report",
+            sentry.op = "fiscal.report",
+            command = report.label()
+        );
+        let _entered = span.enter();
         if let Some(blocked) = self.settle()? {
             return Err(Error::Blocked(
                 match blocked {
-                    Blocked::Receipt => "Najpierw rozstrzygnij niepotwierdzony paragon w Holuto.",
+                    Blocked::Receipt | Blocked::OrphanedReceipt => {
+                        "Najpierw rozstrzygnij niepotwierdzony paragon w Holuto."
+                    },
                     Blocked::Report => "Najpierw wyjaśnij przerwany raport.",
                 }
                 .to_owned(),
@@ -185,7 +204,16 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             operation: &mut operation,
             waiting: self.waiting,
         };
-        self.printer.print_report(report, &serial, &mut dispatch)?;
+        if let Err(error) = self.printer.print_report(report, &serial, &mut dispatch) {
+            if matches!(error, posnet::Error::Device { .. })
+                && matches!(operation.device, Device::Dispatching { .. })
+            {
+                // The driver returns a bare Device error only for a refusal naming this report.
+                operation.device = Device::NotStarted;
+                self.journal.save(&Operation::Report(operation))?;
+            }
+            return Err(error.into());
+        }
         operation.device = Device::Completed {
             receipt_number: None,
         };
@@ -213,6 +241,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     }
 
     fn settle(&mut self) -> Result<Option<Blocked>, Error> {
+        self.orphaned_receipt = false;
         let mut operation = match self.journal.load()?.filter(Operation::blocks) {
             None => return Ok(None),
             Some(Operation::Report(_)) => return Ok(Some(Blocked::Report)),
@@ -234,6 +263,27 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 "Holuto zna inną próbę wykonania tego zadania",
             ));
         }
+        if matches!(operation.device, Device::Completed { .. })
+            && matches!(remote.state, JobState::Failed | JobState::Expired)
+        {
+            self.orphaned_receipt = true;
+            let number = match &operation.device {
+                Device::Completed { receipt_number } => {
+                    receipt_number.as_deref().unwrap_or("nieczytelny")
+                },
+                Device::NotStarted | Device::Dispatching { .. } => "nieczytelny",
+            };
+            self.news.notices.push(format!(
+                "Paragon {number} został wydrukowany dla zlecenia {} (zadanie {}), ale Holuto \
+                 oznaczyło zadanie jako {:?}. Sprawdź wydruk i użyj „Wyjaśnij paragon”.",
+                remote.order_number, remote.id, remote.state
+            ));
+            tracing::error!(
+                job_id = %remote.id, state = ?remote.state,
+                "Printed receipt conflicts with terminal Holuto state"
+            );
+            return Ok(Some(Blocked::OrphanedReceipt));
+        }
         if remote.state.terminal() {
             self.finish(
                 &mut operation,
@@ -241,6 +291,14 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 remote.receipt_number.as_deref(),
             )?;
             return Ok(None);
+        }
+        if matches!(operation.device, Device::NotStarted) && remote.state == JobState::Unknown {
+            self.news.notices.push(format!(
+                "Zlecenie {} (zadanie {}): rejestr drukarki potwierdza, że nie wysłano żadnego \
+                 polecenia fiskalnego. Rozstrzygnij zadanie jako niewydrukowane w Holuto.",
+                remote.order_number, remote.id
+            ));
+            return Ok(Some(Blocked::Receipt));
         }
         let completed_number = match &operation.device {
             Device::Completed { receipt_number } => Some(receipt_number.clone()),
@@ -254,7 +312,14 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             (None, Some(number)) | (Some(JobResult::Unknown { .. }), Some(number @ Some(_))) => {
                 self.report(&mut operation, done(number))?;
             },
-            (None, None) => self.report(&mut operation, JobResult::unknown(INTERRUPTED))?,
+            (None, None) => {
+                let result = if matches!(operation.device, Device::NotStarted) {
+                    JobResult::failed("Przerwano przed wysłaniem pierwszego polecenia fiskalnego.")
+                } else {
+                    JobResult::unknown(INTERRUPTED)
+                };
+                self.report(&mut operation, result)?;
+            },
             (Some(result), _) => {
                 // Resend the same attempt and issue time, never the print commands.
                 if !(matches!(result, JobResult::Unknown { .. })
@@ -276,6 +341,12 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     }
 
     fn execute(&mut self, job: &Job) -> Result<(), Error> {
+        let span = tracing::info_span!(
+            "fiscal.receipt", sentry.op = "fiscal.receipt",
+            job_id = %job.id, attempt = ?job.attempt, kind = ?job.kind
+        );
+        let _entered = span.enter();
+        tracing::info!(job_id = %job.id, "Job claimed");
         job.check(self.api.printer_id())
             .map_err(|problem| invalid_job(job.id, &problem))?;
         let (JobState::Taken, Some(attempt)) = (job.state, job.attempt) else {
@@ -311,9 +382,21 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         };
         // Persist before any physical action; interruptions become UNKNOWN, never retries.
         self.journal.save(&Operation::Receipt(operation.clone()))?;
-        let status = self.printer.probe()?;
-        let notices = self.describe(status.clone())?;
-        self.news.notices.extend(notices);
+        let status = match self
+            .printer
+            .probe()
+            .map_err(Error::from)
+            .and_then(|status| {
+                let notices = self.describe(status.clone())?;
+                self.news.notices.extend(notices);
+                Ok(status)
+            }) {
+            Ok(status) => status,
+            Err(error) => {
+                self.report(&mut operation, JobResult::failed(&error.to_string()))?;
+                return self.finish(&mut operation, JobState::Failed, None);
+            },
+        };
         let receipt = match self.receipt(job) {
             Ok(receipt) => receipt,
             Err(reason) => {
@@ -335,6 +418,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 };
                 operation.issued_at = printed.issued_at;
                 self.journal.save(&Operation::Receipt(operation.clone()))?;
+                tracing::info!(job_id = %job.id, "Receipt printed");
                 self.report(&mut operation, done(printed.receipt_number))?;
                 if matches!(operation.result, Some(JobResult::Done { .. })) {
                     self.finish(&mut operation, JobState::Done, None)?;
@@ -342,6 +426,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 Ok(())
             },
             Err(error @ posnet::Error::Uncertain(_)) => {
+                tracing::error!(job_id = %job.id, "Fiscal receipt outcome is uncertain");
                 self.report(&mut operation, JobResult::unknown(&error.to_string()))
             },
             Err(error) => {
@@ -435,7 +520,24 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         let Some(form) = operation.result_form() else {
             return Ok(());
         };
-        Ok(self.api.report(operation.job_id, &form)?)
+        match self.api.report(operation.job_id, &form) {
+            Ok(()) => Ok(()),
+            Err(error @ ApiError::Status { status: 400, .. })
+                if matches!(operation.device, Device::Completed { .. }) =>
+            {
+                self.news.notices.push(format!(
+                    "Holuto odrzuciło dane wydrukowanego paragonu (zadanie {}). Sprawdź zegar \
+                     drukarki i rozstrzygnij zadanie w Holuto po wygaśnięciu próby; wydruk nie \
+                     zostanie powtórzony.",
+                    operation.job_id
+                ));
+                tracing::error!(
+                    job_id = %operation.job_id, "Holuto rejected completed fiscal evidence"
+                );
+                Err(error.into())
+            },
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Uses the staff-supplied receipt number if the printer's was unreadable.
@@ -445,6 +547,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         state: JobState,
         staff_number: Option<&str>,
     ) -> Result<(), Error> {
+        self.orphaned_receipt = false;
         if let (Device::Completed { receipt_number }, Some(summary)) =
             (&operation.device, &operation.summary)
         {
@@ -463,7 +566,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
                 items: summary.items.clone(),
             };
             match history::append(self.dir, &entry) {
-                Ok(()) => self.news.history_changed = true,
+                Ok(snapshot) => self.news.history = Some(snapshot),
                 Err(error) => self.news.notices.push(error.to_string()),
             }
         }
@@ -472,6 +575,41 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             state,
         });
         self.journal.save(&Operation::Receipt(operation.clone()))
+    }
+
+    /// Explicit local acknowledgement of evidence Holuto cannot accept.
+    /// Same ready device is required; this never sends a fiscal command or result.
+    pub(crate) fn acknowledge_orphaned_receipt(&mut self) -> Result<(), Error> {
+        let Some(Operation::Receipt(mut operation)) = self.journal.load()? else {
+            return Err(Error::Invalid("Brak paragonu do wyjaśnienia.".to_owned()));
+        };
+        if operation.settled.is_some() || !matches!(operation.device, Device::Completed { .. }) {
+            return Err(Error::Invalid(
+                "Brak wydrukowanego paragonu do wyjaśnienia.".to_owned(),
+            ));
+        }
+        if operation.device_serial != self.api.serial() {
+            return Err(Error::Blocked(
+                "Podłącz drukarkę, która wydrukowała ten paragon.".to_owned(),
+            ));
+        }
+        let _status = self.printer.verify(&operation.device_serial)?;
+        let remote = self.api.job(operation.job_id)?;
+        remote
+            .check(self.api.printer_id())
+            .map_err(|problem| reconcile_error(&problem))?;
+        if remote.attempt != Some(operation.attempt)
+            || !matches!(remote.state, JobState::Failed | JobState::Expired)
+        {
+            return Err(reconcile_error(
+                "stan Holuto nie pozwala na lokalne wyjaśnienie",
+            ));
+        }
+        tracing::info!(
+            job_id = %operation.job_id, state = ?remote.state,
+            "Operator acknowledged orphaned receipt; no command reissued"
+        );
+        self.finish(&mut operation, remote.state, None)
     }
 }
 

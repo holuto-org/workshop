@@ -1,3 +1,4 @@
+#[path = "model/table.rs"]
 mod table;
 
 use agent::{
@@ -6,7 +7,7 @@ use agent::{
     settings::{BAUD_RATES, Settings},
     worker::{Command, Tone},
 };
-use jiff::{ToSpan, Zoned, civil::Date};
+use jiff::{ToSpan, civil::Date};
 use posnet::{money::zloty, printer::Status};
 use slint::{ModelRc, SharedString, VecModel};
 use table::{Sort, Table};
@@ -57,6 +58,8 @@ pub(crate) struct Confirmation {
 )]
 pub(crate) struct Model {
     pub(crate) settings: Settings,
+    pub(crate) pairing_code: String,
+    pub(crate) pairing: bool,
     documents: Table<Document>,
     history: Table<HistoryEntry>,
     pub(crate) selected: Option<usize>,
@@ -64,11 +67,13 @@ pub(crate) struct Model {
     pub(crate) has_next: bool,
     pub(crate) running: bool,
     pub(crate) stopping: bool,
+    pub(crate) saving: bool,
     pub(crate) connected: bool,
     pub(crate) serial: String,
     pub(crate) device: Option<Status>,
     pub(crate) blocked: bool,
     pub(crate) report_unresolved: bool,
+    pub(crate) orphaned_receipt: bool,
     pub(crate) tab: Tab,
     pub(crate) nip: String,
     pub(crate) message: String,
@@ -81,14 +86,17 @@ pub(crate) struct Model {
     pub(crate) to: String,
     pub(crate) summary: bool,
     pending: Option<Confirmation>,
+    today: Date,
+    in_flight: bool,
 }
 
 impl Model {
-    pub(crate) fn new(settings: Settings) -> Self {
-        let today = Zoned::now().date();
+    pub(crate) fn new(settings: Settings, today: Date) -> Self {
         let months = months_before(today);
         Self {
             settings,
+            pairing_code: String::new(),
+            pairing: false,
             documents: Table::new(),
             history: Table::new(),
             selected: None,
@@ -96,14 +104,16 @@ impl Model {
             has_next: false,
             running: false,
             stopping: false,
+            saving: false,
             connected: false,
             serial: String::new(),
             device: None,
             blocked: false,
             report_unresolved: false,
+            orphaned_receipt: false,
             tab: Tab::Settings,
             nip: String::new(),
-            message: "Zaloguj się tokenem drukarki z Holuto.".into(),
+            message: "Wpisz kod parowania drukarki z Holuto.".into(),
             tone: Tone::Info,
             months,
             month_index: 0,
@@ -111,6 +121,8 @@ impl Model {
             to: date_label(today),
             summary: false,
             pending: None,
+            today,
+            in_flight: false,
         }
     }
 
@@ -147,8 +159,13 @@ impl Model {
         self.running = false;
         self.stopping = false;
         self.connected = false;
+        self.in_flight = false;
         // Recheck readiness on reconnect; retain the persisted fiscal block.
         self.device = None;
+    }
+
+    pub(crate) const fn command_completed(&mut self) {
+        self.in_flight = false;
     }
 
     fn roll_months(&mut self, today: Date) -> bool {
@@ -177,8 +194,8 @@ impl Model {
         }
     }
 
-    pub(crate) fn initialize(&mut self, window: &AppWindow) {
-        let _rolled = self.roll_months(Zoned::now().date());
+    pub(crate) fn initialize(&mut self, window: &AppWindow, today: Date) {
+        let _rolled = self.roll_months(today);
         window.set_baud_rates(strings(BAUD_RATES.iter().map(u32::to_string)));
         window.set_months(strings(self.months.iter().copied().map(month_label)));
         window.set_documents(self.documents.rows());
@@ -186,17 +203,18 @@ impl Model {
         self.sync(window);
     }
 
-    pub(crate) fn capture(&mut self, window: &AppWindow) {
+    pub(crate) fn capture(&mut self, window: &AppWindow, today: Date) {
+        self.today = today;
         // Slint 1.18 allows assistive actions on disabled widgets; ignore edits while running.
-        if !self.running {
+        if !self.running && !self.saving && !self.pairing {
             window
                 .get_api_url()
                 .trim()
                 .clone_into(&mut self.settings.api_url);
             window
-                .get_token()
+                .get_pairing_code()
                 .trim()
-                .clone_into(&mut self.settings.token);
+                .clone_into(&mut self.pairing_code);
             window.get_port().trim().clone_into(&mut self.settings.port);
             if let Ok(index) = usize::try_from(window.get_baud_index())
                 && let Some(baud) = BAUD_RATES.get(index)
@@ -204,10 +222,11 @@ impl Model {
                 self.settings.baud_rate = *baud;
             }
         }
+        self.settings.telemetry_enabled = window.get_telemetry_enabled();
         self.nip = window.get_nip().to_string();
         self.month_index = usize::try_from(window.get_month_index()).unwrap_or_default();
         // Tray sessions can span months.
-        if self.roll_months(Zoned::now().date()) {
+        if self.roll_months(today) {
             window.set_months(strings(self.months.iter().copied().map(month_label)));
         }
         self.summary = window.get_summary();
@@ -222,12 +241,15 @@ impl Model {
         window.set_tab(self.tab.index());
         window.set_running(self.running);
         window.set_stopping(self.stopping);
+        window.set_saving_settings(self.saving);
+        window.set_pairing(self.pairing);
         window.set_connected(self.connected);
         window.set_queue_enabled(self.queue_enabled() && self.selected.is_some());
         window.set_reports_enabled(self.reports_enabled());
         window.set_previous_enabled(self.connected && self.page > 1);
         window.set_next_enabled(self.connected && self.has_next);
         window.set_report_unresolved(self.resolve_enabled());
+        window.set_orphaned_receipt(self.accepting() && self.orphaned_receipt);
         window.set_status(self.message.as_str().into());
         window.set_status_tone(tone_number(self.tone));
         window.set_connection_text(self.connection_text().into());
@@ -239,7 +261,9 @@ impl Model {
             },
         );
         window.set_api_url(self.settings.api_url.as_str().into());
-        window.set_token(self.settings.token.as_str().into());
+        window.set_pairing_code(self.pairing_code.as_str().into());
+        window.set_start_on_launch(self.settings.start_on_launch);
+        window.set_telemetry_enabled(self.settings.telemetry_enabled);
         window.set_port(self.settings.port.as_str().into());
         window.set_baud_index(
             BAUD_RATES
@@ -270,7 +294,7 @@ impl Model {
     }
 
     const fn accepting(&self) -> bool {
-        self.connected && !self.stopping
+        self.connected && !self.stopping && !self.in_flight
     }
 
     const fn queue_enabled(&self) -> bool {
@@ -348,7 +372,23 @@ impl Model {
                 .into(),
                 action: "Usuń blokadę".into(),
             }),
+            Action::AcknowledgeOrphanedReceipt => {
+                (self.accepting() && self.orphaned_receipt).then(|| Confirmation {
+                    command: Command::AcknowledgeOrphanedReceipt,
+                    title: "Wyjaśnij paragon".into(),
+                    text: format!(
+                        concat!(
+                            "{}\n\nSprawdź wydruk i uzgodnij dokument w Holuto. ",
+                            "Potwierdzenie zapisze lokalne wyjaśnienie i usunie blokadę. ",
+                            "Nie wydrukuje paragonu ponownie ani nie zmieni wyniku w Holuto."
+                        ),
+                        self.message
+                    ),
+                    action: "Potwierdź wyjaśnienie".into(),
+                })
+            },
             Action::Save
+            | Action::Pair
             | Action::Start
             | Action::Stop
             | Action::Quit
@@ -388,7 +428,7 @@ impl Model {
     }
 
     fn periodic_confirmation(&mut self) -> Option<Confirmation> {
-        let (from, to) = match report_range(&self.from, &self.to) {
+        let (from, to) = match report_range(&self.from, &self.to, self.today) {
             Ok(range) => range,
             Err(error) => {
                 self.say(error.to_string(), Tone::Error);
@@ -427,9 +467,11 @@ impl Model {
                 | Command::MonthlyReport { .. }
                 | Command::PeriodicReport { .. } => self.reports_enabled(),
                 Command::ResolveReport => self.resolve_enabled(),
+                Command::AcknowledgeOrphanedReceipt => self.accepting() && self.orphaned_receipt,
                 Command::NextPage | Command::PreviousPage => false,
             };
             if allowed {
+                self.in_flight = true;
                 submit(pending.command);
             }
         }
@@ -442,21 +484,29 @@ enum RangeError {
     Format { which: &'static str },
     #[error("Data {which} nie może być późniejsza niż dzisiejsza.")]
     Future { which: &'static str },
+    #[error("Data {which} nie może być wcześniejsza niż 01.01.2000.")]
+    TooEarly { which: &'static str },
     #[error("Data początkowa nie może być późniejsza niż końcowa.")]
     Reversed,
 }
 
-fn report_range(from: &str, to: &str) -> Result<(Date, Date), RangeError> {
-    let today = Zoned::now().date();
+fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), RangeError> {
     let date = |which, text: &str| {
-        // `%Y` accepts "25" as year 0025.
-        let full_year = text.rsplit_once('.').is_some_and(|(_, year)| {
-            year.len() == 4 && year.bytes().all(|byte| byte.is_ascii_digit())
-        });
+        let padded = text.len() == 10
+            && text.bytes().enumerate().all(|(index, byte)| {
+                if index == 2 || index == 5 {
+                    byte == b'.'
+                } else {
+                    byte.is_ascii_digit()
+                }
+            });
         let date = Date::strptime("%d.%m.%Y", text)
             .ok()
-            .filter(|_| full_year)
+            .filter(|_| padded)
             .ok_or(RangeError::Format { which })?;
+        if date < Date::constant(2000, 1, 1) {
+            return Err(RangeError::TooEarly { which });
+        }
         if date > today {
             return Err(RangeError::Future { which });
         }
@@ -517,4 +567,5 @@ const fn month_name(month: i8) -> &'static str {
 }
 
 #[cfg(test)]
+#[path = "model/tests.rs"]
 mod tests;

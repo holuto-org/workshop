@@ -32,6 +32,8 @@ allow = [
     "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
+    # borrow-or-share via the OpenAPI contract validator.
+    "MIT-0",
     # serialport: file-level copyleft permits unmodified use.
     "MPL-2.0",
     "Unicode-3.0",
@@ -67,6 +69,13 @@ workspace-default-features = "deny"
 [bans.std-replacements]
 
 [bans.build]
+
+# Upstream minidump parser fixture, never executed by this application.
+[[bans.build.bypass]]
+crate = "minidump-writer@0.12.0"
+allow = [
+    { path = "tests/tiny.elf", checksum = "9ccd1d7a8b4d4347f623081ad4a74fade764fa7c8f76495b010bc302fb66e69f" },
+]
 
 [sources]
 unknown-registry = "deny"

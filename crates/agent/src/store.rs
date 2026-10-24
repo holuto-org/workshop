@@ -21,12 +21,53 @@ pub struct StateDir {
 }
 
 impl StateDir {
-    /// Linux: `$XDG_STATE_HOME/holuto-fiscal` or `~/.local/state/holuto-fiscal`.
-    /// macOS: `~/Library/Application Support/holuto-fiscal`.
-    /// Windows: `holuto-fiscal` in the Local `AppData` Known Folder.
+    /// Platform state directory named `workshop`.
     /// Ignores empty or relative base paths to avoid silently moving the journal.
     pub fn default_path() -> Option<PathBuf> {
-        base_dir().map(|base| base.join("holuto-fiscal"))
+        Self::default_path_for(false)
+    }
+
+    /// Simulator state is isolated from the production fiscal journal.
+    pub fn default_path_for(simulator: bool) -> Option<PathBuf> {
+        base_dir().map(|base| {
+            base.join(if simulator {
+                "workshop-simulator"
+            } else {
+                "workshop"
+            })
+        })
+    }
+
+    pub fn open_default(simulator: bool) -> Result<Self, Error> {
+        let path = Self::default_path_for(simulator).ok_or_else(|| {
+            Error::Invalid("Nie można ustalić katalogu stanu użytkownika.".to_owned())
+        })?;
+        Self::open(path)
+    }
+
+    /// Checks an existing lock without creating a directory or lock file.
+    pub fn is_locked(path: &Path) -> Result<bool, Error> {
+        let lock_path = path.join(LOCK);
+        let lock = match File::options().read(true).write(true).open(&lock_path) {
+            Ok(lock) => lock,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(source) => {
+                return Err(Error::Store {
+                    action: "Nie można odczytać blokady katalogu stanu",
+                    path: lock_path,
+                    source,
+                });
+            },
+        };
+        match lock.try_lock() {
+            Ok(()) => Ok(false),
+            Err(TryLockError::WouldBlock) => Ok(true),
+            Err(TryLockError::Error(source)) => Err(Error::Store {
+                action: "Nie można sprawdzić blokady katalogu stanu",
+                path: lock_path,
+                source,
+            }),
+        }
     }
 
     pub fn open(path: PathBuf) -> Result<Self, Error> {
@@ -37,20 +78,27 @@ impl StateDir {
         })?;
         let lock_path = path.join(LOCK);
         // Windows cannot lock an append-only handle.
-        let lock = File::options()
-            .read(true)
-            .create(true)
-            .append(true)
-            .open(&lock_path)
-            .map_err(|source| Error::Store {
-                action: "Nie można otworzyć blokady katalogu stanu",
-                path: lock_path.clone(),
-                source,
-            })?;
+        let mut options = File::options();
+        let _options = options.read(true).create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            let _options = options.mode(0o600);
+        }
+        let lock = options.open(&lock_path).map_err(|source| Error::Store {
+            action: "Nie można otworzyć blokady katalogu stanu",
+            path: lock_path.clone(),
+            source,
+        })?;
+        make_private(&lock).map_err(|source| Error::Store {
+            action: "Nie można zabezpieczyć blokady katalogu stanu",
+            path: lock_path.clone(),
+            source,
+        })?;
         match lock.try_lock() {
             Ok(()) => Ok(Self { path, _lock: lock }),
             Err(TryLockError::WouldBlock) => Err(Error::Blocked(format!(
-                "Holuto Fiscal już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
+                "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
                 path.display()
             ))),
             Err(TryLockError::Error(source)) => Err(Error::Store {
@@ -96,16 +144,29 @@ fn absolute(path: impl Into<PathBuf>) -> Option<PathBuf> {
 
 #[cfg(unix)]
 fn create_private_dir(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt as _;
+    use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(path)
+        .create(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
 }
 
 #[cfg(not(unix))]
 fn create_private_dir(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)
+}
+
+/// Tightens existing files too: creation mode alone does not protect upgrades.
+#[cfg(unix)]
+pub(crate) fn make_private(file: &File) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn make_private(_file: &File) -> io::Result<()> {
+    Ok(())
 }
 
 /// Syncs a temporary file (0600 on Unix) in a private sibling directory, then renames it.

@@ -242,3 +242,7 @@ fn timestamp_label(timestamp: Timestamp) -> String {
         .strftime("%d.%m.%Y %H:%M")
         .to_string()
 }
+
+#[cfg(test)]
+#[path = "table/tests.rs"]
+mod tests;

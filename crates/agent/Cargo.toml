@@ -7,12 +7,20 @@ publish.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+[features]
+testing = ["posnet/simulator", "dep:tiny_http", "dep:jsonschema"]
+
 [dependencies]
 atomicwrites.workspace = true
+icu_normalizer.workspace = true
 jiff.workspace = true
+jsonschema = { workspace = true, optional = true }
 posnet.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sentry-core.workspace = true
+tracing.workspace = true
+tiny_http = { workspace = true, optional = true }
 thiserror.workspace = true
 ureq.workspace = true
 url.workspace = true
@@ -22,8 +30,20 @@ uuid.workspace = true
 known-folders.workspace = true
 
 [dev-dependencies]
+jsonschema.workspace = true
 posnet = { workspace = true, features = ["simulator"] }
 tempfile.workspace = true
+tiny_http.workspace = true
+proptest.workspace = true
+proptest-state-machine.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true
+typify.workspace = true
+schemars.workspace = true
+syn.workspace = true
+quote.workspace = true
 
 [lints]
 workspace = true

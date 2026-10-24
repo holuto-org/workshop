@@ -1,13 +1,14 @@
-#![cfg_attr(
-    all(target_os = "windows", not(debug_assertions)),
-    windows_subsystem = "windows"
-)]
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 #[cfg(all(feature = "simulator", not(debug_assertions)))]
 compile_error!("The simulator feature is restricted to local debug builds.");
 
 mod application;
+mod autostart;
+mod cli;
+mod console;
 mod model;
+mod telemetry;
 mod tray;
 #[expect(
     clippy::pub_use,
@@ -24,6 +25,7 @@ mod ui {
 }
 
 use std::{
+    env,
     error::Error,
     io::{self, Write},
     process::ExitCode,
@@ -39,6 +41,16 @@ use posnet::simulator::Simulator;
 use slint::ComponentHandle;
 
 fn main() -> ExitCode {
+    // Native reporters bypass CLI dispatch, the instance lock and fiscal storage.
+    if telemetry::is_crash_reporter_process() {
+        let _telemetry = telemetry::init();
+        return ExitCode::FAILURE;
+    }
+    console::prepare(env::args_os().nth(1).is_some());
+    if let Some(code) = cli::run(env::args_os().skip(1)) {
+        return code;
+    }
+    let _telemetry = telemetry::init();
     match start() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -54,11 +66,7 @@ fn main() -> ExitCode {
 }
 
 fn start() -> Result<(), Box<dyn Error>> {
-    let path = StateDir::default_path().ok_or("Nie można ustalić katalogu stanu aplikacji.")?;
-    // Keep simulator ports, journal and history separate from real-printer state.
-    #[cfg(feature = "simulator")]
-    let path = path.with_file_name("holuto-fiscal-simulator");
-    let dir = Arc::new(StateDir::open(path)?);
+    let dir = Arc::new(StateDir::open_default(cfg!(feature = "simulator"))?);
     let settings = Settings::load(&dir)?.unwrap_or_default();
     #[cfg(feature = "simulator")]
     let simulator = Simulator::start();
@@ -75,6 +83,7 @@ fn start() -> Result<(), Box<dyn Error>> {
     slint::BackendSelector::new()
         .renderer_name("software".into())
         .select()?;
+    slint::set_xdg_app_id("workshop")?;
     application::run(dir, settings, link)?;
     Ok(())
 }

@@ -1,4 +1,4 @@
-Package: holuto-fiscal
+Package: workshop
 Version: @VERSION@
 Section: office
 Priority: optional

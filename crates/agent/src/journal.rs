@@ -1,8 +1,11 @@
 //! Persisted before each printer command and retained until settlement.
 //! An unreadable journal blocks printing.
 
-use std::{io, path::PathBuf};
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::{borrow::Cow, fmt, io, path::PathBuf};
 
+use icu_normalizer::ComposingNormalizerBorrowed;
 use jiff::Timestamp;
 use posnet::{
     money::Grosze,
@@ -29,7 +32,7 @@ pub(crate) enum Operation {
     Report(ReportOperation),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Device {
     /// Claim recorded; no command sent.
@@ -38,6 +41,18 @@ pub(crate) enum Device {
     Dispatching { stage: String },
     /// All commands succeeded; the counter may be unreadable.
     Completed { receipt_number: Option<String> },
+}
+
+impl fmt::Debug for Device {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotStarted => f.write_str("NotStarted"),
+            Self::Dispatching { stage } => {
+                f.debug_struct("Dispatching").field("stage", stage).finish()
+            },
+            Self::Completed { .. } => f.write_str("Completed([REDACTED])"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,12 +72,21 @@ pub(crate) struct ReceiptOperation {
     pub(crate) settled: Option<Settlement>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Summary {
     pub(crate) total: Grosze,
     pub(crate) payments: Vec<Payment>,
     pub(crate) items: Vec<String>,
+}
+
+impl fmt::Debug for Summary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Summary")
+            .field("items", &self.items.len())
+            .field("payments", &self.payments.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Summary {
@@ -79,12 +103,22 @@ impl Summary {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum JobResult {
     Done { receipt_number: String },
     Failed { reason: String },
     Unknown { reason: String },
+}
+
+impl fmt::Debug for JobResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Done { .. } => "Done([REDACTED])",
+            Self::Failed { .. } => "Failed([REDACTED])",
+            Self::Unknown { .. } => "Unknown([REDACTED])",
+        })
+    }
 }
 
 impl JobResult {
@@ -141,17 +175,17 @@ impl ReceiptOperation {
         };
         Some(ResultForm {
             attempt: self.attempt,
-            state: result.outcome(),
-            receipt_number,
             issued_at,
+            receipt_number,
             result: reason,
+            state: result.outcome(),
         })
     }
 }
 
 impl ReportOperation {
     pub(crate) const fn unresolved(&self) -> bool {
-        self.acknowledged_at.is_none() && !matches!(self.device, Device::Completed { .. })
+        self.acknowledged_at.is_none() && matches!(self.device, Device::Dispatching { .. })
     }
 }
 
@@ -167,12 +201,16 @@ impl Operation {
 #[derive(Debug)]
 pub(crate) struct Journal {
     path: PathBuf,
+    #[cfg(test)]
+    fail_write: AtomicBool,
 }
 
 impl Journal {
     pub(crate) fn new(dir: &StateDir) -> Self {
         Self {
             path: dir.file(FILE),
+            #[cfg(test)]
+            fail_write: AtomicBool::new(false),
         }
     }
 
@@ -202,20 +240,47 @@ impl Journal {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn fail_next_write(&self) {
+        self.fail_write.store(true, Ordering::SeqCst);
+    }
+
     pub(crate) fn write(&self, operation: &Operation) -> io::Result<()> {
+        #[cfg(test)]
+        if self.fail_write.swap(false, Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected journal write failure",
+            ));
+        }
         let bytes = serde_json::to_vec_pretty(operation).map_err(io::Error::other)?;
         store::write_durably(&self.path, &bytes)
     }
 }
 
-/// Backend result text: nonempty, at most 2000 characters; only tab and LF controls.
+/// Backend `platform/src/text.rs:65-104`: NFC, trimmed, bounded multiline Note.
 fn note(reason: &str) -> String {
     let cleaned: String = reason
         .chars()
+        .map(|character| match character {
+            '\u{2028}' | '\u{2029}' => '\n',
+            other => other,
+        })
         .filter(|character| !character.is_control() || matches!(character, '\t' | '\n'))
         .take(MAX_REASON_LENGTH)
         .collect();
-    if cleaned.trim().is_empty() {
+    let mut cleaned = match ComposingNormalizerBorrowed::new_nfc().normalize(&cleaned) {
+        Cow::Borrowed(_) => cleaned,
+        Cow::Owned(normalized) => normalized,
+    };
+    let end = cleaned.trim_end().len();
+    cleaned.truncate(end);
+    let start = cleaned.len() - cleaned.trim_start().len();
+    drop(cleaned.drain(..start));
+    if let Some((end, _character)) = cleaned.char_indices().nth(MAX_REASON_LENGTH) {
+        cleaned.truncate(end);
+    }
+    if cleaned.is_empty() {
         "Brak opisu błędu.".to_owned()
     } else {
         cleaned

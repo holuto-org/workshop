@@ -1,9 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Holuto Fiscal
+Name=Holuto Workshop
 Comment=Paragony Holuto i raporty fiskalne
-Exec=/usr/bin/holuto-fiscal
-Icon=holuto-fiscal
+Exec=/usr/bin/workshop
+Icon=workshop
 Terminal=false
 Categories=Office;Finance;
 StartupNotify=true
+StartupWMClass=workshop

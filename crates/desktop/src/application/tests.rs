@@ -1,0 +1,511 @@
+#[cfg(target_os = "linux")]
+#[path = "tests/autostart.rs"]
+mod autostart;
+#[path = "tests/end_to_end.rs"]
+mod end_to_end;
+#[path = "tests/pairing.rs"]
+mod pairing;
+#[cfg(not(target_os = "macos"))]
+#[path = "tests/start.rs"]
+mod start;
+
+use std::error::Error;
+
+use agent::documents::{Document, ReceiptKind};
+use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+use jiff::Timestamp;
+use posnet::{printer::Status, simulator::Simulator};
+use slint::{
+    Model as _,
+    platform::{Key, WindowEvent},
+};
+use tempfile::TempDir;
+use uuid::Uuid;
+
+use super::*;
+
+type UiFixture = (TempDir, Rc<RefCell<Application>>, AppWindow);
+
+fn fixture() -> Result<UiFixture, Box<dyn Error>> {
+    i_slint_backend_testing::init_no_event_loop();
+    fixture_data()
+}
+
+fn fixture_with_event_loop() -> Result<UiFixture, Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    fixture_data()
+}
+
+fn fixture_data() -> Result<UiFixture, Box<dyn Error>> {
+    let temp = TempDir::new()?;
+    let simulator = Simulator::start();
+    let app = make_app(
+        Arc::new(StateDir::open(temp.path().to_owned())?),
+        Settings::default(),
+        simulator.link(),
+    )?;
+    let window = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing app window")?
+        .clone_strong();
+    window
+        .window()
+        .set_size(slint::LogicalSize::new(1180.0, 820.0));
+    Ok((temp, app, window))
+}
+
+fn make_app(
+    dir: Arc<StateDir>,
+    settings: Settings,
+    link: Arc<dyn Link>,
+) -> Result<Rc<RefCell<Application>>, slint::PlatformError> {
+    let app = Rc::new(RefCell::new(Application::new(
+        dir,
+        settings,
+        link,
+        Date::constant(2025, 10, 24),
+    )));
+    APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
+    app.borrow_mut().launch()?;
+    Ok(app)
+}
+
+fn control(
+    window: &AppWindow,
+    label: &str,
+    role: AccessibleRole,
+) -> Result<ElementHandle, Box<dyn Error>> {
+    ElementHandle::find_by_accessible_label(window, label)
+        .find(|element| element.accessible_role() == Some(role))
+        .ok_or_else(|| format!("missing accessible control {label}").into())
+}
+fn button(window: &AppWindow, label: &str) -> Result<ElementHandle, Box<dyn Error>> {
+    control(window, label, AccessibleRole::Button)
+}
+fn ready(app: &Rc<RefCell<Application>>) {
+    let mut app = app.borrow_mut();
+    app.event(Event::Connected {
+        printer_id: "printer-42".into(),
+        serial: "SERIAL42".into(),
+        port: "test".into(),
+    });
+    app.event(Event::Device {
+        status: Some(Status {
+            name: "TEMO".into(),
+            version: "32.01".into(),
+            serial: "SERIAL42".into(),
+            problems: Vec::new(),
+            vat: Vec::new(),
+        }),
+        blocked: false,
+        report_unresolved: false,
+        orphaned_receipt: false,
+    });
+    app.event(Event::Documents {
+        items: vec![Document {
+            kind: ReceiptKind::Sale,
+            order_id: Uuid::nil(),
+            order_number: 42,
+            allocation_id: None,
+            amount: 25_000,
+            customer_name: Some("Jan Kowalski".into()),
+            occurred_at: Timestamp::UNIX_EPOCH,
+        }],
+        page: 1,
+        has_next: true,
+    });
+    app.model.selected = Some(0);
+    app.sync();
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn queue_confirmation_shows_amount_nip_and_local_pending_state() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    control(&window, "NIP nabywcy", AccessibleRole::TextInput)?.set_accessible_value("1234567890");
+    button(&window, "Dodaj do wydruku")?.invoke_accessible_default_action();
+    assert_eq!(
+        window.get_confirm_text().as_str(),
+        concat!(
+            "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: 1234567890\n",
+            "Zatwierdzenie wystawi paragon fiskalny."
+        ),
+        "operator sees the binding amount and NIP"
+    );
+    let confirm = ElementHandle::find_by_accessible_label(&window, "Dodaj do wydruku")
+        .filter(|element| element.accessible_role() == Some(AccessibleRole::Button))
+        .last()
+        .ok_or("missing confirmation button")?;
+    confirm.invoke_accessible_default_action();
+    assert_eq!(
+        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
+        Some(false),
+        "confirmed receipt waits for worker acknowledgement"
+    );
+    app.borrow_mut().event(Event::CommandCompleted);
+    app.borrow().sync();
+    assert_eq!(
+        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
+        Some(true),
+        "completion restores receipt action"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn paging_buttons_reflect_the_worker_page() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    assert_eq!(
+        button(&window, "Poprzednia strona")?.accessible_enabled(),
+        Some(false),
+        "first page has no predecessor"
+    );
+    assert_eq!(
+        button(&window, "Następna strona")?.accessible_enabled(),
+        Some(true),
+        "cursor exposes next page"
+    );
+    app.borrow_mut().event(Event::Documents {
+        items: Vec::new(),
+        page: 2,
+        has_next: false,
+    });
+    app.borrow().sync();
+    assert_eq!(
+        window.get_page_label().as_str(),
+        "Strona 2",
+        "operator sees current page"
+    );
+    assert_eq!(
+        button(&window, "Poprzednia strona")?.accessible_enabled(),
+        Some(true),
+        "second page can go back"
+    );
+    assert_eq!(
+        button(&window, "Następna strona")?.accessible_enabled(),
+        Some(false),
+        "last page has no successor"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn report_input_before_2000_shows_error_instead_of_confirmation() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    window.set_tab(1);
+    control(&window, "Data początkowa", AccessibleRole::TextInput)?
+        .set_accessible_value("31.12.1999");
+    control(&window, "Data końcowa", AccessibleRole::TextInput)?.set_accessible_value("01.01.2000");
+    button(&window, "Drukuj raport okresowy")?.invoke_accessible_default_action();
+    assert_eq!(
+        window.get_status().as_str(),
+        "Data początkowa nie może być wcześniejsza niż 01.01.2000.",
+        "operator can correct the invalid date"
+    );
+    assert!(
+        !window.get_confirming(),
+        "invalid report cannot reach confirmation"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn save_persists_operator_connection_choices_before_quitting() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture_with_event_loop()?;
+    control(&window, "Adres API", AccessibleRole::TextInput)?
+        .set_accessible_value("https://api.example.test");
+    app.borrow_mut().model.settings.token = "already-paired-secret".into();
+    button(&window, "Zapisz")?.invoke_accessible_default_action();
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    let saved = Settings::load(&app.borrow().dir)?.ok_or("missing saved settings")?;
+    assert_eq!(
+        saved.api_url, "https://api.example.test",
+        "save captures API input"
+    );
+    assert_eq!(
+        saved.token.as_str(),
+        "already-paired-secret",
+        "saving connection choices preserves credentials without exposing an editor"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn nested_ui_callback_is_drained_without_refcell_panic() -> Result<(), Box<dyn Error>> {
+    let (_temp, _app, window) = fixture()?;
+    with_app(|app| {
+        with_app(|app| {
+            app.model
+                .say("Nested callback completed".into(), Tone::Success);
+            Ok(())
+        });
+        app.model.say("Outer callback completed".into(), Tone::Info);
+        Ok(())
+    });
+    assert_eq!(
+        window.get_status().as_str(),
+        "Nested callback completed",
+        "reentrant action executes after outer mutation"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    let mut state = app.borrow_mut();
+    state.model.blocked = true;
+    state.model.orphaned_receipt = true;
+    state
+        .model
+        .say("Zlecenie 42 · paragon 17".into(), Tone::Error);
+    state.sync();
+    drop(state);
+    button(&window, "Wyjaśnij paragon")?.invoke_accessible_default_action();
+    assert!(
+        window
+            .get_confirm_text()
+            .contains("Zlecenie 42 · paragon 17"),
+        "acknowledgement identifies the printed receipt"
+    );
+    assert!(
+        window
+            .get_confirm_text()
+            .contains("Nie wydrukuje paragonu ponownie"),
+        "confirmation explains no reprint"
+    );
+    button(&window, "Anuluj")?.invoke_accessible_default_action();
+    assert!(
+        app.borrow().model.blocked,
+        "cancelling keeps the fiscal block"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn accessible_headers_sort_visible_rows_without_changing_the_selected_document()
+-> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    let mut documents = app.borrow().model.documents().to_vec();
+    let mut other = documents.first().ok_or("missing fixture document")?.clone();
+    other.order_id = Uuid::from_u128(1);
+    other.order_number = 1;
+    documents.push(other);
+    app.borrow_mut().event(Event::Documents {
+        items: documents,
+        page: 1,
+        has_next: false,
+    });
+    app.borrow().sync();
+    button(&window, "Zlecenie")?.invoke_accessible_default_action();
+    assert_eq!(
+        window
+            .get_documents()
+            .row_data(0)
+            .and_then(|row| row.row_data(0))
+            .map(|cell| cell.text.to_string()),
+        Some("1".into()),
+        "ascending header sorts the rows the operator sees"
+    );
+    control(&window, "42", AccessibleRole::ListItem)?.invoke_accessible_default_action();
+    button(&window, "Zlecenie")?.invoke_accessible_default_action();
+    assert_eq!(
+        window
+            .get_documents()
+            .row_data(0)
+            .and_then(|row| row.row_data(0))
+            .map(|cell| cell.text.to_string()),
+        Some("42".into()),
+        "second header action sorts descending"
+    );
+    button(&window, "Dodaj do wydruku")?.invoke_accessible_default_action();
+    assert!(
+        window.get_confirm_text().contains("zlecenie 42"),
+        "sorting must never move selection to another document"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn close_without_a_tray_host_keeps_the_window_visible() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    app.borrow_mut().close_after_probe(false);
+    assert!(
+        window.window().is_visible(),
+        "closing without a tray must not strand the operator"
+    );
+    assert_eq!(
+        app.borrow().model.message,
+        "Zasobnik systemowy jest niedostępny. Aby zakończyć aplikację, kliknij Zakończ.",
+        "operator gets an explicit exit route"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    app.borrow_mut().tray = Some(TrayIcon::new()?);
+    app.borrow_mut().close_after_probe(true);
+    assert!(
+        !window.window().is_visible(),
+        "tray close hides the visible window"
+    );
+    assert!(
+        app.borrow().window.is_none(),
+        "tray close releases the component"
+    );
+    app.borrow_mut().open()?;
+    assert!(
+        app.borrow()
+            .window
+            .as_ref()
+            .is_some_and(|window| window.window().is_visible()),
+        "tray open recreates a visible window"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn keyboard_navigation_selects_rows_and_enter_opens_the_selected_receipt_confirmation()
+-> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    let template = app
+        .borrow()
+        .model
+        .documents()
+        .first()
+        .ok_or("missing fixture")?
+        .clone();
+    app.borrow_mut().event(Event::Documents {
+        items: (1..=30)
+            .map(|number| Document {
+                order_number: number,
+                order_id: Uuid::from_u128(u128::try_from(number).unwrap_or_default()),
+                ..template.clone()
+            })
+            .collect(),
+        page: 1,
+        has_next: false,
+    });
+    app.borrow().sync();
+    control(&window, "1", AccessibleRole::ListItem)?.invoke_accessible_default_action();
+    for (key, row) in [
+        (Key::DownArrow, 1),
+        (Key::End, 29),
+        (Key::Home, 0),
+        (Key::PageDown, 7),
+        (Key::PageUp, 0),
+    ] {
+        window
+            .window()
+            .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+        assert_eq!(
+            window.get_selected(),
+            row,
+            "keyboard navigation changes the operator's selected row"
+        );
+    }
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
+    assert!(
+        window.get_confirm_text().contains("zlecenie 1"),
+        "Enter invokes the selected row's default action without printing yet"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture_with_event_loop()?;
+    control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
+        .invoke_accessible_default_action();
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    let saved = Settings::load(&app.borrow().dir)?.ok_or("missing diagnostic preference")?;
+    assert!(
+        !saved.telemetry_enabled,
+        "opting out must not require an API URL or token"
+    );
+    assert!(
+        saved.api_url.is_empty(),
+        "changing diagnostics must not invent connection settings"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Asserts fail-closed native startup after fallible UI setup"
+)]
+fn missing_native_quit_hook_blocks_worker_start() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    app.borrow_mut().spawn_worker();
+    app.borrow().sync();
+    assert!(
+        app.borrow().worker.is_none(),
+        "no fiscal worker may start without safe native quit"
+    );
+    assert!(
+        window
+            .get_status()
+            .contains("Obsługa drukarki jest wyłączona"),
+        "operator sees why starting is refused"
+    );
+    Ok(())
+}

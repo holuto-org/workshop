@@ -169,13 +169,17 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<String> {
 }
 
 fn is_printable(character: char) -> bool {
+    // POT-I-DEV-37 v5978 p. 14 reserves these bytes for table-drawing glyphs.
     !character.is_control()
-        && !matches!(character, '\u{A0}' | '\u{AD}')
+        && !matches!(
+            character,
+            '\u{A0}' | '\u{A4}' | '\u{A8}' | '\u{AD}' | '\u{2DB}' | '\u{B4}' | '\u{B8}'
+        )
         && encode_char(character).is_some()
 }
 
 /// Advertised to Holuto for validation before queueing; the driver never rewrites text.
-/// Assigned Windows-1250 bytes 0x20–0xFF, excluding DEL, no-break space and soft hyphen.
+/// Assigned Windows-1250 bytes 0x20–0xFF, excluding DEL and the table-drawing glyphs (spec p. 14).
 pub fn printable_characters() -> String {
     (0x20..=0xFF_u8)
         .filter_map(decode_byte)

@@ -1,8 +1,15 @@
 //! Display cache, not the fiscal record. Cache errors never block receipt settlement.
+//!
+//! Each append atomically compacts JSONL to at most 500 distinct receipts.
+//! Reads retain bounded state, including after a torn write. Only a missing receipt
+//! number may be upgraded; replay never rewrites the original print evidence.
 
 use std::{
+    collections::VecDeque,
+    fmt,
     fs::File,
-    io::{self, Write as _},
+    io::{self, BufRead as _, BufReader},
+    path::Path,
 };
 
 use jiff::Timestamp;
@@ -18,7 +25,7 @@ use crate::{
 const FILE: &str = "history.jsonl";
 const LIMIT: usize = 500;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
     pub job_id: Uuid,
@@ -30,60 +37,96 @@ pub struct HistoryEntry {
     pub items: Vec<String>,
 }
 
-/// Up to 500 receipts, newest first; skips crash-torn lines.
-pub fn load(dir: &StateDir) -> Result<Vec<HistoryEntry>, Error> {
-    let path = dir.file(FILE);
-    let mut entries = store::read_optional(&path)
-        .map_err(|source| Error::Store {
-            action: "Nie można odczytać historii",
-            path,
-            source,
-        })?
-        .map(|bytes| parse(&bytes))
-        .unwrap_or_default();
-    entries.reverse();
-    entries.truncate(LIMIT);
-    Ok(entries)
+impl fmt::Debug for HistoryEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HistoryEntry")
+            .field("job_id", &self.job_id)
+            .field("items", &self.items.len())
+            .finish_non_exhaustive()
+    }
 }
 
-pub(crate) fn append(dir: &StateDir, entry: &HistoryEntry) -> Result<(), Error> {
+/// Up to 500 distinct receipts, newest first; skips crash-torn lines.
+/// The GUI reads only before a worker exists; the worker publishes snapshots.
+pub fn load(dir: &StateDir) -> Result<Vec<HistoryEntry>, Error> {
+    let path = dir.file(FILE);
+    let entries = read_entries(&path).map_err(|source| Error::Store {
+        action: "Nie można odczytać historii",
+        path,
+        source,
+    })?;
+    Ok(entries.into_iter().rev().collect())
+}
+
+/// Returns the newest-first publication snapshot only after its compact file is durable.
+pub(crate) fn append(dir: &StateDir, entry: &HistoryEntry) -> Result<Vec<HistoryEntry>, Error> {
     let path = dir.file(FILE);
     let failed = |source| Error::Store {
         action: "Nie można zapisać historii",
         path: path.clone(),
         source,
     };
-    let existing = store::read_optional(&path)
-        .map_err(failed)?
-        .unwrap_or_default();
-    if parse(&existing)
-        .iter()
-        .any(|known| known.job_id == entry.job_id)
+    let mut entries = read_entries(&path).map_err(failed)?;
+    let is_new = if let Some(known) = entries
+        .iter_mut()
+        .find(|known| known.job_id == entry.job_id)
     {
-        return Ok(());
+        if known.receipt_number.is_none() {
+            known.receipt_number.clone_from(&entry.receipt_number);
+        }
+        false
+    } else {
+        true
+    };
+    let skip_oldest = usize::from(is_new && entries.len() == LIMIT);
+    let mut bytes = Vec::new();
+    for saved in entries
+        .iter()
+        .skip(skip_oldest)
+        .chain(is_new.then_some(entry))
+    {
+        serde_json::to_writer(&mut bytes, saved)
+            .map_err(|error| failed(io::Error::other(error)))?;
+        bytes.push(b'\n');
     }
-    let mut line = Vec::new();
-    if existing.last().is_some_and(|byte| *byte != b'\n') {
-        line.push(b'\n'); // Keep a torn line from swallowing this entry.
+    store::write_durably(&path, &bytes).map_err(failed)?;
+    if is_new {
+        retain(&mut entries, entry.clone());
     }
-    serde_json::to_writer(&mut line, entry).map_err(|error| failed(io::Error::other(error)))?;
-    line.push(b'\n');
-    let mut file = File::options()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(failed)?;
-    file.write_all(&line)
-        .and_then(|()| file.sync_all())
-        .map_err(failed)
+    Ok(entries.into_iter().rev().collect())
 }
 
-fn parse(bytes: &[u8]) -> Vec<HistoryEntry> {
-    bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| serde_json::from_slice(line).ok())
-        .collect()
+fn read_entries(path: &Path) -> io::Result<VecDeque<HistoryEntry>> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(VecDeque::new()),
+        Err(error) => return Err(error),
+    };
+    store::make_private(&file)?;
+    let mut entries = VecDeque::new();
+    for line in BufReader::new(file).split(b'\n') {
+        let line = line?;
+        if let Ok(entry) = serde_json::from_slice(&line) {
+            retain(&mut entries, entry);
+        }
+    }
+    Ok(entries)
+}
+
+fn retain(entries: &mut VecDeque<HistoryEntry>, entry: HistoryEntry) {
+    if let Some(known) = entries
+        .iter_mut()
+        .find(|known| known.job_id == entry.job_id)
+    {
+        if known.receipt_number.is_none() {
+            known.receipt_number = entry.receipt_number;
+        }
+    } else {
+        if entries.len() == LIMIT {
+            let _oldest = entries.pop_front();
+        }
+        entries.push_back(entry);
+    }
 }
 
 #[cfg(test)]

@@ -221,7 +221,7 @@ pub struct Receipt {
 }
 
 impl Receipt {
-    /// Requires at most one advance per slot, bounded by that slot's sales.
+    /// Requires at most one positive advance per slot, bounded by that slot's sales.
     /// Payments must equal sales minus advances. `buyer_nip` is sent unchanged.
     /// `brand` prints unchanged when absent from the header and must fit one printable footer line.
     pub fn new(
@@ -270,6 +270,11 @@ impl Receipt {
             return Err(receipt_too_large());
         }
         for (index, advance) in advances.iter().enumerate() {
+            if advance.amount == Grosze::ZERO {
+                return Err(Error::Invalid(
+                    "Kwota zaliczki musi być dodatnia.".to_owned(),
+                ));
+            }
             if advances
                 .iter()
                 .take(index)

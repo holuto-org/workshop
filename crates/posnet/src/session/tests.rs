@@ -1,137 +1,355 @@
 use std::{
-    io::{Read as _, Write as _},
-    net::{TcpListener, TcpStream},
-    time::Duration,
+    collections::{BTreeSet, VecDeque},
+    io,
+    sync::{Arc, Mutex, PoisonError},
+    thread::Builder,
+    time::{Duration, Instant},
 };
 
-use super::Session;
+use serialport::{SerialPortInfo, SerialPortType, UsbPortInfo};
+
+use super::{Connection, Link, Port, Session, filter_serial_ports, next_token};
 use crate::{
     Error,
-    frame::{encode, tests::reply},
-    simulator::TcpPort,
+    frame::{self, MAX_FRAME, tests::reply},
+    simulator::Simulator,
 };
 
-const TIMEOUT: Duration = Duration::from_millis(300);
+const TIMEOUT: Duration = Duration::from_millis(40);
 
-trait Peer {
-    fn send(&mut self, bytes: &[u8]);
-    fn received(&mut self, wait: Duration) -> Vec<u8>;
+mod serial_zero;
+
+struct Wire {
+    reads: VecDeque<io::Result<Vec<u8>>>,
+    sent: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
-impl Peer for TcpStream {
-    fn send(&mut self, bytes: &[u8]) {
-        self.write_all(bytes).unwrap();
+impl Port for Wire {
+    fn write_all(&mut self, bytes: &[u8], _timeout: Duration) -> io::Result<()> {
+        self.sent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(bytes.to_vec());
+        Ok(())
     }
 
-    fn received(&mut self, wait: Duration) -> Vec<u8> {
-        self.set_read_timeout(Some(wait)).unwrap();
-        let mut received = Vec::new();
-        let mut chunk = [0_u8; 4096];
-        while let Ok(read) = self.read(&mut chunk) {
-            if read == 0 {
-                break;
-            }
-            received.extend_from_slice(&chunk[..read]);
+    fn read(&mut self, buffer: &mut [u8], _timeout: Duration) -> io::Result<usize> {
+        let bytes = self
+            .reads
+            .pop_front()
+            .unwrap_or_else(|| Err(io::ErrorKind::TimedOut.into()))?;
+        let size = bytes.len().min(buffer.len());
+        buffer[..size].copy_from_slice(&bytes[..size]);
+        if size < bytes.len() {
+            self.reads.push_front(Ok(bytes[size..].to_vec()));
         }
-        received
+        Ok(size)
     }
 }
 
-fn tcp_pair() -> (TcpStream, Session) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let driver = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-    let (peer, _) = listener.accept().unwrap();
-    (peer, Session::new(Box::new(TcpPort(driver))))
+fn wire(reads: Vec<io::Result<Vec<u8>>>) -> (Session, Arc<Mutex<Vec<Vec<u8>>>>) {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    (
+        Session::new(Box::new(Wire {
+            reads: reads.into(),
+            sent: Arc::clone(&sent),
+        })),
+        sent,
+    )
 }
 
-fn lost_reply_never_retries(peer: &mut dyn Peer, session: &mut Session) {
-    let trinit = encode("trinit", &[("bm", "0".to_owned())]).unwrap();
-    let result = session.command("trinit", &[("bm", "0".to_owned())], TIMEOUT);
-    assert!(
-        matches!(result, Err(Error::Timeout("trinit"))),
-        "{result:?}"
+#[test]
+fn an_interrupted_read_waits_for_the_reply_without_resending_the_command() {
+    let (mut session, sent) = wire(vec![
+        Err(io::ErrorKind::Interrupted.into()),
+        Ok(reply("trinit\t")),
+    ]);
+    assert_eq!(
+        session
+            .command("trinit", &[("bm", "0".to_owned())], TIMEOUT)
+            .unwrap()
+            .fields(),
+        &[]
     );
-    assert_eq!(peer.received(Duration::from_millis(200)), trinit);
+    assert_eq!(
+        *sent.lock().unwrap(),
+        [frame::encode("trinit", &[("bm", "0".to_owned())]).unwrap()]
+    );
 }
 
-/// Line noise is ignored; a late reply cannot satisfy the next command.
-fn foreign_reply_is_not_a_success(peer: &mut dyn Peer, session: &mut Session) {
-    let mut noisy = b"\x00\xFF".to_vec();
-    noisy.extend(reply("getrealid\tnmX\t"));
-    peer.send(&noisy);
+#[test]
+fn a_tokenized_err_from_an_earlier_async_query_is_not_the_current_command_error() {
+    let (mut session, _) = wire(vec![
+        Ok(reply("ERR\t@0001\t?2036\tcm!sdev\tfd\t")),
+        Ok(reply("trend\t")),
+    ]);
+    assert_eq!(
+        session.command("trend", &[], TIMEOUT).unwrap().fields(),
+        &[]
+    );
+}
+
+#[test]
+fn split_frames_noise_and_two_replies_per_read_keep_their_boundaries() {
+    let first = reply("scnt\tbt17\t");
+    let mut second = first[3..].to_vec();
+    second.extend(reply("getrealid\tnuDEMO\t"));
+    let (mut session, _) = wire(vec![
+        Ok(b"noise\x03old\x02junk".to_vec()),
+        Ok(first[..3].to_vec()),
+        Ok(second),
+    ]);
+    assert_eq!(
+        session.command("scnt", &[], TIMEOUT).unwrap().get("bt"),
+        Some("17")
+    );
     assert_eq!(
         session
             .command("getrealid", &[], TIMEOUT)
             .unwrap()
-            .get("nm"),
-        Some("X")
+            .get("nu"),
+        Some("DEMO")
     );
-    peer.send(&reply("scnt\tbt1\t"));
-    let result = session.command("trend", &[("to", "1".to_owned())], TIMEOUT);
-    let Err(Error::Protocol(message)) = result else {
-        panic!("{result:?}")
-    };
-    assert!(message.contains("Oczekiwano odpowiedzi trend"), "{message}");
 }
 
 #[test]
-fn socket_lost_reply_never_retries() {
-    let (mut peer, mut session) = tcp_pair();
-    lost_reply_never_retries(&mut peer, &mut session);
+fn partial_replies_and_silence_time_out_without_a_second_send() {
+    for reads in [vec![], vec![Ok(b"\x02trinit\t".to_vec())]] {
+        let (mut session, sent) = wire(reads);
+        assert!(
+            matches!(
+                session.command("trinit", &[], TIMEOUT),
+                Err(Error::Timeout("trinit"))
+            ),
+            "no complete reply"
+        );
+        assert_eq!(
+            *sent.lock().unwrap(),
+            [frame::encode("trinit", &[]).unwrap()]
+        );
+    }
 }
 
 #[test]
-fn socket_foreign_reply_is_not_a_success() {
-    let (mut peer, mut session) = tcp_pair();
-    foreign_reply_is_not_a_success(&mut peer, &mut session);
+fn an_oversized_unterminated_reply_is_rejected_before_growing_without_bound() {
+    let (mut session, _) = wire(vec![Ok(vec![b'a'; MAX_FRAME])]);
+    assert_eq!(
+        session
+            .command("scnt", &[], TIMEOUT)
+            .unwrap_err()
+            .to_string(),
+        "Zbyt długa odpowiedź drukarki."
+    );
 }
 
-/// Exercises termios timeouts and partial reads, as on the real serial transport.
+#[test]
+fn a_foreign_reply_is_a_protocol_error_not_the_current_commands_success() {
+    let (mut session, _) = wire(vec![Ok(reply("scnt\tbt1\t"))]);
+    assert_eq!(
+        session
+            .command("trend", &[], TIMEOUT)
+            .unwrap_err()
+            .to_string(),
+        "Oczekiwano odpowiedzi trend, otrzymano scnt."
+    );
+}
+
+#[test]
+fn tokens_do_not_repeat_before_the_full_ten_thousand_value_cycle() {
+    // Start well beyond the old AtomicU16 rollover; the modulo must happen atomically.
+    let mut seen = BTreeSet::new();
+    let next = super::AtomicU16::new(0);
+    for _ in 0..70_000 {
+        let value = next_token(&next);
+        assert_eq!(value.len(), 4);
+        if seen.len() == 10_000 {
+            seen.clear();
+        }
+        assert!(seen.insert(value), "early token repetition");
+    }
+}
+
+#[test]
+fn macos_filters_carrier_waiting_duplicates_and_keeps_usb_first_on_every_os() {
+    let ports = vec![
+        SerialPortInfo {
+            port_name: "/dev/tty.Bluetooth".to_owned(),
+            port_type: SerialPortType::BluetoothPort,
+        },
+        SerialPortInfo {
+            port_name: "COM1".to_owned(),
+            port_type: SerialPortType::Unknown,
+        },
+        SerialPortInfo {
+            port_name: "/dev/tty.usbmodem".to_owned(),
+            port_type: SerialPortType::UsbPort(UsbPortInfo {
+                vid: 1,
+                pid: 2,
+                serial_number: None,
+                manufacturer: None,
+                product: None,
+            }),
+        },
+        SerialPortInfo {
+            port_name: "/dev/cu.usbmodem".to_owned(),
+            port_type: SerialPortType::UsbPort(UsbPortInfo {
+                vid: 1,
+                pid: 2,
+                serial_number: None,
+                manufacturer: None,
+                product: None,
+            }),
+        },
+    ];
+    assert_eq!(
+        filter_serial_ports(ports.clone(), true),
+        ["/dev/cu.usbmodem", "COM1"]
+    );
+    assert_eq!(
+        filter_serial_ports(ports, false),
+        [
+            "/dev/tty.usbmodem",
+            "/dev/cu.usbmodem",
+            "/dev/tty.Bluetooth",
+            "COM1"
+        ]
+    );
+}
+
+#[test]
+fn an_empty_port_is_refused_before_attempting_to_open_any_device() {
+    let sim = Simulator::start();
+    assert!(
+        matches!(
+            Session::open(
+                sim.link().as_ref(),
+                &Connection {
+                    port: " ".to_owned(),
+                    baud_rate: 9600
+                }
+            ),
+            Err(Error::NoPort)
+        ),
+        "blank connection"
+    );
+    assert_eq!(sim.frames(), Vec::<Vec<u8>>::new());
+}
+
+fn serial_timeout_and_partial_reads(
+    mut peer: Box<dyn serialport::SerialPort>,
+    mut session: Session,
+) {
+    let expected = frame::encode("trinit", &[]).unwrap();
+    assert!(
+        matches!(
+            session.command("trinit", &[], TIMEOUT),
+            Err(Error::Timeout("trinit"))
+        ),
+        "serial silence is a timeout"
+    );
+    let mut received = vec![0; expected.len()];
+    io::Read::read_exact(&mut peer, &mut received).unwrap();
+    assert_eq!(received, expected);
+    let response = reply("scnt\tbt12\t");
+    io::Write::write_all(&mut peer, &response[..5]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let handle = Builder::new()
+        .name("serial reply".to_owned())
+        .spawn(move || {
+            let mut command = vec![0; frame::encode("scnt", &[]).unwrap().len()];
+            io::Read::read_exact(&mut peer, &mut command).unwrap();
+            io::Write::write_all(&mut peer, &response[5..]).unwrap();
+            peer
+        })
+        .unwrap();
+    let _deadline = session.send("scnt", &[], TIMEOUT).unwrap();
+    assert_eq!(
+        session.receive("scnt", deadline).unwrap().get("bt"),
+        Some("12")
+    );
+    let mut peer = handle.join().unwrap();
+    io::Write::write_all(&mut peer, b"\x02scnt\tbt").unwrap();
+    assert!(
+        matches!(
+            session.command("scnt", &[], TIMEOUT),
+            Err(Error::Timeout("scnt"))
+        ),
+        "partial frame times out"
+    );
+}
+
 #[cfg(unix)]
 mod pty {
-    use std::{
-        io::{Read as _, Write as _},
-        time::Duration,
-    };
+    use super::{Connection, Link, Session, TIMEOUT, serial_timeout_and_partial_reads};
+    use crate::session::SerialLink;
+    use serialport::{SerialPort, TTYPort};
 
-    use serialport::{SerialPort as _, TTYPort};
-
-    use super::{Peer, Session, foreign_reply_is_not_a_success, lost_reply_never_retries};
-    use crate::session::SerialStream;
-
-    impl Peer for TTYPort {
-        fn send(&mut self, bytes: &[u8]) {
-            self.write_all(bytes).unwrap();
-        }
-
-        fn received(&mut self, wait: Duration) -> Vec<u8> {
-            self.set_timeout(wait).unwrap();
-            let mut received = Vec::new();
-            let mut chunk = [0_u8; 4096];
-            while let Ok(read) = self.read(&mut chunk) {
-                if read == 0 {
-                    break;
-                }
-                received.extend_from_slice(&chunk[..read]);
-            }
-            received
-        }
-    }
-
-    fn pair() -> (TTYPort, Session) {
-        let (master, slave) = TTYPort::pair().unwrap();
-        (master, Session::new(Box::new(SerialStream(slave))))
+    fn pair() -> (TTYPort, Session, String) {
+        let (mut master, slave) = TTYPort::pair().unwrap();
+        let path = slave.name().unwrap();
+        drop(slave);
+        master.set_timeout(TIMEOUT).unwrap();
+        let session = Session::open(
+            &SerialLink,
+            &Connection {
+                port: path.clone(),
+                baud_rate: 9600,
+            },
+        )
+        .unwrap();
+        (master, session, path)
     }
 
     #[test]
-    fn lost_reply_never_retries_on_a_terminal() {
-        let (mut peer, mut session) = pair();
-        lost_reply_never_retries(&mut peer, &mut session);
+    fn opening_a_real_terminal_uses_exclusivity_and_releases_it_on_drop() {
+        let (_master, session, path) = pair();
+        assert!(
+            SerialLink.open(&path, 9600).is_err(),
+            "second serial open must fail"
+        );
+        drop(session);
+        assert!(
+            SerialLink.open(&path, 9600).is_ok(),
+            "drop releases serial ownership"
+        );
     }
 
     #[test]
-    fn foreign_reply_is_not_a_success_on_a_terminal() {
-        let (mut peer, mut session) = pair();
-        foreign_reply_is_not_a_success(&mut peer, &mut session);
+    fn the_native_open_path_preserves_partial_reads_and_maps_serial_timeouts() {
+        let (peer, session, _) = pair();
+        serial_timeout_and_partial_reads(Box::new(peer), session);
+    }
+}
+
+#[cfg(windows)]
+mod com_pair {
+    use super::{Connection, Link, Session, TIMEOUT, serial_timeout_and_partial_reads};
+    use crate::session::SerialLink;
+
+    #[test]
+    fn real_com_ports_are_exclusive_and_preserve_partial_reads_and_timeouts() {
+        let configured = std::env::var("HOLUTO_TEST_COM_PAIR")
+            .expect("HOLUTO_TEST_COM_PAIR must name the signed com0com pair, e.g. COM10,COM11");
+        let (driver, peer) = configured
+            .split_once(',')
+            .expect("HOLUTO_TEST_COM_PAIR must contain two COM names");
+        let peer = serialport::new(peer, 9600).timeout(TIMEOUT).open().unwrap();
+        let session = Session::open(
+            &SerialLink,
+            &Connection {
+                port: driver.to_owned(),
+                baud_rate: 9600,
+            },
+        )
+        .unwrap();
+        assert!(
+            SerialLink.open(driver, 9600).is_err(),
+            "second COM open must fail"
+        );
+        serial_timeout_and_partial_reads(peer, session);
+        assert!(
+            SerialLink.open(driver, 9600).is_ok(),
+            "drop releases COM ownership"
+        );
     }
 }

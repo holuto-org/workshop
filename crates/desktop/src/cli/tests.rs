@@ -1,0 +1,302 @@
+use std::{error::Error, ffi::OsString, path::Path, sync::Arc};
+
+use agent::{Error as AgentError, settings::Settings, store::StateDir};
+use serde_json::json;
+
+use super::{Command, execute, parse};
+
+type TestResult = Result<(), Box<dyn Error>>;
+
+fn save_api_url(path: &Path, api_url: &str) -> Result<(), AgentError> {
+    let dir = StateDir::open(path.to_owned())?;
+    Settings {
+        api_url: api_url.into(),
+        ..Settings::default()
+    }
+    .save(&dir)
+}
+
+#[test]
+fn manual_credentials_and_unknown_arguments_are_rejected_without_echoing_them() {
+    for args in [
+        vec!["--token", "secret-canary"],
+        vec!["config", "set", "--token", "secret-canary"],
+        vec!["pair"],
+    ] {
+        let error = parse(args.into_iter().map(OsString::from)).expect_err("invalid command");
+        assert_eq!(error.code, "arguments");
+        assert_eq!(error.exit, 2);
+        assert!(!error.message.contains("secret-canary"));
+    }
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn json_is_accepted_before_or_after_every_command() -> TestResult {
+    for (words, expected) in [
+        (vec!["ports"], Command::Ports),
+        (vec!["check"], Command::Check),
+        (vec!["status"], Command::Status),
+        (vec!["config", "show"], Command::ConfigShow),
+        (vec!["pair", "ABCD1234"], Command::Pair("ABCD1234".into())),
+        (vec!["autostart", "off"], Command::Autostart(false)),
+        (vec!["--help"], Command::Help),
+        (vec!["--version"], Command::Version),
+        (
+            vec!["config", "set", "--speed", "9600"],
+            Command::ConfigSet(super::Changes {
+                speed: Some(9600),
+                ..super::Changes::default()
+            }),
+        ),
+    ] {
+        for before in [true, false] {
+            let mut args = words.iter().map(OsString::from).collect::<Vec<_>>();
+            if before {
+                args.insert(0, "--json".into());
+            } else {
+                args.push("--json".into());
+            }
+            let parsed = parse(args)?;
+            assert!(parsed.json);
+            assert_eq!(parsed.command, expected);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn configuration_output_redacts_saved_credentials() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let dir = StateDir::open(temp.path().join("state"))?;
+    let settings = Settings {
+        api_url: "https://example.test".into(),
+        token: "secret-canary".into(),
+        ..Settings::default()
+    };
+    settings.save(&dir)?;
+    let response = execute(Command::ConfigShow, dir.path())?;
+    assert_eq!(
+        response.value,
+        json!({"ok":true,"config":{
+            "apiUrl":"https://example.test","paired":true,"port":"auto",
+            "baudRate":9600,"telemetryEnabled":true,"startOnLaunch":false
+        }})
+    );
+    assert!(!response.value.to_string().contains("secret-canary"));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn settings_changes_refuse_the_running_apps_lock_and_preserve_config() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let dir = Arc::new(StateDir::open(temp.path().join("state"))?);
+    let settings = Settings {
+        api_url: "https://example.test".into(),
+        token: "secret-canary".into(),
+        ..Settings::default()
+    };
+    settings.save(&dir)?;
+    for args in [
+        vec!["config", "set", "--speed", "19200"],
+        vec!["pair", "ABCD1234"],
+        vec!["autostart", "on"],
+    ] {
+        let parsed = parse(args.into_iter().map(OsString::from))?;
+        let error = execute(parsed.command, dir.path()).expect_err("app lock held");
+        assert_eq!((error.exit, error.code), (4, "app_running"));
+        assert_eq!(Settings::load(&dir)?, Some(settings.clone()));
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn fresh_installation_check_reports_missing_configuration_without_opening_ports() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let response = execute(Command::Check, &temp.path().join("state"))?;
+    assert_eq!(response.exit, 3);
+    assert_eq!(
+        response.value,
+        json!({
+            "ok":false,"configured":false,"appRunning":false,
+            "errors":["Wpisz adres API w Ustawieniach."]
+        })
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn invalid_configuration_is_not_partially_saved() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("state");
+    let parsed = parse(
+        [
+            "config",
+            "set",
+            "--api-url",
+            "http://unsafe.example",
+            "--speed",
+            "19200",
+        ]
+        .map(OsString::from),
+    )?;
+    let error = execute(parsed.command, &path).expect_err("unsafe URL");
+    assert_eq!(error.exit, 3);
+    assert!(!path.join("settings.json").exists());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn status_does_not_claim_to_know_processing_without_ipc() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let dir = StateDir::open(temp.path().join("state"))?;
+    let response = execute(Command::Status, dir.path())?;
+    assert_eq!(
+        response.value,
+        json!({"ok":true,"appRunning":true,"processing":null})
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn autostart_command_registers_login_and_persists_processing_preference() -> TestResult {
+    use std::{
+        env, fs,
+        process::{Command as Process, ExitCode},
+    };
+    if let Some(value) = env::var_os("WORKSHOP_AUTOSTART_CHILD") {
+        assert_eq!(
+            super::run(["autostart".into(), value, "--json".into()]),
+            Some(ExitCode::SUCCESS)
+        );
+        return Ok(());
+    }
+    let temp = tempfile::tempdir()?;
+    let executable = env::current_exe()?;
+    for value in ["on", "off"] {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "Isolate login registration in a child HOME"
+        )]
+        let output = Process::new(&executable)
+            .args([
+                "--exact",
+                "cli::tests::autostart_command_registers_login_and_persists_processing_preference",
+                "--nocapture",
+            ])
+            .env("WORKSHOP_AUTOSTART_CHILD", value)
+            .env("XDG_CONFIG_HOME", temp.path().join("config"))
+            .env("XDG_STATE_HOME", temp.path().join("state"))
+            .output()?;
+        assert!(output.status.success(), "child: {output:?}");
+        let state = temp
+            .path()
+            .join("state")
+            .join(if cfg!(feature = "simulator") {
+                "workshop-simulator"
+            } else {
+                "workshop"
+            });
+        let settings = Settings::load_at(&state)?.ok_or("settings were not written")?;
+        assert_eq!(settings.start_on_launch, value == "on");
+        let artifact = temp.path().join("config/autostart/workshop.desktop");
+        if value == "on" {
+            assert_eq!(
+                fs::read_to_string(&artifact)?,
+                format!(
+                    "[Desktop Entry]\nType=Application\nName=Holuto Workshop\n\
+                     Exec=\"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+                    executable.display()
+                )
+            );
+        } else {
+            assert!(!artifact.exists());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn pairing_command_persists_credentials_and_returns_only_printer_identity() -> TestResult {
+    use agent::testing::{Holuto, PRINTER_ID};
+    let server = Holuto::new();
+    server.pairing_code("ABCD1234");
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("state");
+    save_api_url(&path, server.url())?;
+    let response = execute(Command::Pair("abcd-1234".into()), &path)?;
+    assert_eq!(response.exit, 0);
+    assert_eq!(response.value, json!({"ok":true,"printerId":PRINTER_ID}));
+    let saved = Settings::load_at(&path)?.ok_or("missing credentials")?;
+    assert_eq!(saved.token.as_str(), format!("{:0>42}A", 1));
+    assert!(!response.value.to_string().contains(saved.token.as_str()));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
+fn pairing_command_maps_refusals_to_stable_exit_codes_without_saving() -> TestResult {
+    use agent::testing::{Fault, Holuto};
+    for (status, code, expected_exit, expected_code) in [
+        (400, "fiscal_pairing_invalid", 3, "pairing_invalid"),
+        (429, "rate_limited", 7, "rate_limited"),
+        (401, "unauthorized", 6, "unauthorized"),
+        (503, "unavailable", 5, "holuto"),
+    ] {
+        let server = Holuto::new();
+        server.pairing_code("ABCD1234");
+        server.fault(
+            "POST",
+            "/agent/pair",
+            Fault::Problem {
+                status,
+                code: code.into(),
+                detail: "secret-canary".into(),
+            },
+        );
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("state");
+        save_api_url(&path, server.url())?;
+        let before = Settings::load_at(&path)?;
+        let error = execute(Command::Pair("ABCD1234".into()), &path).expect_err("pairing refusal");
+        assert_eq!((error.exit, error.code), (expected_exit, expected_code));
+        assert!(!error.message.contains("secret-canary"));
+        assert_eq!(Settings::load_at(&path)?, before);
+    }
+    Ok(())
+}

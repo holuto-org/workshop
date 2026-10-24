@@ -1,4 +1,6 @@
-use super::{decode, encode, wrap};
+use proptest::prelude::*;
+
+use super::{MAX_FRAME, crc16, decode, encode, wrap};
 use crate::{Error, text};
 
 pub(crate) fn reply(payload: &str) -> Vec<u8> {
@@ -6,73 +8,112 @@ pub(crate) fn reply(payload: &str) -> Vec<u8> {
 }
 
 #[test]
-fn published_crc_vector() {
-    // Spec p. 13 worked example.
+fn published_checksums_cover_the_payload_not_the_delimiters() {
+    assert_eq!(crc16(b"123456789"), 0x31C3);
     assert_eq!(
         encode("trinit", &[("bm", "0".to_owned())]).unwrap(),
         b"\x02trinit\tbm0\t#4825\x03"
     );
+    assert_eq!(
+        encode("trline", &[("na", "ł".to_owned())]).unwrap(),
+        wrap(b"trline\tna\xB3\t")
+    );
 }
 
 #[test]
-fn polish_text_is_encoded_before_the_checksum() {
-    let frame = encode(
-        "trline",
-        &[("na", "Koło".to_owned()), ("vt", "0".to_owned())],
-    )
-    .unwrap();
-    assert!(frame.windows(4).any(|window| window == b"Ko\xB3o"));
-    let (command, reply) = decode(&frame).unwrap();
-    assert_eq!(command, "trline");
-    assert_eq!(reply.get("na"), Some("Koło"));
-    assert_eq!(reply.get("vt"), Some("0"));
+fn lowercase_hex_and_an_empty_parameter_are_valid_replies() {
+    let mut bytes = reply("scnt\tbt\t");
+    bytes.make_ascii_lowercase();
+    let (command, fields) = decode(&bytes).unwrap();
+    assert_eq!(command, "scnt");
+    assert_eq!(fields.get("bt"), Some(""));
 }
 
 #[test]
-fn command_values_reject_separators_and_unprintable_text() {
-    for value in ["x\ty", "x\u{3}", "x\n", "🔧"] {
+fn documented_device_errors_preserve_the_command_code_and_field() {
+    for (payload, expected_rejected) in [
+        ("trinit\t?2036\tfdts\t", false),
+        ("ERR\t?2036\tcmtrinit\tfdts\t", true),
+    ] {
+        let error = decode(&reply(payload)).unwrap_err();
         assert!(
-            matches!(
-                encode("trline", &[("na", value.to_owned())]),
-                Err(Error::Invalid(_))
-            ),
-            "{value:?}"
+            matches!(&error,
+                Error::Device { code:2036, command, field, rejected }
+                if command == "trinit" && field == "ts" && *rejected == expected_rejected),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "Drukarka zwróciła błąd 2036 (trinit, parametr ts). \
+             Urządzenie w stanie tylko do odczytu."
         );
     }
-    assert!(encode("TRINIT", &[]).is_err());
-    assert!(encode("trline", &[("name", "x".to_owned())]).is_err());
 }
 
 #[test]
-fn corrupt_and_ambiguous_replies_are_rejected() {
-    for frame in [
-        b"\x02trinit\tbm0\t#0000\x03".to_vec(),
-        reply("trinit\tbm0\tbm1\t"),
-        reply("trinit\tb\t"),
-        b"\x02trinit\tbm0\t#48\x03".to_vec(),
-        b"trinit\tbm0\t#4825\x03".to_vec(),
-        wrap(b"scnt\tbt\x81\t"),
+fn corrupt_ambiguous_or_incomplete_replies_never_become_success() {
+    for (name, bytes) in [
+        ("crc", b"\x02scnt\tbt1\t#0000\x03".to_vec()),
+        ("unassigned cp1250", wrap(b"scnt\tbt\x81\t")),
+        ("duplicate field", reply("scnt\tbt1\tbt2\t")),
+        ("duplicate token", reply("scnt\t@0001\t@0002\t")),
+        ("duplicate error", reply("ERR\t?2000\t?2036\t")),
+        ("short field", reply("scnt\tb\t")),
+        ("nonnumeric error", reply("ERR\t?bad\t")),
+        ("missing error", reply("ERR\tcmtrinit\t")),
+        ("short crc", b"\x02scnt\t#123\x03".to_vec()),
+        ("missing stx", b"scnt\t#1234\x03".to_vec()),
+    ] {
+        assert!(matches!(decode(&bytes), Err(Error::Protocol(_))), "{name}");
+    }
+}
+
+#[test]
+fn command_validation_rejects_frame_injection_and_unencodable_text() {
+    for (name, command, key, value) in [
+        ("tab", "trline", "na", "a\tb"),
+        ("etx", "trline", "na", "\u{3}"),
+        ("newline", "trline", "na", "a\nb"),
+        ("emoji", "trline", "na", "😀"),
+        ("uppercase command", "TRINIT", "bm", "0"),
+        ("long key", "trinit", "bad", "0"),
     ] {
         assert!(
-            matches!(decode(&frame), Err(Error::Protocol(_))),
-            "{frame:?}"
+            matches!(
+                encode(command, &[(key, value.to_owned())]),
+                Err(Error::Invalid(_))
+            ),
+            "{name}"
         );
     }
 }
 
 #[test]
-fn an_empty_value_is_still_a_parameter() {
-    let (_, reply) = decode(&reply("scnt\tbt\t")).unwrap();
-    assert_eq!(reply.get("bt"), Some(""));
+fn frame_size_is_bounded_on_both_sides_of_the_connection() {
+    // 7 envelope bytes + "x\tna" + value + TAB.
+    let largest = "a".repeat(MAX_FRAME - 12);
+    let frame = encode("x", &[("na", largest.clone())]).unwrap();
+    assert_eq!(frame.len(), MAX_FRAME);
+    assert_eq!(decode(&frame).unwrap().1.get("na"), Some(largest.as_str()));
+    assert!(matches!(
+        encode("x", &[("na", format!("{largest}a"))]),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        decode(&reply(&format!("x\tna{largest}a\t"))),
+        Err(Error::Protocol(_))
+    ));
 }
 
-#[test]
-fn both_documented_error_forms_are_device_errors() {
-    for payload in ["trline\t?2000", "ERR\t?2000\tcmtrline\tfdvt\t"] {
-        let Err(Error::Device { code, command, .. }) = decode(&reply(payload)) else {
-            panic!("{payload:?} is not a device error");
-        };
-        assert_eq!((code, command.as_str()), (2000, "trline"));
+proptest! {
+    #[test]
+    fn printable_payloads_round_trip_with_exact_field_boundaries(
+        command in "!?[a-z][a-z0-9]{0,15}",
+        value in "[ -~]{0,200}",
+    ) {
+        let frame = encode(&command, &[("na", value.clone())]).unwrap();
+        let (answered, fields) = decode(&frame).unwrap();
+        prop_assert_eq!(answered, command);
+        prop_assert_eq!(fields.fields(), &[("na".to_owned(), value)]);
     }
-    assert!(matches!(decode(&reply("ERR\t")), Err(Error::Protocol(_))));
 }

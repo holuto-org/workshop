@@ -1,56 +1,51 @@
-use super::{
-    check_printable, decode, encode, header_text, is_printable_text, printable_characters,
-};
+use super::{decode, encode, header_text, is_printable_text, printable_characters};
 
 #[test]
-fn polish_text_round_trips_through_windows_1250() {
-    let text = "Zażółć gęślą jaźń ŁÓDŹ €";
-    let bytes = encode(text).unwrap();
-    assert_eq!(bytes.get(..5), Some(b"Za\xBF\xF3\xB3".as_slice()));
-    assert_eq!(decode(&bytes).as_deref(), Some(text));
-}
-
-#[test]
-fn unassigned_code_page_bytes_are_not_text() {
-    for byte in [0x81, 0x83, 0x88, 0x90, 0x98] {
-        assert_eq!(decode(&[b'a', byte]), None, "byte {byte:#04X}");
+fn every_code_page_byte_matches_the_independent_unicode_reference() {
+    // Unmodified mapping: https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WINDOWS/CP1250.TXT
+    let mut reference = [None; 256];
+    for line in include_str!("CP1250.TXT")
+        .lines()
+        .filter(|line| line.starts_with("0x"))
+    {
+        let fields: Vec<_> = line.split('#').next().unwrap().split_whitespace().collect();
+        let byte = u8::from_str_radix(fields[0].trim_start_matches("0x"), 16).unwrap();
+        reference[usize::from(byte)] = fields.get(1).map(|code| {
+            char::from_u32(u32::from_str_radix(code.trim_start_matches("0x"), 16).unwrap()).unwrap()
+        });
+    }
+    for byte in 0..=255_u8 {
+        let expected = reference[usize::from(byte)].map(|character| character.to_string());
+        assert_eq!(decode(&[byte]), expected, "decode 0x{byte:02X}");
+        if let Some(expected) = expected {
+            assert_eq!(encode(&expected), Some(vec![byte]), "encode 0x{byte:02X}");
+        }
     }
 }
 
 #[test]
-fn advertised_characters_are_exactly_what_receipt_text_accepts() {
-    let characters = printable_characters();
-    let unassigned = [0x81, 0x83, 0x88, 0x90, 0x98];
-    let unprintable = [0x7F, 0xA0, 0xAD]; // DEL, no-break space, soft hyphen
-    let expected: Vec<u8> = (0x20..=0xFF_u8)
-        .filter(|byte| !unassigned.contains(byte) && !unprintable.contains(byte))
-        .collect();
-    assert_eq!(characters.chars().count(), 216);
-    assert_eq!(encode(&characters), Some(expected));
-    for character in [' ', '&', '€', 'Ą', 'ż', 'ó', 'ß'] {
-        assert!(characters.contains(character), "{character:?}");
-    }
-    assert!(!characters.contains('\t') && !characters.contains('Ж'));
-    check_printable(&characters).unwrap();
-    assert!(is_printable_text(&characters));
-    for character in [
-        '\t', '\u{A0}', '\u{AD}', '\u{7F}', 'Ж', '🔧', '\u{200B}', '\u{301}',
+fn advertised_text_excludes_printer_table_glyphs_and_nonprinting_unicode() {
+    for text in [
+        "\u{a4}", "\u{a8}", "\u{2db}", "\u{b4}", "\u{b8}", "\u{a0}", "\u{ad}", "\u{7f}", "Я", "😀",
+        "\u{200b}", "a\u{301}", "\t",
     ] {
-        assert!(!is_printable_text(&character.to_string()), "{character:?}");
+        assert!(!is_printable_text(text), "{text:?}");
+        assert!(
+            !printable_characters().contains(text),
+            "advertised {text:?}"
+        );
     }
+    assert!(
+        is_printable_text("Zażółć gęślą jaźń – €"),
+        "Polish names remain unchanged"
+    );
+    assert_eq!(printable_characters().chars().count(), 211);
 }
 
 #[test]
-fn frame_text_rejects_controls_and_characters_without_a_byte() {
-    for text in ["x\ty", "x\u{3}", "x\n", "🔧"] {
-        assert!(check_printable(text).is_err(), "{text:?}");
-    }
-}
-
-#[test]
-fn header_formatting_marks_are_stripped_and_a_doubled_ampersand_is_literal() {
+fn header_matching_uses_only_the_text_the_printer_displays() {
     assert_eq!(
-        header_text("&c&1Kowalski && Syn&1&c\nul. X"),
-        "Kowalski & Syn\nul. X"
+        header_text("&c&1Auto && Moto&1&c\nŻółw&"),
+        "Auto & Moto\nŻółw"
     );
 }

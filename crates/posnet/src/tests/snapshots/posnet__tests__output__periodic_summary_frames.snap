@@ -1,0 +1,11 @@
+---
+source: crates/posnet/src/tests/output.rs
+expression: "stream(& sim, 0)"
+---
+\x02getrealid\t#69AE\x03
+\x02sdev\t#233A\x03
+\x02sprn\t#BE45\x03
+\x02scomm\t#C42B\x03
+\x02strns\t#FCA8\x03
+\x02vatget\t#86AC\x03
+\x02periodicrepbydates\tfd2026-01-01\ttd2026-06-30\tsu1\t#8B9D\x03

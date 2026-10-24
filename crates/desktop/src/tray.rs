@@ -19,3 +19,7 @@ pub(crate) async fn available() -> bool {
 pub(crate) fn available() -> Ready<bool> {
     ready(true)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "tray/session_bus.rs"]
+mod session_bus;

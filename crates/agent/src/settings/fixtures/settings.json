@@ -1,0 +1,8 @@
+{
+  "apiUrl": "https://api.example/v1/",
+  "token": "secret-token",
+  "port": "Żółć/drukarka",
+  "baudRate": 38400,
+  "telemetryEnabled": false,
+  "startOnLaunch": false
+}
