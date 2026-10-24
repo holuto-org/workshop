@@ -171,11 +171,11 @@ fn every_call_uses_the_permanent_token_and_clean_paths() {
         (204, Value::Null),
     ]);
     let mut api = fake.api();
-    let _printer = api.session(&telemetry()).unwrap();
-    let _printer = api.heartbeat(&telemetry()).unwrap();
+    api.session(&telemetry()).unwrap();
+    api.heartbeat(&telemetry()).unwrap();
     assert_eq!(api.take().unwrap().map(|job| job.id), Some(JOB_ID));
     assert_eq!(api.job(JOB_ID).unwrap().id, JOB_ID);
-    let _job = api.report(JOB_ID, &done_body()).unwrap();
+    api.report(JOB_ID, &done_body()).unwrap();
     assert!(api.take().unwrap().is_none());
     let requests = fake.finish();
     let paths: Vec<_> = requests
@@ -232,11 +232,11 @@ type Call = fn(&mut Api) -> Result<(), ApiError>;
 #[test]
 fn a_rejected_token_fails_once_without_refresh_or_retry() {
     let calls: [Call; 5] = [
-        |api| api.session(&telemetry()).map(drop),
-        |api| api.heartbeat(&telemetry()).map(drop),
+        |api| api.session(&telemetry()),
+        |api| api.heartbeat(&telemetry()),
         |api| api.take().map(drop),
         |api| api.job(JOB_ID).map(drop),
-        |api| api.report(JOB_ID, &done_body()).map(drop),
+        |api| api.report(JOB_ID, &done_body()),
     ];
     for call in calls {
         let fake = Fake::start(vec![(401, json!({}))]);
@@ -353,7 +353,7 @@ fn a_session_for_another_printer_than_before_is_rejected() {
     );
     let fake = Fake::start(vec![(200, status_json()), (200, other)]);
     let mut api = fake.api();
-    let _printer = api.session(&telemetry()).unwrap();
+    api.session(&telemetry()).unwrap();
     assert!(matches!(
         api.heartbeat(&telemetry()),
         Err(ApiError::Response(_))
@@ -373,7 +373,9 @@ fn nullable_printer_metadata_is_accepted() {
         &json!({"lastSeenAt": null, "printer": with(printer_json(), &nulls)}),
     );
     let fake = Fake::start(vec![(200, status)]);
-    assert_eq!(fake.api().session(&telemetry()).unwrap().id, PRINTER_ID);
+    let mut api = fake.api();
+    api.session(&telemetry()).unwrap();
+    assert_eq!(api.printer_id(), Some(PRINTER_ID));
     let _requests = fake.finish();
 }
 
@@ -487,7 +489,7 @@ fn documents_and_queue_follow_the_contract() {
         let [item]: [Document; 1] = listed.items.try_into().unwrap();
         assert_eq!((item.order_number, item.allocation_id), (10, allocation));
         let nip = BuyerNip::parse("5260250274").unwrap();
-        let _job = api.queue(&queue_form(&item, Some(nip)).unwrap()).unwrap();
+        api.queue(&queue_form(&item, Some(nip)).unwrap()).unwrap();
         let requests = fake.finish();
         assert_eq!(requests[0].url, "/agent/documents?limit=100");
         assert_eq!(

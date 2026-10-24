@@ -113,9 +113,9 @@ jobs:
         shell: bash
         run: |
           sudo apt-get install -y -qq ./release/*.deb
-          # An empty data directory cannot connect to a printer or print anything.
+          # A fresh runner has an empty state directory: no printer, nothing to print.
           status=0
-          dbus-run-session -- xvfb-run -a timeout 10 holuto-fiscal --data-dir "$(mktemp -d)" || status=$?
+          dbus-run-session -- xvfb-run -a timeout 10 holuto-fiscal || status=$?
           test "$status" -eq 124
       - uses: actions/upload-artifact@v7
         with:

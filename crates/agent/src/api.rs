@@ -21,7 +21,7 @@ use crate::{
     documents::{BuyerNip, Document},
     settings,
 };
-use model::{Job, Page, PrinterInfo, PrinterStatus, QueueForm, ResultForm, Telemetry};
+use model::{Job, Page, PrinterStatus, QueueForm, ResultForm, Telemetry};
 
 /// The largest page `/agent/documents` serves.
 pub const DOCUMENTS_LIMIT: usize = 100;
@@ -52,16 +52,17 @@ pub trait Holuto {
     /// The paired printer, once a session or heartbeat answered.
     fn printer_id(&self) -> Option<Uuid>;
     /// Binds the device serial and replaces the backend's telemetry, VAT slots included.
-    fn session(&mut self, telemetry: &Telemetry) -> Result<PrinterInfo, ApiError>;
-    fn heartbeat(&mut self, telemetry: &Telemetry) -> Result<PrinterInfo, ApiError>;
+    fn session(&mut self, telemetry: &Telemetry) -> Result<(), ApiError>;
+    fn heartbeat(&mut self, telemetry: &Telemetry) -> Result<(), ApiError>;
     /// Claims the next queued job; `None` when the queue is empty.
     fn take(&mut self) -> Result<Option<Job>, ApiError>;
     /// The job's current state, for reconciliation; never prints.
     fn job(&mut self, id: Uuid) -> Result<Job, ApiError>;
-    fn report(&mut self, id: Uuid, result: &ResultForm) -> Result<Job, ApiError>;
+    /// Sends a result; succeeds only when Holuto echoes it back as stored.
+    fn report(&mut self, id: Uuid, result: &ResultForm) -> Result<(), ApiError>;
     /// One page of eligible documents, oldest first; pass the page's cursor back unchanged.
     fn documents(&mut self, cursor: Option<&str>) -> Result<Page, ApiError>;
-    fn queue(&mut self, form: &QueueForm) -> Result<Job, ApiError>;
+    fn queue(&mut self, form: &QueueForm) -> Result<(), ApiError>;
 }
 
 #[derive(Debug)]
@@ -131,7 +132,7 @@ impl Api {
         format!("{}/agent/{path}", self.base_url)
     }
 
-    fn telemetry(&mut self, path: &str, telemetry: &Telemetry) -> Result<PrinterInfo, ApiError> {
+    fn telemetry(&mut self, path: &str, telemetry: &Telemetry) -> Result<(), ApiError> {
         let status: PrinterStatus = self.post(path, Some(telemetry))?.ok_or_else(empty)?;
         let printer = status.printer;
         printer.check(&self.serial).map_err(ApiError::Response)?;
@@ -141,7 +142,7 @@ impl Api {
             ));
         }
         self.printer_id = Some(printer.id);
-        Ok(printer)
+        Ok(())
     }
 
     /// Bearer token, protocol version and language on every request; the device serial on every
@@ -210,11 +211,11 @@ impl Holuto for Api {
         self.printer_id
     }
 
-    fn session(&mut self, telemetry: &Telemetry) -> Result<PrinterInfo, ApiError> {
+    fn session(&mut self, telemetry: &Telemetry) -> Result<(), ApiError> {
         self.telemetry("session", telemetry)
     }
 
-    fn heartbeat(&mut self, telemetry: &Telemetry) -> Result<PrinterInfo, ApiError> {
+    fn heartbeat(&mut self, telemetry: &Telemetry) -> Result<(), ApiError> {
         self.telemetry("heartbeat", telemetry)
     }
 
@@ -230,7 +231,7 @@ impl Holuto for Api {
         Ok(job)
     }
 
-    fn report(&mut self, id: Uuid, result: &ResultForm) -> Result<Job, ApiError> {
+    fn report(&mut self, id: Uuid, result: &ResultForm) -> Result<(), ApiError> {
         let job: Job = self
             .post(&format!("jobs/{id}/result"), Some(result))?
             .ok_or_else(empty)?;
@@ -244,7 +245,7 @@ impl Holuto for Api {
                 "wynik zadania nie został zapisany zgodnie z raportem".to_owned(),
             ));
         }
-        Ok(job)
+        Ok(())
     }
 
     fn documents(&mut self, cursor: Option<&str>) -> Result<Page, ApiError> {
@@ -261,8 +262,10 @@ impl Holuto for Api {
         Ok(page)
     }
 
-    fn queue(&mut self, form: &QueueForm) -> Result<Job, ApiError> {
-        self.post("jobs", Some(form))?.ok_or_else(empty)
+    /// The queued job is parsed only to hold Holuto to the contract.
+    fn queue(&mut self, form: &QueueForm) -> Result<(), ApiError> {
+        let _job: Job = self.post("jobs", Some(form))?.ok_or_else(empty)?;
+        Ok(())
     }
 }
 

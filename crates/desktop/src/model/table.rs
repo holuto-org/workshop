@@ -13,11 +13,9 @@ use slint::{
 /// Both tables show five columns; the `.slint` column lists match `Row::cells`.
 const COLUMNS: usize = 5;
 
-/// One table row type: its cells, its identity and how a column orders it.
+/// One table row type: its cells and how a column orders it.
 pub(crate) trait Row: PartialEq {
     fn cells(&self) -> [SharedString; COLUMNS];
-    /// Whether both rows show the same record, possibly with changed details.
-    fn same(&self, other: &Self) -> bool;
     /// Orders by the underlying values (amounts, timestamps), not by the formatted text.
     fn compare(&self, other: &Self, column: usize) -> Ordering;
 }
@@ -78,19 +76,17 @@ impl<T: Row> Table<T> {
         Rc::clone(&self.rows).into()
     }
 
-    /// Replaces the items in the operator's order; returns where the record at `selected` is now.
-    pub(crate) fn set(&mut self, mut items: Vec<T>, selected: Option<usize>) -> Option<usize> {
+    /// Replaces the items in the operator's order; returns the items they replaced, so a
+    /// caller can find its selected record again.
+    pub(crate) fn set(&mut self, mut items: Vec<T>) -> Vec<T> {
         if let Some(sort) = self.sort {
             items.sort_by(|a, b| sort.compare(a, b));
         }
-        let selected = selected
-            .and_then(|index| self.items.get(index))
-            .and_then(|old| items.iter().position(|new| new.same(old)));
-        if self.items != items {
-            self.rows.set_vec(items.iter().map(row).collect::<Vec<_>>());
-            self.items = items;
+        if self.items == items {
+            return items;
         }
-        selected
+        self.rows.set_vec(items.iter().map(row).collect::<Vec<_>>());
+        mem::replace(&mut self.items, items)
     }
 
     /// Sorts stably; returns where the row at `selected` moved.
@@ -137,10 +133,6 @@ impl Row for Document {
         ]
     }
 
-    fn same(&self, other: &Self) -> bool {
-        self.same_document(other)
-    }
-
     fn compare(&self, other: &Self, column: usize) -> Ordering {
         match column {
             0 => self.order_number.cmp(&other.order_number),
@@ -171,10 +163,6 @@ impl Row for HistoryEntry {
                     .into()
             },
         ]
-    }
-
-    fn same(&self, other: &Self) -> bool {
-        self.job_id == other.job_id
     }
 
     fn compare(&self, other: &Self, column: usize) -> Ordering {

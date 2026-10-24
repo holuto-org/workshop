@@ -15,8 +15,8 @@ use crate::Error;
 
 const LOCK: &str = "instance.lock";
 
-/// The state directory, locked for this process: a second instance (or `--probe` while the app
-/// runs) is refused, so two processes can never drive the printer or the journal at once.
+/// The state directory, locked for this process: a second instance is refused, so two
+/// processes can never drive the printer or the journal at once.
 #[derive(Debug)]
 pub struct StateDir {
     path: PathBuf,

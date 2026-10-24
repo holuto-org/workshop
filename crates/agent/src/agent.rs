@@ -106,7 +106,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
     }
 
     pub(crate) fn session(&mut self) -> Result<(), Error> {
-        let _printer = self.api.session(&self.telemetry)?;
+        self.api.session(&self.telemetry)?;
         Ok(())
     }
 
@@ -130,7 +130,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
             .probe()
             .map_err(Error::from)
             .and_then(|status| self.describe(status));
-        let _printer = self.api.heartbeat(&self.telemetry)?;
+        self.api.heartbeat(&self.telemetry)?;
         let blocked = self.settle(&mut step)?;
         match blocked {
             Some(Blocked::Receipt) => {
@@ -457,8 +457,7 @@ impl<'dir, H: Holuto> Agent<'dir, H> {
         let Some(form) = operation.result_form() else {
             return Ok(());
         };
-        let _job = self.api.report(operation.job_id, &form)?;
-        Ok(())
+        Ok(self.api.report(operation.job_id, &form)?)
     }
 
     /// Settles the operation with the backend `state`; a printed receipt enters the history, with

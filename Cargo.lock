@@ -1733,7 +1733,6 @@ dependencies = [
  "agent",
  "jiff",
  "posnet",
- "serde_json",
  "slint",
  "thiserror 2.0.21",
  "uuid",
@@ -3579,7 +3578,6 @@ version = "0.2.0"
 dependencies = [
  "jiff",
  "serde",
- "serde_json",
  "serialport",
  "thiserror 2.0.21",
 ]

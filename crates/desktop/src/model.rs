@@ -134,13 +134,22 @@ impl Model {
 
     /// The selection follows the document, never its old row.
     pub(crate) fn set_documents(&mut self, documents: Vec<Document>, page: usize, has_next: bool) {
-        self.selected = self.documents.set(documents, self.selected);
+        let previous = self.documents.set(documents);
+        self.selected = self
+            .selected
+            .and_then(|index| previous.get(index))
+            .and_then(|old| {
+                self.documents
+                    .items()
+                    .iter()
+                    .position(|new| new.same_document(old))
+            });
         self.page = page;
         self.has_next = has_next;
     }
 
     pub(crate) fn set_history(&mut self, history: Vec<HistoryEntry>) {
-        let _selected = self.history.set(history, None);
+        let _previous = self.history.set(history);
     }
 
     pub(crate) fn sort_documents(&mut self, column: i32, descending: bool) {

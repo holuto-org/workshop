@@ -14,7 +14,7 @@ One Cargo workspace; dependency versions and lints live only in the root `Cargo.
 | --- | --- |
 | `crates/posnet` | Posnet Temo Online driver: CP1250 text, frames, sessions, preflight, receipts, reports. Feature `simulator`: the in-process TCP peer every printer test uses. |
 | `crates/agent` | Holuto `/agent` API, the durable operation journal, receipt execution and recovery, settings, history, and the single printer `Worker` thread. |
-| `crates/desktop` | `holuto-fiscal`: Slint UI, tray and CLI (`--probe`). Feature `simulator`: `--simulator` for local smoke runs, never in release builds. |
+| `crates/desktop` | `holuto-fiscal`: Slint UI and tray. Feature `simulator`: runs against the in-process simulator with separate state, for local smoke runs, never in release builds. |
 
 ## Code
 

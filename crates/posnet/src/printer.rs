@@ -3,7 +3,7 @@
 use std::{io, sync::Arc, time::Duration};
 
 use jiff::{civil::Date, fmt::strtime::BrokenDownTime};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, decimal,
@@ -29,11 +29,10 @@ pub trait Journal {
     fn dispatching(&mut self, command: &'static str) -> io::Result<()>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VatRate {
     pub slot: u8,
     /// Hundredths of a percent: `2300` is 23 %.
-    #[serde(rename = "percent", serialize_with = "percent")]
     pub basis_points: u32,
 }
 
@@ -61,20 +60,7 @@ impl VatRate {
     }
 }
 
-/// `--probe` shows the rate as a two-place percent string, `"23.00"`.
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "serde's `serialize_with` passes the field by reference"
-)]
-fn percent<S: Serializer>(basis_points: &u32, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.collect_str(&format_args!(
-        "{}.{:02}",
-        basis_points / 100,
-        basis_points % 100
-    ))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub name: String,
     pub version: String,

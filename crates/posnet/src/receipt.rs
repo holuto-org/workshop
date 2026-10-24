@@ -22,8 +22,7 @@ const ADVANCE_NAME: &str = "Zaliczka";
 const MOBILE_NAME: &str = "Płatność mobilna";
 
 /// A printer VAT slot, 0 (A) to 6 (G); not a rate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(try_from = "u8", into = "u8")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VatSlot(u8);
 
 impl VatSlot {
@@ -39,21 +38,7 @@ impl VatSlot {
     }
 }
 
-impl TryFrom<u8> for VatSlot {
-    type Error = Error;
-
-    fn try_from(value: u8) -> Result<Self, Error> {
-        Self::new(value)
-    }
-}
-
-impl From<VatSlot> for u8 {
-    fn from(value: VatSlot) -> Self {
-        value.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaymentForm {
     Cash,
@@ -93,7 +78,7 @@ pub struct Payment {
 }
 
 /// An advance already invoiced on `vat`, deducted from that slot's sales.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Advance {
     pub vat: VatSlot,
     pub amount: Grosze,

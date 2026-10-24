@@ -38,15 +38,12 @@ pub enum Fault {
     Error,
     /// These parameters instead of the real answer; the command has no effect.
     Reply(Vec<(String, String)>),
-    /// No answer at all.
-    Silent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimReceipt {
     pub total: u64,
     pub lines: Vec<Params>,
-    pub advances: Vec<Params>,
     pub payments: Vec<Params>,
     pub buyer_nip: Option<String>,
 }
@@ -330,19 +327,17 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
         }
         while let Some(end) = buffer.iter().position(|byte| *byte == ETX) {
             let received: Vec<u8> = buffer.drain(..=end).collect();
-            if let Some(reply) = answer(&received, state)
-                && stream.write_all(&reply).is_err()
-            {
+            if stream.write_all(&answer(&received, state)).is_err() {
                 return;
             }
         }
     }
 }
 
-fn answer(received: &[u8], state: &Mutex<State>) -> Option<Vec<u8>> {
+fn answer(received: &[u8], state: &Mutex<State>) -> Vec<u8> {
     lock(state).frames.push(received.to_vec());
     let Ok((command, params)) = frame::decode(received) else {
-        return Some(encoded("ERR\t?2000\t"));
+        return encoded("ERR\t?2000\t");
     };
     let held = lock(state).held.take_if(|held| held.command == command);
     if let Some(held) = held {
@@ -351,12 +346,11 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Option<Vec<u8>> {
     }
     let mut state = lock(state);
     let outcome = match state.faults.get(&command).cloned() {
-        Some(Fault::Silent) => return None,
         Some(Fault::Error) => Err(()),
         Some(Fault::Reply(reply)) => Ok(reply),
         None => state.handle(&command, &params),
     };
-    Some(match outcome {
+    match outcome {
         Ok(reply) => {
             let mut payload = command;
             payload.push('\t');
@@ -368,7 +362,7 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Option<Vec<u8>> {
             encoded(&payload)
         },
         Err(()) => encoded(&format!("{command}\t?2000\t")),
-    })
+    }
 }
 
 /// Device replies may carry a line feed inside a value (the header), which the driver's outgoing
@@ -558,7 +552,6 @@ impl State {
         self.receipts.push(SimReceipt {
             total,
             lines: mem::take(&mut self.lines),
-            advances: mem::take(&mut self.advances),
             payments: mem::take(&mut self.payments),
             buyer_nip: self.buyer_nip.take(),
         });

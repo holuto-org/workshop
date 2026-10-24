@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     api::{
         ApiError, Holuto,
-        model::{Job, Page, PrinterInfo, QueueForm, ResultForm, Telemetry},
+        model::{Job, Page, QueueForm, ResultForm, Telemetry},
     },
     store::StateDir,
 };
@@ -140,10 +140,6 @@ impl FakeApi {
     }
 }
 
-fn printer() -> PrinterInfo {
-    serde_json::from_value(printer_json()).unwrap()
-}
-
 impl Holuto for FakeApi {
     fn serial(&self) -> &'static str {
         "DEMO0000001"
@@ -153,13 +149,13 @@ impl Holuto for FakeApi {
         Some(PRINTER_ID)
     }
 
-    fn session(&mut self, _telemetry: &Telemetry) -> Result<PrinterInfo, ApiError> {
-        Ok(printer())
+    fn session(&mut self, _telemetry: &Telemetry) -> Result<(), ApiError> {
+        Ok(())
     }
 
-    fn heartbeat(&mut self, telemetry: &Telemetry) -> Result<PrinterInfo, ApiError> {
+    fn heartbeat(&mut self, telemetry: &Telemetry) -> Result<(), ApiError> {
         self.heartbeats.push(telemetry.clone());
-        Ok(printer())
+        Ok(())
     }
 
     fn take(&mut self) -> Result<Option<Job>, ApiError> {
@@ -173,7 +169,7 @@ impl Holuto for FakeApi {
         })
     }
 
-    fn report(&mut self, id: Uuid, result: &ResultForm) -> Result<Job, ApiError> {
+    fn report(&mut self, id: Uuid, result: &ResultForm) -> Result<(), ApiError> {
         self.reports.push(result.clone());
         if self.fail_report {
             return Err(ApiError::Response("response lost".to_owned()));
@@ -185,7 +181,7 @@ impl Holuto for FakeApi {
         job.state = result.state.into();
         job.receipt_number.clone_from(&result.receipt_number);
         job.result.clone_from(&result.result);
-        Ok(job.clone())
+        Ok(())
     }
 
     fn documents(&mut self, cursor: Option<&str>) -> Result<Page, ApiError> {
@@ -197,8 +193,8 @@ impl Holuto for FakeApi {
             .ok_or(ApiError::Response("page lost".to_owned()))
     }
 
-    fn queue(&mut self, form: &QueueForm) -> Result<Job, ApiError> {
+    fn queue(&mut self, form: &QueueForm) -> Result<(), ApiError> {
         self.queued.push(form.clone());
-        Ok(job())
+        Ok(())
     }
 }

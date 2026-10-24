@@ -269,7 +269,7 @@ impl<H: Holuto> Session<'_, H> {
                 buyer_nip,
             } => {
                 let form = queue_form(&document, buyer_nip)?;
-                let _job = self.agent.api().queue(&form)?;
+                self.agent.api().queue(&form)?;
                 self.say(
                     "Zlecenie dodano do kolejki Holuto.".to_owned(),
                     Tone::Success,

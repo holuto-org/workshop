@@ -66,8 +66,7 @@ The app keeps its state in one directory, readable only by the user (mode **0700
 `settings.json` holds the API URL, token, port and speed; on Windows keep the profile private
 with restricted ACLs. Do not share it or include it in logs. `operation.json` is the fiscal
 journal and `history.jsonl` the local receipt history. `instance.lock` allows one running
-Holuto Fiscal per state directory; a second start is refused. `--data-dir` selects another
-directory.
+Holuto Fiscal per state directory; a second start is refused.
 
 ### Printer
 
@@ -79,16 +78,6 @@ Linux). Never run through sudo. Only serial connections are supported.
 When the saved port does not answer, the app scans the other serial ports with a single
 read-only identification command and adopts (and saves) the first that is a Temo Online. It
 never scans while an operation is unresolved: the device must not change then.
-
-Saved printer settings also apply to `--probe`. `--serial` and `--baudrate` override
-only their respective saved values, both in the app and in probe mode.
-
-A read-only probe, when an operator explicitly wants to inspect the device (close the app
-first; it holds the state directory):
-
-```bash
-holuto-fiscal --serial /dev/ttyACM0 --probe
-```
 
 ## Desktop app
 
@@ -236,8 +225,9 @@ headers (`libfontconfig1-dev` / `fontconfig-devel`). Clippy runs pedantic, nurse
 set of restriction lints (`Cargo.toml`, `clippy.toml`); `deny.toml` holds the dependency and
 license policy.
 
-For a local run without a printer, the `simulator` feature adds an in-process Temo peer:
-`cargo run -p holuto-fiscal --features simulator -- --simulator --data-dir /tmp/holuto`.
+For a local run without a printer, the `simulator` feature replaces the serial port with an
+in-process Temo peer: `cargo run -p holuto-fiscal --features simulator`. Such builds keep their
+state in a `holuto-fiscal-simulator` directory beside the real state directory, never in it.
 Release builds never enable it.
 
 `bash packaging/build.sh` produces the host OS/CPU artifact in `release/`. CI builds the

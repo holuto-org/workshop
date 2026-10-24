@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Error, decimal};
 
 /// A nonnegative amount within the printer's range: 9 999 999 999 grosze.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "u64", into = "u64")]
 pub struct Grosze(u64);
 
