@@ -14,6 +14,7 @@ pub mod api;
 pub mod documents;
 pub mod history;
 pub mod settings;
+pub mod status;
 pub mod store;
 pub mod worker;
 

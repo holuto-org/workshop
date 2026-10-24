@@ -90,9 +90,11 @@ the newest 500 receipts. `instance.lock` prevents a second instance from using
 the same state directory. On Unix every one of these files is **0600**, and an
 existing state directory is tightened to **0700**.
 
-Settings are persisted by one background FIFO writer. Starting waits for
-successful persistence; quitting waits cooperatively for pending writes and the
-worker.
+Settings and `status.json` are persisted by one background FIFO writer. Starting
+waits for successful settings persistence; quitting waits cooperatively for
+pending writes and the worker. `status.json` contains only processing/connection
+flags, device identity, fiscal-block flags and its update timestamp, never
+credentials or customer data. It is display state, not fiscal evidence.
 
 ## CLI
 
@@ -104,6 +106,12 @@ terminal without opening a printer port. Use `workshop --help` and the
 refuse while the app holds the instance lock: choose **Zakończ**, let pending
 work finish, then configure. `ports` lists names only; `check` and `status`
 never prove printer readiness.
+
+`status` reports the running app's published `state`: `processing`, `connected`,
+`serial`, `printerId`, `blocked`, `reportUnresolved`, `orphanedReceipt` and
+`updatedAt`. With no instance lock it reports `appRunning:false` and omits state;
+a snapshot left after a crash is ignored. While a running app has not published
+state yet, the command reports `status_unavailable` (exit 1), not a guessed value.
 
 ```sh
 workshop config show --json

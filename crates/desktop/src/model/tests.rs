@@ -164,3 +164,33 @@ fn sorted_refresh_retains_document_identity_not_row_index() {
         "refresh must not queue the old row index"
     );
 }
+
+#[test]
+fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data() {
+    let mut model = ready();
+    model.running = true;
+    model.serial = "SERIAL42".into();
+    model.printer_id = Some("printer-42".into());
+    model.blocked = true;
+    model.report_unresolved = true;
+    model.orphaned_receipt = true;
+    model.settings.api_url = "https://private-api.example.test".into();
+    model.settings.token = "private-token-canary".into();
+    model.nip = "1234567890".into();
+    let updated_at = Timestamp::UNIX_EPOCH;
+    model.stopped();
+    assert_eq!(
+        model.status(updated_at),
+        agent::status::Snapshot {
+            processing: false,
+            connected: false,
+            serial: Some("SERIAL42".into()),
+            printer_id: Some("printer-42".into()),
+            blocked: true,
+            report_unresolved: true,
+            orphaned_receipt: true,
+            updated_at,
+        },
+        "stopping disconnects without erasing unresolved fiscal evidence"
+    );
+}

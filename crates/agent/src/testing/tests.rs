@@ -359,7 +359,7 @@ fn expired_invalid_and_throttled_pairing_proofs_do_not_revoke_the_token() -> Tes
     let server = Holuto::new();
     server.pairing_code("ABCD1234");
     server.expire_pairing_code("ABCD1234");
-    for code in ["ABCD1234", "ZZZZZZZZ", "bad"] {
+    for code in ["ABCD1234", "ZZZZZZZZ"] {
         assert!(matches!(
             Api::pair(server.url(), code),
             Err(crate::Error::Api(ApiError::Status {

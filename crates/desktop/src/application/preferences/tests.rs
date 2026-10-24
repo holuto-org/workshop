@@ -194,3 +194,60 @@ fn held_completion_does_not_block_submitting_the_next_preferences() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn status_and_preferences_share_one_durable_fifo() -> Result<(), Box<dyn Error>> {
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let observed_dir = Arc::clone(&dir);
+    let (completed, completions) = mpsc::channel();
+    let writer = Writer::spawn(Arc::clone(&dir), move |completion| {
+        let _sent = completed.send((
+            completion,
+            agent::status::Snapshot::load_at(observed_dir.path()),
+            Settings::load(&observed_dir),
+        ));
+    })?;
+    let connected = agent::status::Snapshot {
+        processing: true,
+        connected: true,
+        serial: Some("DEMO0000001".into()),
+        printer_id: Some("printer-42".into()),
+        blocked: false,
+        report_unresolved: false,
+        orphaned_receipt: false,
+        updated_at: "2025-10-24T10:00:00Z".parse()?,
+    };
+    let stopped = agent::status::Snapshot {
+        processing: false,
+        connected: false,
+        blocked: true,
+        report_unresolved: true,
+        updated_at: "2025-10-24T10:00:01Z".parse()?,
+        ..connected.clone()
+    };
+    writer.submit(Request::Status(connected.clone()))?;
+    writer.submit(Request::Save {
+        settings: settings(),
+        start: false,
+    })?;
+    writer.submit(Request::Status(stopped.clone()))?;
+
+    let (outcome, status, stored_settings) = completions.recv_timeout(WAIT)?;
+    assert_eq!(outcome, Ok(Outcome::Status(connected.clone())));
+    assert_eq!(status?, Some(connected.clone()));
+    assert_eq!(stored_settings?, None, "later preferences cannot overtake status");
+    let (outcome, status, stored_settings) = completions.recv_timeout(WAIT)?;
+    assert_eq!(outcome, Ok(Outcome::Saved));
+    assert_eq!(status?, Some(connected));
+    assert_eq!(stored_settings?, Some(settings()));
+    let (outcome, status, stored_settings) = completions.recv_timeout(WAIT)?;
+    assert_eq!(outcome, Ok(Outcome::Status(stopped.clone())));
+    assert_eq!(status?, Some(stopped));
+    assert_eq!(stored_settings?, Some(settings()));
+    Ok(())
+}

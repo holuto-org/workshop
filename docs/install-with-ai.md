@@ -314,8 +314,13 @@ after a running-app refusal, then repeat only the requested configuration.
 - **`workshop autostart on|off --json`**: Register/remove per-user login item
   and start-processing-on-launch preference. Ask separately: `on` can start
   fiscal work at login. Refuses while app runs.
-- **`workshop status --json`**: Report `appRunning` and `processing`. Read-only.
-  `processing: null` means unknown, not stopped: there is no worker-status IPC.
+- **`workshop status --json`**: Read the app's published snapshot while its
+  instance lock is held: `appRunning:true` and `state` with `processing`,
+  `connected`, `serial`, `printerId`, `blocked`, `reportUnresolved`,
+  `orphanedReceipt` and `updatedAt`. With no lock: `appRunning:false`, no state;
+  a snapshot left after a crash is ignored. A running app that has not published
+  its state returns `status_unavailable` (exit 1). Read-only, no printer/API I/O;
+  display state is not proof of a successful fiscal print.
 - **`workshop --help`**: Show available commands. Read-only; exit 0.
 - **`workshop --version`**: Show installed version. Read-only; exit 0.
 - **`workshop`**: Launch GUI with no arguments. Ask before launching. Autostart
@@ -326,7 +331,7 @@ after a running-app refusal, then repeat only the requested configuration.
 | Code | Meaning                                                  |
 | ---- | -------------------------------------------------------- |
 | 0    | Success                                                  |
-| 1    | Local/internal I/O failure                               |
+| 1    | Local/internal failure, including unavailable app status |
 | 2    | Invalid CLI arguments                                    |
 | 3    | Invalid/incomplete configuration or invalid pairing code |
 | 4    | App/state lock busy (mutating commands)                  |

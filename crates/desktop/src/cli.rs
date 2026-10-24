@@ -14,6 +14,7 @@ use agent::{
     Error,
     api::ApiError,
     settings::Settings,
+    status::Snapshot,
     store::StateDir,
     worker::{Event, PairingFailure, Worker},
 };
@@ -30,8 +31,8 @@ Bez argumentów otwiera aplikację.\n\n\
   config set [--api-url URL] [--port auto|PORT] [--speed LICZBA] [--diagnostics on|off]\n\
   ports                              Wypisz nazwy portów (bez otwierania)\n\
   check                              Sprawdź konfigurację i blokadę (bez połączeń)\n\
-  status                             Stan aplikacji (przetwarzanie: nieznane)\n\
-  autostart on|off                    Start aplikacji i przetwarzania po zalogowaniu\n\
+  status                             Stan aplikacji, połączenia i blokady fiskalnej\n\
+  autostart on|off                   Start aplikacji i przetwarzania po zalogowaniu\n\
   --help                             Pomoc\n\
   --version                          Wersja\n\n\
 Kody wyjścia: 0 sukces, 1 błąd lokalny, 2 argumenty, 3 konfiguracja/kod,\n\
@@ -277,21 +278,7 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
                 exit: if configured { 0 } else { 3 },
             })
         },
-        Command::Status => {
-            let app_running = StateDir::is_locked(path)?;
-            Ok(Response {
-                value: json!({"ok":true,"appRunning":app_running,"processing":null}),
-                human: format!(
-                    "Aplikacja: {}. Stan przetwarzania nie jest udostępniany przez CLI.",
-                    if app_running {
-                        "uruchomiona"
-                    } else {
-                        "zatrzymana"
-                    }
-                ),
-                exit: 0,
-            })
-        },
+        Command::Status => status(path),
         Command::Ports => {
             let ports = session::serial_ports();
             Ok(Response {
@@ -318,6 +305,40 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
         Command::Pair(code) => pair(path, code),
         Command::Help | Command::Version => Err(arguments()),
     }
+}
+
+fn status(path: &Path) -> Result<Response, Failure> {
+    let stopped = || Response {
+        value: json!({"ok":true,"appRunning":false}),
+        human: "Aplikacja jest zatrzymana.".into(),
+        exit: 0,
+    };
+    if !StateDir::is_locked(path)? {
+        return Ok(stopped());
+    }
+    let snapshot = Snapshot::load_at(path);
+    // An app can exit during the read; a leftover snapshot is never live state.
+    if !StateDir::is_locked(path)? {
+        return Ok(stopped());
+    }
+    let snapshot = snapshot?.ok_or_else(|| Failure {
+        exit: 1,
+        code: "status_unavailable",
+        message: "Aplikacja nie udostępniła jeszcze stanu. Spróbuj ponownie.".into(),
+    })?;
+    let human = format!(
+        "Aplikacja działa. Przetwarzanie: {}. Połączenie z drukarką: {}. \
+         Blokada fiskalna: {}. Stan z {}.",
+        if snapshot.processing { "włączone" } else { "wyłączone" },
+        if snapshot.connected { "aktywne" } else { "nieaktywne" },
+        if snapshot.blocked { "tak" } else { "nie" },
+        snapshot.updated_at
+    );
+    Ok(Response {
+        value: json!({"ok":true,"appRunning":true,"state":snapshot}),
+        human,
+        exit: 0,
+    })
 }
 
 fn config_set(path: &Path, changes: Changes) -> Result<Response, Failure> {

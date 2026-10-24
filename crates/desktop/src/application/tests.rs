@@ -509,3 +509,38 @@ fn missing_native_quit_hook_blocks_worker_start() -> Result<(), Box<dyn Error>> 
     );
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement()
+-> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    assert!(!app.borrow().model.saving, "launch status is not a settings save");
+    assert_eq!(button(&window, "Uruchom")?.accessible_enabled(), Some(true));
+    let (sent, received) = std::sync::mpsc::channel();
+    let dir = Arc::clone(&app.borrow().dir);
+    let mut state = app.borrow_mut();
+    // Drain the launch publication through a controlled acknowledgement sink.
+    state.settings_writer = Some(preferences::Writer::spawn(dir, move |completion| {
+        let _sent = sent.send(completion);
+    })?);
+    state.writes_pending.clear();
+    state.status_requested = None;
+    state.publish_status();
+    assert_eq!(state.writes_pending.len(), 1);
+    assert!(!state.model.saving);
+    let completion = received.recv_timeout(std::time::Duration::from_secs(10))?;
+    state.settings_saved(completion);
+    assert!(state.writes_pending.is_empty());
+    assert!(!state.model.saving);
+    state.publish_status();
+    assert!(
+        state.writes_pending.is_empty(),
+        "an unchanged snapshot and its acknowledgement never form a save loop"
+    );
+    assert!(state.status_saved.is_some());
+    Ok(())
+}
