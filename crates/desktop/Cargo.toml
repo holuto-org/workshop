@@ -13,16 +13,15 @@ simulator = ["posnet/simulator"]
 [dependencies]
 agent.workspace = true
 posnet.workspace = true
-clap.workspace = true
 jiff.workspace = true
 serde_json.workspace = true
 slint.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(all(unix, not(target_vendor = "apple")))'.dependencies]
 zbus.workspace = true
 
 [build-dependencies]
-slint-build.workspace = true
 winresource.workspace = true
 
 [dev-dependencies]

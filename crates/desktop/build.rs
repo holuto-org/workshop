@@ -1,10 +1,7 @@
 use std::{env, error::Error};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    slint_build::compile_with_config(
-        "ui/app.slint",
-        slint_build::CompilerConfiguration::new().with_style("fluent".into()),
-    )?;
+    println!("cargo::rerun-if-changed=assets/icon.ico");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         winresource::WindowsResource::new()
             .set_icon("assets/icon.ico")

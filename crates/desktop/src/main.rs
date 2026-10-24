@@ -7,48 +7,33 @@
 compile_error!("The simulator feature is restricted to local debug builds.");
 
 mod application;
+mod cli;
 mod model;
 mod tray;
 #[expect(
-    unused_qualifications,
-    trivial_casts,
-    trivial_numeric_casts,
-    let_underscore_drop,
-    missing_debug_implementations,
-    unnameable_types,
-    unreachable_pub,
-    unused_results,
     clippy::pub_use,
-    clippy::absolute_paths,
-    clippy::clone_on_ref_ptr,
     clippy::impl_trait_in_params,
-    clippy::let_underscore_must_use,
-    clippy::as_conversions,
-    clippy::float_arithmetic,
-    clippy::indexing_slicing,
-    clippy::let_underscore_untyped,
     clippy::multiple_inherent_impl,
-    clippy::panic,
     clippy::same_name_method,
-    clippy::semicolon_outside_block,
-    clippy::todo,
-    clippy::unwrap_used,
-    reason = "Slint 1.18 emits these internal operations; handwritten Rust keeps workspace lints"
+    reason = "Slint 1.18 emits these items; handwritten Rust keeps workspace lints"
 )]
 mod ui {
-    slint::include_modules!();
+    slint::slint! {
+        #[style = "fluent"]
+        export * from "../ui/app.slint";
+    }
 }
 
 use std::{
+    env,
     error::Error,
     io::{self, Write},
-    path::PathBuf,
     process::ExitCode,
     sync::Arc,
 };
 
 use agent::{settings::Settings, store::StateDir};
-use clap::Parser;
+use cli::{Arguments, Command};
 #[cfg(feature = "simulator")]
 use posnet::simulator::Simulator;
 use posnet::{
@@ -57,29 +42,26 @@ use posnet::{
 };
 use slint::ComponentHandle;
 
-#[derive(Debug, Parser)]
-#[command(version, about = "Holuto Fiscal · Posnet Temo Online")]
-struct Arguments {
-    /// Odczytaj tożsamość, stan i stawki VAT drukarki, a następnie zakończ.
-    #[arg(long)]
-    probe: bool,
-    /// Port szeregowy drukarki (zastępuje zapisane ustawienie).
-    #[arg(long)]
-    serial: Option<String>,
-    /// Prędkość transmisji (zastępuje zapisane ustawienie).
-    #[arg(long)]
-    baudrate: Option<u32>,
-    /// Katalog stanu aplikacji.
-    #[arg(long)]
-    data_dir: Option<PathBuf>,
-    /// Lokalny symulator TCP. Dostępny wyłącznie w kompilacji debug.
-    #[cfg(feature = "simulator")]
-    #[arg(long)]
-    simulator: bool,
-}
-
 fn main() -> ExitCode {
-    let arguments = Arguments::parse();
+    let arguments = match cli::parse(env::args_os().skip(1)) {
+        Ok(Command::Run(arguments)) => arguments,
+        Ok(Command::Help) => {
+            return cli::write_help(&mut io::stdout().lock())
+                .map_or(ExitCode::FAILURE, |()| ExitCode::SUCCESS);
+        },
+        Ok(Command::Version) => {
+            return writeln!(io::stdout().lock(), "{}", cli::VERSION)
+                .map_or(ExitCode::FAILURE, |()| ExitCode::SUCCESS);
+        },
+        Err(error) => {
+            if let Err(write_error) = writeln!(io::stderr().lock(), "{error}\n{}", cli::HINT) {
+                // There is no second output channel when stderr itself is unavailable.
+                drop(write_error);
+            }
+            // The conventional usage-error status.
+            return ExitCode::from(2);
+        },
+    };
     match start(&arguments) {
         Ok(ready) => {
             if ready {

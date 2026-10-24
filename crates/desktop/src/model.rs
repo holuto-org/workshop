@@ -8,9 +8,38 @@ use agent::{
 };
 use jiff::{Timestamp, ToSpan, Zoned, civil::Date, tz::TimeZone};
 use posnet::{money::zloty, printer::Status};
-use slint::{ModelRc, VecModel};
+use slint::{ModelRc, SharedString, VecModel};
 
-use crate::ui::{Action, AppWindow, Date as PickerDate, Tab, TableRow};
+use crate::ui::{Action, AppWindow, Date as PickerDate, TableRow};
+
+/// The `AppWindow` tabs, in the order of its `TabWidget`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tab {
+    Documents,
+    Reports,
+    History,
+    Settings,
+}
+
+impl Tab {
+    const ALL: [Self; 4] = [Self::Documents, Self::Reports, Self::History, Self::Settings];
+
+    fn from_index(index: i32) -> Option<Self> {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| Self::ALL.get(index))
+            .copied()
+    }
+
+    const fn index(self) -> i32 {
+        match self {
+            Self::Documents => 0,
+            Self::Reports => 1,
+            Self::History => 2,
+            Self::Settings => 3,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct Confirmation {
@@ -143,11 +172,13 @@ impl Model {
         self.nip = window.get_nip().to_string();
         self.month_index = usize::try_from(window.get_month_index()).unwrap_or_default();
         self.summary = window.get_summary();
-        self.tab = window.get_tab();
+        if let Some(tab) = Tab::from_index(window.get_tab()) {
+            self.tab = tab;
+        }
     }
 
     pub(crate) fn sync(&self, window: &AppWindow) {
-        window.set_tab(self.tab);
+        window.set_tab(self.tab.index());
         window.set_running(self.running);
         window.set_stopping(self.stopping);
         window.set_connected(self.connected);
@@ -393,11 +424,8 @@ fn timestamp_label(timestamp: Timestamp) -> String {
         .strftime("%d.%m.%Y %H:%M")
         .to_string()
 }
-pub(crate) fn strings<I: IntoIterator<Item = String>>(values: I) -> ModelRc<slint::SharedString> {
-    Rc::new(VecModel::from(
-        values.into_iter().map(Into::into).collect::<Vec<_>>(),
-    ))
-    .into()
+pub(crate) fn strings<I: IntoIterator<Item = String>>(values: I) -> ModelRc<SharedString> {
+    ModelRc::new(values.into_iter().map(SharedString::from).collect::<VecModel<_>>())
 }
 fn document_row(document: &Document) -> TableRow {
     TableRow {

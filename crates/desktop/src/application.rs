@@ -10,9 +10,9 @@ use posnet::session::{Link, serial_ports};
 use slint::{CloseRequestResponse, ComponentHandle};
 
 use crate::{
-    model::{Model, strings},
+    model::{Model, Tab, strings},
     tray,
-    ui::{Action, AppWindow, Tab, TrayIcon},
+    ui::{Action, AppWindow, TrayIcon},
 };
 
 thread_local! {
@@ -110,16 +110,6 @@ impl Application {
                 app.model.selected = usize::try_from(index)
                     .ok()
                     .filter(|index| *index < app.model.documents.len());
-                Ok(())
-            });
-        });
-        window.on_tab_changed(|tab| {
-            with_app(|app| {
-                app.capture();
-                app.model.tab = tab;
-                if tab == Tab::History {
-                    app.reload_history();
-                }
                 Ok(())
             });
         });
