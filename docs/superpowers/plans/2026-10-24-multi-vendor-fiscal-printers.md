@@ -622,6 +622,19 @@ the fiscal-mode readiness check; it never compiles into release builds.
   possible as a unit test; instead add the `compile_error!` and verify with
   `cargo build --release --features acceptance` failing (expected:
   compile error naming the feature) and the debug build succeeding.
+- [ ] **Step 1b: keep `--all-features` from hiding production gates.**
+  `acceptance` must not be reachable from `--all-features`: name it so the
+  standard suite never enables it (gate it behind a dedicated
+  `cfg(workshop_acceptance)` set by `RUSTFLAGS` in the checklist's build
+  command, not a Cargo feature), so `cargo nextest run --workspace
+  --all-features` keeps proving production behavior. Production-gate tests
+  (run in that standard suite):
+  `non_fiscal_device_is_not_ready_without_acceptance`,
+  `unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command`
+  (one case per brand, asserting simulator `frames()` has no fiscal command).
+  Acceptance-path tests live in a separate module compiled only under
+  `cfg(workshop_acceptance)`, run by a separate documented command in
+  `docs/testing/hardware-acceptance.md` and in CI as its own job.
 - [ ] **Step 2:** write the checklist: read-only phase (USB descriptors via
   OS tools, identity, `50$i`, dialect, VAT sentinels, code page, clock,
   status bits, Elzab CRC), destructive phase on demo units, final pass on
