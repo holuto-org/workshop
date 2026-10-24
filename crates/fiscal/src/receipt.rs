@@ -1,19 +1,10 @@
-//! Fiscal receipts validated before printer I/O.
+//! Fiscal receipts validated against the device's capabilities before printer I/O.
 
 use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    decimal,
-    error::Error,
-    money::Grosze,
-    receipt::posnet::{
-        self as text, MAX_BUYER_NIP_LENGTH, MAX_COMPANY_NAME_LENGTH, MAX_LINES, MAX_NAME_LENGTH,
-    },
-};
-
-pub mod posnet;
+use crate::{decimal, device::Capabilities, error::Error, money::Grosze};
 
 /// VAT slots A–G.
 pub const VAT_SLOTS: u8 = 7;
@@ -96,6 +87,14 @@ impl Quantity {
         self.0
     }
 
+    /// Whether no digit lies beyond `decimals` places after the decimal point.
+    fn fits_decimals(self, decimals: u8) -> bool {
+        10_u64
+            .checked_pow(decimals.into())
+            .filter(|places| *places <= QUANTITY_UNIT)
+            .is_none_or(|places| self.0 % (QUANTITY_UNIT / places) == 0)
+    }
+
     /// Matches printer line rounding: half up to whole grosze; `None` on overflow.
     pub fn times(self, grosze: u64) -> Option<u64> {
         // u64::MAX² plus half a quantity unit fits u128.
@@ -122,29 +121,37 @@ pub struct Line {
 }
 
 impl Line {
-    /// Prints `name` unchanged: nonblank, at most 80 characters, all in
-    /// [`text::printable_characters`].
+    /// Prints `name` unchanged: nonblank, within the item-name limit and entirely in the
+    /// device's allowed characters. The quantity must fit its decimal places.
     /// Line value is quantity × price, rounded half up to grosze.
     pub fn new(
         name: &str,
         quantity: Quantity,
         unit_price: Grosze,
         vat: VatSlot,
+        capabilities: &Capabilities,
     ) -> Result<Self, Error> {
         if name.trim().is_empty() {
             return Err(Error::Invalid(
                 "Nazwa usługi nie może być pusta.".to_owned(),
             ));
         }
-        if name.chars().count() > MAX_NAME_LENGTH {
-            return Err(Error::Invalid(
-                "Nazwa usługi może mieć najwyżej 80 znaków.".to_owned(),
-            ));
+        if name.chars().count() > capabilities.max_item_name {
+            return Err(Error::Invalid(format!(
+                "Nazwa usługi może mieć najwyżej {} znaków.",
+                capabilities.max_item_name
+            )));
         }
-        if !text::is_printable_text(name) {
+        if !capabilities.allows(name) {
             return Err(Error::Invalid(
                 "Nazwa usługi zawiera znaki, których drukarka nie drukuje.".to_owned(),
             ));
+        }
+        if !quantity.fits_decimals(capabilities.max_quantity_decimals) {
+            return Err(Error::Invalid(format!(
+                "Ilość może mieć najwyżej {} miejsc po przecinku.",
+                capabilities.max_quantity_decimals
+            )));
         }
         if quantity.0 == 0 || unit_price == Grosze::ZERO {
             return Err(Error::Invalid(
@@ -205,36 +212,40 @@ pub struct Receipt {
 impl Receipt {
     /// Requires at most one positive advance per slot, bounded by that slot's sales.
     /// Payments must equal sales minus advances. `buyer_nip` is sent unchanged.
-    /// `brand` prints unchanged when absent from the header and must fit one printable footer line.
+    /// `brand` prints unchanged when absent from the header and must fit one footer line.
+    /// Line count, brand, NIP and their characters follow `capabilities`.
     pub fn new(
         lines: Vec<Line>,
         advances: Vec<Advance>,
         payments: Vec<Payment>,
         buyer_nip: Option<String>,
         brand: &str,
+        capabilities: &Capabilities,
     ) -> Result<Self, Error> {
         if brand.trim().is_empty()
-            || brand.chars().count() > MAX_COMPANY_NAME_LENGTH
-            || !text::is_printable_text(brand)
+            || brand.chars().count() > capabilities.max_company_name
+            || !capabilities.allows(brand)
         {
-            return Err(Error::Invalid(
-                "Nazwa firmy musi mieć od 1 do 40 znaków obsługiwanych przez drukarkę. Zmień ją \
-                 w profilu firmy w Holuto."
-                    .to_owned(),
-            ));
+            return Err(Error::Invalid(format!(
+                "Nazwa firmy musi mieć od 1 do {} znaków obsługiwanych przez drukarkę. Zmień ją \
+                 w profilu firmy w Holuto.",
+                capabilities.max_company_name
+            )));
         }
-        if !(1..=MAX_LINES).contains(&lines.len()) {
-            return Err(Error::Invalid(
-                "Paragon musi zawierać od 1 do 500 pozycji.".to_owned(),
-            ));
+        if !(1..=capabilities.max_lines).contains(&lines.len()) {
+            return Err(Error::Invalid(format!(
+                "Paragon musi zawierać od 1 do {} pozycji.",
+                capabilities.max_lines
+            )));
         }
         if let Some(nip) = &buyer_nip {
-            if nip.trim().is_empty() || nip.chars().count() > MAX_BUYER_NIP_LENGTH {
-                return Err(Error::Invalid(
-                    "NIP nabywcy musi zawierać od 1 do 30 znaków.".to_owned(),
-                ));
+            if nip.trim().is_empty() || nip.chars().count() > capabilities.max_buyer_nip {
+                return Err(Error::Invalid(format!(
+                    "NIP nabywcy musi zawierać od 1 do {} znaków.",
+                    capabilities.max_buyer_nip
+                )));
             }
-            if text::check_printable(nip).is_err() {
+            if !capabilities.allows(nip) {
                 return Err(Error::Invalid(
                     "NIP nabywcy zawiera niedozwolone znaki.".to_owned(),
                 ));

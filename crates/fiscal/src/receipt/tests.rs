@@ -1,9 +1,26 @@
 use proptest::prelude::*;
 
 use super::{Advance, Line, Payment, PaymentForm, Quantity, Receipt, VatSlot};
-use crate::{error::Error, money::Grosze};
+use crate::{device::Capabilities, error::Error, money::Grosze};
 
 pub(crate) const BRAND: &str = "Warsztat Kowalski";
+
+/// Limits of a hypothetical driver; real values come from the driver crates.
+pub(crate) fn capabilities() -> Capabilities {
+    Capabilities {
+        max_item_name: 80,
+        max_lines: 500,
+        max_company_name: 40,
+        max_buyer_nip: 30,
+        max_quantity_decimals: 8,
+        allowed_characters: (' '..='~')
+            .chain("ĄĆĘŁŃÓŚŹŻąćęłńóśźż".chars())
+            .collect(),
+        advance_deductions: true,
+        zero_total_receipts: true,
+        company_footer: true,
+    }
+}
 
 pub(crate) fn line(name: &str, quantity: &str, price: &str, slot: u8) -> Line {
     Line::new(
@@ -11,6 +28,7 @@ pub(crate) fn line(name: &str, quantity: &str, price: &str, slot: u8) -> Line {
         Quantity::parse(quantity).unwrap(),
         Grosze::parse(price).unwrap(),
         VatSlot::new(slot).unwrap(),
+        &capabilities(),
     )
     .unwrap()
 }
@@ -29,7 +47,94 @@ fn receipt(
     nip: Option<&str>,
     brand: &str,
 ) -> Result<Receipt, Error> {
-    Receipt::new(lines, advances, payments, nip.map(str::to_owned), brand)
+    Receipt::new(
+        lines,
+        advances,
+        payments,
+        nip.map(str::to_owned),
+        brand,
+        &capabilities(),
+    )
+}
+
+#[test]
+fn line_name_limit_follows_capabilities() {
+    let capabilities = Capabilities {
+        max_item_name: 64,
+        ..capabilities()
+    };
+    let build = |name: String| {
+        Line::new(
+            &name,
+            Quantity::parse("1").unwrap(),
+            Grosze::new(1).unwrap(),
+            VatSlot::new(0).unwrap(),
+            &capabilities,
+        )
+    };
+    assert_eq!(build("a".repeat(64)).unwrap().name(), "a".repeat(64));
+    assert_eq!(
+        build("a".repeat(65)).unwrap_err().to_string(),
+        "Nazwa usługi może mieć najwyżej 64 znaków."
+    );
+}
+
+#[test]
+fn quantity_decimals_follow_capabilities() {
+    let capabilities = Capabilities {
+        max_quantity_decimals: 5,
+        ..capabilities()
+    };
+    let build = |quantity: &str| {
+        Line::new(
+            "Olej",
+            Quantity::parse(quantity).unwrap(),
+            Grosze::new(100).unwrap(),
+            VatSlot::new(0).unwrap(),
+            &capabilities,
+        )
+    };
+    assert_eq!(build("1.12345").unwrap().quantity().to_string(), "1.12345");
+    assert_eq!(
+        build("1.123456").unwrap_err().to_string(),
+        "Ilość może mieć najwyżej 5 miejsc po przecinku."
+    );
+}
+
+#[test]
+fn receipt_limits_follow_capabilities() {
+    let capabilities = Capabilities {
+        max_lines: 2,
+        max_company_name: 5,
+        max_buyer_nip: 3,
+        ..capabilities()
+    };
+    let sale = line("Olej", "1", "1", 0);
+    let build = |lines: usize, nip: &str, brand: &str| {
+        Receipt::new(
+            vec![sale.clone(); lines],
+            vec![],
+            vec![pay(PaymentForm::Cash, 100 * u64::try_from(lines).unwrap())],
+            Some(nip.to_owned()),
+            brand,
+            &capabilities,
+        )
+    };
+    assert!(build(2, "123", "abcde").is_ok());
+    for (result, message) in [
+        (build(3, "123", "abcde"), "Paragon musi zawierać od 1 do 2 pozycji."),
+        (
+            build(2, "1234", "abcde"),
+            "NIP nabywcy musi zawierać od 1 do 3 znaków.",
+        ),
+        (
+            build(2, "123", "abcdef"),
+            "Nazwa firmy musi mieć od 1 do 5 znaków obsługiwanych przez drukarkę. Zmień ją w \
+             profilu firmy w Holuto.",
+        ),
+    ] {
+        assert_eq!(result.unwrap_err().to_string(), message);
+    }
 }
 
 #[expect(
@@ -230,6 +335,7 @@ fn line_validation_rejects_lossy_names_and_out_of_range_values() {
             Quantity::parse(quantity).unwrap(),
             Grosze::parse(price).unwrap(),
             VatSlot::new(0).unwrap(),
+            &capabilities(),
         );
         assert_eq!(
             result.unwrap_err().to_string(),
@@ -243,7 +349,8 @@ fn line_validation_rejects_lossy_names_and_out_of_range_values() {
                 name,
                 Quantity::parse("1").unwrap(),
                 Grosze::new(1).unwrap(),
-                VatSlot::new(0).unwrap()
+                VatSlot::new(0).unwrap(),
+                &capabilities(),
             )
             .is_err(),
             "{name:?}"
@@ -254,7 +361,8 @@ fn line_validation_rejects_lossy_names_and_out_of_range_values() {
             &"a".repeat(81),
             Quantity::parse("1").unwrap(),
             Grosze::new(1).unwrap(),
-            VatSlot::new(0).unwrap()
+            VatSlot::new(0).unwrap(),
+            &capabilities(),
         )
         .unwrap_err()
         .to_string(),
