@@ -206,22 +206,18 @@ pub(crate) fn run<I: IntoIterator<Item = OsString>>(args: I) -> Option<ExitCode>
             },
         }
     });
-    let response = result.unwrap_or_else(|error| Response {
+    let Response { value, human, exit } = result.unwrap_or_else(|error| Response {
         value: json!({"ok":false,"error":{"code":error.code,"message":error.message}}),
         human: error.message,
         exit: error.exit,
     });
-    let output = if json {
-        response.value.to_string()
-    } else {
-        response.human
-    };
-    let written = if !json && response.exit != 0 {
+    let output = if json { value.to_string() } else { human };
+    let written = if !json && exit != 0 {
         writeln!(io::stderr().lock(), "{output}")
     } else {
         writeln!(io::stdout().lock(), "{output}")
     };
-    Some(ExitCode::from(if written.is_ok() { response.exit } else { 1 }))
+    Some(ExitCode::from(if written.is_ok() { exit } else { 1 }))
 }
 
 fn execute(command: Command, path: &Path) -> Result<Response, Failure> {

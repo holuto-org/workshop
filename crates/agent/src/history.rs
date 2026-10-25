@@ -67,32 +67,14 @@ pub(crate) fn append(dir: &StateDir, entry: &HistoryEntry) -> Result<Vec<History
         source,
     };
     let mut entries = read_entries(&path).map_err(failed)?;
-    let is_new = if let Some(known) = entries
-        .iter_mut()
-        .find(|known| known.job_id == entry.job_id)
-    {
-        if known.receipt_number.is_none() {
-            known.receipt_number.clone_from(&entry.receipt_number);
-        }
-        false
-    } else {
-        true
-    };
-    let skip_oldest = usize::from(is_new && entries.len() == LIMIT);
+    retain(&mut entries, entry.clone());
     let mut bytes = Vec::new();
-    for saved in entries
-        .iter()
-        .skip(skip_oldest)
-        .chain(is_new.then_some(entry))
-    {
+    for saved in &entries {
         serde_json::to_writer(&mut bytes, saved)
             .map_err(|error| failed(io::Error::other(error)))?;
         bytes.push(b'\n');
     }
     store::write_durably(&path, &bytes).map_err(failed)?;
-    if is_new {
-        retain(&mut entries, entry.clone());
-    }
     Ok(entries.into_iter().rev().collect())
 }
 

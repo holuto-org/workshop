@@ -13,7 +13,7 @@ pub trait Journal {
     fn waiting(&mut self, problem: Option<&str>);
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Printed {
     /// Post-print counter; `None` if unreadable.
     pub receipt_number: Option<String>,

@@ -189,10 +189,8 @@ impl<'dir> Agent<'dir> {
             return Ok(RETRY);
         }
         self.news.notices.extend(probe?);
-        if let Some(status) = self.status.as_ref().filter(|status| !status.ready()) {
-            self.news
-                .notices
-                .push(format!("Drukarka niegotowa: {}", status.description()));
+        if self.status.as_ref().is_some_and(|status| !status.ready()) {
+            self.news.notices.push(self.not_ready_notice());
             return Ok(RETRY);
         }
         let Some(job) = self.api.take()? else {
@@ -300,16 +298,11 @@ impl<'dir> Agent<'dir> {
                 "Holuto zna inną próbę wykonania tego zadania",
             ));
         }
-        if matches!(operation.device, Device::Completed { .. })
+        if let Device::Completed { receipt_number } = &operation.device
             && matches!(remote.state, JobState::Failed | JobState::Expired)
         {
             self.orphaned_receipt = true;
-            let number = match &operation.device {
-                Device::Completed { receipt_number } => {
-                    receipt_number.as_deref().unwrap_or("nieczytelny")
-                },
-                Device::NotStarted | Device::Dispatching { .. } => "nieczytelny",
-            };
+            let number = receipt_number.as_deref().unwrap_or("nieczytelny");
             self.news.notices.push(format!(
                 "Paragon {number} został wydrukowany dla zlecenia {} (zadanie {}), ale Holuto \
                  oznaczyło zadanie jako {:?}. Sprawdź wydruk i użyj „Wyjaśnij paragon”.",

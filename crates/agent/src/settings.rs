@@ -3,7 +3,6 @@
 use std::{
     fmt,
     io::{self, ErrorKind},
-    net::IpAddr,
     path::Path,
 };
 
@@ -207,6 +206,14 @@ impl Settings {
     }
 }
 
+pub(crate) const fn is_loopback(host: &Host<&str>) -> bool {
+    match host {
+        Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
+        Host::Ipv4(address) => address.is_loopback(),
+        Host::Ipv6(address) => address.is_loopback(),
+    }
+}
+
 /// Preserves path prefixes and strips trailing slashes. HTTP is allowed only on loopback;
 /// credentials, queries and fragments are rejected.
 pub(crate) fn api_url(text: &str) -> Result<String, Error> {
@@ -218,12 +225,10 @@ pub(crate) fn api_url(text: &str) -> Result<String, Error> {
         )
     };
     let url = Url::parse(text.trim()).map_err(|_unparsable| refused())?;
-    let loopback = match url.host() {
-        Some(Host::Domain(domain)) => domain.eq_ignore_ascii_case("localhost"),
-        Some(Host::Ipv4(address)) => IpAddr::V4(address).is_loopback(),
-        Some(Host::Ipv6(address)) => IpAddr::V6(address).is_loopback(),
-        None => return Err(refused()),
+    let Some(host) = url.host() else {
+        return Err(refused());
     };
+    let loopback = is_loopback(&host);
     let scheme_allowed = url.scheme() == "https" || (url.scheme() == "http" && loopback);
     if !scheme_allowed
         || !url.username().is_empty()

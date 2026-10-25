@@ -25,7 +25,7 @@ use std::{
     fmt,
     io::{self, Write},
     sync::{
-        Arc, Condvar, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard,
         mpsc::{Receiver, Sender},
     },
     thread::{self, JoinHandle},
@@ -121,14 +121,14 @@ struct State {
     clippy::expect_used,
     reason = "a poisoned HTTP fake is a failed test, never recoverable state"
 )]
-fn locked(state: &(Mutex<State>, Condvar)) -> MutexGuard<'_, State> {
-    state.0.lock().expect("loopback Holuto state poisoned")
+fn locked(state: &Mutex<State>) -> MutexGuard<'_, State> {
+    state.lock().expect("loopback Holuto state poisoned")
 }
 
 pub struct Holuto {
     url: String,
     server: Arc<Server>,
-    state: Arc<(Mutex<State>, Condvar)>,
+    state: Arc<Mutex<State>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -156,7 +156,7 @@ impl Holuto {
     fn bind() -> io::Result<Self> {
         let server = Arc::new(Server::http("127.0.0.1:0").map_err(io::Error::other)?);
         let url = format!("http://{}", server.server_addr());
-        let state = Arc::new((Mutex::new(State::default()), Condvar::new()));
+        let state = Arc::new(Mutex::new(State::default()));
         let peer = Arc::clone(&server);
         let shared = Arc::clone(&state);
         let thread = thread::Builder::new()
@@ -289,26 +289,6 @@ impl Holuto {
         locked(&self.state).requests.clone()
     }
 
-    #[expect(
-        clippy::unwrap_used,
-        reason = "a poisoned request barrier is a failed test"
-    )]
-    pub fn wait_for_requests(&self, count: usize) -> Vec<RequestLog> {
-        let wake = &self.state.1;
-        let state = locked(&self.state);
-        let (state, timeout) = wake
-            .wait_timeout_while(state, Duration::from_secs(10), |state| {
-                state.requests.len() < count
-            })
-            .unwrap();
-        assert!(
-            !timeout.timed_out(),
-            "expected {count} Holuto requests, got {}",
-            state.requests.len()
-        );
-        state.requests.clone()
-    }
-
     /// Staff can resolve only UNKNOWN; attempts stay unchanged.
     pub fn resolve(&self, id: Uuid, receipt_number: Option<&str>) -> Result<(), &'static str> {
         let mut state = locked(&self.state);
@@ -362,7 +342,7 @@ fn header(request: &Request, name: &'static str) -> Option<String> {
     clippy::unwrap_used,
     reason = "fake schema/header failures must fail the boundary test"
 )]
-fn handle(mut request: Request, shared: &Arc<(Mutex<State>, Condvar)>) {
+fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
     let method = request.method().as_str().to_owned();
     let path = request.url().to_owned();
     let mut bytes = Vec::new();
@@ -397,7 +377,6 @@ fn handle(mut request: Request, shared: &Arc<(Mutex<State>, Condvar)>) {
     };
     let mut state = locked(shared);
     state.requests.push(log.clone());
-    shared.1.notify_all();
     let route = path.split('?').next().unwrap_or(&path);
     let position = state
         .faults

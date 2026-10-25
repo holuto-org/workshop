@@ -188,7 +188,8 @@ impl Model {
     }
 
     pub(crate) fn status_matches(&self, snapshot: &Snapshot) -> bool {
-        snapshot.processing == self.running
+        let processing = self.running;
+        snapshot.processing == processing
             && snapshot.connected == self.connected
             && snapshot.vendor == self.vendor
             && snapshot.serial.as_deref()

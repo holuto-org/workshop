@@ -22,7 +22,7 @@ use crate::{
     documents::{BuyerNip, Document},
     settings,
 };
-use model::{Job, Page, PrinterStatus, QueueForm, ResultForm, Telemetry};
+use model::{Job, Page, Pairing, PrinterStatus, QueueForm, ResultForm, Telemetry};
 
 /// Backend page-size limit.
 pub const DOCUMENTS_LIMIT: usize = 100;
@@ -31,8 +31,6 @@ const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
 const MAX_SERIAL_LENGTH: usize = 32;
 /// Sent as `agent/<SemVer>` for the backend's `App-Version` gate.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-pub type Pairing = model::Pairing;
 
 #[derive(thiserror::Error)]
 pub enum ApiError {
@@ -425,15 +423,7 @@ fn trace_headers<B>(mut request: RequestBuilder<B>) -> Result<RequestBuilder<B>,
 
 fn http_agent(base_url: &str) -> Agent {
     let loopback = url::Url::parse(base_url)
-        .ok()
-        .and_then(|url| {
-            url.host().map(|host| match host {
-                url::Host::Domain(host) => host.eq_ignore_ascii_case("localhost"),
-                url::Host::Ipv4(ip) => ip.is_loopback(),
-                url::Host::Ipv6(ip) => ip.is_loopback(),
-            })
-        })
-        .unwrap_or(false);
+        .is_ok_and(|url| url.host().as_ref().is_some_and(settings::is_loopback));
     let mut config = Agent::config_builder()
         .max_redirects(0)
         .http_status_as_error(false)

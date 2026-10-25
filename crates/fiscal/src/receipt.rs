@@ -51,7 +51,7 @@ impl PaymentForm {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Payment {
     pub form: PaymentForm,
     pub amount: Grosze,
@@ -198,7 +198,7 @@ impl Line {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Receipt {
     lines: Vec<Line>,
     advances: Vec<Advance>,

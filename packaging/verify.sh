@@ -30,17 +30,17 @@ check_cli() {
 
 case "$(uname -s)" in
   Linux)
-    packages=(release/*.deb)
-    [[ ${#packages[@]} == 1 && -f ${packages[0]} ]]
-    dpkg-deb -I "${packages[0]}"
-    dpkg-deb -c "${packages[0]}"
-    dpkg-deb -x "${packages[0]}" "$tmp/package"
+    package=${artifacts[0]}
+    [[ $package == *.deb ]]
+    dpkg-deb -I "$package"
+    dpkg-deb -c "$package"
+    dpkg-deb -x "$package" "$tmp/package"
     binary="$tmp/package/usr/bin/workshop"
-    [[ $(dpkg-deb -f "${packages[0]}" Package) == workshop ]]
+    [[ $(dpkg-deb -f "$package" Package) == workshop ]]
     desktop-file-validate "$tmp/package/usr/share/applications/workshop.desktop"
-    python3 packaging/verify-elf.py "$binary" "${packages[0]}"
+    python3 packaging/verify-elf.py "$binary" "$package"
     if [[ ${CI:-} == true ]] && command -v apt-get >/dev/null; then
-      sudo apt-get install -y -qq "$(pwd)/${packages[0]}"
+      sudo apt-get install -y -qq "$(pwd)/$package"
       binary=/usr/bin/workshop
     else
       # Developer hosts verify/launch the extracted installed tree without a system install.
@@ -53,10 +53,10 @@ case "$(uname -s)" in
     dbus-run-session -- bash packaging/smoke-linux.sh "$binary" "$tmp"
     ;;
   Darwin)
-    packages=(release/*.dmg)
-    [[ ${#packages[@]} == 1 && -f ${packages[0]} ]]
+    package=${artifacts[0]}
+    [[ $package == *.dmg ]]
     mountpoint="$tmp/mounted"
-    hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "${packages[0]}"
+    hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "$package"
     app="$mountpoint/Holuto Workshop.app"
     plutil -lint "$app/Contents/Info.plist"
     [[ $(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist") == workshop ]]
