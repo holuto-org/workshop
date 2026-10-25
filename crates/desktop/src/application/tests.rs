@@ -232,7 +232,8 @@ fn paging_buttons_reflect_the_worker_page() -> Result<(), Box<dyn Error>> {
 )]
 fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
 -> Result<(), Box<dyn Error>> {
-    i_slint_backend_testing::init_no_event_loop();
+    // An event loop lets launch install its session-end handler, as in production.
+    i_slint_backend_testing::init_integration_test_with_mock_time();
     // Crash fixtures: a periodic report whose command may have reached the printer, in the
     // current format and with the legacy key only the worker may migrate.
     for identity_key in ["device_unique_number", "device_serial"] {
@@ -273,6 +274,26 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
             interrupted,
             "launch never rewrites the fiscal journal ({identity_key})"
         );
+        // Save feedback stays hidden while blocked, so launch must explain the block itself.
+        let explanation = (
+            "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
+             wyjaśnić."
+                .to_owned(),
+            Tone::Error,
+        );
+        assert_eq!(
+            (app.borrow().model.message.clone(), app.borrow().model.tone),
+            explanation,
+            "launch explains the block instead of the pairing prompt ({identity_key})"
+        );
+        app.borrow_mut()
+            .settings_saved(Ok(preferences::Outcome::Saved));
+        assert_eq!(
+            (app.borrow().model.message.clone(), app.borrow().model.tone),
+            explanation,
+            "a later save keeps the block explanation visible ({identity_key})"
+        );
+        APPLICATION.with(|slot| *slot.borrow_mut() = None);
     }
     Ok(())
 }

@@ -23,8 +23,7 @@ use jiff::{
 };
 
 use crate::{
-    frame,
-    profile::{self, Profile},
+    frame, profile,
     receipt::{self, Step},
     session::{DLE, DleStatus, ENQ, EnqStatus, Session},
 };
@@ -95,11 +94,16 @@ impl Driver for Printer {
                 "Wybrana stawka VAT jest nieaktywna.".to_owned(),
             ));
         }
-        let profile = checked
-            .profile
+        let info_line_width = checked
+            .info_line_width
             .ok_or_else(|| Error::NotReady("Nieznany profil drukarki Novitus.".to_owned()))?;
         let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
-        let steps = receipt::steps(receipt, footer, &profile)?;
+        let steps = receipt::steps(
+            receipt,
+            footer,
+            &checked.device.capabilities,
+            info_line_width,
+        )?;
         dispatch(&mut session, &steps, journal)?;
         // Failed readback must not turn a completed print into a retry.
         let receipt_number = session.command("0;0?l", TIMEOUT).ok().and_then(|reply| {
@@ -204,7 +208,8 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
 
 struct Checked {
     device: Device,
-    profile: Option<Profile>,
+    /// `None` for an unknown model or firmware.
+    info_line_width: Option<usize>,
     header: String,
     clock: Timestamp,
     date: Date,
@@ -229,10 +234,10 @@ fn preflight_identity(
     firmware: String,
     pc1: bool,
 ) -> Result<Checked, Error> {
-    let mut profile = profile::lookup(&model, &firmware);
+    let profile = profile::lookup(&model, &firmware);
+    let info_line_width = profile.as_ref().map(|profile| profile.info_line_width);
     let capabilities = profile
-        .as_ref()
-        .map(|profile| profile.capabilities.clone())
+        .map(|profile| profile.capabilities)
         .unwrap_or_default();
     let mut device = Device {
         vendor: Vendor::Novitus,
@@ -243,7 +248,7 @@ fn preflight_identity(
         vat: vec![],
         capabilities,
     };
-    if profile.is_none() {
+    if info_line_width.is_none() {
         device
             .problems
             .push("Nieznany model lub firmware Novitus".into());
@@ -254,7 +259,7 @@ fn preflight_identity(
             .push("Połączenie nie prowadzi do fiskalnego portu PC1".into());
         return Ok(Checked {
             device,
-            profile,
+            info_line_width,
             header: String::new(),
             clock: Timestamp::UNIX_EPOCH,
             date: Date::ZERO,
@@ -306,27 +311,23 @@ fn preflight_identity(
         device.problems.push("Brak aktywnych stawek VAT".into());
     }
     let (clock, date) = clock(session)?;
-    if let Some(profile) = profile.as_mut() {
-        read_repertoire(session, profile, &mut device);
+    if info_line_width.is_some() {
+        read_repertoire(session, &mut device);
     }
     Ok(Checked {
         device,
-        profile,
+        info_line_width,
         header,
         clock,
         date,
     })
 }
 
-fn read_repertoire(session: &mut Session, profile: &mut Profile, device: &mut Device) {
+fn read_repertoire(session: &mut Session, device: &mut Device) {
     match session.command("52$i", TIMEOUT) {
         Ok(reply) => {
             if full_cp1250(&reply.body) {
-                profile.enable_full_cp1250();
-                device
-                    .capabilities
-                    .allowed_characters
-                    .clone_from(&profile.capabilities.allowed_characters);
+                device.capabilities.allowed_characters = profile::full_cp1250_characters();
             }
         },
         Err(error) => {

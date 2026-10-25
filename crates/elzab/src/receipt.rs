@@ -1,6 +1,7 @@
 //! Validate the entire command sequence before LOR; no substitution or rounding.
-use crate::{frame, profile::Profile, text};
+use crate::{frame, text};
 use fiscal::{
+    device::Capabilities,
     error::Error,
     money::Grosze,
     receipt::{PaymentForm, Receipt},
@@ -31,8 +32,7 @@ impl Step {
 pub(crate) fn amount(amount: Grosze) -> String {
     format!("{},{:02}", amount.get() / 100, amount.get() % 100)
 }
-fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Result<(), Error> {
-    let caps = &profile.capabilities;
+fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Result<(), Error> {
     if !receipt.advances().is_empty() && !caps.advance_deductions {
         return Err(Error::Invalid(
             "Drukarka nie obsługuje rozliczenia zaliczek.".to_owned(),
@@ -78,10 +78,11 @@ fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Resul
 pub(crate) fn steps(
     receipt: &Receipt,
     footer: Option<&str>,
-    profile: &Profile,
+    caps: &Capabilities,
 ) -> Result<Vec<Step>, Error> {
-    validate(receipt, footer, profile)?;
-    let mut result = vec![Step::new("LOR", profile.open.to_owned(), LINE_TIMEOUT)];
+    validate(receipt, footer, caps)?;
+    // ONLINE line-by-line open variant, never sent to legacy ZETA.
+    let mut result = vec![Step::new("LOR", "LOR\x1dC0".to_owned(), LINE_TIMEOUT)];
     if let Some(nip) = receipt.buyer_nip() {
         result.push(Step::new("LNP", format!("LNP\x1dOA{nip}"), LINE_TIMEOUT));
     }

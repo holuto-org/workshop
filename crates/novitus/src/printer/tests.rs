@@ -956,7 +956,13 @@ fn experimental_advance_allocation_and_footer_are_exact_and_gated() {
         caps,
     )
     .unwrap();
-    let steps = receipt::steps(&job, Some("Łódź"), &profile).unwrap();
+    let steps = receipt::steps(
+        &job,
+        Some("Łódź"),
+        &profile.capabilities,
+        profile.info_line_width,
+    )
+    .unwrap();
     super::dispatch(&mut session, &steps, &mut Log::default()).unwrap();
     assert_eq!(
         fiscal_bodies(&sim),
@@ -1106,16 +1112,16 @@ fn zero_total_is_disabled_in_qualified_profiles_but_encodable_when_enabled() {
         },
     ]);
     assert!(matches!(
-        receipt::steps(&job, None, &profile),
+        receipt::steps(&job, None, &profile.capabilities, profile.info_line_width),
         Err(Error::Invalid(_))
     ));
     profile.capabilities.advance_deductions = true;
     assert!(matches!(
-        receipt::steps(&job, None, &profile),
+        receipt::steps(&job, None, &profile.capabilities, profile.info_line_width),
         Err(Error::Invalid(_))
     ));
     profile.capabilities.zero_total_receipts = true;
-    let steps = receipt::steps(&job, None, &profile).unwrap();
+    let steps = receipt::steps(&job, None, &profile.capabilities, profile.info_line_width).unwrap();
     assert!(!steps.iter().any(|step| step.command == "$b"));
     let mut session = Session::open(sim.link().as_ref(), &connection(&sim)).unwrap();
     super::dispatch(&mut session, &steps, &mut Log::default()).unwrap();

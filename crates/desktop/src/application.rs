@@ -131,6 +131,15 @@ impl Application {
         let block = worker::journal_block(&self.dir);
         self.model.blocked = block.blocked;
         self.model.report_unresolved = block.report_unresolved;
+        if block.blocked {
+            // Settings confirmations stay hidden while blocked; say why nothing may print.
+            self.model.say(
+                "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
+                 wyjaśnić."
+                    .into(),
+                Tone::Error,
+            );
+        }
         self.open()?;
         #[cfg(unix)]
         if let Err(error) = quit_on_session_end() {

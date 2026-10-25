@@ -97,6 +97,10 @@ fn set_at(artifact: &Path, executable: &Path, enabled: bool) -> Result<(), Error
         // Desktop-entry strings and plist XML both forbid raw control characters.
         .filter(|text| !text.chars().any(char::is_control))
         .ok_or_else(|| Error::Invalid("Ścieżka aplikacji nie nadaje się do autostartu.".into()))?;
+    // `/proc/self/exe` marks a binary a package upgrade renamed over the running one;
+    // the installed path is the one to launch at the next login.
+    #[cfg(target_os = "linux")]
+    let text = text.strip_suffix(" (deleted)").unwrap_or(text);
     let content = registration(text);
     if let Some(parent) = artifact.parent() {
         fs::create_dir_all(parent).map_err(|source| store_error(artifact, source))?;

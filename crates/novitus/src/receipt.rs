@@ -5,12 +5,13 @@ use std::time::Duration;
 
 use fiscal::{
     decimal,
+    device::Capabilities,
     error::Error,
     money::Grosze,
     receipt::{PaymentForm, Receipt},
 };
 
-use crate::{profile::Profile, text};
+use crate::text;
 
 /// Silence beyond twice a step's timeout, with no operator wait in DLE, is uncertain.
 const LINE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,8 +34,7 @@ impl Step {
     }
 }
 
-fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Result<(), Error> {
-    let caps = &profile.capabilities;
+fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Result<(), Error> {
     if !receipt.advances().is_empty() && !caps.advance_deductions {
         return Err(Error::Invalid(
             "Drukarka nie obsługuje rozliczenia zaliczek.".to_owned(),
@@ -95,15 +95,14 @@ fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Resul
 pub(crate) fn steps(
     receipt: &Receipt,
     footer: Option<&str>,
-    profile: &Profile,
+    caps: &Capabilities,
+    info_line_width: usize,
 ) -> Result<Vec<Step>, Error> {
-    validate(receipt, footer, profile)?;
+    validate(receipt, footer, caps)?;
     // The company footer is a `$h` additional line, printed after the fiscal logo.
     let begin = match footer {
         Some(footer) => {
-            if text::printable_characters(footer)
-                .is_none_or(|length| length > profile.info_line_width)
-            {
+            if text::printable_characters(footer).is_none_or(|length| length > info_line_width) {
                 return Err(Error::Invalid(
                     "Nazwa firmy nie mieści się w stopce Novitus.".to_owned(),
                 ));

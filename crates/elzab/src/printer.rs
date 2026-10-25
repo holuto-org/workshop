@@ -3,8 +3,7 @@
 //! Online ySR is never confused with legacy YSR. Only a matched initial LOR
 //! transport rejection is certain after dispatch.
 use crate::{
-    frame,
-    profile::{self, Profile},
+    frame, profile,
     receipt::{self, Step},
     session::Session,
 };
@@ -93,11 +92,8 @@ impl Driver for Printer {
                 "Wybrana stawka VAT jest nieaktywna.".to_owned(),
             ));
         }
-        let profile = checked
-            .profile
-            .ok_or_else(|| Error::NotReady("Nieznany profil Elzab.".to_owned()))?;
         let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
-        let steps = receipt::steps(receipt, footer, &profile)?;
+        let steps = receipt::steps(receipt, footer, &checked.device.capabilities)?;
         // LPC's nested error must be checked, even when outer error is empty.
         let permission = query(&mut session, "LPC", "LPC\x1dA1")?;
         let code = field(&permission, 'B')?;
@@ -212,7 +208,6 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
 }
 struct Checked {
     device: Device,
-    profile: Option<Profile>,
     header: String,
     date: Date,
 }
@@ -238,11 +233,8 @@ fn preflight_identity(
     firmware: String,
     daily: bool,
 ) -> Result<Checked, Error> {
-    let mut profile = profile::lookup(&model);
-    let capabilities = profile
-        .as_ref()
-        .map(|p| p.capabilities.clone())
-        .unwrap_or_default();
+    let capabilities = profile::lookup(&model);
+    let known = capabilities.is_some();
     let mut device = Device {
         vendor: Vendor::Elzab,
         model,
@@ -250,9 +242,9 @@ fn preflight_identity(
         unique_number: String::new(),
         problems: vec![],
         vat: vec![],
-        capabilities,
+        capabilities: capabilities.unwrap_or_default(),
     };
-    if profile.is_none() {
+    if !known {
         device.problems.push("Nieznany model Elzab ONLINE".into());
     }
     let unique_number = query(session, "FNR", "FNR")?;
@@ -269,9 +261,6 @@ fn preflight_identity(
             .problems
             .push("Ustaw stronę kodową drukarki na CP1250".into());
         device.capabilities.allowed_characters.clear();
-        if let Some(p) = &mut profile {
-            p.capabilities.allowed_characters.clear();
-        }
     }
     let status = query(session, "ySR", "ySR")?;
     readiness(&status, &mut device.problems, daily)?;
@@ -331,7 +320,6 @@ fn preflight_identity(
     let date = clock(session)?.date();
     Ok(Checked {
         device,
-        profile,
         header,
         date,
     })

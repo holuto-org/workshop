@@ -37,11 +37,10 @@ pub fn lookup(model: &str, firmware: &str) -> Option<Profile> {
     })
 }
 
-impl Profile {
-    pub(crate) fn enable_full_cp1250(&mut self) {
-        self.capabilities.allowed_characters = (0x20..=u8::MAX)
-            .filter_map(cp1250::decode_byte)
-            .filter(|character| !character.is_control())
-            .collect();
-    }
+/// Repertoire once `52$i` confirms full Windows-1250.
+pub(crate) fn full_cp1250_characters() -> String {
+    (0x20..=u8::MAX)
+        .filter_map(cp1250::decode_byte)
+        .filter(|character| !character.is_control())
+        .collect()
 }

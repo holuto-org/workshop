@@ -52,7 +52,7 @@ fn printer(sim: &Simulator) -> Printer {
     Printer::new(sim.link(), connection(sim))
 }
 fn receipt(advance: u64, footer: bool) -> Receipt {
-    let mut caps = profile::lookup("ELZAB CUBE online").unwrap().capabilities;
+    let mut caps = profile::lookup("ELZAB CUBE online").unwrap();
     caps.zero_total_receipts = true;
     let lines = vec![
         Line::new(
@@ -200,7 +200,7 @@ fn read_only_printer_refuses_printing_but_allows_resolution() {
 #[test]
 fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command() {
     // LDS advances are qualified; only zero-total and footer need acceptance.
-    let caps = profile::lookup("ELZAB CUBE online").unwrap().capabilities;
+    let caps = profile::lookup("ELZAB CUBE online").unwrap();
     assert!(caps.advance_deductions);
     for (advance, footer, message) in [
         (
@@ -454,7 +454,7 @@ fn legal_vat_change_since_probe_never_opens() {
 }
 #[test]
 fn wrong_vendor_or_inactive_vat_slot_never_opens() {
-    let caps = profile::lookup("ELZAB CUBE online").unwrap().capabilities;
+    let caps = profile::lookup("ELZAB CUBE online").unwrap();
     let inactive = Receipt::new(
         vec![
             Line::new(
@@ -1034,7 +1034,7 @@ fn unqualified_footer_is_refused_and_qualified_profile_emits_lal() {
     ));
     assert_eq!(fiscal(&sim), Vec::<String>::new());
     let mut qualified = profile::lookup("ELZAB CUBE online").unwrap();
-    qualified.capabilities.company_footer = true;
+    qualified.company_footer = true;
     let steps = receipt_commands::steps(&receipt(0, true), Some("Inna firma"), &qualified).unwrap();
     assert_eq!(steps.last().unwrap().body, "LAL\x1dQAAInna firma");
     assert_eq!(steps.last().unwrap().command, "LAL");

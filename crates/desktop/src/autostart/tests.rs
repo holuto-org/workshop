@@ -39,6 +39,25 @@ fn linux_login_entry_launches_only_the_exact_executable_and_is_removable() -> Te
     clippy::panic_in_result_fn,
     reason = "Assertions prove artifacts; setup propagates I/O"
 )]
+fn linux_login_entry_after_a_package_upgrade_launches_the_installed_executable() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let artifact = temp.path().join("autostart/workshop.desktop");
+    // `/proc/self/exe` once dpkg has renamed a new binary over the running one.
+    set_at(&artifact, Path::new("/usr/bin/workshop (deleted)"), true)?;
+    let entry = fs::read_to_string(&artifact)?;
+    assert!(
+        entry.contains("\nExec=\"/usr/bin/workshop\"\n"),
+        "the login entry must name the installed path: {entry}"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove artifacts; setup propagates I/O"
+)]
 fn desktop_exec_launches_paths_with_field_codes_and_shell_metacharacters() -> TestResult {
     let temp = tempfile::tempdir()?;
     let artifact = temp.path().join("workshop.desktop");
