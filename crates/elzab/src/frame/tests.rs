@@ -27,3 +27,10 @@ fn malformed_frames_and_overflow_are_rejected() {
     assert!(encode("1", b"LOR\x02").is_err());
     assert!(encode("1", &vec![b'A'; 1017]).is_err());
 }
+
+#[test]
+fn empty_default_header_and_empty_reply_data_round_trip() {
+    let raw = encode("", b"").unwrap();
+    assert_eq!(raw.len(), 7);
+    assert_eq!(decode(&raw).unwrap(), ("", &b""[..]));
+}

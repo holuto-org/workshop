@@ -90,3 +90,75 @@ fn malformed_headers_never_become_transport_rejections() {
         ));
     }
 }
+
+#[test]
+fn reply_with_default_header_fields_matches_command_one() {
+    for header in ["\x1d", "\x1d\x1d\x1d\x1d", ""] {
+        let sim = Simulator::start();
+        sim.fault(
+            "FNR",
+            Fault::Reply(frame::encode(header, b"\x1dBABC").unwrap()),
+        );
+        assert_eq!(
+            open(&sim)
+                .command("FNR", "FNR", Duration::from_secs(3))
+                .unwrap(),
+            "\x1dBABC"
+        );
+        assert_eq!(sim.frames().len(), 1);
+    }
+}
+
+#[test]
+fn inconsistent_multipart_totals_are_rejected() {
+    for headers in [
+        vec!["1\x1dSA\x1d1\x1d3", "1\x1dSA\x1d2\x1d2"],
+        vec![
+            "1\x1dSA\x1d1\x1d2",
+            "1\x1dSA\x1d2\x1d3",
+            "1\x1dSA\x1d3\x1d3",
+        ],
+        vec![
+            "1\x1dSA\x1d1\x1d3",
+            "1\x1dSA\x1d2\x1d0",
+            "1\x1dSA\x1d3\x1d3",
+        ],
+        vec![
+            "1\x1dSA\x1d1\x1d0",
+            "1\x1dSA\x1d2\x1d3",
+            "1\x1dSA\x1d3\x1d3",
+        ],
+    ] {
+        let sim = Simulator::start();
+        let mut raw = Vec::new();
+        for header in headers {
+            raw.extend(frame::encode(header, b"").unwrap());
+        }
+        sim.fault("LCL", Fault::Reply(raw));
+        let mut session = open(&sim);
+        assert!(matches!(
+            session.command("LCL", "LCL\x1dRA1,00", Duration::from_secs(3)),
+            Err(Error::Protocol(_))
+        ));
+        assert!(matches!(
+            session.command("FNR", "FNR", Duration::from_secs(3)),
+            Err(Error::NotReady(_))
+        ));
+        assert_eq!(sim.frames().len(), 1);
+    }
+}
+
+#[test]
+fn a_declared_multipart_total_is_preserved_until_its_final_frame() {
+    let sim = Simulator::start();
+    let mut reply = frame::encode("1\x1dSA\x1d1\x1d2", b"\x1dBABC").unwrap();
+    reply.extend(frame::encode("1\x1dSA\x1d2\x1d2", b"DEF").unwrap());
+    sim.fault("FNR", Fault::Reply(reply));
+    assert_eq!(
+        open(&sim)
+            .command("FNR", "FNR", Duration::from_secs(3))
+            .unwrap(),
+        "\x1dBABCDEF"
+    );
+    assert_eq!(sim.frames().len(), 1);
+}

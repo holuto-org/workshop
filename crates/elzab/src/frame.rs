@@ -19,8 +19,7 @@ pub fn crc(bytes: &[u8]) -> u16 {
 }
 
 pub fn encode(header: &str, data: &[u8]) -> Result<Vec<u8>, Error> {
-    if header.is_empty()
-        || !header.is_ascii()
+    if !header.is_ascii()
         || header.bytes().any(|b| matches!(b, STX | ETX | FS))
         || data.iter().any(|b| matches!(*b, STX | ETX))
         || header.len() + data.len() + 7 > MAX_FRAME
@@ -46,7 +45,7 @@ pub fn encode(header: &str, data: &[u8]) -> Result<Vec<u8>, Error> {
 }
 
 pub fn decode(raw: &[u8]) -> Result<(&str, &[u8]), Error> {
-    if !(8..=MAX_FRAME).contains(&raw.len())
+    if !(7..=MAX_FRAME).contains(&raw.len())
         || raw.first() != Some(&STX)
         || raw.last() != Some(&ETX)
     {
@@ -68,7 +67,7 @@ pub fn decode(raw: &[u8]) -> Result<(&str, &[u8]), Error> {
     let separator = content.iter().position(|b| *b == FS).ok_or_else(corrupt)?;
     let header = str::from_utf8(content.get(..separator).ok_or_else(corrupt)?)
         .map_err(|_encoding| corrupt())?;
-    if header.is_empty() || !header.is_ascii() {
+    if !header.is_ascii() {
         return Err(corrupt());
     }
     Ok((header, content.get(separator + 1..).ok_or_else(corrupt)?))

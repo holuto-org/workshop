@@ -64,6 +64,7 @@ impl Session {
         self.port.write_all(&raw, timeout).map_err(Error::Io)?;
         let mut result = Vec::new();
         let mut expected_frame = 1;
+        let mut declared_total = None;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -98,6 +99,18 @@ impl Session {
                 || (header.maximum != 0 && header.maximum < header.number)
             {
                 return Err(frame::corrupt());
+            }
+            match declared_total {
+                Some(total) if header.maximum != total => return Err(frame::corrupt()),
+                None if header.maximum != 0 => {
+                    // B:207-229: an unknown total may become known only on the
+                    // final frame; an initially declared total may never change.
+                    if expected_frame != 1 && header.maximum != header.number {
+                        return Err(frame::corrupt());
+                    }
+                    declared_total = Some(header.maximum);
+                },
+                Some(_) | None => {},
             }
             // B:207-229: unknown total is 0 until the final numbered frame.
             if result.len() + data.len() > 65_536 {
@@ -172,7 +185,7 @@ struct Header<'a> {
 impl<'a> Header<'a> {
     fn parse(header: &'a str) -> Result<Self, Error> {
         let mut fields = header.split('\u{1d}');
-        let id = number(fields.next().ok_or_else(frame::corrupt)?)?;
+        let id = number(fields.next().filter(|s| !s.is_empty()).unwrap_or("1"))?;
         let status = fields.next().filter(|s| !s.is_empty()).unwrap_or("SA");
         let number = number(fields.next().filter(|s| !s.is_empty()).unwrap_or("1"))?;
         let maximum = self::number(fields.next().filter(|s| !s.is_empty()).unwrap_or("1"))?;

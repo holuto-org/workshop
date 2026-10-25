@@ -14,6 +14,10 @@ and `elzab-oss.md` before changing native bytes or completion semantics.
   Requests use fresh decimal IDs. Match reply IDs, validate transport status and
   CRC before command errors; replies do not echo command names. Never resend any
   frame, including on SL, silence, bad CRC or disconnect.
+  Apply documented empty-header defaults before matching (ID/frame/max 1,
+  status SA, transform NDT). Multipart frame numbers must be sequential; a
+  declared nonzero maximum cannot change. Unknown maxima remain 0 until the
+  final frame declares its own number (B:207-229).
 - Require read-only `XHR GS w` to report CP1250. Use `fiscal::cp1250`; printable
   repertoire excludes controls and undefined bytes. Reject text separators and
   unrepresentable input without replacement, truncation or transliteration.

@@ -708,3 +708,46 @@ fn simulator_link_is_exclusive_and_never_opens_another_port() {
     assert_eq!(sim.link_with(candidates.clone()).candidates(), candidates);
     assert_eq!(link.time_scale(), 1000);
 }
+
+#[test]
+fn inconsistent_multipart_lcl_reply_is_uncertain_not_printed() {
+    struct CorruptCloseTotal<'a> {
+        sim: &'a Simulator,
+    }
+    impl Journal for CorruptCloseTotal<'_> {
+        fn dispatching(&mut self, command: &'static str) -> io::Result<()> {
+            if command == "LCL" {
+                let frames = self.sim.frames();
+                let raw = frames.last().ok_or(io::ErrorKind::InvalidData)?;
+                let (header, _) = frame::decode(raw).map_err(io::Error::other)?;
+                let id = header.parse::<u32>().map_err(io::Error::other)? + 1;
+                let mut reply = frame::encode(&format!("{id}\x1dSA\x1d1\x1d3"), b"")
+                    .map_err(io::Error::other)?;
+                reply.extend(
+                    frame::encode(&format!("{id}\x1dSA\x1d2\x1d2"), b"")
+                        .map_err(io::Error::other)?,
+                );
+                self.sim.fault("LCL", Fault::Reply(reply));
+            }
+            Ok(())
+        }
+
+        fn waiting(&mut self, _: Option<&str>) {}
+    }
+    let sim = Simulator::start();
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    let error = driver
+        .print_receipt(
+            &receipt(0, false),
+            &expected,
+            &mut CorruptCloseTotal { sim: &sim },
+        )
+        .unwrap_err();
+    assert!(matches!(error, Error::Uncertain(cause) if matches!(*cause, Error::Protocol(_))));
+    assert_eq!(sim.receipts(), 1);
+    assert_eq!(
+        fiscal(&sim).iter().filter(|b| b.starts_with("LCL")).count(),
+        1
+    );
+}
