@@ -280,14 +280,7 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
             })
         },
         Command::Status => status(path),
-        Command::Ports => {
-            let ports = link::serial_ports();
-            Ok(Response {
-                value: json!({"ok":true,"ports":ports}),
-                human: ports.join("\n"),
-                exit: 0,
-            })
-        },
+        Command::Ports => Ok(ports_response(&link::serial_ports())),
         Command::ConfigSet(changes) => config_set(path, changes),
         Command::Autostart(enabled) => {
             let dir = StateDir::open(path.to_owned())?;
@@ -305,6 +298,21 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
         },
         Command::Pair(code) => pair(path, code),
         Command::Help | Command::Version => Err(arguments()),
+    }
+}
+
+fn ports_response(ports: &[link::Candidate]) -> Response {
+    let mut human = String::new();
+    for (index, candidate) in ports.iter().enumerate() {
+        if index > 0 {
+            human.push('\n');
+        }
+        human.push_str(&candidate.port);
+    }
+    Response {
+        value: json!({"ok":true,"ports":ports}),
+        human,
+        exit: 0,
     }
 }
 

@@ -7,6 +7,55 @@ use super::{Command, execute, parse};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+#[test]
+fn ports_json_includes_brand_hints_while_human_output_keeps_names_only() {
+    use fiscal::{device::Vendor, link::Candidate};
+
+    let response = super::ports_response(&[
+        Candidate {
+            port: "/dev/ttyACM0".into(),
+            hint: Some(Vendor::Posnet),
+        },
+        Candidate {
+            port: "/dev/ttyACM1".into(),
+            hint: Some(Vendor::Novitus),
+        },
+        Candidate {
+            port: "/dev/ttyACM2".into(),
+            hint: Some(Vendor::Elzab),
+        },
+        Candidate {
+            port: "/dev/ttyUSB0".into(),
+            hint: None,
+        },
+    ]);
+    assert_eq!(
+        response.value,
+        json!({
+            "ok": true,
+            "ports": [
+                {"port": "/dev/ttyACM0", "hint": "posnet"},
+                {"port": "/dev/ttyACM1", "hint": "novitus"},
+                {"port": "/dev/ttyACM2", "hint": "elzab"},
+                {"port": "/dev/ttyUSB0", "hint": null}
+            ]
+        })
+    );
+    assert_eq!(
+        response.human,
+        "/dev/ttyACM0\n/dev/ttyACM1\n/dev/ttyACM2\n/dev/ttyUSB0"
+    );
+    assert_eq!(response.exit, 0);
+}
+
+#[test]
+fn empty_ports_response_has_no_human_output() {
+    let response = super::ports_response(&[]);
+    assert_eq!(response.value, json!({"ok": true, "ports": []}));
+    assert_eq!(response.human, "");
+    assert_eq!(response.exit, 0);
+}
+
 fn save_api_url(path: &Path, api_url: &str) -> Result<(), AgentError> {
     let dir = StateDir::open(path.to_owned())?;
     Settings {

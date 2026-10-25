@@ -13,7 +13,7 @@ use std::{
 use fiscal::{
     device::Vendor,
     error::Error as PrinterError,
-    link::{Link, Port},
+    link::{Candidate, Link, Port},
     money::Grosze,
 };
 use posnet::simulator::{Fault as PrinterFault, SERIAL, SimReport, Simulator};
@@ -211,7 +211,7 @@ impl Link for PanicLink {
         panic!("private-token-customer-nip");
     }
 
-    fn candidates(&self) -> Vec<String> {
+    fn candidates(&self) -> Vec<Candidate> {
         Vec::new()
     }
 }

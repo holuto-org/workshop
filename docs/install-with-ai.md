@@ -302,8 +302,14 @@ after a running-app refusal, then repeat only the requested configuration.
   token property. `vendor` is `"posnet"`, `"novitus"`, `"elzab"` or `null` for
   detection (also the value for pre-vendor settings). Read-only; never supplement
   by reading settings files.
-- **`workshop ports --json`**: List serial port names only, without opening any.
-  Read-only metadata; no probe/test.
+- **`workshop ports --json`**: List plausible printer candidates without opening
+  any port: `{"ok":true,"ports":[{"port":"COM3","hint":"posnet"}]}`.
+  Each `hint` is `"posnet"`, `"novitus"`, `"elzab"` or `null` for unhinted
+  bridges/native ports. Hints describe USB metadata, not verified printer
+  identity or permission to print. Candidates are ordered hinted USB first,
+  then RS232 bridges, then native ports; names are sorted within each group.
+  Human output remains port names only. An unlisted port may be configured
+  manually. Read-only metadata; no probe/test.
 - **`workshop config set`**: Save non-secret settings with
   `--api-url <URL>`, `--port auto|<PORT>`, `--speed 9600` and
   `--diagnostics on|off`; at least one flag is required, with no duplicates.

@@ -123,6 +123,16 @@ Typical ports: Linux `/dev/ttyACM0` (prefer `/dev/serial/by-id/...`), Windows
 `COM3`, macOS `/dev/cu.usbmodem…`. Only serial connections are supported. The
 user needs read/write access (`dialout` group on Linux); never run with sudo.
 
+The GUI, `workshop ports` and discovery share a passive candidate list: hinted
+USB devices (`1424:*` Posnet, `1A28:2512` Novitus, `0483:5740` Elzab), then
+FTDI/Prolific/WCH/Silicon Labs RS232 bridges, then native ports, sorted by name
+within each group. USB hints are not verified printer identities. Other USB
+devices and Bluetooth are excluded; macOS uses `/dev/cu.*` rather than duplicate
+`/dev/tty.*` nodes. Linux drops native UARTs whose sysfs `type` is zero, retaining
+ports with unreadable metadata. Windows retains non-USB COM ports, including
+virtual/Bluetooth ports reported as `Unknown`. An unlisted port can still be
+entered manually. Listing never opens a port.
+
 If the saved port fails, discovery identifies other serial candidates read-only
 and verifies the first Temo Online found before using and saving it. It never
 scans with an unresolved operation: the device must not change.

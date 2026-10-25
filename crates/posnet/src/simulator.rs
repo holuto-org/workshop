@@ -24,7 +24,7 @@ use fiscal::{
     driver::Driver,
     error::Error,
     journal::{Journal, Printed},
-    link::{Connection, Link, Port},
+    link::{Candidate, Connection, Link, Port},
     receipt::{Quantity, Receipt},
     report::Report,
 };
@@ -220,7 +220,10 @@ impl Simulator {
     pub fn link_with(&self, candidates: Vec<String>, denied: Vec<String>) -> Arc<dyn Link> {
         Arc::new(SimLink {
             address: self.address.clone(),
-            candidates,
+            candidates: candidates
+                .into_iter()
+                .map(|port| Candidate { port, hint: None })
+                .collect(),
             denied,
             connected: Arc::clone(&self.connected),
             state: Arc::clone(&self.state),
@@ -380,7 +383,7 @@ impl Drop for Simulator {
 #[derive(Debug)]
 struct SimLink {
     address: String,
-    candidates: Vec<String>,
+    candidates: Vec<Candidate>,
     denied: Vec<String>,
     connected: Arc<AtomicBool>,
     state: Arc<Mutex<State>>,
@@ -416,7 +419,7 @@ impl Link for SimLink {
         }))
     }
 
-    fn candidates(&self) -> Vec<String> {
+    fn candidates(&self) -> Vec<Candidate> {
         self.candidates.clone()
     }
 

@@ -231,7 +231,9 @@ impl Application {
             });
         });
         window.window().on_close_requested(request_close);
-        window.set_ports(strings(serial_ports()));
+        window.set_ports(strings(
+            serial_ports().into_iter().map(|candidate| candidate.port),
+        ));
         self.model.initialize(&window, Zoned::now().date());
         window.show()?;
         #[cfg(target_os = "macos")]

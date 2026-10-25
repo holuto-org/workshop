@@ -60,12 +60,12 @@ impl Printer {
             return Err(error);
         }
         let mut denied = error.is_denied().then(|| self.connection.port.clone());
-        for port in self.link.candidates() {
-            if port == self.connection.port {
+        for candidate in self.link.candidates() {
+            if candidate.port == self.connection.port {
                 continue;
             }
             let connection = Connection {
-                port,
+                port: candidate.port,
                 baud_rate: self.connection.baud_rate,
             };
             match identify(self.link.as_ref(), &connection) {
