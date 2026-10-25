@@ -36,7 +36,7 @@ pub struct DleStatus {
 }
 impl DleStatus {
     pub fn decode(byte: u8) -> Result<Self, Error> {
-        if byte & 0xF8 != 0x70 {
+        if !status_matches(DLE, byte) {
             return Err(frame::corrupt());
         }
         Ok(Self {
@@ -54,7 +54,7 @@ pub struct EnqStatus {
 }
 impl EnqStatus {
     pub fn decode(byte: u8) -> Result<Self, Error> {
-        if byte & 0xF0 != 0x60 {
+        if !status_matches(ENQ, byte) {
             return Err(frame::corrupt());
         }
         Ok(Self {
@@ -80,12 +80,11 @@ impl ExtendedStatus {
         // Last printout and receipt numbers: validated, unused.
         let _last_print = decimal(fields.next())?;
         let _last_receipt = decimal(fields.next())?;
-        let flags = fields
+        let flags_wire = fields
             .next()
             .filter(|flags| flags.len() == 8 && flags.bytes().all(|byte| byte.is_ascii_hexdigit()))
-            .ok_or_else(frame::corrupt)?;
-        let flags_wire = u32::from_str_radix(flags, 16)
-            .map_err(|error| Error::Protocol(format!("Nieprawidłowy status Novitus: {error}.")))?
+            .and_then(|flags| u32::from_str_radix(flags, 16).ok())
+            .ok_or_else(frame::corrupt)?
             .to_be_bytes();
         if fields.next() != Some("") || fields.next().is_some() {
             return Err(frame::corrupt());
@@ -214,12 +213,7 @@ impl Session {
     /// Receive the original command's ACK without resending.
     /// Fiscal schemas are ACK-only, so no partial data is discarded.
     pub(crate) fn finish_fiscal(&mut self, command: &str, deadline: Instant) -> Result<(), Error> {
-        if !self.blocked
-            || !matches!(
-                command,
-                "$h" | "$l" | "$z" | "$b" | "$y" | "$w" | "@z" | "#r" | "#o"
-            )
-        {
+        if !self.blocked || !is_fiscal(command) {
             return Err(frame::corrupt());
         }
         let result = self.receive(command, command, deadline).map(|_reply| ());
@@ -414,6 +408,14 @@ const fn status_matches(request: u8, status: u8) -> bool {
     } else {
         status & 0xF0 == 0x60
     }
+}
+
+/// Fiscal schemas reply with an ACK only.
+pub(crate) fn is_fiscal(command: &str) -> bool {
+    matches!(
+        command,
+        "$h" | "$l" | "$z" | "$b" | "$y" | "$w" | "@z" | "#r" | "#o"
+    )
 }
 
 fn decimal(value: Option<&str>) -> Result<u32, Error> {

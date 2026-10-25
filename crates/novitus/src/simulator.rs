@@ -3,7 +3,7 @@
 
 use crate::{
     frame,
-    session::{DLE, DLE2, ENQ, identifier, no_request_checksum},
+    session::{DLE, DLE2, ENQ, identifier, is_fiscal, no_request_checksum},
 };
 use fiscal::{
     cp1250, decimal,
@@ -522,11 +522,7 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
             true,
             false,
         ),
-        _ if matches!(
-            command,
-            "$h" | "$l" | "$z" | "$b" | "$y" | "$w" | "@z" | "#r" | "#o"
-        ) =>
-        {
+        _ if is_fiscal(command) => {
             let code = fiscal_command(body, command, state);
             return frame::query(format!("{code}#Z{command}").as_bytes());
         },

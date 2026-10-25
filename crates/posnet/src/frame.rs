@@ -97,20 +97,23 @@ pub(crate) fn encode(command: &str, params: &[(&str, String)]) -> Result<Vec<u8>
             "Nieprawidłowe polecenie drukarki.".to_owned(),
         ));
     }
-    // Commands and keys are validated ASCII, which Windows-1250 encodes as itself.
-    let mut payload = command.as_bytes().to_vec();
-    payload.push(b'\t');
+    let mut payload = String::from(command);
+    payload.push('\t');
     for (key, value) in params {
         if !valid_key(key) {
             return Err(Error::Invalid(
                 "Nieprawidłowy parametr drukarki.".to_owned(),
             ));
         }
-        payload.extend_from_slice(key.as_bytes());
-        payload.extend(printable(value)?);
-        payload.push(b'\t');
+        check_printable(value)?;
+        payload.push_str(key);
+        payload.push_str(value);
+        payload.push('\t');
     }
-    let frame = wrap(&payload);
+    let encoded = cp1250::encode(&payload).ok_or_else(|| {
+        Error::Invalid("Drukarka nie obsługuje niektórych znaków w tekście.".to_owned())
+    })?;
+    let frame = wrap(&encoded);
     if frame.len() > MAX_FRAME {
         return Err(Error::Invalid(
             "Polecenie drukarki jest zbyt długie.".to_owned(),
@@ -197,15 +200,18 @@ fn corrupt() -> Error {
     Error::Protocol(CORRUPT.to_owned())
 }
 
-fn printable(value: &str) -> Result<Vec<u8>, Error> {
+fn check_printable(value: &str) -> Result<(), Error> {
     if value.chars().any(char::is_control) {
         return Err(Error::Invalid(
             "Tekst nie może zawierać znaków sterujących.".to_owned(),
         ));
     }
-    cp1250::encode(value).ok_or_else(|| {
-        Error::Invalid("Drukarka nie obsługuje niektórych znaków w tekście.".to_owned())
-    })
+    if cp1250::encode(value).is_none() {
+        return Err(Error::Invalid(
+            "Drukarka nie obsługuje niektórych znaków w tekście.".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn parameter(field: &str) -> String {
