@@ -291,6 +291,21 @@ decimals, 80-character item names (`trline`), 500 lines (`trinit`),
 0x20–0xFF, excluding DEL, no-break space, soft hyphen and table-drawing glyphs
 (`¤ ¨ ˛ ´ ¸`, POT-I-DEV-37 p. 14).
 
+`novitus::printer` implements native ESC-P receipts and daily/monthly/periodic
+reports with strict model/firmware profiles for HD II Online, Deon Online,
+Bono Online and Point. It verifies PC1, native dialect, CP1250 input/output,
+fiscal mode, idle status, header, VAT and Warsaw clock in the printing session.
+Unknown firmware is not ready; there is no compatibility fallback. Profiles
+currently advertise only documented printable ASCII, 40/60-character item
+names and 255 sale lines. Advances, zero-total receipts and changing company
+footers are disabled pending qualification; a company absent from the header
+is rejected before begin. DLE2 byte order remains unverified: readiness requires
+zero flags, and execution wait reasons use only documented DLE bits. Native
+identity strings and firmware-specific behavior still require qualification;
+simulator tests are not hardware certification. See the
+[protocol audit](docs/superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/novitus-protocol.md)
+and [implementation evidence](docs/superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/novitus-oss.md).
+
 Session/heartbeat bind and verify the physical serial and vendor; a mismatch
 fails with 403 `fiscal_serial_mismatch` or `fiscal_vendor_mismatch`.
 Other requests carry the same `X-Device-Serial` header; device swaps are rejected

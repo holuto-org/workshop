@@ -15,5 +15,5 @@ text fields reject CR and every other control. UTF-8 or Latin-1 changes Polish
 wire text and its XOR checksum. The five unassigned code-page bytes remain a
 decode error, never replacement text. ASCII protocol identifiers and hex digits
 are not text fields. Settings and journal JSON remain UTF-8; this rule concerns
-only native protocol bytes. Device input/output code pages must be verified by
-the future qualification layer; this transport never changes printer settings.
+only native protocol bytes. The driver verifies both PC input/output code pages;
+discovery and fiscal operations never change printer settings.

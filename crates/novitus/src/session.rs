@@ -255,6 +255,24 @@ impl Session {
         result
     }
 
+    /// Receive the original fiscal command's completion without sending it again.
+    /// Fiscal commands have ACK-only schemas, so no partial data is discarded.
+    pub(crate) fn finish_fiscal(&mut self, command: &str, deadline: Instant) -> Result<(), Error> {
+        if !self.blocked
+            || !matches!(
+                command,
+                "$h" | "$l" | "$z" | "$b" | "$y" | "$w" | "@z" | "#r" | "#o"
+            )
+        {
+            return Err(frame::corrupt());
+        }
+        let result = self.receive(command, command, deadline).map(|_reply| ());
+        if result.is_ok() || matches!(result, Err(Error::Device { .. })) {
+            self.blocked = false;
+        }
+        result
+    }
+
     fn receive(&mut self, request: &str, command: &str, deadline: Instant) -> Result<Reply, Error> {
         let mut data = None;
         let mut completed = false;
@@ -334,12 +352,14 @@ impl Session {
 
     /// DLE and ENQ have single-byte replies; DLE2 uses `extended_status`.
     pub fn realtime(&mut self, byte: u8) -> Result<u8, Error> {
+        self.realtime_until(byte, Instant::now() + self.timeout(TIMEOUT))
+    }
+
+    pub(crate) fn realtime_until(&mut self, byte: u8, cap: Instant) -> Result<u8, Error> {
         if !matches!(byte, DLE | ENQ) {
             return Err(Error::Invalid("Zapytanie wymaga DLE lub ENQ.".to_owned()));
         }
-        let timeout = self.timeout(TIMEOUT);
-        self.port.write_all(&[byte], timeout).map_err(io_error)?;
-        let deadline = Instant::now() + timeout;
+        let deadline = self.send_realtime(byte, cap)?;
         loop {
             match self.next_event(deadline)? {
                 Event::Status(status) if status_matches(byte, status) => return Ok(status),
@@ -349,9 +369,11 @@ impl Session {
     }
 
     pub fn extended_status(&mut self) -> Result<ExtendedStatus, Error> {
-        let timeout = self.timeout(TIMEOUT);
-        self.port.write_all(&[DLE2], timeout).map_err(io_error)?;
-        let deadline = Instant::now() + timeout;
+        self.extended_status_until(Instant::now() + self.timeout(TIMEOUT))
+    }
+
+    pub(crate) fn extended_status_until(&mut self, cap: Instant) -> Result<ExtendedStatus, Error> {
+        let deadline = self.send_realtime(DLE2, cap)?;
         loop {
             match self.next_event(deadline)? {
                 Event::Frame(raw) if frame::unframe(&raw)?.starts_with(b"@s") => {
@@ -360,6 +382,16 @@ impl Session {
                 event @ (Event::Frame(_) | Event::Status(_)) => self.enqueue(event)?,
             }
         }
+    }
+
+    fn send_realtime(&mut self, byte: u8, cap: Instant) -> Result<Instant, Error> {
+        let deadline = (Instant::now() + self.timeout(TIMEOUT)).min(cap);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::Timeout("Novitus"));
+        }
+        self.port.write_all(&[byte], remaining).map_err(io_error)?;
+        Ok(deadline)
     }
 
     fn enqueue(&mut self, event: Event) -> Result<(), Error> {
@@ -454,6 +486,13 @@ fn device_result(code: u32, command: &str) -> Result<(), Error> {
 pub(crate) fn identifier(body: &str) -> Option<&str> {
     let start = body.find(['#', '$', '^', '@', '?'])?;
     let rest = body.get(start..)?;
+    // These commands allow text immediately after the identifier, without a
+    // separator (notably $l). Product-name letters are not command letters.
+    if let Some(command) = rest.get(..2)
+        && matches!(command, "$l" | "$w" | "$h" | "$b" | "$y" | "$z" | "@z")
+    {
+        return Some(command);
+    }
     let length = 1 + rest
         .bytes()
         .skip(1)
@@ -476,6 +515,7 @@ fn response_prefix(body: &str) -> Option<(String, bool, bool)> {
         "$i" => Some((format!("{}$I", body.split('$').next()?), true, true)),
         "^u" => Some(("1#U".to_owned(), true, true)),
         "^c" => Some(("^c".to_owned(), true, true)),
+        "?l" => Some(("0?l".to_owned(), true, true)),
         _ => None,
     }
 }

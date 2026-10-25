@@ -12,6 +12,7 @@ simulator = ["fiscal/simulator"]
 
 [dependencies]
 fiscal.workspace = true
+jiff.workspace = true
 
 [dev-dependencies]
 fiscal = { workspace = true, features = ["simulator"] }

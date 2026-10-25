@@ -55,8 +55,9 @@ One Cargo workspace; dependency versions and lints live only in the root
 - **`crates/posnet` / `posnet`**: CP1250 frames, sessions, preflight,
   receipt/report commands; feature `simulator` provides the printer peer used
   by tests.
-- **`crates/novitus` / `novitus`**: Native ESC-P framing, exclusive sessions
-  and feature-gated TCP simulator; no production fiscal driver qualification.
+- **`crates/novitus` / `novitus`**: Native ESC-P driver, strict model/firmware
+  profiles, same-session preflight and feature-gated TCP simulator. Advances,
+  zero-total receipts and company footers remain unqualified and disabled.
 - **`crates/agent` / `agent`**: Holuto `/agent` client, durable
   journal/recovery, settings/history and single `Worker`; feature `testing`
   exposes the loopback Holuto fake through the production client.

@@ -266,3 +266,23 @@ fn full_config_read_returns_all_counted_options() {
         ]
     );
 }
+
+#[test]
+fn operator_cap_expiry_prevents_even_status_writes() {
+    let sim = Simulator::start();
+    let mut session = open(&sim);
+    let cap = Instant::now();
+    assert!(matches!(
+        session.extended_status_until(cap),
+        Err(Error::Timeout("Novitus"))
+    ));
+    assert!(matches!(
+        session.realtime_until(DLE, cap),
+        Err(Error::Timeout("Novitus"))
+    ));
+    assert!(
+        sim.frames()
+            .iter()
+            .all(|raw| raw.starts_with(&frame::START))
+    );
+}

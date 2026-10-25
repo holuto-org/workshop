@@ -9,7 +9,7 @@ use crate::{
     session::{DLE, DLE2, ENQ, identifier, no_request_checksum},
 };
 use fiscal::{
-    cp1250,
+    cp1250, decimal,
     error::Error,
     link::{Candidate, Link, Port},
 };
@@ -31,6 +31,10 @@ pub enum Fault {
     LoseReply,
     CorruptReply,
     Disconnect,
+    /// Matched refusal, without executing the command.
+    Refuse(u32),
+    /// Execute once, hold its ACK until `resume`, and expose DLE paper/battery.
+    Wait,
     /// Exact wire bytes, allowing fragmented/coalesced and malformed envelopes.
     Reply(Vec<u8>),
 }
@@ -48,6 +52,14 @@ struct State {
     dle: u8,
     enq: u8,
     extended: String,
+    fiscal_mode: u8,
+    transaction: bool,
+    ending: bool,
+    receipts: u32,
+    reports: u32,
+    waiting: bool,
+    gross: u64,
+    paid: u64,
     frames: Vec<Vec<u8>>,
     faults: HashMap<String, Fault>,
     fragment: usize,
@@ -68,6 +80,14 @@ impl Default for State {
             dle: 0x74,
             enq: 0x6D,
             extended: "@s0;0;0;00000000;".to_owned(),
+            fiscal_mode: 1,
+            transaction: false,
+            ending: false,
+            receipts: 0,
+            reports: 0,
+            waiting: false,
+            gross: 0,
+            paid: 0,
             frames: Vec::new(),
             faults: HashMap::new(),
             fragment: usize::MAX,
@@ -181,6 +201,24 @@ impl Simulator {
     pub fn fault(&self, command: &str, fault: Fault) {
         drop(lock(&self.state).faults.insert(command.to_owned(), fault));
     }
+
+    pub fn set_fiscal_mode(&self, mode: u8) {
+        lock(&self.state).fiscal_mode = mode;
+    }
+
+    pub fn receipts(&self) -> u32 {
+        lock(&self.state).receipts
+    }
+
+    pub fn reports(&self) -> u32 {
+        lock(&self.state).reports
+    }
+
+    pub fn resume(&self) {
+        let mut state = lock(&self.state);
+        state.waiting = false;
+        state.dle = 0x74;
+    }
 }
 impl Drop for Simulator {
     fn drop(&mut self) {
@@ -290,6 +328,7 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
     }
     let mut pending = Vec::new();
     let mut chunk = [0; 256];
+    let mut held_response = None;
     while !stop.load(Ordering::SeqCst) {
         match stream.read(&mut chunk) {
             Ok(0) => return,
@@ -314,42 +353,40 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
                         break;
                     };
                     let raw: Vec<_> = pending.drain(..end + 2).collect();
-                    let Ok(payload) = frame::unframe(&raw) else {
+                    let Some(body) = request_body(&raw) else {
                         return;
-                    };
-                    let Some(raw_body) = cp1250::decode(payload) else {
-                        return;
-                    };
-                    let body = if no_request_checksum(&raw_body) {
-                        raw_body
-                    } else {
-                        let Ok(payload) = frame::decode(&raw) else {
-                            return;
-                        };
-                        let Some(body) = cp1250::decode(payload) else {
-                            return;
-                        };
-                        body
                     };
                     let Some(command) = identifier(&body) else {
                         return;
                     };
-                    let fault = state.faults.remove(command);
-                    let response = answer(&body, command, &state);
+                    let fault = state
+                        .faults
+                        .remove(&body)
+                        .or_else(|| state.faults.remove(command));
+                    let response = if let Some(Fault::Refuse(code)) = fault {
+                        frame::query(format!("{code}#Z{command}").as_bytes())
+                    } else {
+                        answer(&body, command, &mut state)
+                    };
+                    if matches!(fault, Some(Fault::Wait)) {
+                        state.waiting = true;
+                        state.dle = 0x76;
+                    }
                     (raw, response, fault, state.fragment)
                 } else {
                     let raw = vec![pending.remove(0)];
-                    let response = match first {
-                        DLE => vec![state.dle],
-                        ENQ => vec![state.enq],
-                        DLE2 => frame::encode(&cp1250::encode(&state.extended).unwrap_or_default()),
-                        _ => return,
+                    let Some(response) = realtime_answer(first, &state) else {
+                        return;
                     };
                     (raw, response, None, state.fragment)
                 }
             };
             lock(state).frames.push(raw);
             let response = match fault {
+                Some(Fault::Wait) => {
+                    held_response = Some(response);
+                    continue;
+                },
                 Some(Fault::LoseReply) => continue,
                 Some(Fault::Disconnect) => return,
                 Some(Fault::Reply(raw)) => raw,
@@ -360,12 +397,18 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
                     }
                     raw
                 },
-                None => response,
+                Some(Fault::Refuse(_)) | None => response,
             };
             for chunk in response.chunks(fragment) {
                 if stream.write_all(chunk).is_err() {
                     return;
                 }
+            }
+            if !lock(state).waiting
+                && let Some(response) = held_response.take()
+                && stream.write_all(&response).is_err()
+            {
+                return;
             }
         }
         if pending.len() >= frame::MAX_FRAME {
@@ -373,7 +416,30 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
         }
     }
 }
-fn answer(body: &str, command: &str, state: &State) -> Vec<u8> {
+fn request_body(raw: &[u8]) -> Option<String> {
+    let raw_body = cp1250::decode(frame::unframe(raw).ok()?)?;
+    if no_request_checksum(&raw_body) {
+        Some(raw_body)
+    } else {
+        cp1250::decode(frame::decode(raw).ok()?)
+    }
+}
+fn realtime_answer(byte: u8, state: &State) -> Option<Vec<u8>> {
+    Some(match byte {
+        DLE => vec![state.dle],
+        ENQ => vec![state.enq | if state.transaction { 2 } else { 0 }],
+        DLE2 => {
+            let extended = if state.transaction || state.ending {
+                format!("@s0;{};{};FFFFFFFF;", state.receipts, state.receipts)
+            } else {
+                state.extended.clone()
+            };
+            frame::encode(&cp1250::encode(&extended)?)
+        },
+        _ => return None,
+    })
+}
+fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
     let (response, checksum, ack) = match body {
         "3#e" => return frame::query(b"0#Z#e"),
         "30#v" => (
@@ -382,6 +448,25 @@ fn answer(body: &str, command: &str, state: &State) -> Vec<u8> {
             false,
         ),
         "50$i" => (format!("50$I{}\r", state.endpoint), true, true),
+        "11$i" => (
+            format!(
+                "11$I{}\r2020-01-01 12:00:00\r1234567890\rREG1\rMEM1\r0\r0\r0\r",
+                state.fiscal_mode
+            ),
+            true,
+            true,
+        ),
+        "0;0?l" => (
+            format!(
+                concat!(
+                    "0?l2/0/{}/2026-10-24 12:00:00\r{}/\r\r\r3/0/5/{}/0/0/\r{}/0/0/0/",
+                    "{}/0/0/0/0/0/0/0/0/0/0/\r\r\r\r\r\r\r0/0/0/"
+                ),
+                state.receipts, state.receipts, state.gross, state.gross, state.gross
+            ),
+            true,
+            true,
+        ),
         _ if command == "^c" => {
             let Some(response) = configuration_reply(body, &state.options) else {
                 return frame::query(b"4#Z^c");
@@ -400,6 +485,14 @@ fn answer(body: &str, command: &str, state: &State) -> Vec<u8> {
             true,
             false,
         ),
+        _ if matches!(
+            command,
+            "$h" | "$l" | "$z" | "$b" | "$y" | "$w" | "@z" | "#r" | "#o"
+        ) =>
+        {
+            let code = fiscal_command(body, command, state);
+            return frame::query(format!("{code}#Z{command}").as_bytes());
+        },
         _ => return frame::query(format!("82#Z{command}").as_bytes()),
     };
     let bytes = cp1250::encode(&response).unwrap_or_default();
@@ -412,6 +505,89 @@ fn answer(body: &str, command: &str, state: &State) -> Vec<u8> {
         raw.extend_from_slice(&frame::query(format!("0#Z{command}").as_bytes()));
     }
     raw
+}
+
+fn fiscal_command(body: &str, command: &str, state: &mut State) -> u32 {
+    match command {
+        "$h" if body == "0$h" && !state.transaction => {
+            state.transaction = true;
+            state.ending = false;
+            state.gross = 0;
+            state.paid = 0;
+        },
+        "$l" if state.transaction && !state.ending => {
+            let Some(fields) = body.split_once("$l").map(|(_, tail)| tail) else {
+                return 4;
+            };
+            let fields: Vec<_> = fields.split('\r').collect();
+            let Some(amounts) = fields.get(2) else {
+                return 4;
+            };
+            let Some(total) = amounts
+                .split('/')
+                .nth(2)
+                .and_then(|amount| decimal::parse(amount, 2))
+            else {
+                return 20;
+            };
+            state.gross += total;
+        },
+        "@z" if state.transaction && !state.ending => {
+            let Some(amounts) = body.rsplit('\r').next() else {
+                return 4;
+            };
+            let Some(value) = amounts
+                .split('/')
+                .next()
+                .and_then(|amount| decimal::parse(amount, 2))
+            else {
+                return 4;
+            };
+            let Some(gross) = state.gross.checked_sub(value) else {
+                return 20;
+            };
+            state.gross = gross;
+        },
+        "$b" if state.transaction && !state.ending => {
+            let Some(value) = body
+                .split_once("$b")
+                .and_then(|(_, tail)| tail.split('/').next())
+                .and_then(|amount| decimal::parse(amount, 2))
+            else {
+                return 19;
+            };
+            state.paid += value;
+        },
+        "$y" if state.transaction && !state.ending => {
+            let Some(tail) = body.rsplit('\r').next() else {
+                return 4;
+            };
+            let Some(total) = tail
+                .split('/')
+                .next()
+                .and_then(|amount| decimal::parse(amount, 2))
+            else {
+                return 27;
+            };
+            if total != state.gross || state.paid != total {
+                return 27;
+            }
+            state.ending = true;
+        },
+        "$z" if body.starts_with("100;1$z") && state.transaction && !state.ending => {},
+        "$z" if body == "12$z" && state.ending => {},
+        "$w" if body.starts_with("200;0$w") && state.ending => {},
+        "$z" if body == "28;0$z" && state.ending => {
+            state.receipts += 1;
+            state.transaction = false;
+            state.ending = false;
+        },
+        "#r" | "#o" if !state.transaction => {
+            state.reports += 1;
+        },
+        _ => return 21,
+    }
+    0
 }
 
 /// Full and bounded configuration reads, N:L13323-L13347,L15761-L15783.
