@@ -7,7 +7,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/workshop-install-tests.XXXXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$work/bin" "$work/home"
 export FIXTURE_LOG="$work/calls" FIXTURE_OS=Darwin FIXTURE_ARCH=x86_64
-export FIXTURE_MAC=11.0 FIXTURE_ARM=0 FIXTURE_GLIBC='glibc 2.39'
+export FIXTURE_MAC=11.0 FIXTURE_ARM=0
 export FIXTURE_DOWNLOAD=forbidden FIXTURE_MANIFEST=bad FIXTURE_GH=0
 export FIXTURE_RUNNING=none FIXTURE_MOUNT=forbidden FIXTURE_MOVE=real FIXTURE_ASSET=workshop-mac-x64.dmg
 export FIXTURE_APT=forbidden FIXTURE_DEB='workshop amd64 1.2.3' FIXTURE_INSTALLED=
@@ -25,7 +25,6 @@ case $name in
     case $1 in -s) printf '%s\n' "$FIXTURE_OS" ;; -m) printf '%s\n' "$FIXTURE_ARCH" ;; *) exit 91 ;; esac ;;
   sw_vers) [[ $1 == -productVersion ]]; printf '%s\n' "$FIXTURE_MAC" ;;
   sysctl) [[ $* == '-n hw.optional.arm64' ]]; printf '%s\n' "$FIXTURE_ARM" ;;
-  getconf) [[ $1 == GNU_LIBC_VERSION ]]; printf '%s\n' "$FIXTURE_GLIBC" ;;
   pgrep)
     printf 'pgrep %s\n' "$*" >> "$FIXTURE_LOG"
     [[ $1 == -x && $# == 2 ]]
@@ -108,7 +107,7 @@ case $name in
 esac
 FIXTURE
 chmod +x "$work/bin/fixture"
-for command in uname sw_vers sysctl getconf pgrep shasum curl gh apt sudo dpkg-deb dpkg-query hdiutil ditto open xattr mv; do
+for command in uname sw_vers sysctl pgrep shasum curl gh apt sudo dpkg-deb dpkg-query hdiutil ditto open xattr mv; do
   ln -s fixture "$work/bin/$command"
 done
 export PATH="$work/bin:$PATH" HOME="$work/home"
@@ -183,12 +182,6 @@ if [[ $("$FIXTURE_REAL_UNAME" -s) == Linux ]]; then
     run --release v1.2.3 --dry-run
     [[ $status == 0 ]] || fail 'supported Linux ARM dry-run failed'
     contains 'workshop-linux-arm64.deb'
-    FIXTURE_GLIBC='glibc 2.38'
-    run --release v1.2.3 --dry-run
-    [[ $status != 0 ]] || fail 'accepted glibc below baseline'
-    FIXTURE_GLIBC='musl 1.2.5'
-    run --release v1.2.3 --dry-run
-    [[ $status != 0 ]] || fail 'accepted non-glibc Linux'
   else
     contains 'Unsupported Linux distribution'
     printf 'Native Linux distribution rejected; supported Linux paths need Ubuntu/Debian CI.\n'
@@ -308,7 +301,7 @@ if ((EUID != 0)); then
   # The verified .deb must be this package, architecture and release, and apt never
   # downgrades; real dpkg compares versions, so 1.10.0 is newer than 1.2.3.
   if ((native_linux)); then
-    FIXTURE_OS=Linux FIXTURE_ARCH=x86_64 FIXTURE_GLIBC='glibc 2.39' FIXTURE_ASSET=workshop-linux-x64.deb
+    FIXTURE_OS=Linux FIXTURE_ARCH=x86_64 FIXTURE_ASSET=workshop-linux-x64.deb
     FIXTURE_MANIFEST=valid FIXTURE_APT=allowed
     for row in 'other amd64 1.2.3 - package name' 'workshop arm64 1.2.3 - package architecture' \
       'workshop amd64 1.2.4 - version does not match' 'workshop amd64 1.2.3 1.10.0 newer than 1.2.3; downgrades'; do

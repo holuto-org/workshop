@@ -1,8 +1,5 @@
 use crate::{session::Session, simulator::Simulator};
-use fiscal::{
-    device::Vendor,
-    link::{Candidate, Connection},
-};
+use fiscal::link::Connection;
 use std::time::Duration;
 
 #[test]
@@ -11,12 +8,7 @@ fn fragmented_queries_preserve_polish_header_endpoint_and_candidates() {
     sim.set_fragment_size(1);
     sim.set_endpoint("PC2");
     sim.set_dialect("0");
-    let candidates = vec![Candidate {
-        port: sim.address().to_owned(),
-        hint: Some(Vendor::Novitus),
-    }];
-    let link = sim.link_with(candidates.clone());
-    assert_eq!(link.candidates(), candidates);
+    let link = sim.link();
     let connection = Connection {
         port: sim.address().to_owned(),
         baud_rate: 9600,

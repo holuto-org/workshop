@@ -15,7 +15,7 @@ use fiscal::{
 use crate::{
     capabilities::capabilities,
     frame,
-    printer::Printer,
+    printer::{Printer, identify},
     simulator::{Fault, Simulator, UNIQUE_NUMBER},
     testing::{BRAND, line, pay},
 };
@@ -476,62 +476,19 @@ fn invalid_reports_are_refused_without_sending_a_report() {
 }
 
 #[test]
-fn detection_only_switches_when_permitted_and_preserves_permission_guidance() {
-    let sim = simulator();
-    let connection = Connection {
-        port: "missing".to_owned(),
-        baud_rate: 9600,
-    };
-    let mut device = Printer::new(
-        sim.link_with(vec![sim.address().to_owned()], vec![]),
-        connection.clone(),
-    );
-    assert!(
-        matches!(device.detect(false), Err(Error::Open { .. })),
-        "unresolved operation forbids scanning"
-    );
-    assert_eq!(commands(&sim), Vec::<String>::new());
-    let found = device.detect(true).unwrap();
-    assert_eq!(found.unique_number, UNIQUE_NUMBER);
-    assert_eq!(device.connection().port, sim.address());
-    assert!(
-        device.verify(UNIQUE_NUMBER).unwrap().ready(),
-        "the same ready device permits resolution"
-    );
-    sim.set_paper(false);
-    assert_eq!(
-        device.verify(UNIQUE_NUMBER).unwrap_err().to_string(),
-        "Brak papieru"
-    );
-    let mut denied = Printer::new(
-        sim.link_with(vec!["denied".to_owned()], vec!["denied".to_owned()]),
-        connection.clone(),
-    );
-    assert_eq!(
-        denied.detect(true).unwrap_err().to_string(),
-        "Brak uprawnień do portu denied. Na Linuksie dodaj użytkownika do grupy dialout \
-         i zaloguj się ponownie."
-    );
-    let mut absent = Printer::new(sim.link_with(vec![], vec![]), connection);
-    assert!(
-        matches!(absent.detect(true),Err(Error::Open {port,..}) if port == "missing"),
-        "keep the original error"
-    );
-}
-
-#[test]
 fn unidentified_devices_receive_only_the_identification_command() {
     let sim = simulator();
     sim.set_status("nm", "OTHER");
-    let mut device = Printer::new(
-        sim.link_with(vec![sim.address().to_owned()], vec![]),
-        Connection {
-            port: "missing".to_owned(),
-            baud_rate: 9600,
-        },
-    );
     assert!(
-        device.detect(true).is_err(),
+        identify(
+            sim.link().as_ref(),
+            &Connection {
+                port: sim.address().to_owned(),
+                baud_rate: 9600,
+            },
+        )
+        .unwrap()
+        .is_none(),
         "foreign device is not adopted"
     );
     assert_eq!(commands(&sim), ["getrealid"]);

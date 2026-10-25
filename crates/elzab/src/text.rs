@@ -1,15 +1,6 @@
 //! Configured CP1250 only, never replacement or escaping.
 use fiscal::{cp1250, error::Error};
 
-pub fn encode(text: &str) -> Result<Vec<u8>, Error> {
-    if text.chars().any(char::is_control) {
-        return Err(Error::Invalid(
-            "Tekst zawiera znaki sterujące ElzabSTX.".to_owned(),
-        ));
-    }
-    cp1250::encode(text).ok_or_else(|| Error::Invalid("Tekst nie mieści się w CP1250.".to_owned()))
-}
-
 pub(crate) fn encode_body(body: &str) -> Result<Vec<u8>, Error> {
     // Separators belong to the command grammar, never caller-supplied text.
     if body

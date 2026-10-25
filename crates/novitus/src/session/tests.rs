@@ -38,9 +38,6 @@ fn realtime_status_bits_decode_paper_and_cover() {
     assert!(dle.online && dle.paper_or_battery && dle.mechanism_error);
     let enq = EnqStatus::decode(0x6F).unwrap();
     assert!(enq.fiscal && enq.command_ok && enq.transaction && enq.finalized);
-    let byte4 = MechanismStatus::from_documented_byte4(0x15);
-    assert!(byte4.paper_out && byte4.cover_open && byte4.waiting_for_user);
-    assert!(!byte4.mechanism_error);
     assert!(DleStatus::decode(0x60).is_err());
     assert!(EnqStatus::decode(0x70).is_err());
 }

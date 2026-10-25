@@ -106,7 +106,7 @@ verification cannot be performed, stop before executing downloaded software.
 Read OS/CPU/package metadata, not app data:
 
 - **Ubuntu 24.04+ / Debian 13+**
-  - Detection: `uname -m`; `cat /etc/os-release`; `getconf GNU_LIBC_VERSION`.
+  - Detection: `uname -m`; `cat /etc/os-release`.
   - Supported download: `workshop-linux-x64.deb` (`x86_64`) or
     `workshop-linux-arm64.deb` (`aarch64`).
 - **macOS 11+**
@@ -116,17 +116,16 @@ Read OS/CPU/package metadata, not app data:
     Rosetta; otherwise `workshop-mac-x64.dmg` on Intel.
 - **Windows 10/11, native x64**
   - Detection: `Get-CimInstance Win32_OperatingSystem | Select-Object
-    Caption,Version`; `$env:PROCESSOR_ARCHITEW6432`;
-    `$env:PROCESSOR_ARCHITECTURE`.
+    Caption,Version`; `(Get-CimInstance Win32_Processor).Architecture` (`9`
+    is x64).
   - Supported download: `workshop-win-x64.exe`.
 
-Linux needs **glibc 2.39+**, APT and a graphical desktop. No Fedora/Arch/musl,
-32-bit systems or Windows ARM (even under x64 emulation). Do not force
-incompatible packages or build from source. The `.deb` also declares the build
-host's glibc version as its `libc6` minimum; APT may require newer than the
-installer's 2.39 floor. The `.exe` needs no VC runtime installer; APT resolves
-desktop libraries. macOS bundles are ad-hoc signed, not Developer-ID
-signed/notarized; Windows packages are unsigned.
+Linux needs APT and a graphical desktop. No Fedora/Arch/musl, 32-bit systems or
+Windows ARM (even under x64 emulation). Do not force incompatible packages or
+build from source. The `.deb` declares the build host's glibc version as its
+`libc6` minimum, so APT enforces it. The `.exe` needs no VC runtime installer;
+APT resolves desktop libraries. macOS bundles are ad-hoc signed, not
+Developer-ID signed/notarized; Windows packages are unsigned.
 
 If another copy exists (for example `/Applications/Holuto Workshop.app` or a
 portable `.exe`), ask which to keep; do not remove it automatically. The macOS

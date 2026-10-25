@@ -1,12 +1,10 @@
 use proptest::prelude::*;
 
 use super::{MAX_FRAME, crc16, decode, encode, wrap};
-use fiscal::error::Error;
-
-use crate::text;
+use fiscal::{cp1250, error::Error};
 
 pub(crate) fn reply(payload: &str) -> Vec<u8> {
-    wrap(&text::encode(payload).unwrap())
+    wrap(&cp1250::encode(payload).unwrap())
 }
 
 #[test]

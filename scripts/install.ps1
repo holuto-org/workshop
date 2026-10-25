@@ -1,5 +1,6 @@
+#Requires -Version 5.1
 # Download this script for inspection and verification; do not pipe it into a shell.
-# Requires Windows PowerShell 5.1+ or pwsh. Never changes execution policy.
+# Never changes execution policy.
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidatePattern('(?-i)\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z')]
@@ -21,8 +22,6 @@ function Get-HolutoPlatform {
         Platform = $platform
         Version = [Version]$os.Version
         NativeArchitectures = $architectures
-        ProcessorArchitecture = $env:PROCESSOR_ARCHITECTURE
-        Wow64Architecture = $env:PROCESSOR_ARCHITEW6432
         IsAdministrator = $administrator
         LocalAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
         Programs = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
@@ -33,12 +32,8 @@ function Assert-HolutoPlatform {
     param([hashtable]$Platform, [switch]$DryRun)
     if ($Platform.Platform -ne [PlatformID]::Win32NT) { throw 'This installer supports Windows only.' }
     if ($Platform.Version -lt [Version]'10.0.10240') { throw 'Windows 10 or newer is required.' }
-    # CIM reports the native CPU, unlike PROCESSOR_ARCHITECTURE under emulation.
-    if (@($Platform.NativeArchitectures).Count -eq 0 -or
-        @($Platform.NativeArchitectures | Where-Object { $_ -ne 9 }).Count -ne 0 -or
-        ($Platform.Wow64Architecture -and $Platform.Wow64Architecture -ne 'AMD64') -or
-        ($Platform.ProcessorArchitecture -ne 'AMD64' -and
-            -not ($Platform.ProcessorArchitecture -eq 'x86' -and $Platform.Wow64Architecture -eq 'AMD64'))) {
+    # CIM reports the native CPU (9 = x64), unlike PROCESSOR_ARCHITECTURE under emulation.
+    if (@($Platform.NativeArchitectures).Count -eq 0 -or @($Platform.NativeArchitectures | Where-Object { $_ -ne 9 }).Count -ne 0) {
         throw 'Only native Windows x64 is supported; ARM and x64 emulation on ARM are not supported.'
     }
     if ($Platform.IsAdministrator -and -not $DryRun) { throw 'Run this per-user installer from a non-elevated PowerShell, not as administrator.' }
@@ -50,9 +45,9 @@ function Assert-HolutoPlatform {
 
 function Get-HolutoReleaseFromRedirect {
     param([string]$Location)
+    # Only the tag is used; downloads always go to the fixed repository URL.
     $uri = New-Object Uri([Uri]'https://github.com', $Location)
     if ($uri.Scheme -ne 'https' -or $uri.Host -cne 'github.com' -or
-        -not $uri.IsDefaultPort -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or
         $uri.AbsolutePath -cnotmatch '\A/holuto-org/workshop/releases/tag/(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\z') {
         throw 'Unexpected latest-release redirect; specify -Release vX.Y.Z explicitly.'
     }
@@ -88,21 +83,6 @@ function Assert-HolutoNotRunning {
     if ($running.Count -ne 0) { throw 'Holuto Workshop is running. Quit it from its tray menu, then run the installer again. No process was stopped.' }
 }
 
-function Assert-HolutoPlainPath {
-    param([string]$Path)
-    # Never write through an existing junction/symlink, including a parent directory.
-    $current = [IO.Path]::GetFullPath($Path)
-    while ($current) {
-        if (Test-Path -LiteralPath $current) {
-            $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-                throw "Refusing installation through a reparse point: $current"
-            }
-        }
-        $current = [IO.Path]::GetDirectoryName($current)
-    }
-}
-
 function Get-HolutoPathWithDirectory {
     param([string]$Path, [string]$Directory)
     foreach ($entry in ($Path -split ';')) {
@@ -130,6 +110,24 @@ function Add-HolutoUserPath {
     $kind = if ($Key.GetValueNames() -contains 'Path') { $Key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
     $Key.SetValue('Path', $updated, $kind)
     return $true
+}
+
+function Update-HolutoUserPath {
+    param([string]$Directory)
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    try {
+        if (Add-HolutoUserPath -Key $key -Directory $Directory) { Send-HolutoEnvironmentChange }
+    } finally { $key.Dispose() }
+}
+
+function New-HolutoShortcut {
+    param([string]$Path, [string]$Target)
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Path))
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($Path)
+    $shortcut.TargetPath = $Target
+    $shortcut.WorkingDirectory = [IO.Path]::GetDirectoryName($Target)
+    $shortcut.Description = 'Holuto Workshop'
+    $shortcut.Save()
 }
 
 function Send-HolutoEnvironmentChange {
@@ -171,7 +169,6 @@ function Invoke-HolutoInstall {
     $ErrorActionPreference = 'Stop'
     # Windows PowerShell 5.1 redraws progress per chunk, slowing Invoke-WebRequest by an order of magnitude.
     $ProgressPreference = 'SilentlyContinue'
-    if ($PSVersionTable.PSVersion -lt [Version]'5.1') { throw 'PowerShell 5.1 or newer is required.' }
     $platform = Get-HolutoPlatform
     Assert-HolutoPlatform -Platform $platform -DryRun:$DryRun
     $directory = Join-Path (Join-Path $platform.LocalAppData 'Programs') 'Holuto Workshop'
@@ -197,14 +194,12 @@ function Invoke-HolutoInstall {
             Write-Output 'DRY RUN: Require one exact 64-hex manifest entry and matching Get-FileHash -Algorithm SHA256.'
             Write-Output "DRY RUN: If gh exists: gh attestation verify <unique-temp>\$asset --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master (failure is fatal)."
             Write-Output 'DRY RUN: Only if gh is absent, warn and use weaker checksum-only integrity.'
-            Write-Output "DRY RUN: Refuse a running app or a newer installed version; retain Internet Zone.Identifier, stage verified EXE, skip equal hash or atomically replace $target; create shortcut with WScript.Shell."
+            Write-Output "DRY RUN: Refuse a running app or a newer installed version; stage the verified EXE with an Internet Zone.Identifier and atomically replace $target; create shortcut with WScript.Shell."
             Write-Output "DRY RUN: Append $directory to user PATH and process PATH only if absent, preserving existing entries."
             Write-Output 'DRY RUN: No downloads or installation writes; the app will not be launched.'
             return
         }
         Assert-HolutoNotRunning
-        Assert-HolutoPlainPath -Path $target
-        Assert-HolutoPlainPath -Path $shortcutPath
         if (Test-Path -LiteralPath $target -PathType Leaf) {
             Assert-HolutoNotDowngrade -InstalledVersion (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -Release $Release
         }
@@ -229,44 +224,16 @@ function Invoke-HolutoInstall {
         } else {
             Write-Warning 'gh is absent: using weaker checksum-only integrity. This does not independently authenticate the release or its build provenance.'
         }
+        [void][IO.Directory]::CreateDirectory($directory)
+        $staged = Join-Path $directory ('.workshop-' + [Guid]::NewGuid().ToString('N') + '.exe')
+        [IO.File]::Copy($artifact, $staged, $false)
         # Invoke-WebRequest does not add MOTW. Keep Internet-zone protection on the installed EXE.
-        Set-HolutoInternetZone -Path $artifact -Url "$base/$asset"
+        Set-HolutoInternetZone -Path $staged -Url "$base/$asset"
         Assert-HolutoNotRunning
-        Assert-HolutoPlainPath -Path $target
-        Assert-HolutoPlainPath -Path $shortcutPath
-        $same = (Test-Path -LiteralPath $target -PathType Leaf) -and
-            ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $expected)
-        if ($same) {
-            Write-Output 'The installed executable already has the verified SHA-256; no executable replacement needed.'
-        } else {
-            [void][IO.Directory]::CreateDirectory($directory)
-            $staged = Join-Path $directory ('.workshop-' + [Guid]::NewGuid().ToString('N') + '.exe')
-            [IO.File]::Copy($artifact, $staged, $false)
-            # Explicitly preserve the ADS even if a filesystem/copy implementation omits streams.
-            Set-HolutoInternetZone -Path $staged -Url "$base/$asset"
-            if ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected) {
-                throw 'Staged executable SHA-256 mismatch; existing installation was not replaced.'
-            }
-            Assert-HolutoNotRunning
-            Install-HolutoStagedExecutable -Staged $staged -Target $target
-            $staged = $null
-            Write-Output 'Installed the verified executable.'
-        }
-        [void][IO.Directory]::CreateDirectory($platform.Programs)
-        $shell = New-Object -ComObject WScript.Shell
-        try {
-            $shortcut = $shell.CreateShortcut($shortcutPath)
-            try {
-                $shortcut.TargetPath = $target
-                $shortcut.WorkingDirectory = $directory
-                $shortcut.Description = 'Holuto Workshop'
-                $shortcut.Save()
-            } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
-        } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
-        $userKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
-        try {
-            if (Add-HolutoUserPath -Key $userKey -Directory $directory) { Send-HolutoEnvironmentChange }
-        } finally { $userKey.Dispose() }
+        Install-HolutoStagedExecutable -Staged $staged -Target $target
+        $staged = $null
+        New-HolutoShortcut -Path $shortcutPath -Target $target
+        Update-HolutoUserPath -Directory $directory
         $current = [Environment]::GetEnvironmentVariable('Path', 'Process')
         $updated = Get-HolutoPathWithDirectory -Path $current -Directory $directory
         if ($updated -cne $current) { [Environment]::SetEnvironmentVariable('Path', $updated, 'Process') }

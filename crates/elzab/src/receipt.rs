@@ -49,14 +49,6 @@ fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Resul
                 "Pozycja nie mieści się w profilu Elzab (64 znaki, 5 miejsc ilości).".to_owned(),
             ));
         }
-        drop(text::encode(line.name())?);
-    }
-    drop(text::encode(receipt.brand())?);
-    if let Some(nip) = receipt.buyer_nip() {
-        drop(text::encode(nip)?);
-    }
-    if let Some(footer) = footer {
-        drop(text::encode(footer)?);
     }
     Ok(())
 }

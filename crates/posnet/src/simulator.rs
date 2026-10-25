@@ -18,7 +18,7 @@ use std::{
 use jiff::{Timestamp, tz::TimeZone};
 
 use fiscal::{
-    decimal,
+    cp1250, decimal,
     device::{Capabilities, Device, Vendor},
     driver::Driver,
     error::Error,
@@ -32,7 +32,6 @@ use crate::{
     capabilities::MAX_BUYER_NIP,
     frame::{self, ETX, MAX_FRAME, Reply},
     printer::{PRINTER_ZONE, Printer},
-    text,
 };
 
 pub const UNIQUE_NUMBER: &str = "DEM0000000001";
@@ -116,13 +115,11 @@ struct State {
     buyer_nip: Option<String>,
     receipts: Vec<SimReceipt>,
     reports: Vec<SimReport>,
-    footers: Vec<Params>,
     frames: Vec<Vec<u8>>,
     faults: HashMap<String, Fault>,
     held: Option<Held>,
     holding: Option<String>,
     paper_out: bool,
-    out_of_paper_at: Option<String>,
 }
 
 #[derive(Debug)]
@@ -208,20 +205,14 @@ impl Simulator {
         self.state().capabilities = Some(capabilities);
     }
 
+    /// Offers this simulator as the only detection candidate.
     pub fn link(&self) -> Arc<dyn Link> {
-        self.link_with(vec![self.address.clone()], Vec::new())
-    }
-
-    /// Offers `candidates` for detection. `denied` ports refuse permission;
-    /// ports other than this simulator do not exist.
-    pub fn link_with(&self, candidates: Vec<String>, denied: Vec<String>) -> Arc<dyn Link> {
         Arc::new(SimLink {
             address: self.address.clone(),
-            candidates: candidates
-                .into_iter()
-                .map(|port| Candidate { port, hint: None })
-                .collect(),
-            denied,
+            candidates: vec![Candidate {
+                port: self.address.clone(),
+                hint: None,
+            }],
             connected: Arc::clone(&self.connected),
             state: Arc::clone(&self.state),
         })
@@ -235,21 +226,12 @@ impl Simulator {
         self.state().reports.clone()
     }
 
-    pub fn footers(&self) -> Vec<Params> {
-        self.state().footers.clone()
-    }
-
     pub fn frames(&self) -> Vec<Vec<u8>> {
         self.state().frames.clone()
     }
 
     pub fn transaction_open(&self) -> bool {
         self.state().transaction_open
-    }
-
-    /// Changes keypad transaction state without sending a command.
-    pub fn set_transaction_open(&self, open: bool) {
-        self.state().transaction_open = open;
     }
 
     pub fn set_header(&self, header: &str) {
@@ -279,18 +261,9 @@ impl Simulator {
         drop(self.state().faults.insert(command.to_owned(), fault));
     }
 
-    pub fn clear_fault(&self, command: &str) {
-        drop(self.state().faults.remove(command));
-    }
-
     /// Without paper, status queries still answer; printing commands wait without replying.
     pub fn set_paper(&self, present: bool) {
         self.state().paper_out = !present;
-    }
-
-    /// The next matching command waits for paper before executing.
-    pub fn run_out_of_paper_at(&self, command: &str) {
-        self.state().out_of_paper_at = Some(command.to_owned());
     }
 
     /// Holds the next matching command before execution until [`Hold::release`].
@@ -381,7 +354,6 @@ impl Drop for Simulator {
 struct SimLink {
     address: String,
     candidates: Vec<Candidate>,
-    denied: Vec<String>,
     connected: Arc<AtomicBool>,
     state: Arc<Mutex<State>>,
 }
@@ -392,9 +364,6 @@ impl Link for SimLink {
             port: port.to_owned(),
             source: kind.into(),
         };
-        if self.denied.iter().any(|denied| denied == port) {
-            return Err(refuse(io::ErrorKind::PermissionDenied));
-        }
         if port != self.address {
             return Err(refuse(io::ErrorKind::NotFound));
         }
@@ -410,7 +379,7 @@ impl Link for SimLink {
         })?;
         stream.set_nodelay(true).map_err(Error::Io)?;
         Ok(Box::new(SimPort {
-            inner: TcpPort(stream),
+            stream,
             connected: Arc::clone(&self.connected),
             state: Arc::clone(&self.state),
         }))
@@ -426,7 +395,7 @@ impl Link for SimLink {
 }
 
 struct SimPort {
-    inner: TcpPort,
+    stream: TcpStream,
     connected: Arc<AtomicBool>,
     state: Arc<Mutex<State>>,
 }
@@ -439,11 +408,21 @@ impl Drop for SimPort {
 
 impl Port for SimPort {
     fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
-        self.inner.write_all(bytes, timeout)
+        self.stream
+            .set_write_timeout(Some(timeout.max(Duration::from_millis(1))))?;
+        self.stream.write_all(bytes)
     }
 
     fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
-        self.inner.read(buffer, timeout)
+        self.stream
+            .set_read_timeout(Some(timeout.max(Duration::from_millis(1))))?;
+        match self.stream.read(buffer) {
+            Ok(0) => Err(io::ErrorKind::UnexpectedEof.into()),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                Err(io::ErrorKind::TimedOut.into())
+            },
+            result => result,
+        }
     }
 
     fn operator_wait_limit(&self, scaled: Duration) -> Duration {
@@ -451,28 +430,6 @@ impl Port for SimPort {
             Duration::from_secs(600)
         } else {
             scaled
-        }
-    }
-}
-
-pub(crate) struct TcpPort(pub(crate) TcpStream);
-
-impl Port for TcpPort {
-    fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
-        self.0
-            .set_write_timeout(Some(timeout.max(Duration::from_millis(1))))?;
-        self.0.write_all(bytes)
-    }
-
-    fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
-        self.0
-            .set_read_timeout(Some(timeout.max(Duration::from_millis(1))))?;
-        match self.0.read(buffer) {
-            Ok(0) => Err(io::ErrorKind::UnexpectedEof.into()),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                Err(io::ErrorKind::TimedOut.into())
-            },
-            result => result,
         }
     }
 }
@@ -564,11 +521,7 @@ fn waits_for_paper(command: &str, state: &Mutex<State>, queued: bool) -> bool {
     if queued {
         return true;
     }
-    let mut state = lock(state);
-    if state.out_of_paper_at.as_deref() == Some(command) {
-        state.out_of_paper_at = None;
-        state.paper_out = true;
-    }
+    let state = lock(state);
     state.paper_out && state.query(command).is_none()
 }
 
@@ -644,7 +597,7 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Answer {
 
 /// Reply values allow line feeds (headers), unlike outgoing command values.
 fn encoded(payload: &str) -> Vec<u8> {
-    frame::wrap(&text::encode(payload).unwrap_or_default())
+    frame::wrap(&cp1250::encode(payload).unwrap_or_default())
 }
 
 fn reply(fields: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -808,10 +761,7 @@ impl State {
             "trend" if self.transaction_open && !self.lines.is_empty() => {
                 self.end_transaction(&params)
             },
-            "trftrln" if self.footer_open => {
-                self.footers.push(params);
-                Ok(Vec::new())
-            },
+            "trftrln" if self.footer_open => Ok(Vec::new()),
             "trftrend" if self.footer_open => {
                 self.footer_open = false;
                 Ok(Vec::new())

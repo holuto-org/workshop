@@ -9,11 +9,10 @@ use crate::{
 };
 use fiscal::{
     cp1250,
-    device::Vendor,
     driver::Driver,
     error::Error,
     journal::Journal,
-    link::{Candidate, Connection},
+    link::Connection,
     money::Grosze,
     receipt::{Advance, Line, Payment, PaymentForm, Quantity, Receipt, VatSlot},
     report::Report,
@@ -774,11 +773,6 @@ fn simulator_link_is_exclusive_and_never_opens_another_port() {
     ));
     drop(first);
     drop(link.open(sim.address(), 9600).unwrap());
-    let candidates = vec![Candidate {
-        port: sim.address().to_owned(),
-        hint: Some(Vendor::Elzab),
-    }];
-    assert_eq!(sim.link_with(candidates.clone()).candidates(), candidates);
     assert_eq!(link.time_scale(), 1000);
 }
 

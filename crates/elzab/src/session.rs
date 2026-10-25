@@ -185,11 +185,12 @@ struct Header<'a> {
 impl<'a> Header<'a> {
     fn parse(header: &'a str) -> Result<Self, Error> {
         let mut fields = header.split('\u{1d}');
-        let id = number(fields.next().filter(|s| !s.is_empty()).unwrap_or("1"))?;
-        let status = fields.next().filter(|s| !s.is_empty()).unwrap_or("SA");
-        let number = number(fields.next().filter(|s| !s.is_empty()).unwrap_or("1"))?;
-        let maximum = self::number(fields.next().filter(|s| !s.is_empty()).unwrap_or("1"))?;
-        let transform = fields.next().filter(|s| !s.is_empty()).unwrap_or("NDT");
+        let mut next = |default| fields.next().filter(|s| !s.is_empty()).unwrap_or(default);
+        let id = number(next("1"))?;
+        let status = next("SA");
+        let number = number(next("1"))?;
+        let maximum = self::number(next("1"))?;
+        let transform = next("NDT");
         if fields.next().is_some() {
             return Err(frame::corrupt());
         }

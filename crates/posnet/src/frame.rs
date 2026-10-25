@@ -3,9 +3,7 @@
 //! CRC-16/XMODEM (polynomial 0x1021, initial value 0) covers the payload;
 //! four uppercase hex digits carry the checksum (spec p. 13).
 
-use fiscal::error::Error;
-
-use crate::text;
+use fiscal::{cp1250, error::Error};
 
 pub(crate) const MAX_FRAME: usize = 16_384;
 pub(crate) const STX: u8 = 0x02;
@@ -15,7 +13,7 @@ const KEY_LENGTH: usize = 2;
 const CORRUPT: &str = "Uszkodzona odpowiedź drukarki (CRC lub kodowanie).";
 
 /// Reply parameters in device order, with unique keys.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Reply(Vec<(String, String)>, Option<u32>);
 
 impl Reply {
@@ -112,7 +110,7 @@ pub(crate) fn encode(command: &str, params: &[(&str, String)]) -> Result<Vec<u8>
         payload.push_str(value);
         payload.push('\t');
     }
-    let encoded = text::encode(&payload).ok_or_else(|| {
+    let encoded = cp1250::encode(&payload).ok_or_else(|| {
         Error::Invalid("Drukarka nie obsługuje niektórych znaków w tekście.".to_owned())
     })?;
     let frame = wrap(&encoded);
@@ -151,7 +149,7 @@ pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
     if crc16(payload) != expected {
         return Err(corrupt());
     }
-    let text = text::decode(payload).ok_or_else(corrupt)?;
+    let text = cp1250::decode(payload).ok_or_else(corrupt)?;
     let mut fields = text.split('\t');
     let command = fields.next().unwrap_or_default().to_owned();
     let mut reply = Vec::new();
@@ -208,7 +206,7 @@ fn check_printable(value: &str) -> Result<(), Error> {
             "Tekst nie może zawierać znaków sterujących.".to_owned(),
         ));
     }
-    if text::encode(value).is_none() {
+    if cp1250::encode(value).is_none() {
         return Err(Error::Invalid(
             "Drukarka nie obsługuje niektórych znaków w tekście.".to_owned(),
         ));

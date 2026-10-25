@@ -10,11 +10,6 @@ pub fn encode(text: &str) -> Option<Vec<u8>> {
     cp1250::encode(text)
 }
 
-pub fn decode(bytes: &[u8]) -> Option<String> {
-    let text = cp1250::decode(bytes)?;
-    (!text.chars().any(char::is_control)).then_some(text)
-}
-
 pub fn printable_characters(text: &str) -> Option<usize> {
     encode(text).map(|bytes| bytes.len())
 }

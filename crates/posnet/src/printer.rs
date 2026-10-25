@@ -48,47 +48,6 @@ impl Printer {
         Self { link, connection }
     }
 
-    /// Probes the configured port, then other candidates if `may_switch` permits.
-    /// Adopts the first Temo Online; unidentified devices receive only `getrealid`.
-    /// `may_switch` must be false while an operation is unresolved.
-    pub fn detect(&mut self, may_switch: bool) -> Result<Device, Error> {
-        let error = match self.probe() {
-            Ok(device) => return Ok(device),
-            Err(error) => error,
-        };
-        if !may_switch {
-            return Err(error);
-        }
-        let mut denied = error.is_denied().then(|| self.connection.port.clone());
-        for candidate in self.link.candidates() {
-            if candidate.port == self.connection.port {
-                continue;
-            }
-            let connection = Connection {
-                port: candidate.port,
-                baud_rate: self.connection.baud_rate,
-            };
-            match identify(self.link.as_ref(), &connection) {
-                Ok(Some(device)) => {
-                    self.connection = connection;
-                    return Ok(device);
-                },
-                Ok(None) => {},
-                Err(scan) => {
-                    if denied.is_none() && scan.is_denied() {
-                        denied = Some(connection.port);
-                    }
-                },
-            }
-        }
-        Err(denied.map_or(error, |port| {
-            Error::Invalid(format!(
-                "Brak uprawnień do portu {port}. Na Linuksie dodaj użytkownika do grupy dialout i \
-                 zaloguj się ponownie."
-            ))
-        }))
-    }
-
     fn session(&self) -> Result<Session, Error> {
         Session::open(self.link.as_ref(), &self.connection)
     }

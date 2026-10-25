@@ -14,15 +14,8 @@ case "$(uname -m)" in
   arm64 | aarch64) arch=arm64; deb_arch=arm64 ;;
   *) echo "Unsupported CPU: $(uname -m)" >&2; exit 1 ;;
 esac
-if [[ $os == win && $arch != x64 ]]; then
-  echo "Only Windows x64 is distributed." >&2
-  exit 1
-fi
 if [[ $os == linux ]]; then
-  if ! glibc_version=$(getconf GNU_LIBC_VERSION 2>/dev/null); then
-    echo 'Linux packages require glibc; musl hosts are not supported.' >&2
-    exit 1
-  fi
+  glibc_version=$(getconf GNU_LIBC_VERSION)
   glibc_version=${glibc_version#glibc }
   # Keep DWARF in one ELF before extracting a Sentry-compatible debug companion.
   export CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off
@@ -55,18 +48,8 @@ case $os in
     install -m 755 "$binary" "$app/Contents/MacOS/workshop"
     strip "$app/Contents/MacOS/workshop"
     iconutil -c icns packaging/macos/icon.iconset -o "$app/Contents/Resources/icon.icns"
-    VERSION="$version" python3 - "$app/Contents/Info.plist" <<'PY'
-import os
-import plistlib
-import sys
-
-with open("packaging/macos/Info.plist", "rb") as source:
-    info = plistlib.load(source)
-info["CFBundleShortVersionString"] = os.environ["VERSION"]
-info["CFBundleVersion"] = os.environ["VERSION"]
-with open(sys.argv[1], "wb") as destination:
-    plistlib.dump(info, destination)
-PY
+    info=$(< packaging/macos/Info.plist.in)
+    printf '%s\n' "${info//@VERSION@/"$version"}" > "$app/Contents/Info.plist"
     # Stripping changes the Mach-O; ARM64 requires a fresh ad-hoc signature.
     codesign --force --sign - "$app"
     # The dSYM holds no unwind information; the shipped Mach-O does.

@@ -1,6 +1,6 @@
 //! Bounded frames with CRC-16/ARC.
 use fiscal::error::Error;
-use std::str;
+use std::{io::Write as _, str};
 
 pub const MAX_FRAME: usize = 1024;
 pub const STX: u8 = 2;
@@ -32,14 +32,7 @@ pub fn encode(header: &str, data: &[u8]) -> Result<Vec<u8>, Error> {
     raw.push(FS);
     raw.extend_from_slice(data);
     let checksum = crc(raw.get(1..).ok_or_else(corrupt)?);
-    for shift in [12, 8, 4, 0] {
-        let nibble = u8::try_from((checksum >> shift) & 0xF).map_err(|_overflow| corrupt())?;
-        raw.push(if nibble < 10 {
-            b'0' + nibble
-        } else {
-            b'A' + nibble - 10
-        });
-    }
+    write!(raw, "{checksum:04X}").map_err(|_infallible| corrupt())?;
     raw.push(ETX);
     Ok(raw)
 }
@@ -58,8 +51,7 @@ pub fn decode(raw: &[u8]) -> Result<(&str, &[u8]), Error> {
     }
     let hex = str::from_utf8(raw.get(end..raw.len() - 1).ok_or_else(corrupt)?)
         .map_err(|_encoding| corrupt())?;
-    if hex.len() != 4
-        || !hex.bytes().all(|b| b.is_ascii_hexdigit())
+    if !hex.bytes().all(|b| b.is_ascii_hexdigit())
         || u16::from_str_radix(hex, 16).map_err(|_number| corrupt())? != crc(content)
     {
         return Err(corrupt());

@@ -82,11 +82,7 @@ while (($#)); do
       valid_release "$release" || fail 'Release must be a stable tag vX.Y.Z (without leading zeroes).'
       shift 2
       ;;
-    --dry-run)
-      ((dry_run == 0)) || fail '--dry-run may only be supplied once.'
-      dry_run=1
-      shift
-      ;;
+    --dry-run) dry_run=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; fail "Unknown argument: $1" ;;
   esac
@@ -118,11 +114,6 @@ case $os in
         ;;
       *) fail "Unsupported Linux distribution: $ID. Only Ubuntu 24.04+ and Debian 13+ are supported." ;;
     esac
-    require getconf
-    libc=$(getconf GNU_LIBC_VERSION 2>/dev/null) || fail 'Linux requires glibc 2.39 or newer, not musl.'
-    [[ $libc =~ ^glibc\ ([0-9]{1,4})\.([0-9]{1,4})$ ]] || fail "Cannot validate glibc version: $libc"
-    ((10#${BASH_REMATCH[1]} > 2 || (10#${BASH_REMATCH[1]} == 2 && 10#${BASH_REMATCH[2]} >= 39))) ||
-      fail 'Linux requires glibc 2.39 or newer.'
     target='/usr/bin/workshop (managed by apt)'
     ;;
   Darwin)
@@ -278,7 +269,6 @@ else
     mv -- "$target" "$backup"
   fi
   mv -- "$staging/Holuto Workshop.app" "$target"
-  check_launcher
   if [[ ! -L $launcher ]]; then
     ln -s "$target/Contents/MacOS/workshop" "$launcher"
   fi

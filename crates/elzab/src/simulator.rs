@@ -73,6 +73,7 @@ impl Default for State {
         }
     }
 }
+const ADDRESS: &str = "elzab-simulator";
 #[derive(Debug)]
 pub struct Simulator {
     state: Arc<Mutex<State>>,
@@ -82,7 +83,7 @@ impl Simulator {
     pub fn start() -> Self {
         Self {
             state: Arc::new(Mutex::new(State::default())),
-            address: "elzab-simulator",
+            address: ADDRESS,
         }
     }
 
@@ -91,16 +92,8 @@ impl Simulator {
     }
 
     pub fn link(&self) -> Arc<dyn Link> {
-        self.link_with(vec![Candidate {
-            port: self.address().to_owned(),
-            hint: None,
-        }])
-    }
-
-    pub fn link_with(&self, candidates: Vec<Candidate>) -> Arc<dyn Link> {
         Arc::new(SimLink {
             state: Arc::clone(&self.state),
-            candidates,
         })
     }
 
@@ -165,11 +158,10 @@ impl Simulator {
 #[derive(Debug)]
 struct SimLink {
     state: Arc<Mutex<State>>,
-    candidates: Vec<Candidate>,
 }
 impl Link for SimLink {
     fn open(&self, port: &str, _baud_rate: u32) -> Result<Box<dyn Port>, Error> {
-        if port != "elzab-simulator" {
+        if port != ADDRESS {
             return Err(Error::Open {
                 port: port.to_owned(),
                 source: io::ErrorKind::NotFound.into(),
@@ -191,7 +183,10 @@ impl Link for SimLink {
     }
 
     fn candidates(&self) -> Vec<Candidate> {
-        self.candidates.clone()
+        vec![Candidate {
+            port: ADDRESS.to_owned(),
+            hint: None,
+        }]
     }
 
     fn time_scale(&self) -> u32 {

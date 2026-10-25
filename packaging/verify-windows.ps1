@@ -60,7 +60,6 @@ $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicat
 if (Test-Path -LiteralPath (Join-Path $local 'workshop')) { throw 'Package smoke requires a clean Windows profile: workshop state exists' }
 $installed = Join-Path ([IO.Path]::GetTempPath()) ('workshop-verify-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($installed)
-$process = $null
 try {
     $exe = Join-Path $installed 'workshop.exe'
     Copy-Item -LiteralPath $files[0].FullName -Destination $exe
@@ -82,7 +81,7 @@ try {
     if ($process.MainWindowTitle -ne 'Holuto Workshop') { throw "Main window missing: $($process.MainWindowTitle)" }
     Write-Host "Verified main window: $($process.MainWindowTitle)"
 } finally {
-    Remove-WorkshopSmoke -Process $process -Installed $installed
+    Remove-WorkshopSmoke $installed
     # Absent before launch (checked above), so this is only the state this smoke created.
     $state = Join-Path $local 'workshop'
     if (Test-Path -LiteralPath $state) { Remove-Item -LiteralPath $state -Recurse -Force }

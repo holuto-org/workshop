@@ -72,37 +72,6 @@ impl EnqStatus {
     }
 }
 
-/// Requires the manual's byte4; does not infer its position in DLE2.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent protocol status bits"
-)]
-pub struct MechanismStatus {
-    pub cannot_process: bool,
-    pub daily_report: bool,
-    pub verifying_copy: bool,
-    pub waiting_for_user: bool,
-    pub menu: bool,
-    pub paper_out: bool,
-    pub mechanism_error: bool,
-    pub cover_open: bool,
-}
-impl MechanismStatus {
-    pub const fn from_documented_byte4(byte: u8) -> Self {
-        Self {
-            cannot_process: byte & 0x80 != 0,
-            daily_report: byte & 0x40 != 0,
-            verifying_copy: byte & 0x20 != 0,
-            waiting_for_user: byte & 0x10 != 0,
-            menu: byte & 8 != 0,
-            paper_out: byte & 4 != 0,
-            mechanism_error: byte & 2 != 0,
-            cover_open: byte & 1 != 0,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExtendedStatus {
     pub last_error: u32,
@@ -124,18 +93,9 @@ impl ExtendedStatus {
             .next()
             .filter(|flags| flags.len() == 8 && flags.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .ok_or_else(frame::corrupt)?;
-        let mut flags_wire = [0; 4];
-        for (out, pair) in flags_wire
-            .iter_mut()
-            .zip(flags.as_bytes().as_chunks::<2>().0)
-        {
-            let pair = str::from_utf8(pair).map_err(|error| {
-                Error::Protocol(format!("Nieprawidłowy status Novitus: {error}."))
-            })?;
-            *out = u8::from_str_radix(pair, 16).map_err(|error| {
-                Error::Protocol(format!("Nieprawidłowy status Novitus: {error}."))
-            })?;
-        }
+        let flags_wire = u32::from_str_radix(flags, 16)
+            .map_err(|error| Error::Protocol(format!("Nieprawidłowy status Novitus: {error}.")))?
+            .to_be_bytes();
         if fields.next() != Some("") || fields.next().is_some() {
             return Err(frame::corrupt());
         }
@@ -523,17 +483,9 @@ pub(crate) fn identifier(body: &str) -> Option<&str> {
 }
 
 fn query_identifier(command: &str) -> Option<&'static str> {
-    match command {
-        "#v" => Some("#v"),
-        "$i" => Some("$i"),
-        "^c" => Some("^c"),
-        "^u" => Some("^u"),
-        "#c" => Some("#c"),
-        "#s" => Some("#s"),
-        "#n" => Some("#n"),
-        "?l" => Some("?l"),
-        _ => None,
-    }
+    ["#v", "$i", "^c", "^u", "#c", "#s", "#n", "?l"]
+        .into_iter()
+        .find(|query| *query == command)
 }
 pub(crate) fn no_request_checksum(body: &str) -> bool {
     matches!(identifier(body), Some("#v" | "#c" | "#n" | "$i")) || body == "23#s"

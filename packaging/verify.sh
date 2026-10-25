@@ -50,7 +50,7 @@ case "$(uname -s)" in
       echo 'Simulator leaked into package' >&2; exit 1
     fi
     check_cli
-    dbus-run-session -- bash packaging/smoke-linux.sh "$binary" "$tmp"
+    dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' bash packaging/smoke-linux.sh "$binary" "$tmp"
     ;;
   Darwin)
     package=${artifacts[0]}

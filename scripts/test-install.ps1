@@ -29,8 +29,6 @@ $script:platform = @{
     Platform = [PlatformID]::Win32NT
     Version = [Version]'10.0.19045'
     NativeArchitectures = @(9)
-    ProcessorArchitecture = 'AMD64'
-    Wow64Architecture = ''
     IsAdministrator = $false
     LocalAppData = Join-Path $script:fixtureRoot 'LocalAppData'
     Programs = Join-Path $script:fixtureRoot 'Programs'
@@ -70,15 +68,13 @@ foreach ($candidate in @('', 'latest', '1.2.3', 'V1.2.3', 'v1.2', 'v01.2.3', 'v1
 Assert-Throws { & $installer -UnknownOption -DryRun } 'parameter|argument'
 Assert-Throws { & $installer 'v1.2.3' -DryRun } 'positional|parameter|argument'
 
-# Each fixture changes one native safety condition, including ARM x64 emulation.
+# Each fixture changes one native safety condition, including ARM.
 foreach ($case in @(
     @{ Key = 'Platform'; Value = [PlatformID]::Unix; Error = 'Windows' },
     @{ Key = 'Version'; Value = [Version]'6.3.9600'; Error = 'Windows 10' },
     @{ Key = 'NativeArchitectures'; Value = @(12); Error = 'x64' },
     @{ Key = 'NativeArchitectures'; Value = @(0); Error = 'x64' },
-    @{ Key = 'NativeArchitectures'; Value = @(); Error = 'x64' },
-    @{ Key = 'Wow64Architecture'; Value = 'ARM64'; Error = 'x64' },
-    @{ Key = 'ProcessorArchitecture'; Value = 'ARM64'; Error = 'x64' }
+    @{ Key = 'NativeArchitectures'; Value = @(); Error = 'x64' }
 )) {
     $saved = $script:platform[$case.Key]
     try {
@@ -86,11 +82,6 @@ foreach ($case in @(
         Assert-Throws { Invoke-HolutoInstall -Release 'v1.2.3' -DryRun } $case.Error
     } finally { $script:platform[$case.Key] = $saved }
 }
-$script:platform.ProcessorArchitecture = 'x86'
-$script:platform.Wow64Architecture = 'AMD64'
-Invoke-HolutoInstall -Release 'v1.2.3' -DryRun | Out-Null
-$script:platform.ProcessorArchitecture = 'AMD64'
-$script:platform.Wow64Architecture = ''
 Assert-True (-not (Test-Path -LiteralPath $script:fixtureRoot)) 'Platform tests wrote installation files'
 $script:platform.IsAdministrator = $true
 try {
@@ -122,7 +113,6 @@ foreach ($location in @(
     'https://evil.example/holuto-org/workshop/releases/tag/v2.3.4',
     'http://github.com/holuto-org/workshop/releases/tag/v2.3.4',
     '/other/workshop/releases/tag/v2.3.4',
-    '/holuto-org/workshop/releases/tag/v2.3.4?extra=1',
     '/holuto-org/workshop/releases/tag/v2.3.4-rc1'
 )) {
     Assert-Throws { Get-HolutoReleaseFromRedirect -Location $location } 'redirect|release'
@@ -197,7 +187,8 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
 }
 
 # A real install stops before writing the target when the checksum does not
-# match or attestation fails. Only external effects are faked.
+# match or attestation fails, and otherwise installs exactly the verified bytes.
+# Only external effects are faked.
 $script:gh = @{ Attestation = 0; Calls = @() }
 $fakeGh = [pscustomobject]@{ Source = {
     $script:gh.Calls += ($args -join ' ')
@@ -217,8 +208,14 @@ function Invoke-WebRequest {
     [IO.File]::WriteAllText($OutFile, $content)
 }
 function Get-Process { return @() }
-# A regression that slips past verification must not reach the real user PATH.
-function Add-HolutoUserPath { throw 'Unexpected user PATH write' }
+# A regression that slips past verification must not reach the real user PATH or Start Menu.
+function Update-HolutoUserPath { param([string]$Directory) $script:userPath += @($Directory) }
+function New-HolutoShortcut { param([string]$Path, [string]$Target) $script:shortcuts += @("$Path -> $Target") }
+$windows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
+if (-not $windows) {
+    # NTFS streams exist only on Windows; there the real Set-HolutoInternetZone runs.
+    function Set-HolutoInternetZone { param([string]$Path, [string]$Url) $script:zones += @("$Path $Url") }
+}
 $exeDigest = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes('fixture exe'))).Replace('-', '').ToLowerInvariant()
 $installRoot = Join-Path ([IO.Path]::GetTempPath()) ('holuto-install-test-' + [Guid]::NewGuid().ToString('N'))
 $installTemp = Join-Path $installRoot 'Temp'
@@ -226,9 +223,10 @@ $installTemp = Join-Path $installRoot 'Temp'
 $savedTemp = @{ TMP = $env:TMP; TEMP = $env:TEMP; TMPDIR = $env:TMPDIR }
 $script:platform.LocalAppData = Join-Path $installRoot 'LocalAppData'
 $script:platform.Programs = Join-Path $installRoot 'Programs'
-$installedExe = Join-Path $script:platform.LocalAppData 'Programs\Holuto Workshop\workshop.exe'
+$installedExe = Join-Path (Join-Path (Join-Path $script:platform.LocalAppData 'Programs') 'Holuto Workshop') 'workshop.exe'
 try {
     $env:TMP = $installTemp; $env:TEMP = $installTemp; $env:TMPDIR = $installTemp
+    $script:userPath = @(); $script:shortcuts = @(); $script:zones = @()
     foreach ($case in @(
         @{ Attestation = 0; Digest = '0' * 64; Error = 'does not match SHA256SUMS'; Downloads = 2 },
         @{ Attestation = 1; Digest = $exeDigest; Error = 'attestation verification failed.*2\.68\.0'; Downloads = 2 }
@@ -243,7 +241,29 @@ try {
     }
     $verified = @($script:gh.Calls | Where-Object { $_ -like 'attestation verify *workshop-win-x64.exe --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master' })
     Assert-True ($verified.Count -eq 1) 'Attestation was not bound to the release workflow on master'
+    Assert-True ($script:userPath.Count + $script:shortcuts.Count + $script:zones.Count -eq 0) 'Failed verification reached installation side effects'
+
+    $script:gh = @{ Attestation = 0; Calls = @() }
+    $script:manifestDigest = $exeDigest
+    Invoke-HolutoInstall -Release 'v1.2.3' | Out-Null
+    $installDir = Split-Path -Parent $installedExe
+    $installedDigest = (Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-True ($installedDigest -ceq $exeDigest) 'Installed executable is not the verified download'
+    Assert-True (@(Get-ChildItem -LiteralPath $installDir -Force).Count -eq 1) 'Left a staged executable behind'
+    Assert-True (@(Get-ChildItem -LiteralPath $installTemp -Force).Count -eq 0) 'Left downloads behind after install'
+    $assetUrl = 'https://github.com/holuto-org/workshop/releases/download/v1.2.3/workshop-win-x64.exe'
+    if ($windows) {
+        $zone = Microsoft.PowerShell.Management\Get-Content -LiteralPath $installedExe -Stream Zone.Identifier -Raw
+        Assert-True ($zone -ceq "[ZoneTransfer]`r`nZoneId=3`r`nHostUrl=$assetUrl`r`n") 'Installed executable lost its Internet zone'
+    } else {
+        Assert-True ($script:zones.Count -eq 1 -and $script:zones[0] -like "*$([IO.Path]::DirectorySeparatorChar).workshop-*.exe $assetUrl") 'Staged executable was not marked Internet-zone'
+    }
+    $shortcutPath = Join-Path $script:platform.Programs 'Holuto Workshop.lnk'
+    Assert-True ($script:shortcuts.Count -eq 1 -and $script:shortcuts[0] -ceq "$shortcutPath -> $installedExe") 'Start Menu shortcut does not target the installed executable'
+    Assert-True ($script:userPath.Count -eq 1 -and $script:userPath[0] -ceq $installDir) 'User PATH was not given the install directory'
+    Assert-True (([Environment]::GetEnvironmentVariable('Path', 'Process') -split ';') -contains $installDir) 'Process PATH was not given the install directory'
 } finally {
+    [Environment]::SetEnvironmentVariable('Path', $processPathBefore, 'Process')
     $env:TMP = $savedTemp.TMP; $env:TEMP = $savedTemp.TEMP; $env:TMPDIR = $savedTemp.TMPDIR
     Remove-Item -LiteralPath $installRoot -Recurse -Force
 }

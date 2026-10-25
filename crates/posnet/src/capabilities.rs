@@ -2,9 +2,7 @@
 //!
 //! Spec: POSNET POT-I-DEV-37 v5978 (Online MR2021).
 
-use fiscal::device::Capabilities;
-
-use crate::text;
+use fiscal::{cp1250, device::Capabilities};
 
 /// Undetectable device limit: `trline` `na`, p. 295.
 const MAX_ITEM_NAME: usize = 80;
@@ -19,7 +17,7 @@ const MAX_QUANTITY_DECIMALS: u8 = 8;
 /// Holuto excludes them before queueing because the driver never rewrites text.
 fn printable_characters() -> String {
     (0x20..=0xFF_u8)
-        .filter_map(|byte| text::decode(&[byte])?.chars().next())
+        .filter_map(cp1250::decode_byte)
         .filter(|character| {
             !character.is_control()
                 && !matches!(
