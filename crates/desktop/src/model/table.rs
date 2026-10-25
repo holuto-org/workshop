@@ -126,15 +126,15 @@ impl Row for Document {
             self.kind.label().into(),
             self.customer_name.as_deref().unwrap_or("—").into(),
             zloty(self.amount).into(),
-            format!(
-                "{}{}",
-                if self.is_overdue {
-                    "PO TERMINIE · "
-                } else {
-                    ""
-                },
-                timestamp_label(self.due_at)
-            )
+            if self.is_overdue {
+                format!("PO TERMINIE · {}", timestamp_label(self.latest_at))
+            } else {
+                // Due now: the later statutory limit is not a reason to wait.
+                format!(
+                    "Niezwłocznie · najpóźniej {}",
+                    timestamp_label(self.latest_at)
+                )
+            }
             .into(),
         ]
     }
@@ -149,7 +149,7 @@ impl Row for Document {
                 text_order,
             ),
             3 => self.amount.cmp(&other.amount),
-            4 => self.due_at.cmp(&other.due_at),
+            4 => self.latest_at.cmp(&other.latest_at),
             _ => Ordering::Equal,
         }
     }

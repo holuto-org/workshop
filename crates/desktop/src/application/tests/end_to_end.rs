@@ -27,7 +27,8 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
     holuto.documents(vec![json!({
         "kind": "sale", "orderId": ORDER_ID, "orderNumber": 10, "allocationId": null,
         "amount": "250.00", "customerName": "Klient testowy",
-        "occurredAt": "2025-10-24T10:00:00Z", "dueAt": "2025-10-24T10:00:00Z", "isOverdue": false
+        "occurredAt": "2025-10-24T10:00:00Z", "dueAt": "2025-10-24T10:00:00Z",
+        "latestAt": "2025-10-24T10:00:00Z", "isOverdue": false
     })]);
     let settings = Settings {
         api_url: holuto.url().into(),
@@ -387,7 +388,8 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
     holuto.documents(vec![json!({
         "kind": "sale", "orderId": ORDER_ID, "orderNumber": 10, "allocationId": null,
         "amount": "250.00", "customerName": "private-customer-canary",
-        "occurredAt": "2025-10-24T10:00:00Z", "dueAt": "2025-10-24T10:00:00Z", "isOverdue": false
+        "occurredAt": "2025-10-24T10:00:00Z", "dueAt": "2025-10-24T10:00:00Z",
+        "latestAt": "2025-10-24T10:00:00Z", "isOverdue": false
     })]);
     let settings = Settings {
         api_url: holuto.url().into(),

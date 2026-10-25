@@ -56,6 +56,8 @@ pub enum Fault {
     Disconnect,
     /// Executes, then emits `<command>\t?2000\t`, not an `ERR` rejection.
     ExecutionError,
+    /// Emits the command-named `<command>\t?<code>\t` without executing (spec p. 13).
+    Refused(u32),
     /// Documented error form, optionally naming a different command.
     Device {
         code: u32,
@@ -544,12 +546,16 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Answer {
     let mut state = lock(state);
     let fault = state.faults.get(&command).cloned();
     let outcome = match &fault {
-        Some(Fault::Error | Fault::Device { .. }) => Err(()),
+        Some(Fault::Error | Fault::Device { .. } | Fault::Refused(_)) => Err(()),
         Some(Fault::Reply(reply)) => Ok(reply.clone()),
         _ => state.handle(&command, &params),
     };
-    let execution_error = fault == Some(Fault::ExecutionError);
-    let mut payload = if outcome.is_err() && !execution_error {
+    let command_error = match &fault {
+        Some(Fault::ExecutionError) => Some(2000),
+        Some(Fault::Refused(code)) => Some(*code),
+        _ => None,
+    };
+    let mut payload = if outcome.is_err() && command_error.is_none() {
         "ERR".to_owned()
     } else {
         command.clone()
@@ -560,8 +566,8 @@ fn answer(received: &[u8], state: &Mutex<State>) -> Answer {
         payload.push_str(token);
         payload.push('\t');
     }
-    if execution_error {
-        payload.push_str("?2000\t");
+    if let Some(code) = command_error {
+        let _written = write!(payload, "?{code:04}\t");
     } else if let Ok(reply) = outcome {
         for (key, value) in reply {
             payload.push_str(&key);

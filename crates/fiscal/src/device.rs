@@ -182,6 +182,16 @@ impl Device {
         }
     }
 
+    /// Resolving an interrupted operation tolerates only an overdue daily report:
+    /// that report may be the interrupted one, and it cannot run until resolution.
+    pub fn require_resolvable(&self) -> Result<(), Error> {
+        if self.daily_report_allowed() {
+            Ok(())
+        } else {
+            Err(Error::NotReady(self.description()))
+        }
+    }
+
     /// Refuses a printer other than the one the operation belongs to.
     pub fn require_unique_number(&self, unique_number: &str) -> Result<(), Error> {
         if self.unique_number == unique_number {

@@ -136,12 +136,15 @@ fn document_deadlines_sort_independently_and_overdue_is_explicit() {
         customer_name: None,
         occurred_at: Timestamp::UNIX_EPOCH,
         due_at: Timestamp::UNIX_EPOCH,
+        latest_at: Timestamp::UNIX_EPOCH,
         is_overdue: false,
     };
     let earlier = document.clone();
-    document.due_at = "2026-10-24T10:00:00Z".parse().unwrap();
+    document.latest_at = "2026-10-24T10:00:00Z".parse().unwrap();
     assert_eq!(document.compare(&earlier, 4), Ordering::Greater);
-    assert!(!document.cells()[4].contains("PO TERMINIE"));
+    // A bank-settled advance before its statutory limit is still due now.
+    assert!(document.cells()[4].starts_with("Niezwłocznie · najpóźniej "));
+    assert!(document.cells()[4].contains("24.10.2026"));
     document.is_overdue = true;
     assert!(document.cells()[4].starts_with("PO TERMINIE · "));
     assert!(document.cells()[4].contains("24.10.2026"));

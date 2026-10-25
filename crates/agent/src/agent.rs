@@ -186,17 +186,15 @@ impl<'dir> Agent<'dir> {
         }
         self.api.heartbeat()?;
         if let Some(blocked) = self.settle()? {
-            self.news.notices.push(
-                match blocked {
-                    Blocked::Receipt | Blocked::OrphanedReceipt => {
-                        "Niepotwierdzony wynik. Sprawdź wydruk i rozstrzygnij zadanie w Holuto."
-                    },
-                    Blocked::Report => {
-                        "Przerwany raport. Sprawdź wydruk i kliknij „Wyjaśnij raport”."
-                    },
-                }
-                .to_owned(),
-            );
+            let notice = match blocked {
+                Blocked::Receipt => {
+                    "Niepotwierdzony wynik. Sprawdź wydruk i rozstrzygnij zadanie w Holuto."
+                },
+                Blocked::Report => "Przerwany raport. Sprawdź wydruk i kliknij „Wyjaśnij raport”.",
+                // `settle` already reported the receipt evidence the acknowledgement quotes.
+                Blocked::OrphanedReceipt => return Ok(RETRY),
+            };
+            self.news.notices.push(notice.to_owned());
             return Ok(RETRY);
         }
         self.news.notices.extend(probe?);

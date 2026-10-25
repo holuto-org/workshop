@@ -49,7 +49,11 @@ pub struct Document {
     #[serde(deserialize_with = "Option::deserialize")]
     pub customer_name: Option<String>,
     pub occurred_at: Timestamp,
+    /// Print without delay from here: sale completion or the advance's recorded payment.
     pub due_at: Timestamp,
+    /// Statutory hard limit; later than `due_at` only for card, transfer and BLIK advances.
+    pub latest_at: Timestamp,
+    /// Past `latest_at`.
     pub is_overdue: bool,
 }
 

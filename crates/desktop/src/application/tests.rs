@@ -125,6 +125,7 @@ fn ready(app: &Rc<RefCell<Application>>) {
             customer_name: Some("Jan Kowalski".into()),
             occurred_at: Timestamp::UNIX_EPOCH,
             due_at: Timestamp::UNIX_EPOCH,
+            latest_at: Timestamp::UNIX_EPOCH,
             is_overdue: false,
         }],
         page: 1,
@@ -239,22 +240,46 @@ fn report_input_before_2000_shows_error_instead_of_confirmation() -> Result<(), 
     Ok(())
 }
 
+fn paired_fixture() -> Result<UiFixture, Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temp = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temp.path().to_owned())?);
+    let settings = Settings {
+        api_url: "https://paired.example.test".into(),
+        token: "already-paired-secret".into(),
+        ..Settings::default()
+    };
+    settings.save(&dir)?;
+    let app = make_app(dir, settings, Simulator::start().link())?;
+    let window = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing app window")?
+        .clone_strong();
+    Ok((temp, app, window))
+}
+
+fn save_and_quit(
+    app: &Rc<RefCell<Application>>,
+    window: &AppWindow,
+) -> Result<Settings, Box<dyn Error>> {
+    button(window, "Zapisz")?.invoke_accessible_default_action();
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    Ok(Settings::load(&app.borrow().dir)?.ok_or("missing saved settings")?)
+}
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
 fn save_persists_operator_connection_choices_before_quitting() -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = fixture_with_event_loop()?;
-    app.borrow_mut().model.settings.api_url = "https://paired.example.test".into();
-    app.borrow_mut().model.settings.token = "already-paired-secret".into();
-    app.borrow().sync();
+    let (_temp, app, window) = paired_fixture()?;
     control(&window, "Adres API", AccessibleRole::TextInput)?
         .set_accessible_value("https://api.example.test");
-    button(&window, "Zapisz")?.invoke_accessible_default_action();
-    app.borrow_mut().stop(true)?;
-    slint::run_event_loop_until_quit()?;
-    let saved = Settings::load(&app.borrow().dir)?.ok_or("missing saved settings")?;
+    let saved = save_and_quit(&app, &window)?;
     assert_eq!(
         saved.api_url, "https://api.example.test",
         "save captures API input"
@@ -263,6 +288,28 @@ fn save_persists_operator_connection_choices_before_quitting() -> Result<(), Box
         saved.token.as_str(),
         "",
         "a token paired with another API address is never saved for the new one"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn a_reverted_api_address_edit_keeps_the_saved_pairing() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = paired_fixture()?;
+    let address = control(&window, "Adres API", AccessibleRole::TextInput)?;
+    address.set_accessible_value("https://paired.example.tes");
+    // Any UI callback captures the half-edited field.
+    window.invoke_sort_documents(0, false);
+    address.set_accessible_value("https://paired.example.test");
+    let saved = save_and_quit(&app, &window)?;
+    assert_eq!(saved.api_url, "https://paired.example.test");
+    assert_eq!(
+        saved.token.as_str(),
+        "already-paired-secret",
+        "the pairing belongs to the saved address the operator restored"
     );
     Ok(())
 }

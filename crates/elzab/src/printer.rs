@@ -56,7 +56,7 @@ impl Driver for Printer {
 
     fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
-        device.require_ready()?;
+        device.require_resolvable()?;
         device.require_unique_number(unique_number)?;
         Ok(device)
     }
@@ -109,7 +109,7 @@ impl Driver for Printer {
         // Read-only evidence; never use a changed counter as proof of our print.
         let _before = read_number(&mut session, "SER", 'J')?;
         let _day = read_number(&mut session, "RNR", 'A')?;
-        let (issued_at, _) = clock(&mut session)?;
+        let issued_at = timestamp(clock(&mut session)?)?;
         dispatch(&mut session, &steps, journal)?;
         let receipt_number = read_number(&mut session, "SER", 'J').ok();
         Ok(Printed {
@@ -308,7 +308,7 @@ fn preflight_identity(
     if !device.vat.iter().any(|r| r.active()) {
         device.problems.push("Brak aktywnych stawek VAT".into());
     }
-    let (_, date) = clock(session)?;
+    let date = clock(session)?.date();
     Ok(Checked {
         device,
         profile,
@@ -367,7 +367,8 @@ fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(),
     }
     Ok(())
 }
-fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
+/// Civil printer time; only the date is needed outside receipt timestamps.
+fn clock(session: &mut Session) -> Result<DateTime, Error> {
     let body = query(session, "XCR", "XCR")?;
     let value = field(&body, 'A')?;
     if value.len() != 12 || !value.bytes().all(|b| b.is_ascii_digit()) {
@@ -385,7 +386,7 @@ fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
     if !(0..=49).contains(&year) {
         return Err(frame::corrupt());
     }
-    let datetime = DateTime::new(
+    DateTime::new(
         2000 + i16::from(year),
         month?,
         day?,
@@ -394,14 +395,15 @@ fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
         second?,
         0,
     )
-    .map_err(|_date| frame::corrupt())?;
+    .map_err(|_date| frame::corrupt())
+}
+fn timestamp(datetime: DateTime) -> Result<Timestamp, Error> {
     // No offset exists on the wire: fail on DST gaps/folds instead of guessing.
     let timestamp = TimeZone::get("Europe/Warsaw")
         .and_then(|zone| zone.to_ambiguous_timestamp(datetime).unambiguous())
         .map_err(|error| Error::Protocol(format!("Nieprawidłowy zegar drukarki: {error}.")))?;
-    let timestamp = Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
-        .map_err(|_timestamp| frame::corrupt())?;
-    Ok((timestamp, datetime.date()))
+    Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
+        .map_err(|_timestamp| frame::corrupt())
 }
 fn date_fields(date: Date) -> Result<String, Error> {
     if !(2000..=2099).contains(&date.year()) {

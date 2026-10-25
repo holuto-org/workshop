@@ -779,3 +779,110 @@ fn a_trinit_execution_error_has_no_receipt_and_its_open_transaction_blocks_prefl
         "verification prints nothing"
     );
 }
+
+#[test]
+fn a_spaced_unique_number_binds_in_its_canonical_form() {
+    for (reported, bound, ready) in [
+        ("DEM 0000000001", UNIQUE_NUMBER, true),
+        ("DE M0000000001", "DE M0000000001", false),
+        ("DEM 000000001", "DEM 000000001", false),
+    ] {
+        let sim = simulator();
+        sim.set_status("nu", reported);
+        let device = printer(&sim);
+        let status = device.probe().unwrap();
+        assert_eq!(status.unique_number, bound, "{reported:?}");
+        assert_eq!(status.ready(), ready, "{reported:?}");
+        if ready {
+            let _printed = device
+                .print_receipt(&sale(), &status, &mut Recorder::default())
+                .unwrap();
+            assert_eq!(sim.receipts().len(), 1);
+        }
+    }
+}
+
+#[test]
+fn item_names_the_printer_treats_as_empty_are_refused_before_trinit() {
+    for (name, refused) in [
+        ("-", true),
+        ("***", true),
+        ("<:;__?[^^]__ ?;:>", true),
+        ("%", false),
+        ("ż", false),
+        ("Ä", false),
+        ("Č", false),
+        ("- 5 -", false),
+    ] {
+        let sim = simulator();
+        let device = printer(&sim);
+        let status = device.probe().unwrap();
+        let receipt = Receipt::new(
+            vec![line(name, "1", "1", 0)],
+            vec![],
+            vec![pay(PaymentForm::Cash, 100)],
+            None,
+            BRAND,
+            &capabilities(),
+        )
+        .unwrap();
+        let mut journal = Recorder::default();
+        let result = device.print_receipt(&receipt, &status, &mut journal);
+        if refused {
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "Nazwa usługi musi zawierać literę, cyfrę lub jeden ze znaków , . / \\ %.",
+                "{name:?}"
+            );
+            assert_eq!(journal.stages, Vec::<&str>::new(), "{name:?}");
+            assert_eq!(fiscal_commands(&sim), Vec::<String>::new(), "{name:?}");
+        } else {
+            let _printed = result.unwrap();
+            assert_eq!(sim.receipts()[0].lines[0]["na"], name);
+        }
+    }
+}
+
+#[test]
+fn a_refused_zero_daily_report_is_certain_and_other_report_codes_stay_uncertain() {
+    let sim = simulator();
+    sim.fault("dailyrep", Fault::Refused(382));
+    let mut journal = Recorder::default();
+    let error = printer(&sim)
+        .print_report(Report::Daily, UNIQUE_NUMBER, &mut journal)
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Device { code: 382, rejected: false, command, .. } if command == "dailyrep"),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "Drukarka zwróciła błąd 382 (dailyrep). Nie można wykonać dwóch kolejnych zerowych \
+         raportów dobowych."
+    );
+    assert_eq!(journal.stages, ["dailyrep"]);
+    assert_eq!(fiscal_commands(&sim), ["dailyrep"], "never resent");
+    assert_eq!(sim.reports(), vec![]);
+
+    for (command, code, report) in [
+        ("dailyrep", 2000, Report::Daily),
+        (
+            "monthlyrep",
+            382,
+            Report::Monthly {
+                year: 2026,
+                month: 6,
+            },
+        ),
+    ] {
+        let sim = simulator();
+        sim.fault(command, Fault::Refused(code));
+        let error = printer(&sim)
+            .print_report(report, UNIQUE_NUMBER, &mut Recorder::default())
+            .unwrap_err();
+        assert!(
+            matches!(error, Error::Uncertain(_)),
+            "{command} {code}: {error:?}"
+        );
+    }
+}

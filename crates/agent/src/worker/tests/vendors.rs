@@ -3,18 +3,28 @@ use super::{
     job_json, problem, receive_until, state_dir, stop,
 };
 use crate::{
-    agent::{Agent, RETRY},
-    api::Api,
+    Error,
+    agent::{Agent, Blocked, RETRY},
+    api::{Api, model::JobState},
     device,
+    journal::{ReceiptOperation, Summary},
     store::StateDir,
-    testing::printers::{RoutingLink, Simulator, VENDORS},
+    testing::{
+        ATTEMPT, JOB_ID,
+        printers::{RoutingLink, Simulator, VENDORS},
+        with,
+    },
 };
 use fiscal::{
     device::Vendor,
+    error::Error as PrinterError,
     link::{Candidate, Connection},
+    money::Grosze,
+    report::Report,
 };
 use serde_json::json;
 use std::{
+    fs,
     sync::{Arc, Mutex, mpsc},
     time::Instant,
 };
@@ -135,6 +145,106 @@ fn overdue_daily_report_does_not_allow_a_job_claim() {
     );
     assert_eq!(sim.receipts(), 0);
     assert_eq!(sim.reports(), 0);
+}
+
+const OVERDUE: u128 = (1_u128 << 115) | (1_u128 << 102) | (1_u128 << 98) | 4;
+
+fn ignore_waits(_problem: Option<&str>) {}
+
+fn elzab_agent<'dir>(
+    sim: &elzab::simulator::Simulator,
+    holuto: &Holuto,
+    dir: &'dir StateDir,
+) -> Agent<'dir> {
+    let (printer, status) = device::detect(
+        sim.link(),
+        Connection {
+            port: sim.address().to_owned(),
+            baud_rate: 9600,
+        },
+        Some(Vendor::Elzab),
+        false,
+    )
+    .unwrap();
+    let api = Api::new(holuto.url(), holuto.token(), &status.unique_number).unwrap();
+    let mut agent = Agent::new(printer, api, dir, &ignore_waits);
+    let _notices = agent.describe(status).unwrap();
+    let _session = agent.session().unwrap();
+    agent
+}
+
+#[test]
+fn unprinted_overdue_daily_report_is_resolved_on_the_same_printer_and_can_run_again() {
+    let sim = elzab::simulator::Simulator::start();
+    sim.set_status(0, OVERDUE, 32);
+    let holuto = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let mut agent = elzab_agent(&sim, &holuto, &dir);
+    sim.fault("RRP", elzab::simulator::Fault::Device(1));
+    assert!(matches!(
+        agent.run_report(Report::Daily),
+        Err(Error::Printer(PrinterError::Uncertain(_)))
+    ));
+    assert_eq!(agent.blocked().unwrap(), Some(Blocked::Report));
+    assert!(!sim.daily_pending(), "the refused report printed nothing");
+
+    sim.set_status(0, OVERDUE, 32 | 1);
+    let journal = fs::read(dir.file("operation.json")).unwrap();
+    assert!(
+        matches!(agent.resolve_report(), Err(Error::Printer(PrinterError::NotReady(_)))),
+        "other readiness problems still refuse resolution"
+    );
+    assert_eq!(fs::read(dir.file("operation.json")).unwrap(), journal);
+
+    sim.set_status(0, OVERDUE, 32);
+    agent.resolve_report().unwrap();
+    assert_eq!(agent.blocked().unwrap(), None);
+    assert!(!sim.daily_pending(), "resolution never sends the report");
+    assert!(matches!(
+        agent.run_report(Report::Daily),
+        Err(Error::Printer(PrinterError::Uncertain(_)))
+    ));
+    assert!(sim.daily_pending(), "the overdue daily report is sent again");
+}
+
+#[test]
+fn orphaned_receipt_on_an_overdue_printer_is_acknowledged_without_printing() {
+    let sim = elzab::simulator::Simulator::start();
+    sim.set_status(0, OVERDUE, 32);
+    let holuto = Holuto::new();
+    holuto.insert(with(job_json(), &json!({"state": "failed"})));
+    let (_temporary, dir) = state_dir();
+    Journal::new(&dir)
+        .save(&Operation::Receipt(ReceiptOperation {
+            job_id: JOB_ID,
+            attempt: ATTEMPT,
+            issued_at: "2026-10-24T21:59:00Z".parse().unwrap(),
+            vendor: Vendor::Elzab,
+            device_unique_number: "ABC1234567890".to_owned(),
+            device: Device::Completed {
+                receipt_number: Some("17".to_owned()),
+            },
+            summary: Some(Summary {
+                total: Grosze::new(25_000).unwrap(),
+                payments: Vec::new(),
+                items: vec!["Wymiana oleju".to_owned()],
+            }),
+            result: None,
+            settled: None,
+        }))
+        .unwrap();
+    let mut agent = elzab_agent(&sim, &holuto, &dir);
+    assert_eq!(agent.step().unwrap(), RETRY);
+    assert_eq!(agent.blocked().unwrap(), Some(Blocked::OrphanedReceipt));
+
+    agent.acknowledge_orphaned_receipt().unwrap();
+    assert_eq!(agent.blocked().unwrap(), None);
+    let Some(Operation::Receipt(operation)) = Journal::new(&dir).load().unwrap() else {
+        panic!("acknowledged evidence stays journaled");
+    };
+    assert_eq!(operation.settled.map(|settled| settled.state), Some(JobState::Failed));
+    assert_eq!(sim.receipts(), 0);
+    assert!(!sim.daily_pending());
 }
 
 #[test]

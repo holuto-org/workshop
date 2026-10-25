@@ -174,6 +174,7 @@ fn generated_page_preserves_the_domain_decimal_conversion_in_both_directions() {
             "orderNumber": 42, "amount": "12.34", "customerName": null,
             "occurredAt": "2026-10-24T10:00:00Z",
         "dueAt": "2026-10-24T10:00:00Z",
+        "latestAt": "2026-10-24T10:00:00Z",
         "isOverdue": false
         }],
         "nextCursor": null
@@ -217,6 +218,7 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
             "kind":"sale","allocationId":null,"orderId":ORDER_ID,"orderNumber":42,
             "amount":"987.65","customerName":"PRIVATE-CUSTOMER","occurredAt":"2026-10-24T10:00:00Z",
         "dueAt": "2026-10-24T10:00:00Z",
+        "latestAt": "2026-10-24T10:00:00Z",
         "isOverdue": false
         }],"nextCursor":"PRIVATE-CURSOR"
     }))

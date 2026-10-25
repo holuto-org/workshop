@@ -4,7 +4,7 @@ mod table;
 use agent::{
     documents::{BuyerNip, Document},
     history::HistoryEntry,
-    settings::{BAUD_RATES, Settings},
+    settings::{BAUD_RATES, Settings, Token},
     status::Snapshot,
     worker::{Command, Tone},
 };
@@ -61,6 +61,10 @@ pub(crate) struct Confirmation {
 )]
 pub(crate) struct Model {
     pub(crate) settings: Settings,
+    /// Persisted API address and pairing; address edits are judged against these,
+    /// not an earlier capture, so reverting an edit keeps the pairing.
+    saved_api_url: String,
+    saved_token: Token,
     pub(crate) pairing_code: String,
     pub(crate) pairing: bool,
     documents: Table<Document>,
@@ -99,6 +103,8 @@ impl Model {
     pub(crate) fn new(settings: Settings, today: Date) -> Self {
         let months = months_before(today);
         Self {
+            saved_api_url: settings.api_url.clone(),
+            saved_token: settings.token.clone(),
             settings,
             pairing_code: String::new(),
             pairing: false,
@@ -136,6 +142,12 @@ impl Model {
     pub(crate) fn say(&mut self, text: String, tone: Tone) {
         self.message = text;
         self.tone = tone;
+    }
+
+    /// Call after `settings` were written to or reloaded from disk.
+    pub(crate) fn settings_persisted(&mut self) {
+        self.saved_api_url.clone_from(&self.settings.api_url);
+        self.saved_token.clone_from(&self.settings.token);
     }
 
     pub(crate) fn documents(&self) -> &[Document] {
@@ -242,6 +254,8 @@ impl Model {
         self.today = today;
         // Slint 1.18 permits assistive edits on disabled controls; guard settings here too.
         if !self.running && !self.saving && !self.pairing {
+            self.settings.api_url.clone_from(&self.saved_api_url);
+            self.settings.token.clone_from(&self.saved_token);
             self.settings.set_api_url(window.get_api_url().trim());
             window
                 .get_pairing_code()

@@ -17,6 +17,7 @@ fn document() -> Document {
         customer_name: Some("Jan Kowalski".into()),
         occurred_at: Timestamp::UNIX_EPOCH,
         due_at: Timestamp::UNIX_EPOCH,
+        latest_at: Timestamp::UNIX_EPOCH,
         is_overdue: false,
     }
 }

@@ -12,9 +12,9 @@ Review in this order, using [the test checklist](../docs/testing/checklist.md):
    journals, stale completions overwriting newer state, history errors blocking
    settlement.
 3. Uncertainty that fails to block, or a "certain" refusal broader than the
-   driver documents (Posnet initial `trinit` and report `ERR` frames; Novitus
-   initial `$h` and daily-report cancellation 37; Elzab initial `LOR` transport
-   rejection).
+   driver documents (Posnet initial `trinit`, report `ERR` frames and daily-report
+   code 382; Novitus initial `$h` and daily-report cancellation 37; Elzab initial
+   `LOR` transport rejection).
 4. Exact output: amounts, VAT slots, payments, Polish text and command order.
 5. Secrets and privacy: the device token or pairing code in logs, errors,
    telemetry, `Debug`, or sent to a host it was not paired with.

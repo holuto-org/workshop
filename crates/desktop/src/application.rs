@@ -332,10 +332,15 @@ impl Application {
             Ok(preferences::Outcome::Start(mut settings)) if !self.quitting => {
                 settings.telemetry_enabled = self.model.settings.telemetry_enabled;
                 self.model.settings = settings;
+                self.model.settings_persisted();
                 self.spawn_worker();
             },
-            Ok(preferences::Outcome::Saved) if !self.model.blocked => {
-                self.model.say("Zapisano ustawienia.".into(), Tone::Success);
+            Ok(preferences::Outcome::Saved) => {
+                // Inputs stay locked while saving, so the model still holds what was written.
+                self.model.settings_persisted();
+                if !self.model.blocked {
+                    self.model.say("Zapisano ustawienia.".into(), Tone::Success);
+                }
             },
             Ok(preferences::Outcome::Telemetry) if !self.model.blocked => {
                 self.model
@@ -350,6 +355,7 @@ impl Application {
             },
             Ok(preferences::Outcome::Reload(settings)) => {
                 self.model.settings = settings;
+                self.model.settings_persisted();
             },
             Ok(preferences::Outcome::Status(snapshot))
                 if self.status_requested.as_ref() == Some(&snapshot) =>
@@ -359,7 +365,6 @@ impl Application {
             Ok(
                 preferences::Outcome::Port
                 | preferences::Outcome::Start(_)
-                | preferences::Outcome::Saved
                 | preferences::Outcome::Telemetry
                 | preferences::Outcome::Status(_),
             ) => {},

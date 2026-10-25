@@ -483,6 +483,34 @@ fn daily_ack_leaves_pending_state_across_connections() {
 }
 
 #[test]
+fn dst_fold_clock_blocks_only_receipt_timestamps() {
+    use jiff::civil::date;
+    let sim = Simulator::start();
+    sim.set_clock("261025023000");
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(expected.ready(), "{}", expected.description());
+    driver
+        .print_report(
+            Report::Periodic {
+                from: date(2026, 9, 1),
+                to: date(2026, 9, 30),
+                summary: false,
+            },
+            "ABC1234567890",
+            &mut Log::default(),
+        )
+        .unwrap();
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&receipt(0, false), &expected, &mut log),
+        Err(Error::Protocol(_))
+    ));
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal(&sim), ["RPP\x1dE1\x1dFE260901\x1eF260930\x1dS0"]);
+}
+
+#[test]
 fn missing_number_never_replays_a_completed_receipt() {
     struct NumberFault<'a> {
         sim: &'a Simulator,

@@ -338,7 +338,8 @@ fn document(number: u128) -> Value {
         "allocationId": null,
         "amount": "10.00",
         "customerName": null,
-        "occurredAt": "2026-10-16T10:00:00Z", "dueAt": "2026-10-16T10:00:00Z", "isOverdue": false
+        "occurredAt": "2026-10-16T10:00:00Z", "dueAt": "2026-10-16T10:00:00Z",
+        "latestAt": "2026-10-16T10:00:00Z", "isOverdue": false
     })
 }
 
@@ -1193,6 +1194,43 @@ fn an_orphaned_print_is_acknowledged_locally_without_reprinting_or_reporting() {
         reports_before
     );
     assert_eq!(sim.reports(), []);
+}
+
+#[test]
+fn an_orphaned_print_leaves_its_evidence_as_the_latest_status() {
+    // The desktop quotes the latest status in the acknowledgement confirmation.
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    print_with_unconfirmed_result(&sim, &holuto, &dir);
+    holuto.set_job(JOB_ID, &json!({"state": "failed"}));
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let received = receive_until(&events, |event| {
+        matches!(
+            event,
+            Event::Device {
+                blocked: true,
+                orphaned_receipt: true,
+                ..
+            }
+        )
+    });
+    let _stopped = stop(worker, &events);
+    let latest = received.iter().rev().find_map(|event| {
+        if let Event::Status { text, .. } = event {
+            Some(text.clone())
+        } else {
+            None
+        }
+    });
+    assert_eq!(
+        latest,
+        Some(format!(
+            "Paragon 1 został wydrukowany dla zlecenia 10 (zadanie {JOB_ID}), ale Holuto \
+             oznaczyło zadanie jako Failed. Sprawdź wydruk i użyj „Wyjaśnij paragon”."
+        ))
+    );
 }
 
 #[derive(Clone)]

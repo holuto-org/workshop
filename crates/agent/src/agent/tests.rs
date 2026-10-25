@@ -1036,6 +1036,7 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
         "amount": "9876.54", "customerName": "PrivateCustomer",
         "occurredAt": "2025-01-02T12:00:00Z",
         "dueAt": "2025-01-02T12:00:00Z",
+        "latestAt": "2025-01-02T12:00:00Z",
         "isOverdue": false
     }))?;
     let nip = BuyerNip::parse("5261040828")?;

@@ -86,7 +86,8 @@ before taking or printing jobs.
 
 - **`GET /agent/documents?limit=100[&cursor=…]`**:
   `{items:[{kind, orderId, orderNumber, allocationId, amount, customerName,`
-  `occurredAt, dueAt, isOverdue}], nextCursor}`. Return `nextCursor` unchanged and URL-encoded;
+  `occurredAt, dueAt, latestAt, isOverdue}], nextCursor}`. Return `nextCursor` unchanged and
+  URL-encoded;
   null ends pagination. Kind is `advance` or `sale`. Advances identify their
   allocation and payment time; sales use null allocation and posting time.
 - **`POST /agent/jobs`**: Queue `{kind, orderId, allocationId, buyerNip}`.
@@ -165,7 +166,10 @@ is gross total minus advances; `trend.fp` sums payments. Fully prepaid sales
 close at zero without payment commands. Before dispatch, slot/rate pairs must
 match fresh telemetry, deductions cannot exceed slot sales, and payments must
 exactly cover fiscal value. Amounts must be nonnegative whole grosze within the
-printer's range.
+printer's range. Every item name needs a letter, digit or one of `, . / \ %`;
+the printer treats other names as empty (p. 430). A `getrealid` unique number
+written `ABC 1234567890` binds as `ABC1234567890`. Certain report refusals are
+listed in [fiscal safety](testing/fiscal-safety.md#recovery-classification).
 
 Buyer NIP and payment forms follow
 [Posnet POT-I-DEV-37 v5978, pp. 295, 297 and
@@ -202,7 +206,10 @@ failure, and every accepted daily `RRP`, is unknown until a person resolves it.
 
 ## Advisory deadlines and voided receipts
 
-The documents table displays `dueAt` and marks `isOverdue` explicitly. Deadlines never
+Every listed document is due now (`dueAt`: sale completion or the advance's recorded
+payment); `latestAt` is the statutory hard limit, later only for card, transfer and BLIK
+advances. The table shows "Niezwłocznie · najpóźniej …" until that limit and
+"PO TERMINIE · …" after it (`isOverdue`), sorted by the limit. Deadlines never
 queue or print anything; staff still choose every document. A `voided` job is a terminal,
 already-printed receipt cancelled in the obvious-mistake register. Recovery acknowledges
 its local journal without printing or reporting a replacement.

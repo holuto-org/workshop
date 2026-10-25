@@ -61,7 +61,7 @@ impl Driver for Printer {
 
     fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
-        device.require_ready()?;
+        device.require_resolvable()?;
         device.require_unique_number(unique_number)?;
         Ok(device)
     }

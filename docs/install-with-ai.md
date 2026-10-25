@@ -329,9 +329,10 @@ after a running-app refusal, then repeat only the requested configuration.
   fiscal work at login. Refuses while app runs.
 - **`workshop status --json`**: Read the app's published snapshot while its
   instance lock is held: `appRunning:true` and `state` with `processing`,
-  `connected`, `vendor`, `serial`, `printerId`, `blocked`, `reportUnresolved`,
-  `orphanedReceipt` and `updatedAt`. `vendor` is `"posnet"`, `"novitus"`, `"elzab"`
-  or `null` until known; vendor/serial may remain while disconnected.
+  `connected`, `vendor`, `uniqueNumber`, `printerId`, `blocked`,
+  `reportUnresolved`, `orphanedReceipt` and `updatedAt`. `vendor` is `"posnet"`,
+  `"novitus"`, `"elzab"` or `null` until known; `vendor` and `uniqueNumber` may
+  remain while disconnected.
   With no lock: `appRunning:false`, no state;
   a snapshot left after a crash is ignored while stopped. A held lock with no
   snapshot returns `status_unavailable` (exit 1). During startup, an older

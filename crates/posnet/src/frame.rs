@@ -223,6 +223,7 @@ fn parameter(field: &str) -> String {
 /// Errors preflight cannot detect (POT-I-DEV-37 v5978, "Opisy błędów").
 const fn explanation(code: u32) -> &'static str {
     match code {
+        382 => " Nie można wykonać dwóch kolejnych zerowych raportów dobowych.",
         1039 | 2904 => " Pamięć chroniona zapełniona.",
         2036 => " Urządzenie w stanie tylko do odczytu.",
         2098 => " Pamięć fiskalna zapełniona.",

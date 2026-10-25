@@ -5,7 +5,7 @@ use std::{
 
 use fiscal::{
     decimal,
-    device::{Device, Problem, VatKind, VatRate, Vendor},
+    device::{Device, Problem, VatKind, VatRate, Vendor, valid_unique_number},
     driver::Driver,
     error::Error,
     journal::{Journal, Printed},
@@ -36,6 +36,11 @@ pub(crate) const PRINTER_ZONE: &str = "Europe/Warsaw";
 const EXEMPT_BASIS_POINTS: u32 = 10_000;
 /// Above 99.99 %, only the exempt 100 % slot is active.
 const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
+/// `ERR_RD_ZERO`: the printer refuses a second consecutive zero daily report before printing.
+const ZERO_DAILY_REPORT: u32 = 382;
+/// Non-letter, non-digit characters the printer compares; a name with none of these, no
+/// letter and no digit equals an empty name (p. 430).
+const SIGNIFICANT_SYMBOLS: &str = ",./\\%";
 
 #[derive(Debug)]
 pub struct Printer {
@@ -68,7 +73,7 @@ impl Driver for Printer {
 
     fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
-        device.require_ready()?;
+        device.require_resolvable()?;
         device.require_unique_number(unique_number)?;
         Ok(device)
     }
@@ -80,6 +85,18 @@ impl Driver for Printer {
         expected: &Device,
         journal: &mut dyn Journal,
     ) -> Result<Printed, Error> {
+        if receipt.lines().iter().any(|line| {
+            !line.name().chars().any(|character| {
+                character.is_alphabetic()
+                    || character.is_ascii_digit()
+                    || SIGNIFICANT_SYMBOLS.contains(character)
+            })
+        }) {
+            return Err(Error::Invalid(
+                "Nazwa usługi musi zawierać literę, cyfrę lub jeden ze znaków , . / \\ %."
+                    .to_owned(),
+            ));
+        }
         let mut session = self.session()?;
         let device = read_device(&mut session)?;
         device.require_ready()?;
@@ -203,11 +220,20 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
 
 fn refusal_is_certain(error: &Error, sent: &str) -> bool {
     // Only trend creates the receipt; preflight blocks any transaction left open by trinit.
-    // Never reissue it. Reports create the record, so only an ERR rejection is certain (pp. 13–15).
+    // Never reissue it. Reports create the record, so only an ERR rejection or a documented
+    // pre-print refusal is certain (pp. 13–15, 441).
     refuses(error, sent)
         && (sent == "trinit"
             || (matches!(sent, "dailyrep" | "monthlyrep" | "periodicrepbydates")
-                && matches!(error, Error::Device { rejected: true, .. })))
+                && matches!(error, Error::Device { rejected: true, .. }))
+            || (sent == "dailyrep"
+                && matches!(
+                    error,
+                    Error::Device {
+                        code: ZERO_DAILY_REPORT,
+                        ..
+                    }
+                )))
 }
 
 fn refuses(error: &Error, sent: &str) -> bool {
@@ -414,7 +440,7 @@ fn device_from(
 ) -> Result<Device, Error> {
     let name = identity.require("nm")?.to_owned();
     let version = identity.require("vr")?.to_owned();
-    let unique_number = identity.require("nu")?.to_owned();
+    let unique_number = canonical_unique_number(identity.require("nu")?);
     let fiscal = boolean(common.require("fs")?)?;
     let header = boolean(common.require("hr")?)?;
     let queue_empty = boolean(device.require("qe")?)?;
@@ -485,6 +511,22 @@ fn mechanism_problem(code: &str) -> Option<String> {
         "6" => "Nieprawidłowa temperatura lub zasilanie".to_owned(),
         other => format!("Błąd mechanizmu: {other}"),
     })
+}
+
+/// `getrealid` may separate the prefix as in `ABC 1234567890` (pp. 378, 391); Holuto binds
+/// `ABC1234567890`. Anything else stays verbatim, so readiness still rejects it.
+fn canonical_unique_number(raw: &str) -> String {
+    match raw.split_once(' ') {
+        Some((prefix, digits)) if prefix.len() == 3 => {
+            let joined = format!("{prefix}{digits}");
+            if valid_unique_number(&joined) {
+                joined
+            } else {
+                raw.to_owned()
+            }
+        },
+        _ => raw.to_owned(),
+    }
 }
 
 fn boolean(value: &str) -> Result<bool, Error> {

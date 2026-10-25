@@ -681,6 +681,7 @@
           "customerName",
           "occurredAt",
           "dueAt",
+          "latestAt",
           "isOverdue"
         ],
         "properties": {
@@ -709,13 +710,20 @@
           },
           "dueAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "When the receipt becomes due and should be printed without delay: sale completion or\nthe payment's recorded (credited) time."
           },
           "isOverdue": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Past `latest_at`."
           },
           "kind": {
             "$ref": "#/components/schemas/FiscalReceiptKind"
+          },
+          "latestAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The statutory hard limit: equal to `due_at`, except that a card, transfer or BLIK\nadvance, still due promptly, breaches the law only after the earlier of its local\nmonth's end and sale completion."
           },
           "occurredAt": {
             "type": "string",
@@ -893,6 +901,7 @@
                 "customerName",
                 "occurredAt",
                 "dueAt",
+                "latestAt",
                 "isOverdue"
               ],
               "properties": {
@@ -921,13 +930,20 @@
                 },
                 "dueAt": {
                   "type": "string",
-                  "format": "date-time"
+                  "format": "date-time",
+                  "description": "When the receipt becomes due and should be printed without delay: sale completion or\nthe payment's recorded (credited) time."
                 },
                 "isOverdue": {
-                  "type": "boolean"
+                  "type": "boolean",
+                  "description": "Past `latest_at`."
                 },
                 "kind": {
                   "$ref": "#/components/schemas/FiscalReceiptKind"
+                },
+                "latestAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "The statutory hard limit: equal to `due_at`, except that a card, transfer or BLIK\nadvance, still due promptly, breaches the law only after the earlier of its local\nmonth's end and sale completion."
                 },
                 "occurredAt": {
                   "type": "string",

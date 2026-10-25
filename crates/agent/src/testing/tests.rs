@@ -35,6 +35,7 @@ fn document(order: Uuid, allocation: Option<Uuid>, occurred_at: &str) -> Value {
         "orderId": order, "orderNumber": 10, "allocationId": allocation,
         "amount": "250.00", "customerName": null, "occurredAt": occurred_at,
         "dueAt": occurred_at,
+        "latestAt": occurred_at,
         "isOverdue": false
     })
 }
