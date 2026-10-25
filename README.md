@@ -260,10 +260,12 @@ truncated.
 - Persist the job, attempt and execution-start timestamp before dispatch;
   persist the result before sending it. A `done` result uses the printer clock
   (`rtcget` on Posnet, `#c` on Novitus, `XCR` on Elzab), interpreted in Polish
-  time, not the PC clock. Unreadable/ambiguous clocks fail before fiscal
-  commands. Resending a saved API result preserves its attempt and issue
-  time; it is not reprinting. Recovery reconciles durable evidence with server
-  state without replaying printer commands.
+  time, not the PC clock. Unreadable clocks fail before fiscal commands.
+  Novitus and Elzab also reject ambiguous or nonexistent Warsaw local times.
+  Posnet prefers offset-bearing `tm`; legacy offset-free `da` selects the
+  earlier instant in Warsaw's repeated autumn hour. Resending a saved API
+  result preserves its attempt and issue time; it is not reprinting. Recovery
+  reconciles durable evidence with server state without replaying commands.
 - Terminal server resolutions are authoritative, except against completed-print
   evidence: if the receipt printed but Holuto already marked the job `failed` or
   `expired`, the app keeps the journal, blocks and names the job and receipt

@@ -155,7 +155,9 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
 8. **Printer clock.** Capture `rtcget` / `#c` / `XCR` and compare with the
    operator-observed local date/time in Europe/Warsaw. Record precision, YY
    epoch, supported years and DST ambiguity behavior/vendor statement. Expected:
-   an unambiguous valid timestamp, never PC-clock substitution. Novitus/Elzab
+   no PC-clock substitution. Novitus/Elzab reject repeated or skipped Warsaw
+   local times; Posnet prefers offset-bearing `tm`, but legacy offset-free
+   `da` chooses the earlier instant in the repeated autumn hour. Novitus/Elzab
    currently accept 2000–2049; do not widen from a guess. **Fills:**
    `Printed.issued_at` and clock-parser qualification, no profile clock field.
 9. **Frames and response ordering.** Capture Novitus mode-3 switch ACK,
