@@ -166,6 +166,8 @@ fn read_only_printer_refuses_printing_but_allows_resolution() {
         expected.description(),
         "Drukarka jest w trybie tylko do odczytu"
     );
+    // The driver refuses monthly/periodic reports below, so the UI must not offer them.
+    assert!(!expected.periodic_reports_allowed());
     let _resolvable = driver.verify("ABC1234567890").unwrap();
     let mut log = Log::default();
     assert!(matches!(

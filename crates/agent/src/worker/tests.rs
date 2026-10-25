@@ -812,6 +812,48 @@ fn a_failed_queue_command_does_not_delay_the_following_report() {
 }
 
 #[test]
+fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
+    let sim = Simulator::start();
+    sim.set_vat([
+        "23,00", "8,00", "5,00", "0,00", "100,00", "7,00", "101,00",
+    ]);
+    let holuto = Holuto::new();
+    holuto.fault("POST", "/agent/jobs", problem(503));
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let mut received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    worker.submit(Command::Queue {
+        document: serde_json::from_value(document(1)).unwrap(),
+        buyer_nip: None,
+    });
+    let mut completed = false;
+    received.extend(receive_until(&events, |event| {
+        completed |= matches!(event, Event::CommandCompleted);
+        completed && matches!(event, Event::Documents { .. })
+    }));
+    let _stopped = stop(worker, &events);
+    let statuses: Vec<_> = received
+        .iter()
+        .filter_map(|event| match event {
+            Event::Status { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            "Łączenie z drukarką i Holuto…",
+            "Połączono: DEM0000000001. Oczekiwanie na zlecenia.",
+            "Pomijam nieobsługiwaną stawkę VAT w slocie F · 7%",
+            "Błąd: Holuto odpowiedziało błędem 503: backend unavailable",
+        ],
+        "an unchanged VAT table is not re-announced by each poll"
+    );
+}
+
+#[test]
 fn command_unauthorized_releases_the_submission_guard_then_stops() {
     let sim = Simulator::start();
     let holuto = Holuto::new();

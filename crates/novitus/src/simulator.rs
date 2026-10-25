@@ -516,19 +516,19 @@ fn request_body(raw: &[u8]) -> Option<String> {
     }
 }
 fn realtime_answer(byte: u8, state: &State) -> Option<Vec<u8>> {
+    let extended = if state.transaction || state.ending {
+        format!("@s0;{};{};FFFFFFFF;", state.receipts, state.receipts)
+    } else {
+        state.extended.clone()
+    };
+    // ENQ is synchronous: an off-line, paper-out, failed or busy printer leaves it unanswered.
+    let enq_unanswered =
+        state.dle & 0b111 != 0b100 || extended.split(';').nth(3) != Some("00000000");
     Some(match byte {
         DLE => vec![state.dle],
-        // ENQ is synchronous: an off-line, paper-out or failed printer leaves it unanswered.
-        ENQ if state.dle & 0b111 != 0b100 => Vec::new(),
+        ENQ if enq_unanswered => Vec::new(),
         ENQ => vec![state.enq | if state.transaction { 2 } else { 0 }],
-        DLE2 => {
-            let extended = if state.transaction || state.ending {
-                format!("@s0;{};{};FFFFFFFF;", state.receipts, state.receipts)
-            } else {
-                state.extended.clone()
-            };
-            frame::encode(&cp1250::encode(&extended)?)
-        },
+        DLE2 => frame::encode(&cp1250::encode(&extended)?),
         _ => return None,
     })
 }

@@ -370,23 +370,26 @@ fn read_readiness(session: &mut Session, problems: &mut Vec<Problem>) -> Result<
     match fields.clone().next() {
         Some("1") => {},
         Some("0") if cfg!(workshop_acceptance) => {},
-        // Read-only still permits resolution, which sends no commands.
-        Some("2") => problems.push(Problem::ReadOnly),
+        // Read-only still permits resolution, which sends no commands. Reports stay
+        // refused until a read-only report is qualified.
+        Some("2") => problems.push(Problem::ReadOnly {
+            periodic_reports: false,
+        }),
         _ => problems.push("Drukarka nie jest w czynnym trybie fiskalnym".into()),
     }
     if fields.clone().nth(5) != Some("0") {
         problems.push("Nieobsługiwany typ drukarki fiskalnej".into());
     }
     let dle = DleStatus::decode(session.realtime(DLE)?)?;
-    // ENQ is synchronous: an off-line, paper-out or failed printer may never answer it.
+    // ENQ is synchronous: an off-line, paper-out, failed or busy printer may never answer it,
+    // so it is sent only after the asynchronous DLE and DLE2 show nothing.
     let busy = !dle.online || dle.paper_or_battery || dle.mechanism_error || {
-        let enq = EnqStatus::decode(session.realtime(ENQ)?)?;
         let extended = session.extended_status()?;
         // Zero flags prove idle without guessing DLE2's byte-label ordering.
-        (!enq.fiscal && !cfg!(workshop_acceptance))
-            || enq.transaction
-            || extended.flags_wire != [0; 4]
-            || extended.last_error != 0
+        extended.flags_wire != [0; 4] || extended.last_error != 0 || {
+            let enq = EnqStatus::decode(session.realtime(ENQ)?)?;
+            (!enq.fiscal && !cfg!(workshop_acceptance)) || enq.transaction
+        }
     };
     if busy {
         problems.push("Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi".into());

@@ -12,6 +12,11 @@ use fiscal::{
 
 use crate::{profile::Profile, text};
 
+/// Silence beyond twice a step's timeout, with no operator wait in DLE, is uncertain.
+const LINE_TIMEOUT: Duration = Duration::from_secs(10);
+/// `$y` and the closing `$z` print the summary, payments, fiscal logo and cut.
+const END_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Debug)]
 pub(crate) struct Step {
     pub command: &'static str,
@@ -19,11 +24,11 @@ pub(crate) struct Step {
     pub timeout: Duration,
 }
 impl Step {
-    pub(crate) const fn new(command: &'static str, body: String) -> Self {
+    pub(crate) const fn new(command: &'static str, body: String, timeout: Duration) -> Self {
         Self {
             command,
             body,
-            timeout: Duration::from_secs(3),
+            timeout,
         }
     }
 }
@@ -97,9 +102,9 @@ pub(crate) fn steps(
         },
         None => "0$h".to_owned(),
     };
-    let mut steps = vec![Step::new("$h", begin)];
+    let mut steps = vec![Step::new("$h", begin, LINE_TIMEOUT)];
     if let Some(nip) = receipt.buyer_nip() {
-        steps.push(Step::new("$z", format!("100;1$z{nip}\r")));
+        steps.push(Step::new("$z", format!("100;1$z{nip}\r"), LINE_TIMEOUT));
     }
     let mut remaining = receipt
         .advances()
@@ -118,6 +123,7 @@ pub(crate) fn steps(
                 decimal::format(line.price().get(), 2),
                 decimal::format(line.total().get(), 2)
             ),
+            LINE_TIMEOUT,
         ));
         // First-match advance allocation is unverified; acceptance only.
         if let Some((_, remaining)) = remaining.iter_mut().find(|(vat, _)| *vat == line.vat()) {
@@ -131,6 +137,7 @@ pub(crate) fn steps(
                         decimal::format(amount, 2),
                         decimal::format(line.total().get() - amount, 2)
                     ),
+                    LINE_TIMEOUT,
                 ));
                 *remaining -= amount;
             }
@@ -151,14 +158,16 @@ pub(crate) fn steps(
         steps.push(Step::new(
             "$b",
             format!("1;{kind}$b{}/\r", decimal::format(payment.amount.get(), 2)),
+            LINE_TIMEOUT,
         ));
     }
     let total = decimal::format(receipt.fiscal_total().get(), 2);
     steps.push(Step::new(
         "$y",
         format!("0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r{total}/0/0/{total}/0/"),
+        END_TIMEOUT,
     ));
-    steps.push(Step::new("$z", "12$z".to_owned()));
-    steps.push(Step::new("$z", "28;0$z".to_owned()));
+    steps.push(Step::new("$z", "12$z".to_owned(), END_TIMEOUT));
+    steps.push(Step::new("$z", "28;0$z".to_owned(), END_TIMEOUT));
     Ok(steps)
 }

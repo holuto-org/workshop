@@ -361,9 +361,12 @@ fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(),
                 .into(),
         );
     }
-    // Read-only still permits resolution, which sends no commands.
+    // Read-only still permits resolution, which sends no commands. Reports stay refused
+    // until a read-only report is qualified.
     if two & 4 == 0 {
-        problems.push(Problem::ReadOnly);
+        problems.push(Problem::ReadOnly {
+            periodic_reports: false,
+        });
     }
     // Reminder-only and overdue-daily bits must not prevent the daily report.
     if !daily && two & (1_u128 << 115) != 0 {

@@ -107,7 +107,8 @@ impl<'dir> Agent<'dir> {
         mem::take(&mut self.news)
     }
 
-    /// Updates telemetry and warns about active VAT rates unsupported by Holuto.
+    /// Updates telemetry and, when the description changes, warns about active VAT rates
+    /// unsupported by Holuto; polls must not repeat the warning over command results.
     pub(crate) fn describe(&mut self, device: PrinterDevice) -> Result<Vec<String>, Error> {
         if device.unique_number != self.api.unique_number() {
             return Err(Error::Blocked(format!(
@@ -117,20 +118,21 @@ impl<'dir> Agent<'dir> {
                 self.api.unique_number()
             )));
         }
-        self.telemetry_changed |= self.status.as_ref().is_none_or(|prior| {
+        let changed = self.status.as_ref().is_none_or(|prior| {
             prior.vendor != device.vendor
                 || prior.model != device.model
                 || prior.firmware != device.firmware
                 || prior.vat != device.vat
                 || prior.capabilities != device.capabilities
         });
+        self.telemetry_changed |= changed;
         let skipped = if device.describable_capabilities().is_some() {
             self.telemetry.describe(&device)
         } else {
             Vec::new()
         };
         self.status = Some(device);
-        Ok(skipped)
+        Ok(if changed { skipped } else { Vec::new() })
     }
 
     /// `false` means local identity/readiness cannot yet be advertised.

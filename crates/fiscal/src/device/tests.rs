@@ -80,13 +80,20 @@ fn daily_report_eligibility_only_ignores_overdue_reports_for_every_vendor() {
 }
 
 #[test]
-fn read_only_mode_still_allows_monthly_and_periodic_reports_and_resolution() {
+fn read_only_mode_allows_reports_only_when_permitted_and_always_allows_resolution() {
+    let reporting = Problem::ReadOnly {
+        periodic_reports: true,
+    };
+    let silent = Problem::ReadOnly {
+        periodic_reports: false,
+    };
     for (problems, ready, daily, periodic, resolvable) in [
         (vec![], true, true, true, true),
-        (vec![Problem::ReadOnly], false, false, true, true),
+        (vec![reporting.clone()], false, false, true, true),
+        (vec![silent], false, false, false, true),
         (vec![Problem::DailyReportOverdue], false, true, false, true),
         (
-            vec![Problem::ReadOnly, "Brak papieru".into()],
+            vec![reporting, "Brak papieru".into()],
             false,
             false,
             false,
@@ -118,7 +125,9 @@ fn read_only_mode_still_allows_monthly_and_periodic_reports_and_resolution() {
         model: String::new(),
         firmware: String::new(),
         unique_number: "TST0000000001".to_owned(),
-        problems: vec![Problem::ReadOnly],
+        problems: vec![Problem::ReadOnly {
+            periodic_reports: false,
+        }],
         vat: vec![],
         capabilities: Capabilities::default(),
     };

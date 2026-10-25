@@ -151,7 +151,7 @@ impl Driver for Printer {
             ));
         }
         let mut session = self.session()?;
-        let device = read_device(&mut session)?;
+        let (device, fiscal) = read_status(&mut session)?;
         if matches!(report, Report::Daily) {
             device.require_ready()?;
         } else {
@@ -170,7 +170,7 @@ impl Driver for Printer {
                 let first = Date::new(year, month, 1).map_err(|error| {
                     Error::Invalid(format!("Nieprawidłowy miesiąc raportu: {error}."))
                 })?;
-                require_report_dates(&mut session, first, first.last_of_month(), today)?;
+                require_report_dates(&mut session, fiscal, first, first.last_of_month(), today)?;
                 // A monthly report prints the periodic report for that month (p. 216).
                 Step {
                     command: "monthlyrep",
@@ -179,7 +179,7 @@ impl Driver for Printer {
                 }
             },
             Report::Periodic { from, to, summary } => {
-                require_report_dates(&mut session, from, to, today)?;
+                require_report_dates(&mut session, fiscal, from, to, today)?;
                 Step {
                     command: "periodicrepbydates",
                     params: vec![
@@ -197,11 +197,14 @@ impl Driver for Printer {
     }
 }
 
+/// Refuses report dates the printer would refuse with an uncertain outcome.
+///
 /// The printer refuses a range starting after its date or ending before its fiscalisation
-/// before printing (`ERR_REP_PER_DATE_START_GT_CURR`, `ERR_REP_PER_DATE_END_GT_FISK`, p. 441),
-/// but such a refusal is not certain, so the range is checked before dispatch.
+/// before printing (`ERR_REP_PER_DATE_START_GT_CURR`, `ERR_REP_PER_DATE_END_GT_FISK`,
+/// p. 441), but that refusal is not certain.
 fn require_report_dates(
     session: &mut Session,
+    fiscal: bool,
     from: Date,
     to: Date,
     today: Date,
@@ -212,32 +215,20 @@ fn require_report_dates(
             today.strftime("%d.%m.%Y")
         )));
     }
-    if let Some(fiscalised) = fiscalisation_date(session)?
-        && to < fiscalised
-    {
-        return Err(Error::Invalid(format!(
-            "Raport nie może kończyć się przed fiskalizacją drukarki ({}).",
-            fiscalised.strftime("%d.%m.%Y")
-        )));
+    // Only a fiscal printer has a fiscalisation record (p. 405); demo mode is acceptance-only.
+    if fiscal {
+        let fiscalised = civil_date(&session.command("fmrecfisc", &[], DEFAULT_TIMEOUT)?)
+            .ok_or_else(|| {
+                Error::Protocol("Nie można odczytać daty fiskalizacji drukarki.".to_owned())
+            })?;
+        if to < fiscalised {
+            return Err(Error::Invalid(format!(
+                "Raport nie może kończyć się przed fiskalizacją drukarki ({}).",
+                fiscalised.strftime("%d.%m.%Y")
+            )));
+        }
     }
     Ok(())
-}
-
-/// Demo-mode printers, allowed only in acceptance builds, have no fiscalisation record
-/// (p. 405).
-fn fiscalisation_date(session: &mut Session) -> Result<Option<Date>, Error> {
-    if cfg!(workshop_acceptance)
-        && !boolean(
-            session
-                .command("scomm", &[], DEFAULT_TIMEOUT)?
-                .require("fs")?,
-        )?
-    {
-        return Ok(None);
-    }
-    civil_date(&session.command("fmrecfisc", &[], DEFAULT_TIMEOUT)?)
-        .map(Some)
-        .ok_or_else(|| Error::Protocol("Nie można odczytać daty fiskalizacji drukarki.".to_owned()))
 }
 
 /// `da` is `YYYY-MM-DD;HH:MM` printer civil time; reports take only the date.
@@ -468,6 +459,11 @@ fn clock(session: &mut Session) -> Result<Timestamp, Error> {
 }
 
 fn read_device(session: &mut Session) -> Result<Device, Error> {
+    read_status(session).map(|(device, _fiscal)| device)
+}
+
+/// The device and its `scomm.fs` fiscal mode, which acceptance builds do not require.
+fn read_status(session: &mut Session) -> Result<(Device, bool), Error> {
     let identity = session.command("getrealid", &[], DEFAULT_TIMEOUT)?;
     let device = session.command("sdev", &[], DEFAULT_TIMEOUT)?;
     let mechanism = session.command("sprn", &[], DEFAULT_TIMEOUT)?;
@@ -488,7 +484,7 @@ fn device_from(
     common: &Reply,
     transaction: &Reply,
     vat: &Reply,
-) -> Result<Device, Error> {
+) -> Result<(Device, bool), Error> {
     let name = identity.require("nm")?.to_owned();
     let version = identity.require("vr")?.to_owned();
     let unique_number = canonical_unique_number(identity.require("nu")?);
@@ -529,8 +525,11 @@ fn device_from(
         problems.push("Drukarka ma oczekujące polecenia".into());
     }
     problems.extend(mechanism_problem(mechanism.require("pr")?).map(Problem::Blocking));
+    // The specification permits monthly and periodic reports in read-only mode.
     if boolean(common.require("td")?)? {
-        problems.push(Problem::ReadOnly);
+        problems.push(Problem::ReadOnly {
+            periodic_reports: true,
+        });
     }
     if device.require("tl")? != "0" {
         problems.push("Zasoby transakcji są zajęte przez inny interfejs".into());
@@ -541,7 +540,7 @@ fn device_from(
     if !rates.iter().any(|rate| rate.active()) {
         problems.push("Brak aktywnych stawek VAT".into());
     }
-    Ok(Device {
+    let device = Device {
         vendor: Vendor::Posnet,
         model: name,
         firmware: version,
@@ -549,7 +548,8 @@ fn device_from(
         problems,
         vat: rates,
         capabilities: capabilities(),
-    })
+    };
+    Ok((device, fiscal))
 }
 
 /// Mechanism `pr` codes (spec p. 384); `None` when ready.

@@ -92,7 +92,9 @@ fn a_read_only_printer_offers_monthly_and_periodic_reports_but_not_the_daily_rep
         .as_mut()
         .unwrap()
         .problems
-        .push(Problem::ReadOnly);
+        .push(Problem::ReadOnly {
+            periodic_reports: true,
+        });
     let mut commands = Vec::new();
     for action in [
         Action::DailyReport,

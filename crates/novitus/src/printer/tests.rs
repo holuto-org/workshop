@@ -155,6 +155,8 @@ fn read_only_printer_refuses_printing_but_allows_resolution() {
         expected.description(),
         "Drukarka jest w trybie tylko do odczytu"
     );
+    // The driver refuses monthly/periodic reports below, so the UI must not offer them.
+    assert!(!expected.periodic_reports_allowed());
     let _resolvable = driver.verify("ABC1234567890").unwrap();
     let mut log = Log::default();
     assert!(matches!(
@@ -447,22 +449,32 @@ fn non_cp1250_output_reports_the_code_page_instead_of_a_corrupt_header() {
 }
 
 #[test]
-fn dle_problem_is_reported_without_waiting_for_an_unanswered_enq() {
-    // Paper out, mechanism error, off-line.
-    for dle in [0x76, 0x75, 0x70] {
+fn dle_or_dle2_problem_is_reported_without_waiting_for_an_unanswered_enq() {
+    // Paper out, mechanism error, off-line; then a healthy DLE with DLE2 activity flags.
+    for (dle, extended) in [
+        (0x76, "@s0;0;0;00000000;"),
+        (0x75, "@s0;0;0;00000000;"),
+        (0x70, "@s0;0;0;00000000;"),
+        (0x74, "@s0;0;0;00000080;"),
+        (0x74, "@s0;0;0;01000000;"),
+    ] {
         let sim = Simulator::start();
         supported(&sim);
-        sim.set_status(dle, 0x6D, "@s0;0;0;00000000;");
+        sim.set_status(dle, 0x6D, extended);
         let device = printer(&sim).probe().unwrap();
         assert_eq!(
             device.description(),
             "Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi",
-            "DLE {dle:#04X}"
+            "DLE {dle:#04X}, {extended}"
         );
         let found = identify(sim.link().as_ref(), &connection(&sim))
             .unwrap()
             .unwrap();
-        assert_eq!(found.description(), device.description(), "DLE {dle:#04X}");
+        assert_eq!(
+            found.description(),
+            device.description(),
+            "DLE {dle:#04X}, {extended}"
+        );
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }
 }
