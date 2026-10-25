@@ -65,7 +65,7 @@ pub struct Advance {
 }
 
 /// Quantity in hundred-millionths, up to 9 999 999 999 with at most eight decimal places.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Quantity(u64);
 
 impl Quantity {

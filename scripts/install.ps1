@@ -187,7 +187,7 @@ function Invoke-HolutoInstall {
             $staged = Join-Path $directory ('.workshop-' + [Guid]::NewGuid().ToString('N') + '.exe')
             [IO.File]::Copy($artifact, $staged, $false)
             # Explicitly preserve the ADS even if a filesystem/copy implementation omits streams.
-            [IO.File]::WriteAllText($staged + ':Zone.Identifier', [IO.File]::ReadAllText($artifact + ':Zone.Identifier'), [Text.Encoding]::ASCII)
+            [IO.File]::WriteAllText($staged + ':Zone.Identifier', $zone, [Text.Encoding]::ASCII)
             if ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected) {
                 throw 'Staged executable SHA-256 mismatch; existing installation was not replaced.'
             }
