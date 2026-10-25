@@ -5,7 +5,6 @@ set -euo pipefail
 repo=holuto-org/workshop
 release=
 dry_run=0
-release_seen=0
 work=
 staging=
 mounted=0
@@ -77,11 +76,10 @@ trap 'exit 143' TERM
 while (($#)); do
   case $1 in
     --release)
-      ((release_seen == 0)) || fail '--release may only be supplied once.'
+      [[ -z $release ]] || fail '--release may only be supplied once.'
       (($# >= 2)) || fail '--release requires vX.Y.Z.'
       release=$2
       valid_release "$release" || fail 'Release must be a stable tag vX.Y.Z (without leading zeroes).'
-      release_seen=1
       shift 2
       ;;
     --dry-run)

@@ -95,7 +95,6 @@ done
 # Wrong architecture, baseline, or Rosetta selection must be visible without writes.
 for row in 'x86_64 0 11.0 workshop-mac-x64.dmg' 'arm64 1 14.0 workshop-mac-arm64.dmg' 'x86_64 1 12.3 workshop-mac-arm64.dmg'; do
   read -r FIXTURE_ARCH FIXTURE_ARM FIXTURE_MAC expected <<< "$row"
-  export FIXTURE_ARCH FIXTURE_ARM FIXTURE_MAC
   run --release v1.2.3 --dry-run
   [[ $status == 0 ]] || fail "supported macOS dry-run failed"
   contains "https://github.com/holuto-org/workshop/releases/download/v1.2.3/$expected"
@@ -137,7 +136,6 @@ if [[ $("$FIXTURE_REAL_UNAME" -s) == Linux ]]; then
     FIXTURE_GLIBC='musl 1.2.5'
     run --release v1.2.3 --dry-run
     [[ $status != 0 ]] || fail 'accepted non-glibc Linux'
-    FIXTURE_GLIBC='glibc 2.39'
   else
     contains 'Unsupported Linux distribution'
     printf 'Native Linux distribution rejected; supported Linux paths need Ubuntu/Debian CI.\n'
@@ -146,7 +144,7 @@ if [[ $("$FIXTURE_REAL_UNAME" -s) == Linux ]]; then
 fi
 
 # Default resolution is a single HEAD, never an artifact download during dry-run.
-FIXTURE_OS=Darwin FIXTURE_ARCH=x86_64 FIXTURE_MAC=11.0 FIXTURE_ARM=0
+FIXTURE_OS=Darwin FIXTURE_ARCH=x86_64
 FIXTURE_DOWNLOAD=allowed
 run --dry-run
 [[ $status == 0 ]] || fail 'latest resolution dry-run failed'
@@ -178,7 +176,6 @@ if ((EUID != 0)); then
   rm "$HOME/.local/bin/workshop"
   ln -s "$HOME/Applications/Holuto Workshop.app/Contents/MacOS/workshop" "$HOME/.local/bin/workshop"
   for FIXTURE_MANIFEST in bad missing duplicate mismatch valid; do
-    export FIXTURE_MANIFEST
     if [[ $FIXTURE_MANIFEST == valid ]]; then
       if command -v sha256sum >/dev/null 2>&1; then
         FIXTURE_DIGEST=$(printf 'fixture artifact\n' | sha256sum)

@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Fresh state, no configured printer, no Start action: never touches a serial device.
+# verify.sh's fresh state, no configured printer, no Start action: never touches a serial device.
 set -euo pipefail
 binary=$1
 state=$2
-mkdir -p "$state/home" "$state/state" "$state/config"
-export HOME="$state/home" XDG_STATE_HOME="$state/state" XDG_CONFIG_HOME="$state/config"
 export WINIT_UNIX_BACKEND=x11
 unset WAYLAND_DISPLAY
 mkfifo "$state/display"
@@ -39,7 +37,7 @@ if xdotool search --all --onlyvisible --pid "$pid" --name 'błąd'; then
   echo 'Startup error window appeared' >&2; exit 1
 fi
 geometry=$(xdotool getwindowgeometry --shell "$window")
-width=$(printf '%s\n' "$geometry" | grep '^WIDTH=' | cut -d= -f2)
-height=$(printf '%s\n' "$geometry" | grep '^HEIGHT=' | cut -d= -f2)
-[[ $width -ge 1040 && $height -ge 720 ]]
-printf 'Verified main window: %s (%s × %s)\n' "$window" "$width" "$height"
+# --shell prints WINDOW/X/Y/WIDTH/HEIGHT/SCREEN assignments.
+eval "$geometry"
+[[ $WIDTH -ge 1040 && $HEIGHT -ge 720 ]]
+printf 'Verified main window: %s (%s × %s)\n' "$window" "$WIDTH" "$HEIGHT"

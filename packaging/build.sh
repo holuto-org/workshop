@@ -86,16 +86,10 @@ PY
 
     # Include dlopened display libraries, TLS roots and Warsaw timezone data too.
     depends="libc6 (>= $glibc_version), libgcc-s1, libfontconfig1, fonts-dejavu-core, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, ca-certificates, tzdata"
-    VERSION="$version" ARCH="$deb_arch" DEPENDS="$depends" python3 - "$package/DEBIAN/control" <<'PY'
-import os
-import pathlib
-import sys
-
-control = pathlib.Path("packaging/linux/control.in").read_text()
-for key in ("VERSION", "ARCH", "DEPENDS"):
-    control = control.replace(f"@{key}@", os.environ[key])
-pathlib.Path(sys.argv[1]).write_text(control)
-PY
+    control=$(< packaging/linux/control.in)
+    control=${control//@VERSION@/"$version"}
+    control=${control//@ARCH@/"$deb_arch"}
+    printf '%s\n' "${control//@DEPENDS@/"$depends"}" > "$package/DEBIAN/control"
     chmod 755 "$package" "$package/DEBIAN"
     dpkg-deb --root-owner-group -Zxz --build "$package" "release/$stem.deb"
     ;;
