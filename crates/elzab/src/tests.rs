@@ -425,7 +425,7 @@ fn nested_lpc_refusal_prevents_open_while_status_reports_ready() {
     assert_eq!(log.commands, Vec::<&str>::new());
     assert_eq!(fiscal(&sim), Vec::<String>::new());
     sim.set_receipt_permission(0);
-    driver
+    let _printed = driver
         .print_receipt(&receipt(0, false), &expected, &mut Log::default())
         .unwrap();
     assert_eq!(sim.receipts(), 1);

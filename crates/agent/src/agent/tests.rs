@@ -181,7 +181,7 @@ fn completed_crash_recovers_done_and_preserves_printer_issue_time() -> TestResul
         },
         None,
     )?;
-    Journal::new(&dir).save(&Operation::Receipt(operation.clone()))?;
+    Journal::new(&dir).save(&Operation::Receipt(operation))?;
     let mut agent = agent(&sim, &dir, &server)?;
     assert_eq!(agent.settle()?, None);
     assert_eq!(server.job(JOB_ID)["receiptNumber"], "41");

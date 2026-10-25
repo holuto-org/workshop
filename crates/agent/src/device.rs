@@ -49,7 +49,9 @@ pub fn detect(
                 if failure.is_denied() && denied.is_none() {
                     denied = Some(connection.port.clone());
                 }
-                error = failure;
+                if !matches!(error, Error::Unsupported(_)) {
+                    error = failure;
+                }
             },
         }
     }
@@ -68,6 +70,12 @@ pub fn detect(
             Err(failure) => {
                 if failure.is_denied() && denied.is_none() {
                     denied = Some(candidate_connection.port);
+                }
+                // An answering but unsupported printer explains more than silent ports.
+                if matches!(failure, Error::Unsupported(_))
+                    && !matches!(error, Error::Unsupported(_))
+                {
+                    error = failure;
                 }
             },
         }
@@ -103,7 +111,8 @@ fn probe(
         match identify(link, connection, vendor) {
             Ok(Some(device)) => return Ok((vendor, device)),
             Ok(None) => {},
-            Err(failure @ Error::Open { .. }) => return Err(failure),
+            // Open: the port is unusable. Unsupported: this port's brand already answered.
+            Err(failure @ (Error::Open { .. } | Error::Unsupported(_))) => return Err(failure),
             Err(failure) => error = failure,
         }
     }
