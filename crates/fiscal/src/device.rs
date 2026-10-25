@@ -74,7 +74,7 @@ impl Capabilities {
 }
 
 /// Readiness failures shared by drivers, independent of vendor status bits.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Problem {
     Blocking(String),
     DailyReportOverdue,

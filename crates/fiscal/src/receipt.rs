@@ -58,7 +58,7 @@ pub struct Payment {
 }
 
 /// Already-invoiced advance deducted from sales in the same VAT slot.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Advance {
     pub vat: VatSlot,
     pub amount: Grosze,
@@ -111,7 +111,7 @@ impl fmt::Display for Quantity {
 }
 
 /// Gross prices; the printer computes VAT.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Line {
     name: String,
     quantity: Quantity,

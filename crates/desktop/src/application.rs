@@ -4,7 +4,7 @@ pub(crate) mod macos;
 #[path = "application/preferences.rs"]
 mod preferences;
 
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::VecDeque, fmt::Display, rc::Rc, sync::Arc};
 
 use agent::{
     history,
@@ -279,9 +279,15 @@ impl Application {
                     .map(|writer| slot.insert(writer))
             },
         };
+        let description = if is_status {
+            "stanu aplikacji"
+        } else {
+            "ustawień"
+        };
+        let failed = |error: &dyn Display| format!("Nie można zapisać {description}: {error}");
         let submitted = writer
-            .map_err(|error| error.to_string())
-            .and_then(|writer| writer.submit(request).map_err(|error| error.to_string()));
+            .map_err(|error| failed(&error))
+            .and_then(|writer| writer.submit(request).map_err(|error| failed(&error)));
         match submitted {
             Ok(()) => {
                 self.writes_pending.push_back(if is_status {
@@ -292,16 +298,8 @@ impl Application {
                 self.model.saving |= !is_status;
                 true
             },
-            Err(error) => {
-                let description = if is_status {
-                    "stanu aplikacji"
-                } else {
-                    "ustawień"
-                };
-                self.model.say(
-                    format!("Nie można zapisać {description}: {error}"),
-                    Tone::Error,
-                );
+            Err(message) => {
+                self.model.say(message, Tone::Error);
                 false
             },
         }

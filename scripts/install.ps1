@@ -74,7 +74,7 @@ function Get-HolutoLatestRelease {
 }
 
 function Get-HolutoExpectedHash {
-    param([AllowEmptyString()][string]$ManifestText, [string]$Asset)
+    param([string]$ManifestText, [string]$Asset)
     $escaped = [Regex]::Escape($Asset)
     $entries = @($ManifestText -split '\r?\n' | Where-Object { $_ -cmatch ('(?:\A|[ \t*])' + $escaped + '\z') })
     if ($entries.Count -ne 1 -or $entries[0] -cnotmatch ('\A([0-9a-fA-F]{64}) [ *]' + $escaped + '\z')) {
@@ -104,7 +104,7 @@ function Assert-HolutoPlainPath {
 }
 
 function Get-HolutoPathWithDirectory {
-    param([AllowNull()][AllowEmptyString()][string]$Path, [string]$Directory)
+    param([string]$Path, [string]$Directory)
     foreach ($entry in ($Path -split ';')) {
         $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim().Trim('"')).TrimEnd([char[]]'\/')
         if ([StringComparer]::OrdinalIgnoreCase.Equals($expanded, $Directory.TrimEnd([char[]]'\/'))) { return $Path }
@@ -208,12 +208,11 @@ function Invoke-HolutoInstall {
                 $shortcut.Save()
             } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
         } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell) }
-        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-        $updatedUserPath = Get-HolutoPathWithDirectory -Path $userPath -Directory $directory
-        if ($updatedUserPath -cne $userPath) { [Environment]::SetEnvironmentVariable('Path', $updatedUserPath, 'User') }
-        $processPath = [Environment]::GetEnvironmentVariable('Path', 'Process')
-        $updatedProcessPath = Get-HolutoPathWithDirectory -Path $processPath -Directory $directory
-        if ($updatedProcessPath -cne $processPath) { [Environment]::SetEnvironmentVariable('Path', $updatedProcessPath, 'Process') }
+        foreach ($scope in 'User', 'Process') {
+            $current = [Environment]::GetEnvironmentVariable('Path', $scope)
+            $updated = Get-HolutoPathWithDirectory -Path $current -Directory $directory
+            if ($updated -cne $current) { [Environment]::SetEnvironmentVariable('Path', $updated, $scope) }
+        }
         Write-Output 'Installation complete. The app was not launched. Open Holuto Workshop from the Start Menu, or run workshop, when ready.'
         Write-Output 'Internet-zone protection is retained. If SmartScreen appears, review the publisher and approve manually only if you trust this release; do not disable protection.'
         Write-Output 'If script signing policy prevents this installer, use the verified release EXE and create a per-user shortcut manually; do not bypass execution policy.'
