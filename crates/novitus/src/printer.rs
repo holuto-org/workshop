@@ -98,11 +98,7 @@ impl Driver for Printer {
         let profile = checked
             .profile
             .ok_or_else(|| Error::NotReady("Nieznany profil drukarki Novitus.".to_owned()))?;
-        let footer = (!checked
-            .header
-            .to_lowercase()
-            .contains(&receipt.brand().to_lowercase()))
-        .then_some(receipt.brand());
+        let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
         let steps = receipt::steps(receipt, footer, &profile)?;
         dispatch(&mut session, &steps, journal)?;
         // Failed readback must not turn a completed print into a retry.

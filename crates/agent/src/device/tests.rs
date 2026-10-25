@@ -299,6 +299,16 @@ fn remembered_elzab_with_unsupported_model_gets_no_foreign_probe() {
     assert_eq!(elzab_frame::decode(only).unwrap().1, b"XTR");
 }
 
+#[test]
+fn automatic_port_without_any_printer_reports_no_printer_without_opening_a_port() {
+    let link = RoutingLink::new(Vec::new());
+    let error = detect(Arc::<RoutingLink>::clone(&link), connection(""), None, true)
+        .err()
+        .unwrap();
+    assert!(matches!(error, Error::NoPort), "{error:?}");
+    assert_eq!(*link.opened.lock().unwrap(), Vec::<String>::new());
+}
+
 #[derive(Debug)]
 struct Denied;
 impl Link for Denied {

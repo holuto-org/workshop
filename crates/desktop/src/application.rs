@@ -11,7 +11,7 @@ use agent::{
     settings::Settings,
     status::Snapshot,
     store::StateDir,
-    worker::{Command, Event, Tone, Worker},
+    worker::{self, Command, Event, Tone, Worker},
 };
 use fiscal::link::{Link, serial_ports};
 use jiff::{Zoned, civil::Date};
@@ -127,6 +127,10 @@ impl Application {
 
     fn launch(&mut self) -> Result<(), slint::PlatformError> {
         self.reload_history();
+        // A block outlives restarts; `workshop status` must show it before Start.
+        let block = worker::journal_block(&self.dir);
+        self.model.blocked = block.blocked;
+        self.model.report_unresolved = block.report_unresolved;
         self.open()?;
         #[cfg(unix)]
         if let Err(error) = quit_on_session_end() {

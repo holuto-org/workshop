@@ -33,12 +33,22 @@ pub(crate) fn amount(amount: Grosze) -> String {
 }
 fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Result<(), Error> {
     let caps = &profile.capabilities;
-    if (!receipt.advances().is_empty() && !caps.advance_deductions)
-        || (receipt.fiscal_total() == Grosze::ZERO && !caps.zero_total_receipts)
-        || (footer.is_some() && !caps.company_footer)
-    {
+    if !receipt.advances().is_empty() && !caps.advance_deductions {
         return Err(Error::Invalid(
-            "Profil Elzab nie obsługuje tego rozliczenia lub tekstu firmy.".to_owned(),
+            "Drukarka nie obsługuje rozliczenia zaliczek.".to_owned(),
+        ));
+    }
+    if receipt.fiscal_total() == Grosze::ZERO && !caps.zero_total_receipts {
+        return Err(Error::Invalid(
+            "Drukarka nie obsługuje paragonu opłaconego w całości zaliczkami.".to_owned(),
+        ));
+    }
+    // The name stays out of the message: failure reasons are stored and sent onward.
+    if footer.is_some() && !caps.company_footer {
+        return Err(Error::Invalid(
+            "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka nie drukuje jej \
+             w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem drukarki."
+                .to_owned(),
         ));
     }
     if receipt.lines().len() > caps.max_lines

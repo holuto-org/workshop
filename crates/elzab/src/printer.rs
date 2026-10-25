@@ -96,11 +96,7 @@ impl Driver for Printer {
         let profile = checked
             .profile
             .ok_or_else(|| Error::NotReady("Nieznany profil Elzab.".to_owned()))?;
-        let footer = (!checked
-            .header
-            .to_lowercase()
-            .contains(&receipt.brand().to_lowercase()))
-        .then_some(receipt.brand());
+        let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
         let steps = receipt::steps(receipt, footer, &profile)?;
         // LPC's nested error must be checked, even when outer error is empty.
         let permission = query(&mut session, "LPC", "LPC\x1dA1")?;
@@ -366,24 +362,16 @@ fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(),
     if three > u128::from(u32::MAX) {
         return Err(frame::corrupt());
     }
-    let any = |value: u128, bits: &[u32]| bits.iter().any(|bit| value & (1_u128 << bit) != 0);
-    if any(one, &[123, 122, 115, 103, 102])
-        || any(
-            two,
-            &[
-                122, 101, 100, 99, 90, 87, 82, 81, 78, 77, 70, 68, 67, 66, 65, 64, 0,
-            ],
-        )
-        || (two & 8 != 0 && !cfg!(workshop_acceptance))
-        || ![102, 98].iter().all(|bit| two & (1_u128 << bit) != 0)
-        || any(three, &[4, 3, 2, 1, 0])
-        || three & (1 << 5) == 0
-    {
-        problems.push(
-            "Drukarka Elzab niegotowa: tryb, pamięć, zasilanie, otwarty dokument \
-             lub mechanizm/papier"
-                .into(),
-        );
+    let packages = [one, two, three];
+    let bit = |&(package, bit): &(usize, u32)| {
+        packages
+            .get(package)
+            .is_some_and(|value| (value >> bit) & 1 == 1)
+    };
+    for cause in &CAUSES {
+        if cause.set.iter().any(bit) || !cause.cleared.iter().all(bit) {
+            problems.push(cause.message.into());
+        }
     }
     // Read-only still permits resolution, which sends no commands. Reports stay refused
     // until a read-only report is qualified.
@@ -398,6 +386,83 @@ fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(),
     }
     Ok(())
 }
+/// Operator-facing `ySR` blocker, as (package index, bit) pairs.
+struct Cause {
+    message: &'static str,
+    /// Any of these set blocks.
+    set: &'static [(usize, u32)],
+    /// Any of these cleared blocks.
+    cleared: &'static [(usize, u32)],
+}
+/// Bit meanings from the `<status_package_ONLINE>` table of the `ElzabSTX` protocol for
+/// fiscal printers; listed in the order operators see them.
+const CAUSES: [Cause; 9] = [
+    Cause {
+        message: "Drukarka Elzab wymaga serwisu: pamięć, inicjalizacja lub blokada sprzedaży",
+        // RAM cleared or forced clear; no fiscal memory, service jumper, limited operation,
+        // sales blocked, pending currency change, no manufacturer; not server-initialized.
+        set: &[
+            (0, 123),
+            (0, 122),
+            (1, 100),
+            (1, 99),
+            (1, 90),
+            (1, 87),
+            (1, 78),
+            (1, 0),
+        ],
+        cleared: &[(1, 98)],
+    },
+    Cause {
+        message: "Sprawdź zasilanie i akumulator drukarki Elzab",
+        // Shutdown requested or running, external power lost, low batteries; battery not good.
+        set: &[(0, 115), (0, 103), (0, 102), (1, 122), (1, 77)],
+        cleared: &[(1, 102)],
+    },
+    Cause {
+        message: "Podłącz wyświetlacz klienta drukarki Elzab",
+        set: &[(1, 101)],
+        cleared: &[],
+    },
+    Cause {
+        message: "Drukarka Elzab jest w menu lub teście albo wydruk przerwano na drukarce",
+        set: &[(1, 82), (1, 67), (1, 64)],
+        cleared: &[],
+    },
+    Cause {
+        message: "Drukarka Elzab jeszcze drukuje. Poczekaj na koniec wydruku",
+        // Print buffer busy; printing.
+        set: &[(1, 81), (2, 0)],
+        cleared: &[],
+    },
+    Cause {
+        message: "Otwarty dokument na drukarce Elzab. Dokończ lub anuluj go na drukarce",
+        // Invoice, receipt, name-database control printout, superformatka.
+        set: &[(1, 70), (1, 68), (1, 66), (1, 65)],
+        cleared: &[],
+    },
+    Cause {
+        message: "Drukarka Elzab jest w trybie szkoleniowym",
+        set: if cfg!(workshop_acceptance) {
+            &[]
+        } else {
+            &[(1, 3)]
+        },
+        cleared: &[],
+    },
+    Cause {
+        message: "Brak papieru lub podniesiona głowica drukarki Elzab",
+        // Head raised, document interrupted by paper out, paper out.
+        set: &[(2, 4), (2, 3), (2, 1)],
+        cleared: &[],
+    },
+    Cause {
+        message: "Awaria mechanizmu drukującego Elzab",
+        // Printer failure; "printer operational" missing.
+        set: &[(2, 2)],
+        cleared: &[(2, 5)],
+    },
+];
 /// Civil printer time; only the date is needed outside receipt timestamps.
 fn clock(session: &mut Session) -> Result<DateTime, Error> {
     let body = query(session, "XCR", "XCR")?;

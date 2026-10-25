@@ -298,6 +298,26 @@ impl Worker {
     }
 }
 
+/// `Event::Device` block flags known from the journal alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JournalBlock {
+    pub blocked: bool,
+    pub report_unresolved: bool,
+}
+
+/// For display before a worker has read the journal; never writes it or touches the printer
+/// or Holuto. An unreadable journal blocks; an orphaned receipt needs Holuto, so it shows
+/// only as `blocked`.
+pub fn journal_block(dir: &StateDir) -> JournalBlock {
+    let blocking = Journal::new(dir)
+        .read()
+        .map(|operation| operation.filter(Operation::blocks));
+    JournalBlock {
+        blocked: !matches!(blocking, Ok(None)),
+        report_unresolved: matches!(blocking, Ok(Some(Operation::Report(_)))),
+    }
+}
+
 fn pairing_failed(error: &Error) -> Event {
     let failure = match error {
         Error::Api(ApiError::Unauthorized) => PairingFailure::Unauthorized,
@@ -513,13 +533,14 @@ fn publish_device(agent: &Agent<'_>, sink: &dyn Fn(Event)) {
     });
 }
 
+/// Transient Holuto failures must not end processing started unattended at login.
 const fn retry_start(error: &Error) -> bool {
     matches!(
         error,
         Error::Api(
             ApiError::Transport(_)
                 | ApiError::Status {
-                    status: 500..=599,
+                    status: 408 | 429 | 500..=599,
                     ..
                 }
         )

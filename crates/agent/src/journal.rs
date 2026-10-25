@@ -254,7 +254,24 @@ impl<'dir> Journal<'dir> {
         }
     }
 
+    /// Migrates a legacy journal in place; see `read` for a query that never writes.
     pub(crate) fn load(&self) -> Result<Option<Operation>, Error> {
+        let Some((operation, legacy)) = self.decode()? else {
+            return Ok(None);
+        };
+        if legacy {
+            self.save(&operation)?;
+        }
+        Ok(Some(operation))
+    }
+
+    /// Display queries leave a legacy journal for the worker's first `load` to migrate.
+    pub(crate) fn read(&self) -> Result<Option<Operation>, Error> {
+        Ok(self.decode()?.map(|(operation, _legacy)| operation))
+    }
+
+    /// `true` marks the legacy `device_serial` key.
+    fn decode(&self) -> Result<Option<(Operation, bool)>, Error> {
         let bytes = store::read_optional(&self.path).map_err(|source| Error::Store {
             action: "Nie można odczytać rejestru operacji. Drukowanie zablokowane",
             path: self.path.clone(),
@@ -272,10 +289,10 @@ impl<'dir> Journal<'dir> {
         };
         let operation: Operation =
             serde_json::from_slice(&bytes).map_err(|_invalid_json| invalid())?;
-        let migrated = bytes
+        let legacy = bytes
             .windows(b"\"device_serial\"".len())
             .any(|key| key == b"\"device_serial\"");
-        if migrated {
+        if legacy {
             let identity = match &operation {
                 Operation::Receipt(receipt) => &receipt.device_unique_number,
                 Operation::Report(report) => &report.device_unique_number,
@@ -283,9 +300,8 @@ impl<'dir> Journal<'dir> {
             if !valid_unique_number(identity) {
                 return Err(invalid());
             }
-            self.save(&operation)?;
         }
-        Ok(Some(operation))
+        Ok(Some((operation, legacy)))
     }
 
     pub(crate) fn save(&self, operation: &Operation) -> Result<(), Error> {

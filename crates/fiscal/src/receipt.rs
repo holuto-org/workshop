@@ -332,6 +332,17 @@ impl Receipt {
         &self.brand
     }
 
+    /// Case-insensitive; whitespace runs match, since printers pad or break header lines.
+    pub fn brand_in_header(&self, header: &str) -> bool {
+        let words = |text: &str| {
+            text.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        words(header).contains(&words(&self.brand))
+    }
+
     /// Gross sales minus advances, covered by payments.
     pub const fn fiscal_total(&self) -> Grosze {
         self.fiscal_total

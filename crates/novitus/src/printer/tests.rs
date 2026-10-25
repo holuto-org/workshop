@@ -178,20 +178,26 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
     for case in 0..3 {
         let sim = Simulator::start();
         supported(&sim);
-        let advances = match case {
-            0 => vec![Advance {
-                vat: VatSlot::new(0).unwrap(),
-                amount: Grosze::new(500).unwrap(),
-            }],
-            1 => [(0, 1000), (1, 2000), (4, 3000)]
-                .map(|(slot, amount)| Advance {
-                    vat: VatSlot::new(slot).unwrap(),
-                    amount: Grosze::new(amount).unwrap(),
-                })
-                .to_vec(),
+        let (advances, message) = match case {
+            0 => (
+                vec![Advance {
+                    vat: VatSlot::new(0).unwrap(),
+                    amount: Grosze::new(500).unwrap(),
+                }],
+                ADVANCE_REFUSAL,
+            ),
+            1 => (
+                [(0, 1000), (1, 2000), (4, 3000)]
+                    .map(|(slot, amount)| Advance {
+                        vat: VatSlot::new(slot).unwrap(),
+                        amount: Grosze::new(amount).unwrap(),
+                    })
+                    .to_vec(),
+                ADVANCE_REFUSAL,
+            ),
             _ => {
                 sim.set_header("Inny podatnik");
-                vec![]
+                (vec![], FOOTER_REFUSAL)
             },
         };
         let driver = printer(&sim);
@@ -199,12 +205,17 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
         let mut log = Log::default();
         assert!(matches!(
             driver.print_receipt(&receipt(advances), &expected, &mut log),
-            Err(Error::Invalid(_))
+            Err(Error::Invalid(text)) if text == message
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new(), "case {case}");
     }
 }
+const ADVANCE_REFUSAL: &str = "Drukarka nie obsługuje rozliczenia zaliczek.";
+/// Names the fix: the printer header must contain the Holuto company name.
+const FOOTER_REFUSAL: &str = "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka \
+                              nie drukuje jej w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem \
+                              drukarki.";
 
 #[test]
 fn identify_accepts_supported_models_only() {
@@ -421,6 +432,59 @@ fn only_report_refusals_documented_before_printing_are_certain() {
             assert!(matches!(error, Error::Uncertain(_)), "{body} {code}");
         }
         assert_eq!(fiscal_bodies(&sim), [body]);
+    }
+}
+
+#[test]
+fn certain_refusals_explain_documented_codes() {
+    let receipt_refusal = |code| {
+        let sim = Simulator::start();
+        supported(&sim);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        sim.fault("$h", Fault::Refuse(code));
+        driver
+            .print_receipt(&receipt(vec![]), &expected, &mut Log::default())
+            .unwrap_err()
+    };
+    let report_refusal = |report, body, code| {
+        let sim = Simulator::start();
+        supported(&sim);
+        sim.fault(body, Fault::Refuse(code));
+        printer(&sim)
+            .print_report(report, "ABC1234567890", &mut Log::default())
+            .unwrap_err()
+    };
+    let periodic = Report::Periodic {
+        from: "2024-01-02".parse().unwrap(),
+        to: "2024-03-04".parse().unwrap(),
+        summary: false,
+    };
+    for (error, text) in [
+        (
+            report_refusal(Report::Daily, "1;26;10;24#r", 36),
+            "Drukarka Novitus zwróciła błąd 36 (#r). Raport dobowy bez sprzedaży jest już \
+             zapisany z tą datą.",
+        ),
+        (
+            report_refusal(Report::Daily, "1;26;10;24#r", 37),
+            "Drukarka Novitus zwróciła błąd 37 (#r). Raport przerwano na klawiaturze drukarki.",
+        ),
+        (
+            report_refusal(periodic, "24;1;2;24;3;4;0#o", 4),
+            "Drukarka Novitus zwróciła błąd 4 (#o). Nieprawidłowy zakres dat lub brak zapisów \
+             w pamięci fiskalnej dla tego zakresu.",
+        ),
+        (
+            receipt_refusal(94),
+            "Drukarka Novitus zwróciła błąd 94 ($h). Sprzedaż zablokowana: założona zwora \
+             serwisowa.",
+        ),
+        // The same number means a parameter error for `$h`, not a date range.
+        (receipt_refusal(4), "Drukarka Novitus zwróciła błąd 4 ($h)."),
+    ] {
+        assert!(matches!(error, Error::Device { .. }), "{error:?}");
+        assert_eq!(error.to_string(), text);
     }
 }
 
@@ -707,9 +771,47 @@ fn unqualified_footer_is_refused_before_begin() {
     sim.set_header("Inny podatnik");
     assert!(matches!(
         driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default()),
-        Err(Error::Invalid(_))
+        Err(Error::Invalid(text)) if text == FOOTER_REFUSAL
     ));
     assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+}
+
+#[cfg(not(workshop_acceptance))]
+#[test]
+fn brand_across_padded_header_lines_needs_no_footer() {
+    // `^u` pads header lines with spaces instead of sending line breaks.
+    for (header, printed) in [
+        ("     AUTO SERWIS                   KOWALSKI      ", true),
+        ("AUTOSERWIS KOWALSKI", false),
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        sim.set_header(header);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let base = receipt(vec![]);
+        let receipt = Receipt::new(
+            base.lines().to_vec(),
+            vec![],
+            base.payments().to_vec(),
+            None,
+            "Auto Serwis Kowalski",
+            &expected.capabilities,
+        )
+        .unwrap();
+        let result = driver.print_receipt(&receipt, &expected, &mut Log::default());
+        if printed {
+            assert!(result.is_ok(), "{header:?}: {result:?}");
+            assert_eq!(fiscal_bodies(&sim).first().map(String::as_str), Some("0$h"));
+            assert_eq!(sim.receipts(), 1);
+        } else {
+            assert!(
+                matches!(&result, Err(Error::Invalid(text)) if text == FOOTER_REFUSAL),
+                "{header:?}: {result:?}"
+            );
+            assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+        }
+    }
 }
 
 #[test]

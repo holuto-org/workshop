@@ -164,7 +164,8 @@ fn startup_retries_network_and_server_failures_but_not_auth_or_contract_failures
     assert!(retry_start(&Error::Api(ApiError::Transport(
         TransportFailure::Connection
     ))));
-    for status in [500, 502, 503, 599] {
+    // 408 and 429 are the backend's request timeout and burst limiter: transient.
+    for status in [408, 429, 500, 502, 503, 599] {
         assert!(retry_start(&Error::Api(ApiError::Status {
             status,
             detail: None

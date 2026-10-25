@@ -28,6 +28,9 @@ impl fmt::Debug for Session {
 }
 impl Session {
     pub fn open(link: &dyn Link, connection: &Connection) -> Result<Self, Error> {
+        if connection.port.trim().is_empty() {
+            return Err(Error::NoPort);
+        }
         #[cfg(any(test, feature = "simulator"))]
         let scale = link.time_scale().max(1);
         #[cfg(not(any(test, feature = "simulator")))]

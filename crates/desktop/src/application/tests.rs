@@ -230,6 +230,58 @@ fn paging_buttons_reflect_the_worker_page() -> Result<(), Box<dyn Error>> {
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
+fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
+-> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_no_event_loop();
+    // Crash fixtures: a periodic report whose command may have reached the printer, in the
+    // current format and with the legacy key only the worker may migrate.
+    for identity_key in ["device_unique_number", "device_serial"] {
+        let temp = TempDir::new()?;
+        let dir = Arc::new(StateDir::open(temp.path().to_owned())?);
+        let interrupted = format!(
+            r#"{{
+  "report": {{
+    "report": {{"kind": "periodic", "from": "2026-09-01", "to": "2026-09-30", "summary": false}},
+    "vendor": "posnet",
+    "{identity_key}": "POS0000123456",
+    "started_at": "2026-10-16T10:00:00Z",
+    "device": {{"dispatching": {{"stage": "periodicrepbydates"}}}},
+    "acknowledged_at": null
+  }}
+}}"#
+        );
+        fs::write(temp.path().join("operation.json"), &interrupted)?;
+        let simulator = Simulator::start();
+        let app = make_app(dir, Settings::default(), simulator.link())?;
+        let published = app
+            .borrow()
+            .status_requested
+            .clone()
+            .ok_or("launch published no status")?;
+        assert_eq!(
+            (
+                published.processing,
+                published.blocked,
+                published.report_unresolved,
+                published.orphaned_receipt
+            ),
+            (false, true, true, false),
+            "`workshop status` must not report an unresolved report as unblocked ({identity_key})"
+        );
+        assert_eq!(
+            fs::read_to_string(temp.path().join("operation.json"))?,
+            interrupted,
+            "launch never rewrites the fiscal journal ({identity_key})"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
 fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<(), Box<dyn Error>>
 {
     let (_temp, app, window) = fixture()?;

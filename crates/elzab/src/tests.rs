@@ -13,12 +13,16 @@ use fiscal::{
     driver::Driver,
     error::Error,
     journal::Journal,
-    link::Connection,
+    link::{Candidate, Connection, Link, Port},
     money::Grosze,
     receipt::{Advance, Line, Payment, PaymentForm, Quantity, Receipt, VatSlot},
     report::Report,
 };
-use std::{io, time::Duration};
+use std::{
+    io,
+    sync::{Arc, Mutex, PoisonError},
+    time::Duration,
+};
 #[cfg(workshop_acceptance)]
 mod acceptance;
 mod telemetry;
@@ -198,19 +202,30 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
     // LDS advances are qualified; only zero-total and footer need acceptance.
     let caps = profile::lookup("ELZAB CUBE online").unwrap().capabilities;
     assert!(caps.advance_deductions);
-    for (advance, footer) in [(12346, false), (0, true)] {
+    for (advance, footer, message) in [
+        (
+            12346,
+            false,
+            "Drukarka nie obsługuje paragonu opłaconego w całości zaliczkami.",
+        ),
+        (0, true, FOOTER_REFUSAL),
+    ] {
         let sim = Simulator::start();
         let driver = printer(&sim);
         let expected = driver.probe().unwrap();
         let mut log = Log::default();
         assert!(matches!(
             driver.print_receipt(&receipt(advance, footer), &expected, &mut log),
-            Err(Error::Invalid(_))
+            Err(Error::Invalid(text)) if text == message
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
 }
+/// Names the fix: the printer header must contain the Holuto company name.
+const FOOTER_REFUSAL: &str = "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka \
+                              nie drukuje jej w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem \
+                              drukarki.";
 #[test]
 fn identify_accepts_online_models_only() {
     for model in [
@@ -507,57 +522,82 @@ fn nested_lpc_refusal_prevents_open_while_status_reports_ready() {
 }
 
 #[test]
-fn every_document_and_mechanism_blocker_prevents_dispatch() {
-    let ready = (1_u128 << 102) | (1_u128 << 98) | 4;
-    for (package, bit) in [
-        (0, 123),
-        (0, 122),
-        (0, 115),
-        (0, 103),
-        (0, 102),
-        (1, 122),
-        (1, 101),
-        (1, 100),
-        (1, 99),
-        (1, 90),
-        (1, 87),
-        (1, 82),
-        (1, 81),
-        (1, 78),
-        (1, 77),
-        (1, 70),
-        (1, 68),
-        (1, 67),
-        (1, 66),
-        (1, 65),
-        (1, 64),
-        (1, 3),
-        (1, 0),
-        (2, 4),
-        (2, 3),
-        (2, 2),
-        (2, 1),
-        (2, 0),
+fn every_document_and_mechanism_blocker_prevents_dispatch_and_names_its_cause() {
+    const SERVICE: &str =
+        "Drukarka Elzab wymaga serwisu: pamięć, inicjalizacja lub blokada sprzedaży";
+    const POWER: &str = "Sprawdź zasilanie i akumulator drukarki Elzab";
+    const DISPLAY: &str = "Podłącz wyświetlacz klienta drukarki Elzab";
+    const OPERATOR: &str =
+        "Drukarka Elzab jest w menu lub teście albo wydruk przerwano na drukarce";
+    const PRINTING: &str = "Drukarka Elzab jeszcze drukuje. Poczekaj na koniec wydruku";
+    const DOCUMENT: &str = "Otwarty dokument na drukarce Elzab. Dokończ lub anuluj go na drukarce";
+    const TRAINING: &str = "Drukarka Elzab jest w trybie szkoleniowym";
+    const PAPER: &str = "Brak papieru lub podniesiona głowica drukarki Elzab";
+    const MECHANISM: &str = "Awaria mechanizmu drukującego Elzab";
+    let ready = [0, (1_u128 << 102) | (1_u128 << 98) | 4, 32];
+    let set = [
+        (0, 123, SERVICE),
+        (0, 122, SERVICE),
+        (0, 115, POWER),
+        (0, 103, POWER),
+        (0, 102, POWER),
+        (1, 122, POWER),
+        (1, 101, DISPLAY),
+        (1, 100, SERVICE),
+        (1, 99, SERVICE),
+        (1, 90, SERVICE),
+        (1, 87, SERVICE),
+        (1, 82, OPERATOR),
+        (1, 81, PRINTING),
+        (1, 78, SERVICE),
+        (1, 77, POWER),
+        (1, 70, DOCUMENT),
+        (1, 68, DOCUMENT),
+        (1, 67, OPERATOR),
+        (1, 66, DOCUMENT),
+        (1, 65, DOCUMENT),
+        (1, 64, OPERATOR),
+        (1, 3, TRAINING),
+        (1, 0, SERVICE),
+        (2, 4, PAPER),
+        (2, 3, PAPER),
+        (2, 2, MECHANISM),
+        (2, 1, PAPER),
+        (2, 0, PRINTING),
     ]
     .into_iter()
-    .filter(|&case| !cfg!(workshop_acceptance) || case != (1, 3))
-    {
-        let sim = Simulator::start();
-        let mut status = [0_u128, ready, 32];
+    .filter(|&(package, bit, _)| !cfg!(workshop_acceptance) || (package, bit) != (1, 3))
+    .map(|(package, bit, message)| {
+        let mut status = ready;
         *status.get_mut(package).unwrap() |= 1_u128 << bit;
-        let [one, two, three] = status;
+        (status, (package, bit), message)
+    });
+    let cleared = [
+        (1, 102, POWER),
+        (1, 98, SERVICE),
+        (1, 2, "Drukarka jest w trybie tylko do odczytu"),
+        (2, 5, MECHANISM),
+    ]
+    .map(|(package, bit, message)| {
+        let mut status = ready;
+        *status.get_mut(package).unwrap() &= !(1_u128 << bit);
+        (status, (package, bit), message)
+    });
+    for ([one, two, three], (package, bit), message) in set.chain(cleared) {
+        let sim = Simulator::start();
         sim.set_status(one, two, u32::try_from(three).unwrap());
-        assert!(
-            !printer(&sim).probe().unwrap().ready(),
-            "package {package} bit {bit}"
-        );
+        let device = printer(&sim).probe().unwrap();
+        assert!(!device.ready(), "package {package} bit {bit}");
+        assert_eq!(device.description(), message, "package {package} bit {bit}");
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
-    for bit in [102, 98, 2] {
-        let sim = Simulator::start();
-        sim.set_status(0, ready & !(1_u128 << bit), 32);
-        assert!(!printer(&sim).probe().unwrap().ready());
-    }
+    let sim = Simulator::start();
+    sim.set_status(0, ready[1] | (1 << 68) | (1 << 67), 32 | 2 | 8);
+    assert_eq!(
+        printer(&sim).probe().unwrap().description(),
+        format!("{OPERATOR}. {DOCUMENT}. {PAPER}"),
+        "each cause is listed once, in a stable order"
+    );
 }
 
 #[test]
@@ -781,6 +821,29 @@ fn configured_header_all_lines_are_used_without_writing_configuration() {
     assert!(!bodies(&sim).iter().any(|b| b.ends_with('W')));
 }
 
+#[cfg(not(workshop_acceptance))]
+#[test]
+fn brand_across_header_lines_needs_no_footer() {
+    for (header, printed) in [("Serwis Inna\nfirma", true), ("Innafirma", false)] {
+        let sim = Simulator::start();
+        sim.set_header(header);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let result = driver.print_receipt(&receipt(0, true), &expected, &mut Log::default());
+        if printed {
+            assert!(result.is_ok(), "{header:?}: {result:?}");
+            assert!(!fiscal(&sim).iter().any(|b| b.starts_with("LAL")));
+            assert_eq!(sim.receipts(), 1);
+        } else {
+            assert!(
+                matches!(&result, Err(Error::Invalid(text)) if text == FOOTER_REFUSAL),
+                "{header:?}: {result:?}"
+            );
+            assert_eq!(fiscal(&sim), Vec::<String>::new());
+        }
+    }
+}
+
 #[test]
 fn every_payment_form_uses_online_kind_not_entry_number() {
     let sim = Simulator::start();
@@ -967,7 +1030,7 @@ fn unqualified_footer_is_refused_and_qualified_profile_emits_lal() {
     let expected = driver.probe().unwrap();
     assert!(matches!(
         driver.print_receipt(&receipt(0, true), &expected, &mut Log::default()),
-        Err(Error::Invalid(_))
+        Err(Error::Invalid(text)) if text == FOOTER_REFUSAL
     ));
     assert_eq!(fiscal(&sim), Vec::<String>::new());
     let mut qualified = profile::lookup("ELZAB CUBE online").unwrap();
@@ -1036,4 +1099,124 @@ fn inconsistent_multipart_lcl_reply_is_uncertain_not_printed() {
         fiscal(&sim).iter().filter(|b| b.starts_with("LCL")).count(),
         1
     );
+}
+/// Command, write budget and the first read budget after it.
+type Budgets = Arc<Mutex<Vec<(String, Duration, Option<Duration>)>>>;
+/// Real-time link: records each command's write budget and the read budget that follows it.
+#[derive(Debug)]
+struct Deadlines {
+    inner: Arc<dyn Link>,
+    seen: Budgets,
+}
+impl Link for Deadlines {
+    fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, Error> {
+        Ok(Box::new(DeadlinePort {
+            inner: self.inner.open(port, baud_rate)?,
+            seen: Arc::clone(&self.seen),
+        }))
+    }
+
+    fn candidates(&self) -> Vec<Candidate> {
+        self.inner.candidates()
+    }
+
+    fn time_scale(&self) -> u32 {
+        1
+    }
+}
+struct DeadlinePort {
+    inner: Box<dyn Port>,
+    seen: Budgets,
+}
+impl Port for DeadlinePort {
+    fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
+        let (_, data) = frame::decode(bytes).map_err(io::Error::other)?;
+        let body = cp1250::decode(data).ok_or(io::ErrorKind::InvalidData)?;
+        let command = body.split('\u{1d}').next().unwrap_or_default().to_owned();
+        self.seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((command, timeout, None));
+        self.inner.write_all(bytes, timeout)
+    }
+
+    fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
+        if let Some((_, _, read @ None)) = self
+            .seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last_mut()
+        {
+            *read = Some(timeout);
+        }
+        self.inner.read(buffer, timeout)
+    }
+}
+
+#[test]
+fn silence_budget_is_short_for_receipt_lines_and_long_only_for_synchronous_reports() {
+    let sim = Simulator::start();
+    let seen = Arc::default();
+    let driver = Printer::new(
+        Arc::new(Deadlines {
+            inner: sim.link(),
+            seen: Arc::clone(&seen),
+        }),
+        connection(&sim),
+    );
+    let expected = driver.probe().unwrap();
+    let _printed = driver
+        .print_receipt(&receipt(2346, false), &expected, &mut Log::default())
+        .unwrap();
+    driver
+        .print_report(
+            Report::Monthly {
+                year: 2026,
+                month: 9,
+            },
+            &expected.unique_number,
+            &mut Log::default(),
+        )
+        .unwrap();
+    assert!(matches!(
+        driver.print_report(Report::Daily, &expected.unique_number, &mut Log::default()),
+        Err(Error::Uncertain(_))
+    ));
+    let line = Duration::from_secs(10);
+    let end = Duration::from_secs(30);
+    let report = Duration::from_secs(600);
+    let fiscal: Vec<_> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(command, ..)| {
+            ["LOR", "LNP", "LIT", "LDS", "LBP", "LCL", "RPP", "RRP"].contains(&command.as_str())
+        })
+        .cloned()
+        .collect();
+    assert_eq!(
+        fiscal
+            .iter()
+            .map(|(command, write, _)| (command.as_str(), *write))
+            .collect::<Vec<_>>(),
+        [
+            ("LOR", line),
+            ("LNP", line),
+            ("LIT", line),
+            ("LDS", line),
+            ("LBP", line),
+            ("LCL", end),
+            ("RPP", report),
+            ("RRP", end),
+        ]
+    );
+    for (command, write, read) in fiscal {
+        let read = read.unwrap();
+        assert!(
+            write
+                .checked_sub(read)
+                .is_some_and(|spent| spent < Duration::from_secs(1)),
+            "{command}: read budget {read:?} must be the remaining {write:?}"
+        );
+    }
 }

@@ -466,9 +466,30 @@ fn device_result(code: u32, command: &str) -> Result<(), Error> {
     Err(Error::Device {
         code,
         command: command.to_owned(),
-        detail: format!("Drukarka Novitus zwróciła błąd {code} ({command})."),
+        detail: format!(
+            "Drukarka Novitus zwróciła błąd {code} ({command}).{}",
+            explanation(command, code)
+        ),
         rejected: false,
     })
+}
+/// Refusals of the commands sent here; codes are numbered per command.
+fn explanation(command: &str, code: u32) -> &'static str {
+    match (command, code) {
+        ("$h" | "#r" | "#o", 1) => " Nie zainicjowano zegara drukarki.",
+        ("$h" | "#r" | "#o", 6) => " Błąd pamięci fiskalnej. Wezwij serwis.",
+        ("$h", 40) => " Brak nagłówka w pamięci drukarki.",
+        ("$h", 94) => " Sprzedaż zablokowana: założona zwora serwisowa.",
+        ("#r", 7) => {
+            " Data drukarki jest wcześniejsza niż ostatni zapis albo zmieniła się przed raportem."
+        },
+        ("#r", 36) => " Raport dobowy bez sprzedaży jest już zapisany z tą datą.",
+        ("#r", 37) => " Raport przerwano na klawiaturze drukarki.",
+        ("#o", 4) => {
+            " Nieprawidłowy zakres dat lub brak zapisów w pamięci fiskalnej dla tego zakresu."
+        },
+        _ => "",
+    }
 }
 
 pub(crate) fn identifier(body: &str) -> Option<&str> {
