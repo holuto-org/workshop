@@ -50,7 +50,7 @@ how to build the test.
 - Telemetry: a capturing Sentry transport/hub with synthetic canaries; inspect
   errors, breadcrumbs, logs and transactions. Never a live DSN.
 - Data: reuse `job_json`/fixture helpers and create state through public
-  behavior. Raw file edits only for old-format, corruption and crash fixtures.
+  behavior. Raw file edits only for corruption and crash fixtures.
   Helpers build data, never hidden assertions; keep setup, one action and
   literal expected values visible. Assert exact variants/messages and stored
   state, plus what did **not** change after a refusal.

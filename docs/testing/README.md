@@ -47,7 +47,7 @@ placement and fixtures.
 6. **Frozen UI or abandoned worker.** The event loop stays responsive and
    cooperative quit finishes the operation before joining.
 7. **Corrupt local state on one OS.** Journal durability, private settings,
-   process exclusion and old formats must work on each supported platform.
+   process exclusion and stored formats must work on each supported platform.
 8. **Availability.** Bound network bodies, history display and pages; recover
    from handled outages without busy loops or false fiscal certainty.
 

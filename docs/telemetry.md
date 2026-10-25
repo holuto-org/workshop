@@ -126,7 +126,8 @@ files/source context using `sentry-cli debug-files upload --include-sources`.
 Source uploads contain application source code, not runtime settings or fiscal
 documents. Release records/commits and client events must agree on identity;
 Linux ELF/DWARF, macOS dSYM and Windows PDB files must match their packaged
-binary.
+binary. The shipped executable is uploaded too: it carries the unwind
+information that minidump stack walking needs and the debug companions lack.
 
 See [CI configuration](ci.md#release-telemetry-artifacts) for variables/secrets
 and [release verification](workflows.md#sentry-release-check). Uploads enable

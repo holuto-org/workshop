@@ -90,9 +90,8 @@ drivers, using that brand's simulator through the real driver.
   - Test shape: Frame/session unit vectors + driver snapshots/fault matrices
 - **Detection and cross-brand recovery**
   - Required guarantee: Hint/remembered vendor and safe probe order, PC2
-    refusal, no scan while blocked, journal identity vendor + serial, durable
-    pre-vendor journal migration; unknown capabilities never form invalid
-    telemetry or allow a claim
+    refusal, no scan while blocked, journal identity vendor + serial; unknown
+    capabilities never form invalid telemetry or allow a claim
   - Test shape: Mixed simulator candidates + real worker/HTTP/restart matrix
 - **Acceptance isolation**
   - Required guarantee: Normal all-feature tests retain fiscal-mode and
@@ -254,7 +253,7 @@ drivers, using that brand's simulator through the real driver.
   - Test shape: Feature-matrix build check + isolated process fixture
 - **Packages**
   - Required guarantee: Workshop
-    executable/version/resources/dependencies/replacement metadata;
+    executable/version/resources/dependencies;
     mount/extract/install; installed CLI help/check and main window without
     configured printer; debug files match release
   - Test shape: Package check on Windows x64, Linux x64/ARM64, macOS x64/ARM64

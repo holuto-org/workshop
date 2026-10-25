@@ -102,7 +102,7 @@ Run on the host target, without configured printer credentials; never launch a
 package against the user's saved state. The verifier uses isolated home/state
 and proves `workshop --help`, `workshop check --json` and the **Holuto Workshop
 main window** work: a process that merely survives a timeout could be stuck in
-an error dialog. Check `.deb` replacement metadata/dependencies/desktop entry
+an error dialog. Check `.deb` dependencies/desktop entry
 and installed executable (only CI, `CI=true`, installs the `.deb` system-wide;
 elsewhere the extracted tree is launched); `.dmg` mounting and `.app`
 Info.plist/executable; Windows PE subsystem and version/icon resources. Keep

@@ -30,7 +30,7 @@ fn saving_settings_preserves_the_reviewed_stored_format() -> TestResult {
     settings().save(&dir)?;
     assert_eq!(
         fs::read(dir.file("settings.json"))?,
-        include_bytes!("fixtures/settings-current.json"),
+        include_bytes!("fixtures/settings.json"),
         "the golden fixture pins the current on-disk format"
     );
     assert_eq!(
@@ -424,25 +424,6 @@ fn invalid_port_names_never_replace_saved_preferences() -> TestResult {
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
-    reason = "Assertions prove backward-compatible read-only settings."
-)]
-fn legacy_settings_load_with_detection_vendor() -> TestResult {
-    let temporary = tempfile::tempdir()?;
-    let legacy = include_bytes!("fixtures/settings.json");
-    fs::write(temporary.path().join("settings.json"), legacy)?;
-    let restored = Settings::load_at(temporary.path())?.ok_or("missing settings")?;
-    assert_eq!(
-        serde_json::to_value(&restored)?.get("vendor"),
-        Some(&serde_json::Value::Null)
-    );
-    assert_eq!(fs::read(temporary.path().join("settings.json"))?, legacy);
-    assert!(!temporary.path().join("instance.lock").exists());
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
     reason = "Assertions prove vendor validation at the persisted boundary."
 )]
 fn vendor_preferences_roundtrip_and_invalid_vendors_do_not_load() -> TestResult {
@@ -463,9 +444,13 @@ fn vendor_preferences_roundtrip_and_invalid_vendors_do_not_load() -> TestResult 
         expected.save(&dir)?;
         assert_eq!(Settings::load(&dir)?, Some(expected));
     }
-    let current = include_str!("fixtures/settings-current.json");
-    for invalid in ["\"other\"", "\"POSNET\"", "1", "true", "{}"] {
-        let text = current.replace("\"vendor\": null", &format!("\"vendor\": {invalid}"));
+    let current = include_str!("fixtures/settings.json");
+    let invalid_vendors = ["\"other\"", "\"POSNET\"", "1", "true", "{}"]
+        .map(|invalid| current.replace("\"vendor\": null", &format!("\"vendor\": {invalid}")));
+    for text in invalid_vendors
+        .into_iter()
+        .chain([current.replace("  \"vendor\": null,\n", "")])
+    {
         fs::write(dir.file("settings.json"), &text)?;
         assert!(matches!(Settings::load(&dir), Err(Error::Store { .. })));
         assert_eq!(fs::read(dir.file("settings.json"))?, text.as_bytes());

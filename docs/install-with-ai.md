@@ -301,8 +301,7 @@ after a running-app refusal, then repeat only the requested configuration.
 - **`workshop config show --json`**: Display `config` with `apiUrl`, `paired`,
   `port`, `baudRate`, `vendor`, `telemetryEnabled` and `startOnLaunch`, never a
   token property. `vendor` is `"posnet"`, `"novitus"`, `"elzab"` or `null` for
-  detection (also the value for pre-vendor settings). Read-only; never supplement
-  by reading settings files.
+  detection. Read-only; never supplement by reading settings files.
 - **`workshop ports --json`**: List plausible printer candidates without opening
   any port: `{"ok":true,"ports":[{"port":"COM3","hint":"posnet"}]}`.
   Each `hint` is `"posnet"`, `"novitus"`, `"elzab"` or `null` for unhinted

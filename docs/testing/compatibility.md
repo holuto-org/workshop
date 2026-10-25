@@ -1,20 +1,17 @@
 # Compatibility testing
 
-## Current stored-file contracts
+## Stored-file contracts
 
-The repository pins the current on-disk formats; it does not establish deployment
-history. Keep sanitized, literal golden fixtures, not fixtures serialized by the
-reader/writer under test. Decide migrations explicitly before changing persisted
-contracts; never infer that an unreadable journal can be discarded.
+The repository pins the on-disk formats. Keep sanitized, literal golden
+fixtures, not fixtures serialized by the reader/writer under test. Never infer
+that an unreadable journal can be discarded.
 
-- **`operation.json`**: Receipt/report variants include vendor and serial;
-  pre-vendor evidence is migrated durably once to Posnet under the instance
-  lock, never discarded. `NotStarted`, `Dispatching`, completed with/without
-  number, results and settlements retain their meaning across restart.
-  Resolution requires the same vendor and serial and never reissues commands.
+- **`operation.json`**: Receipt/report variants include vendor and serial.
+  `NotStarted`, `Dispatching`, completed with/without number, results and
+  settlements retain their meaning across restart. Resolution requires the same
+  vendor and serial and never reissues commands.
 - **`settings.json`**: API URL/token/port/baud/diagnostics/autostart and nullable
-  vendor retain meaning; old settings without vendor use detection.
-  Unknown fields still fail closed, so downgrades are not generally supported.
+  vendor retain meaning; unknown fields and a missing `vendor` fail closed.
   Diagnostics opt-out survives save/load/restart.
 - **`history.jsonl`**: Current entries preserve ordering, duplicate-job handling
   and staff-entered numbers; torn lines do not swallow the next valid entry.

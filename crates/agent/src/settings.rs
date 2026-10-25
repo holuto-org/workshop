@@ -57,8 +57,8 @@ pub struct Settings {
     /// Empty until a printer port is chosen or detected.
     pub port: String,
     pub baud_rate: u32,
-    /// None selects read-only vendor detection; legacy settings have no preference.
-    #[serde(default)]
+    /// None selects read-only vendor detection.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub vendor: Option<Vendor>,
     /// Optional diagnostic reporting; enabled until explicitly disabled.
     pub telemetry_enabled: bool,

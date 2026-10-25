@@ -27,10 +27,8 @@ interruptMode: never
 - One process per state directory (`instance.lock`); CLI mutations refuse while
   the app holds it. Readers that skip the lock (`Settings::load_at`,
   `Snapshot::load_at`) must not create state.
-- Stored formats are contracts. Keep current-format literal fixtures beside the
-  module; a format change needs an explicit migration (see `journal/legacy.rs`)
-  and a fixture for the old shape. `deny_unknown_fields` means downgrades fail
-  closed.
+- Stored formats are contracts. Keep literal fixtures of the stored format
+  beside the module; `deny_unknown_fields` makes unknown fields fail closed.
 - The device token lives only in `settings.json`: `Token` redacts `Debug` and
   `Display`, serde errors never echo values, and a different API URL forgets it
   (`Settings::set_api_url`). `status.json` and history never hold credentials.

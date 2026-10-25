@@ -3,6 +3,7 @@
   "token": "secret-token",
   "port": "Żółć/drukarka",
   "baudRate": 38400,
+  "vendor": null,
   "telemetryEnabled": false,
   "startOnLaunch": false
 }

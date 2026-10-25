@@ -1,8 +1,6 @@
 //! Persisted before each printer command and retained until settlement.
 //! An unreadable journal blocks printing.
 
-mod legacy;
-
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{borrow::Cow, fmt, io, marker::PhantomData, path::PathBuf};
@@ -229,20 +227,13 @@ impl<'dir> Journal<'dir> {
         let Some(bytes) = bytes else {
             return Ok(None);
         };
-        match serde_json::from_slice(&bytes) {
-            Ok(operation) => Ok(Some(operation)),
-            Err(error) => {
-                let operation = legacy::decode(&bytes).map_err(|_not_legacy| {
-                    Error::Blocked(format!(
-                        "Uszkodzony rejestr operacji ({}): {error}. Drukowanie zablokowane; nie \
-                         usuwaj pliku, rozstrzygnij operację w Holuto.",
-                        self.path.display()
-                    ))
-                })?;
-                self.save(&operation)?;
-                Ok(Some(operation))
-            },
-        }
+        serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+            Error::Blocked(format!(
+                "Uszkodzony rejestr operacji ({}): {error}. Drukowanie zablokowane; nie usuwaj \
+                 pliku, rozstrzygnij operację w Holuto.",
+                self.path.display()
+            ))
+        })
     }
 
     pub(crate) fn save(&self, operation: &Operation) -> Result<(), Error> {
