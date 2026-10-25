@@ -138,15 +138,10 @@ impl Driver for Printer {
                         "Raport miesięczny wymaga zakończonego miesiąca.".to_owned(),
                     ));
                 }
-                let date = date_fields(from)?;
-                Step::new(
-                    "RPP",
-                    format!(
-                        "E1\x1dFB{}\x1dS0",
-                        date.get(..4).ok_or_else(frame::corrupt)?
-                    ),
-                    REPORT_TIMEOUT,
-                )
+                let mut date = date_fields(from)?;
+                // YYMM of the YYMMDD date.
+                date.truncate(4);
+                Step::new("RPP", format!("E1\x1dFB{date}\x1dS0"), REPORT_TIMEOUT)
             },
             Report::Periodic { from, to, summary } => {
                 if from > to || to > checked.date {

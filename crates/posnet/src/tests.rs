@@ -773,15 +773,9 @@ report_faults!(
 
 #[test]
 fn a_refused_later_receipt_step_is_uncertain_and_stops_the_stream() {
-    for (index, command) in [
-        "trnipset",
-        "trline",
-        "tradvance",
-        "trpayment",
-        "trend",
-    ]
-    .into_iter()
-    .enumerate()
+    for (index, command) in ["trnipset", "trline", "tradvance", "trpayment", "trend"]
+        .into_iter()
+        .enumerate()
     {
         let sim = simulator();
         sim.fault(command, Fault::Error);

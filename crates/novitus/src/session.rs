@@ -296,14 +296,12 @@ impl Session {
                 };
                 data = Some(Reply { body, options });
             }
-            if expected
-                .as_ref()
-                .is_some_and(|(_, _, ack)| self.discovery || !ack || completed)
+            if let Some((_, _, ack)) = &expected
+                && (self.discovery || !ack || completed)
                 && let Some(reply) = data.take()
             {
                 // Mode 0 never sends this ACK; mode 3 sends it after the data.
-                if self.discovery && !completed && expected.as_ref().is_some_and(|(_, _, ack)| *ack)
-                {
+                if self.discovery && !completed && *ack {
                     self.discovery_ack = query_identifier(command);
                 }
                 return Ok(reply);
