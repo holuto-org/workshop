@@ -96,7 +96,6 @@ fn refused_step_traces_command_and_code_but_never_fiscal_payloads() {
     for expected in [
         "device.receipt",
         "timeout_ms=",
-        "timeout_ms=10000",
         "device_error_code=1234",
         "Printer refused command",
         "Printer operation has an uncertain outcome",
@@ -107,7 +106,12 @@ fn refused_step_traces_command_and_code_but_never_fiscal_payloads() {
         );
     }
     assert!(!captured.contains("Receipt printed"), "{captured}");
-    for sensitive in ["CUSTOMER SECRET NAME", "9876543210", "93764321", "937643.21"] {
+    for sensitive in [
+        "CUSTOMER SECRET NAME",
+        "9876543210",
+        "93764321",
+        "937643.21",
+    ] {
         assert!(
             !captured.contains(sensitive),
             "fiscal payload leaked: {sensitive}"

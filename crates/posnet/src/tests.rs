@@ -289,9 +289,9 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
                 "22,00", "8,00", "0,00", "101,00", "101,00", "101,00", "100,00",
             ]),
             // Slot G may hold any rate, so the device stays ready; only the VAT guard refuses.
-            "regraded" => sim.set_vat([
-                "23,00", "8,00", "5,00", "0,00", "100,00", "101,00", "8,00",
-            ]),
+            "regraded" => {
+                sim.set_vat(["23,00", "8,00", "5,00", "0,00", "100,00", "101,00", "8,00"]);
+            },
             "none" => sim.set_vat(["101,00"; 7]),
             "missing" => sim.fault("vatget", Fault::Reply(vec![])),
             _ => {},
@@ -637,6 +637,29 @@ fn unidentified_devices_receive_only_the_identification_command() {
         .unwrap()
         .is_none(),
         "foreign device is not adopted"
+    );
+    assert_eq!(commands(&sim), ["getrealid"]);
+}
+
+#[test]
+fn an_unsupported_posnet_model_is_reported_by_name_after_only_identification() {
+    let sim = simulator();
+    sim.set_status("nm", "POSNET THERMAL HD ONLINE");
+    let result = identify(
+        sim.link().as_ref(),
+        &Connection {
+            port: sim.address().to_owned(),
+            baud_rate: 9600,
+        },
+    );
+    assert!(
+        matches!(
+            &result,
+            Err(Error::Unsupported(message)) if message
+                == "Nieobsługiwany model drukarki Posnet: POSNET THERMAL HD ONLINE \
+                    (oprogramowanie 32.01). Obsługiwana jest Posnet Temo Online."
+        ),
+        "{result:?}"
     );
     assert_eq!(commands(&sim), ["getrealid"]);
 }

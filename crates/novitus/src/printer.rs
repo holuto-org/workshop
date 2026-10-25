@@ -574,7 +574,10 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
             // Announce only changes: a persisting problem was already shown.
             Ok(problem) if problem != shown => {
                 if problem.is_some() {
-                    tracing::warn!(command = step.command, "Printer needs operator intervention");
+                    tracing::warn!(
+                        command = step.command,
+                        "Printer needs operator intervention"
+                    );
                 } else {
                     tracing::info!(
                         command = step.command,

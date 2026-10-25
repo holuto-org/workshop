@@ -126,15 +126,32 @@ fn manual_credentials_and_unknown_arguments_are_rejected_without_echoing_them() 
 }
 
 #[test]
-fn a_lone_macos_process_serial_number_opens_the_gui_but_still_bounds_the_cli() {
+fn only_a_lone_process_serial_number_is_a_launch_services_argument() {
+    assert!(super::process_serial_number(&[OsString::from(
+        "-psn_0_1234567"
+    )]));
+    assert!(!super::process_serial_number(
+        &["-psn_0_1234567", "status"].map(OsString::from)
+    ));
+    assert!(!super::process_serial_number(&[OsString::from("status")]));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_lone_process_serial_number_opens_the_gui_on_macos() {
+    assert_eq!(super::run([OsString::from("-psn_0_1234567")]), None);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a_process_serial_number_is_an_invalid_argument_outside_macos() {
+    use std::process::ExitCode;
+
     assert_eq!(
         super::run([OsString::from("-psn_0_1234567")]),
-        None,
-        "LaunchServices' first-launch argument is not a CLI command"
+        Some(ExitCode::from(2)),
+        "a GUI launch could start fiscal processing"
     );
-    let error = parse(["-psn_0_1234567", "status"].map(OsString::from))
-        .expect_err("a serial number beside a command is still invalid");
-    assert_eq!(error.exit, 2);
 }
 
 #[test]

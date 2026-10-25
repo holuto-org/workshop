@@ -5,15 +5,27 @@ use fiscal::{
     money::Grosze,
     receipt::{PaymentForm, Receipt},
 };
+use std::time::Duration;
+
+/// Item, NIP, advance and payment commands answer once the line is accepted.
+const LINE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Closing commands may finish the printout before answering.
+const END_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub(crate) struct Step {
     pub command: &'static str,
     pub body: String,
+    /// Silence beyond this leaves the outcome uncertain; nothing is resent.
+    pub timeout: Duration,
 }
 impl Step {
-    pub(crate) const fn new(command: &'static str, body: String) -> Self {
-        Self { command, body }
+    pub(crate) const fn new(command: &'static str, body: String, timeout: Duration) -> Self {
+        Self {
+            command,
+            body,
+            timeout,
+        }
     }
 }
 pub(crate) fn amount(amount: Grosze) -> String {
@@ -59,9 +71,9 @@ pub(crate) fn steps(
     profile: &Profile,
 ) -> Result<Vec<Step>, Error> {
     validate(receipt, footer, profile)?;
-    let mut result = vec![Step::new("LOR", profile.open.to_owned())];
+    let mut result = vec![Step::new("LOR", profile.open.to_owned(), LINE_TIMEOUT)];
     if let Some(nip) = receipt.buyer_nip() {
-        result.push(Step::new("LNP", format!("LNP\x1dOA{nip}")));
+        result.push(Step::new("LNP", format!("LNP\x1dOA{nip}"), LINE_TIMEOUT));
     }
     for line in receipt.lines() {
         let letter = char::from(b'A' + line.vat().get());
@@ -74,6 +86,7 @@ pub(crate) fn steps(
                 amount(line.price()),
                 amount(line.total())
             ),
+            LINE_TIMEOUT,
         ));
     }
     for advance in receipt.advances() {
@@ -84,6 +97,7 @@ pub(crate) fn steps(
                 "LDS\x1dIAA1\x1fB{}\x1fDZaliczka\x1eC{letter}\x1eD",
                 amount(advance.amount)
             ),
+            LINE_TIMEOUT,
         ));
     }
     for (index, payment) in receipt
@@ -111,16 +125,18 @@ pub(crate) fn steps(
                 index + 1,
                 amount(payment.amount)
             ),
+            LINE_TIMEOUT,
         ));
     }
     result.push(Step::new(
         "LCL",
         format!("LCL\x1dRA{}", amount(receipt.fiscal_total())),
+        END_TIMEOUT,
     ));
     // Acceptance can exercise this order; production needs hardware qualification
     // of post-close LAL before enabling company_footer.
     if let Some(footer) = footer {
-        result.push(Step::new("LAL", format!("LAL\x1dQAA{footer}")));
+        result.push(Step::new("LAL", format!("LAL\x1dQAA{footer}"), END_TIMEOUT));
     }
     for step in &result {
         drop(frame::encode("999999999", &text::encode_body(&step.body)?)?);

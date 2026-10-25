@@ -590,14 +590,16 @@ fn operator_wait_resumes_without_resending() {
             None
         ]
     );
-    let sent = fiscal_bodies(&sim);
-    assert_eq!(
-        sent.iter()
-            .filter(|body| identifier(body) == Some("$l"))
-            .count(),
-        3
-    );
-    assert_eq!(sent.last().map(String::as_str), Some("28;0$z"));
+    // The exact uninterrupted sequence: no step replayed, skipped or reordered.
+    let clean = Simulator::start();
+    supported(&clean);
+    let clean_driver = printer(&clean);
+    let clean_expected = clean_driver.probe().unwrap();
+    let clean_printed = clean_driver
+        .print_receipt(&receipt(vec![]), &clean_expected, &mut Log::default())
+        .unwrap();
+    assert_eq!(clean_printed.receipt_number, printed.receipt_number);
+    assert_eq!(fiscal_bodies(&sim), fiscal_bodies(&clean));
     assert_eq!(sim.receipts(), 1);
 }
 
@@ -784,7 +786,10 @@ fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
                     if message == "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie."
             ));
         } else {
-            assert!(matches!(result, Err(Error::Invalid(_) | Error::NotReady(_))));
+            assert!(matches!(
+                result,
+                Err(Error::Invalid(_) | Error::NotReady(_))
+            ));
         }
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }

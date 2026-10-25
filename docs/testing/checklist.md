@@ -230,8 +230,9 @@ drivers, using that brand's simulator through the real driver.
   - Test shape: Controlled hold + event acknowledgement, not elapsed-time
     assertion
 - **Close/reopen/tray**
-  - Required guarantee: Close hides only with tray; without tray remains
-    visible; recreate preserves selection/sort; worker remains active
+  - Required guarantee: Close hides only while a host shows this app's icon;
+    otherwise remains visible; recreate preserves selection/sort; worker remains
+    active
   - Test shape: Testing backend application scenario + Linux `session_bus`
 - **Stop/quit**
   - Required guarantee: Current print finishes; no second submission; quit

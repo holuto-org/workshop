@@ -1,13 +1,19 @@
 #[cfg(not(all(unix, not(target_vendor = "apple"))))]
 use std::future::{Ready, ready};
 
-/// Slint misses Linux tray-host loss after shell restarts; recheck before hiding.
-/// A watcher needs a registered host to display the icon.
+/// Whether closing may hide the window: a host must show this process's icon.
+///
+/// Slint creates the icon once and gives up when no watcher exists yet (autostart can
+/// win the login race), and misses host loss after shell restarts.
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub(crate) async fn available() -> bool {
-    use std::time::Duration;
+    use std::{process, time::Duration};
 
-    use zbus::{connection, fdo::PropertiesProxy, names::InterfaceName};
+    use zbus::{
+        connection,
+        fdo::{DBusProxy, PropertiesProxy},
+        names::{BusName, InterfaceName},
+    };
 
     let check = async {
         // An unresponsive watcher must not leave the close button doing nothing.
@@ -20,13 +26,33 @@ pub(crate) async fn available() -> bool {
             .path("/StatusNotifierWatcher")?
             .build()
             .await?;
-        let registered = watcher
-            .get(
-                InterfaceName::from_static_str("org.kde.StatusNotifierWatcher")?,
-                "IsStatusNotifierHostRegistered",
-            )
+        let interface = InterfaceName::from_static_str("org.kde.StatusNotifierWatcher")?;
+        let host = watcher
+            .get(interface.clone(), "IsStatusNotifierHostRegistered")
             .await?;
-        Ok::<bool, zbus::Error>(bool::try_from(registered)?)
+        if !bool::try_from(host)? {
+            return Ok(false);
+        }
+        let items: Vec<String> = watcher
+            .get(interface, "RegisteredStatusNotifierItems")
+            .await?
+            .try_into()?;
+        let bus = DBusProxy::new(&connection).await?;
+        for item in &items {
+            // `service/path`; GNOME lists the unique name instead of the requested one.
+            let service = item
+                .split_once('/')
+                .map_or(item.as_str(), |(service, _)| service);
+            if let Ok(service) = BusName::try_from(service)
+                && bus
+                    .get_connection_unix_process_id(service)
+                    .await
+                    .is_ok_and(|owner| owner == process::id())
+            {
+                return Ok(true);
+            }
+        }
+        Ok::<bool, zbus::Error>(false)
     };
     check.await.unwrap_or(false)
 }

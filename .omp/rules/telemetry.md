@@ -10,8 +10,8 @@ interruptMode: never
 # Telemetry
 
 [The telemetry policy](../../docs/telemetry.md) is the data allowlist and
-explains native-dump privacy. Instrumentation in posnet/agent uses `tracing`,
-not direct Sentry capture (agent API may read trace propagation headers).
+explains native-dump privacy. Instrumentation in the drivers and agent uses
+`tracing`, not direct Sentry capture (agent API may read trace propagation headers).
 Desktop owns the Sentry client, OS-root transport, subscriber, scrubbers,
 sessions and native reporter.
 

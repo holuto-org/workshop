@@ -167,9 +167,15 @@ fn parse<I: IntoIterator<Item = OsString>>(args: I) -> Result<Parsed, Failure> {
     Ok(Parsed { command, json })
 }
 
+/// `LaunchServices` can pass a lone `-psn_…` to the first launch of a downloaded app.
+fn process_serial_number(args: &[OsString]) -> bool {
+    matches!(args, [only] if only.to_str().is_some_and(|word| word.starts_with("-psn_")))
+}
+
 pub(crate) fn run<I: IntoIterator<Item = OsString>>(args: I) -> Option<ExitCode> {
     let args: Vec<_> = args.into_iter().collect();
-    if args.is_empty() {
+    // Elsewhere the argument stays invalid: a GUI launch may start fiscal processing.
+    if args.is_empty() || (cfg!(target_os = "macos") && process_serial_number(&args)) {
         return None;
     }
     let mut json = args.iter().any(|word| word == "--json");

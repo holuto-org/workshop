@@ -190,10 +190,11 @@ retries every 15 seconds and shows a notice; a 401 stops processing. A confirmed
 receipt or report stays disabled until the worker finishes that command, so a
 second click cannot queue it twice. Closing the window hides it in the tray and
 releases its memory without stopping processing; reopen from the tray. Without a
-tray, closing keeps the window visible. **Zatrzymaj** stops processing;
-**Zakończ**, the tray's quit, the macOS Dock/⌘Q quit and, on Linux and macOS,
-SIGTERM, SIGHUP or SIGINT (Linux logout or shutdown, Ctrl+C) exit. All of them
-finish the current operation first.
+tray icon, closing keeps the window visible; on Linux this includes an icon that
+could not register because the desktop's tray started after the app.
+**Zatrzymaj** stops processing; **Zakończ**, the tray's quit, the macOS Dock/⌘Q
+quit and, on Linux and macOS, SIGTERM, SIGHUP or SIGINT (Linux logout or
+shutdown, Ctrl+C) exit. All of them finish the current operation first.
 
 Prices are gross; API quantities and amounts are decimal strings. The schema
 allows unit prices with up to eight decimal places, but this driver requires
@@ -223,8 +224,11 @@ truncated.
   Wait at most ten minutes from the first wait, without resending.
   **Novitus:** real-time DLE/ENQ/DLE2 observe waits without resending;
   undocumented DLE2 byte order is never guessed. **Elzab:** no concurrent
-  status polling is assumed; paper-out auto-cancellation still leaves an
-  uncertain outcome. Unexplained silence or unreadable status is **unknown**.
+  status polling is assumed, so silence is not an operator wait: after 10 s on
+  an item or payment, 30 s at close or on a daily report, or ten minutes on a
+  periodic report, the outcome is **unknown**. Paper-out auto-cancellation also
+  leaves an uncertain outcome. Unexplained silence or unreadable status is
+  **unknown**.
 - Uncertain outcomes, including process death during dispatch, are **unknown**
   and block receipts and reports across restarts. Inspect the printout and
   printer, then resolve the job in the **web app**. Resolution unblocks, never

@@ -242,8 +242,10 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    state. Expected: each fiscal command sent once; no hidden transport retry,
    cancel, resume or reprint. Novitus waits observe DLE/ENQ/DLE2; record byte
    order by known physical state. Elzab paper-out may auto-cancel, but still
-   leaves uncertainty. **Fills:** fault/wait/readiness masks and narrow certain
-   refusal evidence; never a retry permission or new capability.
+   leaves uncertainty; record each Elzab reply delay and whether a paper or
+   operator wait withholds the reply. **Fills:** fault/wait/readiness masks,
+   Elzab `receipt.rs` line/end and `printer.rs` report timeouts, and narrow
+   certain refusal evidence; never a retry permission or new capability.
 8. **Restart and resolution.** For each uncertain scenario restart with the
    same journal and show all receipts/reports blocked, with no scan or device
    switch. Inspect read-only last-document/counter evidence before and after

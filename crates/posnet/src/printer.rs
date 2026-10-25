@@ -424,11 +424,24 @@ fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<String> {
     matches!(device.get("ds"), Some("2" | "3")).then(|| "Drukarka oczekuje na operatora".to_owned())
 }
 
+/// An unlisted model named POSNET is reported by name instead of as an absent printer;
+/// other names are not Posnet. Either way no further command is sent.
 pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
     let mut session = Session::open(link, connection)?;
     let identity = session.command("getrealid", &[], SCAN_TIMEOUT)?;
-    if identity.get("nm") != Some(TEMO) {
-        return Ok(None);
+    let model = identity.get("nm").unwrap_or_default();
+    if model != TEMO {
+        if !model
+            .get(..6)
+            .is_some_and(|brand| brand.eq_ignore_ascii_case("POSNET"))
+        {
+            return Ok(None);
+        }
+        return Err(Error::Unsupported(format!(
+            "Nieobsługiwany model drukarki Posnet: {model} (oprogramowanie {}). Obsługiwana \
+             jest Posnet Temo Online.",
+            identity.get("vr").unwrap_or("nieznane")
+        )));
     }
     read_device(&mut session).map(Some)
 }

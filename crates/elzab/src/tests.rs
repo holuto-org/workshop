@@ -21,6 +21,7 @@ use fiscal::{
 use std::{io, time::Duration};
 #[cfg(workshop_acceptance)]
 mod acceptance;
+mod telemetry;
 #[derive(Default)]
 struct Log {
     commands: Vec<&'static str>,

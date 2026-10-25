@@ -25,7 +25,10 @@ use jiff::{
 };
 use std::{sync::Arc, time::Duration};
 const TIMEOUT: Duration = Duration::from_secs(3);
-const PRINT_TIMEOUT: Duration = Duration::from_secs(600);
+/// `RRP` answers on acceptance; printing continues after the reply.
+const ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Synchronous `RPP` (S0) prints the whole report before answering.
+const REPORT_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Debug)]
 pub struct Printer {
@@ -61,6 +64,7 @@ impl Driver for Printer {
         Ok(device)
     }
 
+    #[tracing::instrument(skip_all, fields(sentry.op = "device.receipt"))]
     fn print_receipt(
         &self,
         receipt: &Receipt,
@@ -112,12 +116,14 @@ impl Driver for Printer {
         let issued_at = timestamp(clock(&mut session)?)?;
         dispatch(&mut session, &steps, journal)?;
         let receipt_number = read_number(&mut session, "SER", 'J').ok();
+        tracing::info!("Receipt printed");
         Ok(Printed {
             receipt_number,
             issued_at,
         })
     }
 
+    #[tracing::instrument(skip_all, fields(sentry.op = "device.report", report = report.label()))]
     fn print_report(
         &self,
         report: Report,
@@ -166,7 +172,12 @@ impl Driver for Printer {
                 )
             },
         };
-        dispatch(&mut session, &[Step::new(command, body)], journal)?;
+        let timeout = if command == "RRP" {
+            ACCEPT_TIMEOUT
+        } else {
+            REPORT_TIMEOUT
+        };
+        dispatch(&mut session, &[Step::new(command, body, timeout)], journal)?;
         if command == "RRP" {
             // The protocol promises acceptance, not completion.
             return Err(uncertain(Error::NotReady(
@@ -175,6 +186,7 @@ impl Driver for Printer {
                     .to_owned(),
             )));
         }
+        tracing::info!("Report printed");
         Ok(())
     }
 }
@@ -451,7 +463,14 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
             let error = Error::Journal(error);
             return Err(if index == 0 { error } else { uncertain(error) });
         }
-        if let Err(error) = session.command(step.command, &step.body, PRINT_TIMEOUT) {
+        if let Err(error) = session.command(step.command, &step.body, step.timeout) {
+            if let Error::Device { code, .. } = &error {
+                tracing::warn!(
+                    command = step.command,
+                    device_error_code = code,
+                    "Printer refused command"
+                );
+            }
             let certain = index == 0
                 && step.command == "LOR"
                 && matches!(error, Error::Device { rejected: true, .. });
@@ -461,6 +480,7 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
     Ok(())
 }
 fn uncertain(error: Error) -> Error {
+    tracing::error!("Printer operation has an uncertain outcome");
     Error::Uncertain(Box::new(error))
 }
 fn field(body: &str, tag: char) -> Result<&str, Error> {

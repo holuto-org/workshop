@@ -60,6 +60,11 @@ impl Session {
         self.next_id += 1;
         self.poisoned = true;
         let timeout = self.timeout(timeout);
+        tracing::debug!(
+            command,
+            timeout_ms = timeout.as_millis(),
+            "Sending printer command once"
+        );
         let deadline = Instant::now() + timeout;
         self.port.write_all(&raw, timeout).map_err(Error::Io)?;
         let mut result = Vec::new();

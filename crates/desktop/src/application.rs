@@ -75,13 +75,10 @@ pub(crate) fn run(
     let tray = TrayIcon::new()?;
     tray.on_open(|| with_app(Application::open));
     tray.on_quit(|| with_app(|app| app.stop(true)));
-    match tray.show() {
-        Ok(()) => app.borrow_mut().tray = Some(tray),
-        Err(error) => app.borrow_mut().model.say(
-            format!("Zasobnik systemowy jest niedostępny: {error}"),
-            Tone::Error,
-        ),
-    }
+    // Only sets `visible`; Slint creates the native icon later and cannot report failure,
+    // so closing asks `tray::available()` before hiding.
+    tray.show()?;
+    app.borrow_mut().tray = Some(tray);
     app.borrow_mut().launch()?;
     let result = slint::run_event_loop_until_quit();
     APPLICATION.with(|slot| *slot.borrow_mut() = None);

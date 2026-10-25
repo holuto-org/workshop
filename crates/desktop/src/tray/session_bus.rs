@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use slint::platform::update_timers_and_animations;
 use std::{
     env,
     error::Error,
@@ -12,15 +13,29 @@ use std::{
 use zbus::Connection;
 
 use super::available;
+use crate::ui::TrayIcon;
 
+/// Lists items as `service/path`, like the KDE watcher.
 #[derive(Debug)]
-struct Watcher(bool);
+struct Watcher {
+    host: bool,
+    items: Vec<String>,
+}
 
 #[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
 impl Watcher {
+    fn register_status_notifier_item(&mut self, service: &str) {
+        self.items.push(format!("{service}/StatusNotifierItem"));
+    }
+
     #[zbus(property)]
     const fn is_status_notifier_host_registered(&self) -> bool {
-        self.0
+        self.host
+    }
+
+    #[zbus(property)]
+    fn registered_status_notifier_items(&self) -> Vec<String> {
+        self.items.clone()
     }
 }
 
@@ -46,12 +61,24 @@ fn run<F: Future>(future: F) -> F::Output {
     }
 }
 
+/// Creates the application's icon the way `application::run` does.
+///
+/// Slint registers it with the watcher from its change handlers; running them here
+/// makes the attempt synchronous.
+fn show_icon() -> Result<TrayIcon, slint::PlatformError> {
+    let tray = TrayIcon::new()?;
+    tray.show()?;
+    update_timers_and_animations();
+    Ok(tray)
+}
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
-fn tray_availability_requires_a_registered_status_notifier_host() -> Result<(), Box<dyn Error>> {
+fn tray_availability_requires_this_apps_icon_registered_with_a_tray_host()
+-> Result<(), Box<dyn Error>> {
     if env::var_os("WORKSHOP_PRIVATE_TEST_BUS").is_none() {
         #[expect(
             clippy::disallowed_methods,
@@ -62,7 +89,10 @@ fn tray_availability_requires_a_registered_status_notifier_host() -> Result<(), 
             .arg(env::current_exe()?)
             .args([
                 "--exact",
-                "tray::session_bus::tray_availability_requires_a_registered_status_notifier_host",
+                concat!(
+                    "tray::session_bus::",
+                    "tray_availability_requires_this_apps_icon_registered_with_a_tray_host"
+                ),
                 "--nocapture",
             ])
             .env("WORKSHOP_PRIVATE_TEST_BUS", "1")
@@ -75,22 +105,36 @@ fn tray_availability_requires_a_registered_status_notifier_host() -> Result<(), 
         return Ok(());
     }
     let _address = env::var("DBUS_SESSION_BUS_ADDRESS")?;
+    i_slint_backend_testing::init_integration_test_with_mock_time();
     run(async {
         assert!(
             !available().await,
             "a bus without StatusNotifierWatcher must keep the application visible"
         );
+        // Autostart can win the login race against the desktop's watcher.
+        let _early = show_icon()?;
         let watcher = Connection::session().await?;
         let _served = watcher
             .object_server()
-            .at("/StatusNotifierWatcher", Watcher(false))
+            .at(
+                "/StatusNotifierWatcher",
+                Watcher {
+                    host: true,
+                    items: Vec::new(),
+                },
+            )
             .await?;
         watcher
             .request_name("org.kde.StatusNotifierWatcher")
             .await?;
         assert!(
             !available().await,
-            "a watcher without a registered tray host cannot show the icon"
+            "an icon created before the watcher never registered; hiding would strand the app"
+        );
+        let _registered = show_icon()?;
+        assert!(
+            available().await,
+            "this application's icon registered with a tray host makes hiding safe"
         );
         watcher
             .object_server()
@@ -98,10 +142,10 @@ fn tray_availability_requires_a_registered_status_notifier_host() -> Result<(), 
             .await?
             .get_mut()
             .await
-            .0 = true;
+            .host = false;
         assert!(
-            available().await,
-            "a watcher with a registered tray host makes tray hiding safe"
+            !available().await,
+            "a watcher without a registered tray host cannot show the icon"
         );
         let released = watcher
             .release_name("org.kde.StatusNotifierWatcher")

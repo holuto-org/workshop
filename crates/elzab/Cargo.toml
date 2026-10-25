@@ -13,10 +13,12 @@ simulator = ["fiscal/simulator"]
 [dependencies]
 fiscal.workspace = true
 jiff.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 fiscal = { workspace = true, features = ["simulator"] }
 insta.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

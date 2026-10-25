@@ -17,10 +17,11 @@ interruptMode: never
   `preferences::Writer`) and report completion through the event loop.
 - Every event-loop callback that later syncs the model into the window first
   captures the window (`app.capture()`), so operator input is never overwritten.
-- Closing the window only hides it when a tray host is available (otherwise it
-  stays visible) and never stops the worker. **Zatrzymaj** stops processing;
-  **Zakończ**, tray quit, macOS Dock/⌘Q quit and Unix SIGTERM/SIGHUP/SIGINT
-  route through `Worker::stop` and join only after the final `Event::Stopped`.
+- Closing the window only hides it when a tray host shows this app's icon
+  (otherwise it stays visible) and never stops the worker. **Zatrzymaj** stops
+  processing; **Zakończ**, tray quit, macOS Dock/⌘Q quit and Unix
+  SIGTERM/SIGHUP/SIGINT route through `Worker::stop` and join only after the
+  final `Event::Stopped`.
   On macOS no worker (including
   pairing) starts unless `macos::install()` succeeds. A failed status write never
   keeps quit waiting.
