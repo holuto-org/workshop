@@ -101,17 +101,17 @@ pub fn steps(receipt: &Receipt, footer: Option<&str>) -> Vec<Step> {
         ("to", receipt.fiscal_total().get().to_string()),
         ("fp", receipt.fiscal_total().get().to_string()),
     ];
-    if let Some(footer) = footer {
+    if footer.is_some() {
         end.push(("fe", "0".to_owned()));
-        steps.push(Step::new("trend", end, END_TIMEOUT));
+    }
+    steps.push(Step::new("trend", end, END_TIMEOUT));
+    if let Some(footer) = footer {
         steps.push(Step::new(
             "trftrln",
             vec![("id", "25".to_owned()), ("na", footer.to_owned())],
             LINE_TIMEOUT,
         ));
         steps.push(Step::new("trftrend", Vec::new(), END_TIMEOUT));
-    } else {
-        steps.push(Step::new("trend", end, END_TIMEOUT));
     }
     steps
 }

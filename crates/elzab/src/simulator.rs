@@ -211,15 +211,9 @@ impl Port for SimPort {
         let mut state = lock(&self.state);
         state.frames.push(bytes.to_vec());
         let (header, data) = frame::decode(bytes).map_err(io::Error::other)?;
-        let id = header
-            .split('\u{1d}')
-            .next()
-            .ok_or(io::ErrorKind::InvalidData)?;
+        let id = header.split('\u{1d}').next().unwrap_or_default();
         let body = cp1250::decode(data).ok_or(io::ErrorKind::InvalidData)?;
-        let command = body
-            .split('\u{1d}')
-            .next()
-            .ok_or(io::ErrorKind::InvalidData)?;
+        let command = body.split('\u{1d}').next().unwrap_or_default();
         let fault = state.faults.remove(command);
         let (status, reply) = match &fault {
             Some(Fault::Transport(status)) => (status.as_str(), String::new()),
@@ -270,11 +264,8 @@ impl Port for SimPort {
             .len()
             .min(self.pending.len())
             .min(lock(&self.state).fragment);
-        for byte in buffer.iter_mut().take(length) {
-            *byte = self
-                .pending
-                .pop_front()
-                .ok_or(io::ErrorKind::UnexpectedEof)?;
+        for (slot, byte) in buffer.iter_mut().zip(self.pending.drain(..length)) {
+            *slot = byte;
         }
         Ok(length)
     }

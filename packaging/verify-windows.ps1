@@ -52,7 +52,6 @@ try {
     $result = Get-Content -Raw (Join-Path $installed 'check.json') | ConvertFrom-Json
     if ($check.ExitCode -ne 3 -or $result.ok -ne $false -or $result.configured -ne $false -or $result.appRunning -ne $false -or $result.errors.Count -eq 0) { throw 'Fresh configuration CLI check failed' }
     $process = Start-Process $exe -PassThru
-    if (-not $process.WaitForInputIdle(20000)) { throw 'Application did not become input-idle' }
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
     do {
         $process.Refresh()

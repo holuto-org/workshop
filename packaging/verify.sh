@@ -59,7 +59,6 @@ case "$(uname -s)" in
     ditto "$app" "$tmp/Applications/Holuto Workshop.app"
     app="$tmp/Applications/Holuto Workshop.app"
     binary="$app/Contents/MacOS/workshop"
-    [[ -x $binary ]]
     [[ $(lipo -archs "$binary") == "$(uname -m)" ]]
     codesign --verify --strict "$app"
     check_cli

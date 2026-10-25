@@ -209,10 +209,6 @@ impl Simulator {
     pub fn link(&self) -> Arc<dyn Link> {
         Arc::new(SimLink {
             address: self.address.clone(),
-            candidates: vec![Candidate {
-                port: self.address.clone(),
-                hint: None,
-            }],
             connected: Arc::clone(&self.connected),
             state: Arc::clone(&self.state),
         })
@@ -353,7 +349,6 @@ impl Drop for Simulator {
 #[derive(Debug)]
 struct SimLink {
     address: String,
-    candidates: Vec<Candidate>,
     connected: Arc<AtomicBool>,
     state: Arc<Mutex<State>>,
 }
@@ -386,7 +381,10 @@ impl Link for SimLink {
     }
 
     fn candidates(&self) -> Vec<Candidate> {
-        self.candidates.clone()
+        vec![Candidate {
+            port: self.address.clone(),
+            hint: None,
+        }]
     }
 
     fn time_scale(&self) -> u32 {

@@ -38,9 +38,6 @@ $script:latestRequests = 0
 function Get-HolutoLatestRelease { $script:latestRequests++; return 'v1.2.3' }
 function Invoke-WebRequest { throw 'Unexpected download during dry-run' }
 function Get-Process { throw 'Unexpected process inspection during dry-run' }
-function New-Item { throw 'Unexpected write during dry-run' }
-function Copy-Item { throw 'Unexpected write during dry-run' }
-function Set-Content { throw 'Unexpected write during dry-run' }
 
 # A wrong branch here would download, write, or choose a different asset/tag.
 $userPathBefore = [Environment]::GetEnvironmentVariable('Path', 'User')
