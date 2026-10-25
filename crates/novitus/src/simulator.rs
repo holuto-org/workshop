@@ -1,7 +1,6 @@
 //! Offline native Novitus TCP peer using the real Session and shared Link/Port.
 //!
-//! Read-only fixtures follow N:L795-L850,L1230-L1290,L1969-L1993,
-//! L2073-L2112,L13380-L13386,L16080-L16101; raw status N:L383-L536.
+//! Read-only fixtures follow the native protocol's documented replies and raw status.
 //! Identity, clock, VAT and header are synthetic, not hardware qualification.
 
 use crate::{
@@ -636,7 +635,7 @@ fn fiscal_command(body: &str, command: &str, state: &mut State) -> u32 {
     0
 }
 
-/// Full and bounded configuration reads, N:L13323-L13347,L15761-L15783.
+/// Full and bounded configuration reads.
 fn configuration_reply(body: &str, options: &BTreeMap<u32, String>) -> Option<String> {
     let (first, last) = if body == "^c" {
         (0, u32::MAX)

@@ -315,6 +315,7 @@ after a running-app refusal, then repeat only the requested configuration.
   `--api-url <URL>`, `--port auto|<PORT>`, `--speed 9600` and
   `--diagnostics on|off`; at least one flag is required, with no duplicates.
   Choose one actual value; `|` means alternatives. Refuses while app runs.
+  A different API address forgets the saved pairing; pair again afterwards.
 - **`workshop pair <CODE> --json`**: Exchange a short-lived single-use code for
   internally stored credentials. Ask before linking the intended
   computer/printer. Refuses while app runs. Never reveal the token or retry

@@ -1,6 +1,6 @@
-//! ESC P / ESC backslash frames and FF-initialized XOR, N:L538-L576.
+//! ESC P / ESC backslash frames and FF-initialized XOR.
 //! `encode`/`decode` require checksums; `query`/`unframe` are only for schemas
-//! explicitly omitting them (N:L583-L587,L660-L668,L1236-L1248).
+//! explicitly omitting them.
 
 use fiscal::error::Error;
 

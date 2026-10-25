@@ -1,4 +1,4 @@
-//! B:128-139,156-254,342-390: bounded frames with CRC-16/ARC.
+//! Bounded frames with CRC-16/ARC.
 use fiscal::error::Error;
 use std::str;
 

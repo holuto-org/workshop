@@ -1,4 +1,3 @@
-//! P:3583-3620,3804-3888,4131-4166,4287-4312,4578-4589,4828-4841,4903-4918.
 //! Validate the entire command sequence before LOR; no substitution or rounding.
 use crate::{frame, profile::Profile, text};
 use fiscal::{
@@ -127,7 +126,7 @@ pub(crate) fn steps(
         format!("LCL\x1dRA{}", amount(receipt.fiscal_total())),
     ));
     // Acceptance can exercise this order; production needs hardware qualification
-    // of post-close LAL before enabling company_footer (OSS §2).
+    // of post-close LAL before enabling company_footer.
     if let Some(footer) = footer {
         result.push(Step::new("LAL", format!("LAL\x1dQAA{footer}")));
     }

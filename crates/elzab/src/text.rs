@@ -1,4 +1,4 @@
-//! P:569-573,3229-3236: configured CP1250 only, never replacement or escaping.
+//! Configured CP1250 only, never replacement or escaping.
 use fiscal::{cp1250, error::Error};
 
 pub fn encode(text: &str) -> Result<Vec<u8>, Error> {

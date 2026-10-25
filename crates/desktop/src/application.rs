@@ -272,6 +272,7 @@ impl Application {
             let sink = |completion| {
                 let _event_loop_closed = slint::invoke_from_event_loop(move || {
                     with_app(move |app| {
+                        app.capture();
                         app.settings_saved(completion);
                         Ok(())
                     });
@@ -319,6 +320,11 @@ impl Application {
         let snapshot = self.model.status(jiff::Timestamp::now());
         if self.write_settings(preferences::Request::Status(snapshot.clone())) {
             self.status_requested = Some(snapshot);
+        } else {
+            // Reported like a failed write: an unsubmitted status never keeps quit waiting,
+            // and an older acknowledgement can no longer match the forgotten request.
+            self.status_requested = None;
+            self.status_settled = Some(snapshot);
         }
     }
 
@@ -351,24 +357,29 @@ impl Application {
             Ok(preferences::Outcome::Reload(settings)) => {
                 self.model.settings = settings;
             },
-            Ok(preferences::Outcome::Status(snapshot)) => {
+            // Older acknowledgements never replace the latest requested state.
+            Ok(preferences::Outcome::Status(snapshot))
+                if self.status_requested.as_ref() == Some(&snapshot) =>
+            {
                 self.status_settled = Some(snapshot);
             },
             Ok(
                 preferences::Outcome::Port
                 | preferences::Outcome::Start(_)
                 | preferences::Outcome::Saved
-                | preferences::Outcome::Telemetry,
+                | preferences::Outcome::Telemetry
+                | preferences::Outcome::Status(_),
             ) => {},
             Err(error) => {
+                // Forget the request so the next state change retries the write.
                 if matches!(kind, Some(WriteKind::Status))
                     && !self
                         .writes_pending
                         .iter()
                         .any(|kind| matches!(kind, WriteKind::Status))
+                    && let Some(requested) = self.status_requested.take()
                 {
-                    // Forget the request so the next state change retries the write.
-                    self.status_settled = self.status_requested.take();
+                    self.status_settled = Some(requested);
                 }
                 self.model.say(error, Tone::Error);
             },
@@ -411,6 +422,11 @@ impl Application {
 
     fn pair(&mut self) {
         if self.worker.is_some() || self.model.saving || self.quitting {
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if !macos::install() {
+            self.model.say(NATIVE_QUIT_ERROR.into(), Tone::Error);
             return;
         }
         match Worker::pair(

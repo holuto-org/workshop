@@ -12,6 +12,18 @@ use zbus::Connection;
 
 use super::available;
 
+/// Fake watcher: only its host-registration property decides tray visibility.
+#[derive(Debug)]
+struct Watcher(bool);
+
+#[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
+impl Watcher {
+    #[zbus(property)]
+    const fn is_status_notifier_host_registered(&self) -> bool {
+        self.0
+    }
+}
+
 struct ThreadWake(Thread);
 impl Wake for ThreadWake {
     fn wake(self: Arc<Self>) {
@@ -39,7 +51,7 @@ fn run<F: Future>(future: F) -> F::Output {
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
-fn tray_availability_tracks_status_notifier_watcher_ownership() -> Result<(), Box<dyn Error>> {
+fn tray_availability_requires_a_registered_status_notifier_host() -> Result<(), Box<dyn Error>> {
     if env::var_os("WORKSHOP_PRIVATE_TEST_BUS").is_none() {
         #[expect(
             clippy::disallowed_methods,
@@ -50,7 +62,7 @@ fn tray_availability_tracks_status_notifier_watcher_ownership() -> Result<(), Bo
             .arg(env::current_exe()?)
             .args([
                 "--exact",
-                "tray::session_bus::tray_availability_tracks_status_notifier_watcher_ownership",
+                "tray::session_bus::tray_availability_requires_a_registered_status_notifier_host",
                 "--nocapture",
             ])
             .env("WORKSHOP_PRIVATE_TEST_BUS", "1")
@@ -69,12 +81,27 @@ fn tray_availability_tracks_status_notifier_watcher_ownership() -> Result<(), Bo
             "a bus without StatusNotifierWatcher must keep the application visible"
         );
         let watcher = Connection::session().await?;
+        let _served = watcher
+            .object_server()
+            .at("/StatusNotifierWatcher", Watcher(false))
+            .await?;
         watcher
             .request_name("org.kde.StatusNotifierWatcher")
             .await?;
         assert!(
+            !available().await,
+            "a watcher without a registered tray host cannot show the icon"
+        );
+        watcher
+            .object_server()
+            .interface::<_, Watcher>("/StatusNotifierWatcher")
+            .await?
+            .get_mut()
+            .await
+            .0 = true;
+        assert!(
             available().await,
-            "a live StatusNotifierWatcher makes tray hiding safe"
+            "a watcher with a registered tray host makes tray hiding safe"
         );
         let released = watcher
             .release_name("org.kde.StatusNotifierWatcher")

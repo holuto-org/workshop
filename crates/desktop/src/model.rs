@@ -243,10 +243,7 @@ impl Model {
         self.today = today;
         // Slint 1.18 allows assistive actions on disabled widgets; ignore edits while running.
         if !self.running && !self.saving && !self.pairing {
-            window
-                .get_api_url()
-                .trim()
-                .clone_into(&mut self.settings.api_url);
+            self.settings.set_api_url(window.get_api_url().trim());
             window
                 .get_pairing_code()
                 .trim()

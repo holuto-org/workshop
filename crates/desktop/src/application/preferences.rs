@@ -57,6 +57,14 @@ impl Writer {
         Ok(Self { sender })
     }
 
+    /// A writer whose thread is gone, so every submission fails.
+    #[cfg(test)]
+    pub(super) fn closed() -> Self {
+        Self {
+            sender: mpsc::channel().0,
+        }
+    }
+
     pub(super) fn submit(&self, request: Request) -> Result<(), mpsc::SendError<Request>> {
         self.sender.send(request)
     }

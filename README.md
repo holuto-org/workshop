@@ -376,9 +376,7 @@ footers are disabled pending qualification; a company absent from the header
 is rejected before begin. DLE2 byte order remains unverified: readiness requires
 zero flags, and execution wait reasons use only documented DLE bits. Native
 identity strings and firmware-specific behavior still require qualification;
-simulator tests are not hardware certification. See the
-[protocol audit](docs/superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/novitus-protocol.md)
-and [implementation evidence](docs/superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/novitus-oss.md).
+simulator tests are not hardware certification.
 
 Session/heartbeat bind and verify the physical serial and vendor; a mismatch
 fails with 403 `fiscal_serial_mismatch` or `fiscal_vendor_mismatch`.

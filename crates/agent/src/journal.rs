@@ -25,7 +25,7 @@ use crate::{
 };
 
 const FILE: &str = "operation.json";
-/// Backend `Note` limit.
+/// API `Note` limit.
 const MAX_REASON_LENGTH: usize = 2000;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,7 +272,7 @@ impl<'dir> Journal<'dir> {
     }
 }
 
-/// Backend `platform/src/text.rs:65-104`: NFC, trimmed, bounded multiline Note.
+/// API `Note` rules: NFC, trimmed, bounded multiline text.
 fn note(reason: &str) -> String {
     let cleaned: String = reason
         .chars()

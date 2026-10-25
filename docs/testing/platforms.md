@@ -103,13 +103,14 @@ package against the user's saved state. The verifier uses isolated home/state
 and proves `workshop --help`, `workshop check --json` and the **Holuto Workshop
 main window** work: a process that merely survives a timeout could be stuck in
 an error dialog. Check `.deb` replacement metadata/dependencies/desktop entry
-and installed executable; `.dmg` mounting and `.app` Info.plist/executable;
-Windows PE subsystem and version/icon resources. Keep symbol/debug artifacts for
-Sentry separate from stripped distribution packages.
+and installed executable (only CI, `CI=true`, installs the `.deb` system-wide;
+elsewhere the extracted tree is launched); `.dmg` mounting and `.app`
+Info.plist/executable; Windows PE subsystem and version/icon resources. Keep
+symbol/debug artifacts for Sentry separate from stripped distribution packages.
 
 Headless launch is not proof of physical printer access, real tray integration
 on every desktop shell, Wayland layout, SmartScreen/Gatekeeper reputation or
-signing. [Windows signing procedures](../windows-code-signing.md) are separate.
+signing.
 All printer behavior in checks remains simulator/pty/com0com only.
 
 ## Multi-vendor qualification

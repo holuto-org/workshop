@@ -1,10 +1,9 @@
-//! One exclusive native connection; commands are dispatched once, N:L577-L598.
+//! One exclusive native connection; commands are dispatched once.
 //!
-//! Mode 3 is sent once without awaiting its undocumented initialization ACK
-//! (N:L631-L685). ACK identifiers are correlated, including four-digit errors
-//! (N:L660-L668,L20480-L20520). Raw status and fragmented frames share one parser.
-//! DLE2 octets stay in wire order: their byte-label mapping is unverified
-//! (N:L475-L533; novitus-protocol.md §1.4, novitus-oss.md §4).
+//! Mode 3 is sent once without awaiting its undocumented initialization ACK.
+//! ACK identifiers are correlated, including four-digit errors. Raw status and
+//! fragmented frames share one parser. DLE2 octets stay in wire order: their
+//! byte-label mapping is unverified.
 
 use crate::frame;
 use fiscal::{
@@ -52,7 +51,7 @@ impl DleStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent bits defined by N:L383-L408"
+    reason = "independent protocol status bits"
 )]
 pub struct EnqStatus {
     pub fiscal: bool,
@@ -80,7 +79,7 @@ impl EnqStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent bits defined by N:L484-L506"
+    reason = "independent protocol status bits"
 )]
 pub struct MechanismStatus {
     pub cannot_process: bool,
@@ -557,7 +556,7 @@ fn response_prefix(body: &str) -> Option<(String, bool, bool)> {
     }
 }
 
-/// Counted option/value pairs, N:L13323-L13347,L15761-L15783.
+/// Counted option/value pairs.
 fn configuration_options(body: &str) -> Result<Vec<(u32, String)>, Error> {
     let (count, fields) = body.split_once("^c").ok_or_else(frame::corrupt)?;
     let count = decimal(Some(count))?;

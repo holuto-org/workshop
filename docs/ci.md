@@ -5,8 +5,9 @@
     invocation.
   - **Runner and work**: Installer checks/dry runs on Linux, Windows and macOS;
     static checks on Ubuntu; default/all-feature Clippy on those three OSes;
-    native nextest on the five targets below; separate simulator-only debug
-    acceptance and release-rejection checks; Package for PR artifacts.
+    native nextest on the five test runners below (`ubuntu-24.04` only
+    packages); separate simulator-only debug acceptance and release-rejection
+    checks; Package for PR artifacts.
 - **Package (`package.yml`)**
   - **Trigger**: Reused by Checks and Release.
   - **Runner and work**: Build and verify Windows x64 `.exe`, Linux x64/ARM64
@@ -33,7 +34,9 @@ target.
 ## Native matrix
 
 - **`ubuntu-latest` — Linux x64**: Unix ptys, private modes/locks, fake
-  session bus under `dbus-run-session`, `.deb` checks.
+  session bus under `dbus-run-session`.
+- **`ubuntu-24.04` — Linux x64 package**: `.deb` build and checks; the build
+  host's glibc is the package's `libc6` floor.
 - **`ubuntu-24.04-arm` — Linux ARM64**: Native tests and ARM64 package launch.
 - **`windows-latest` — Windows x64**: Signed com0com pair via
   `HOLUTO_TEST_COM_PAIR`; PE resources/subsystem and executable launch.
@@ -87,5 +90,3 @@ A successful upload is not proof of symbolication: inspect a synthetic, approved
 release event against that exact binary as described in
 [workflows](workflows.md#sentry-release-check). [Telemetry](telemetry.md)
 records runtime data and privacy boundaries.
-[Windows signing](windows-code-signing.md) is a separate provisioning procedure,
-not a claim that current artifacts are signed.

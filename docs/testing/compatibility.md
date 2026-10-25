@@ -33,8 +33,8 @@ terminal states and result idempotency/refusals with those handlers. Update
 `agent::testing` loopback fake in the same change, then prove requests through
 production `ureq` and the observable stored server state.
 
-The source is the new Rust backend's `openapi/agent.json`, never legacy
-`../api`. After regenerating it with `cargo run -p holuto -- openapi` in the
+The source is the backend's `openapi/agent.json`. After regenerating it with
+`cargo run -p holuto -- openapi` in the
 backend, run `bash scripts/openapi-sync.sh` here (`BACKEND_DIR` defaults to
 `../backend`) and commit the vendored `openapi/` diff. Typify generates wire
 types into `OUT_DIR/agent-wire.rs` during builds, not committed source. Deploy

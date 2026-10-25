@@ -1,4 +1,4 @@
-use std::{sync::atomic::AtomicBool, thread, time::Duration};
+use std::sync::atomic::AtomicBool;
 
 #[cfg(target_os = "macos")]
 use super::super::macos;

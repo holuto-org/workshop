@@ -348,6 +348,8 @@ fn watch(
         let (name, reply) = match session.next_frame(command, deadline) {
             Ok(frame) => frame,
             Err(Error::Timeout(_)) => break,
+            // Later status anomalies cannot undo the command's own correlated reply.
+            Err(_) if answered.is_some() => break,
             Err(error) => return Err(error),
         };
         let token = reply.get("@");
@@ -361,7 +363,7 @@ fn watch(
             let result = reply.into_result(&name);
             if name == command || result.as_ref().is_err_and(|error| refuses(error, command)) {
                 answered = Some(result);
-            } else {
+            } else if answered.is_none() {
                 let _reply = result?;
                 return Err(Error::Protocol(format!(
                     "Oczekiwano odpowiedzi {command}, otrzymano {name}."

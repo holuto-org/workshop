@@ -3,7 +3,7 @@
 //!
 //! A journal proving no fiscal command was sent reports FAILED while Holuto still
 //! says TAKEN. If that attempt expired to UNKNOWN, staff must resolve it as failed:
-//! backend `receipts.rs:174-177` intentionally refuses automatic UNKNOWN → FAILED.
+//! Holuto intentionally refuses automatic UNKNOWN → FAILED.
 //! Completed evidence conflicting with FAILED/EXPIRED stays blocked until an
 //! operator explicitly acknowledges it locally on the same ready printer.
 

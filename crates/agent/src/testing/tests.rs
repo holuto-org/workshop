@@ -142,7 +142,6 @@ fn queue_precision_ignores_trailing_zeros_and_accepts_the_device_boundary() -> T
     reason = "literal backend conflict matrix and refused-write evidence stay visible together"
 )]
 fn queue_conflicts_follow_kind_allocation_state_and_paired_printer() -> TestResult {
-    // ../backend/crates/fiscal/queries/receipts/queue_blocked_job.sql:8-35.
     for (
         name,
         existing_order,
@@ -279,7 +278,6 @@ fn queue_conflicts_follow_kind_allocation_state_and_paired_printer() -> TestResu
     reason = "boundary assertions panic while setup and HTTP failures use Result"
 )]
 fn documents_exclude_only_the_jobs_that_make_each_document_ineligible() -> TestResult {
-    // ../backend/crates/fiscal/queries/receipts/documents.sql:50-64,92-98.
     for (name, existing_order, existing_allocation, document_allocation, hidden) in [
         (
             "same sale",
@@ -355,8 +353,7 @@ fn documents_exclude_only_the_jobs_that_make_each_document_ineligible() -> TestR
     reason = "boundary assertions panic while setup and HTTP failures use Result"
 )]
 fn queue_removes_documents_without_skipping_the_cursor_successor() -> TestResult {
-    // ../backend/crates/fiscal/queries/receipts/documents.sql:1-26,111-132:
-    // eligibility can disappear, but the underlying document still anchors the cursor.
+    // Eligibility can disappear, but the underlying document still anchors the cursor.
     let server = Holuto::new();
     let mut first_items: Vec<_> = (4000..4099)
         .map(|id| document(Uuid::from_u128(id), None, "2025-10-16T10:00:00Z"))

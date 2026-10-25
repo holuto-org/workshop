@@ -1,7 +1,7 @@
-//! Windows-1250 text fields, with no control bytes, N:L538-L562.
+//! Windows-1250 text fields, with no control bytes.
 //!
 //! Character counting establishes codec representability, not a verified device
-//! font repertoire (novitus-oss.md §7); no transliteration or truncation.
+//! font repertoire; no transliteration or truncation.
 
 use fiscal::cp1250;
 

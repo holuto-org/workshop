@@ -12,7 +12,12 @@ mod start;
 use std::{
     error::Error,
     fs,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread,
+    time::Duration,
 };
 
 use agent::documents::{Document, ReceiptKind};
@@ -239,9 +244,11 @@ fn report_input_before_2000_shows_error_instead_of_confirmation() -> Result<(), 
 )]
 fn save_persists_operator_connection_choices_before_quitting() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
+    app.borrow_mut().model.settings.api_url = "https://paired.example.test".into();
+    app.borrow_mut().model.settings.token = "already-paired-secret".into();
+    app.borrow().sync();
     control(&window, "Adres API", AccessibleRole::TextInput)?
         .set_accessible_value("https://api.example.test");
-    app.borrow_mut().model.settings.token = "already-paired-secret".into();
     button(&window, "Zapisz")?.invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;
     slint::run_event_loop_until_quit()?;
@@ -252,10 +259,117 @@ fn save_persists_operator_connection_choices_before_quitting() -> Result<(), Box
     );
     assert_eq!(
         saved.token.as_str(),
-        "already-paired-secret",
-        "saving connection choices preserves credentials without exposing an editor"
+        "",
+        "a token paired with another API address is never saved for the new one"
     );
     Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn a_status_write_acknowledgement_keeps_settings_typed_meanwhile() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture_with_event_loop()?;
+    control(&window, "Adres API", AccessibleRole::TextInput)?
+        .set_accessible_value("https://typed.example.test");
+    control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-1234");
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    assert_eq!(
+        (
+            window.get_api_url().as_str(),
+            window.get_pairing_code().as_str()
+        ),
+        ("https://typed.example.test", "ABCD-1234"),
+        "the launch status acknowledgement must not overwrite operator input"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn quit_completes_when_the_final_status_cannot_be_submitted() -> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temp = TempDir::new()?;
+    let simulator = Simulator::start();
+    let app = Rc::new(RefCell::new(Application::new(
+        Arc::new(StateDir::open(temp.path().to_owned())?),
+        Settings::default(),
+        simulator.link(),
+        Date::constant(2025, 10, 24),
+    )));
+    APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
+    app.borrow_mut().settings_writer = Some(preferences::Writer::closed());
+    app.borrow_mut().launch()?;
+    let _scheduled = slint::invoke_from_event_loop(|| {
+        with_app(|app| {
+            app.event(Event::Device {
+                status: None,
+                blocked: true,
+                report_unresolved: false,
+                orphaned_receipt: false,
+            });
+            app.stop(true)
+        });
+    });
+    assert!(
+        quit_before_deadline()?,
+        "a status write that was never submitted must not keep quit waiting"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn an_older_status_acknowledgement_never_replaces_a_newer_unsubmitted_status()
+-> Result<(), Box<dyn Error>> {
+    // Launch has submitted its status; the event loop delivers that acknowledgement
+    // only after the newer status below could not be submitted.
+    let (_temp, app, _window) = fixture_with_event_loop()?;
+    app.borrow_mut().settings_writer = Some(preferences::Writer::closed());
+    app.borrow_mut().event(Event::Device {
+        status: None,
+        blocked: true,
+        report_unresolved: false,
+        orphaned_receipt: false,
+    });
+    app.borrow_mut().stop(true)?;
+    assert!(
+        quit_before_deadline()?,
+        "the stale launch acknowledgement must not keep quit waiting"
+    );
+    Ok(())
+}
+
+/// Runs the event loop; `false` if quitting had to be forced after the deadline.
+fn quit_before_deadline() -> Result<bool, Box<dyn Error>> {
+    let (finished, quit) = mpsc::channel::<()>();
+    let deadline = thread::Builder::new()
+        .name("quit deadline".into())
+        .spawn(move || {
+            // Failure diagnostic only: end a hung loop instead of hanging the suite.
+            let hung = quit.recv_timeout(Duration::from_secs(5)).is_err();
+            if hung {
+                let _scheduled = slint::invoke_from_event_loop(|| {
+                    let _quit = slint::quit_event_loop();
+                });
+            }
+            hung
+        })?;
+    slint::run_event_loop_until_quit()?;
+    let _sent = finished.send(());
+    let hung = deadline
+        .join()
+        .map_err(|_panic| "quit deadline thread panicked")?;
+    Ok(!hung)
 }
 
 #[test]

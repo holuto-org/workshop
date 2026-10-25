@@ -1,8 +1,8 @@
 //! Strict model/firmware allowlist, not a marketing-name or version-range fallback.
 //!
-//! N:L6216-L6231 supplies literal firmware spellings; `210` is not guessed to
-//! mean `2.10`. Native identity spellings still require hardware qualification
-//! (novitus-oss.md §6). These are explicit candidate profiles, not a parity claim.
+//! The protocol supplies literal firmware spellings; `210` is not guessed to
+//! mean `2.10`. Native identity spellings still require hardware qualification.
+//! These are explicit candidate profiles, not a parity claim.
 
 use fiscal::{cp1250, device::Capabilities};
 
@@ -14,7 +14,7 @@ pub struct Profile {
 }
 
 pub fn lookup(model: &str, firmware: &str) -> Option<Profile> {
-    // N:L6216-L6231: no inferred aliases or newer-version compatibility.
+    // Literal firmware spellings: no inferred aliases or newer-version compatibility.
     let (max_item_name, info_line_width) = match (model, firmware) {
         ("NOVITUS HD II ONLINE", "1.40" | "2.20" | "3.50") => (60, 40),
         ("NOVITUS DEON ONLINE", "1.40") | ("NOVITUS BONO ONLINE", "1.10") => (40, 42),
@@ -25,26 +25,25 @@ pub fn lookup(model: &str, firmware: &str) -> Option<Profile> {
     Some(Profile {
         capabilities: Capabilities {
             max_item_name,
-            max_lines: 255, // N:L6072,L6180-L6181; no online index wrapping.
+            max_lines: 255, // No online index wrapping.
             max_company_name: info_line_width,
-            max_buyer_nip: 16, // N:L7785-L7813.
+            max_buyer_nip: 16,
             max_quantity_decimals: 8,
-            // Until read-only 52$i proves attr1 0x0200, advertise only ASCII
-            // (N:L538-L546,L599-L602,L1879-L1961).
+            // Until read-only 52$i proves attr1 0x0200, advertise only ASCII.
             allowed_characters: (' '..='~').collect(),
             advance_deductions: cfg!(workshop_acceptance),
             zero_total_receipts: cfg!(workshop_acceptance),
             company_footer: cfg!(workshop_acceptance),
         },
         // HD II is absent from the 24$z width table: use the documented $y
-        // width 40 (N:L6935-L6939), not HD's 64. Point's narrow width is 44;
-        // Bono/Deon 42 (N:L7682-L7699). Footer remains unqualified regardless.
+        // width 40, not HD's 64. Point's narrow width is 44; Bono/Deon 42.
+        // Footer remains unqualified regardless.
         info_line_width,
     })
 }
 
 impl Profile {
-    /// N:L1916-L1919 explicitly promises every Windows-1250 glyph.
+    /// The protocol explicitly promises every Windows-1250 glyph for this attribute.
     pub(crate) fn enable_full_cp1250(&mut self) {
         self.capabilities.allowed_characters = (0x20..=u8::MAX)
             .filter_map(cp1250::decode_byte)

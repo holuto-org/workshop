@@ -1,4 +1,4 @@
-//! B:156-254,276-298,342-390: fresh IDs, validated correlation, no retransmission.
+//! Fresh IDs, validated correlation, no retransmission.
 //! A damaged or missing response poisons the connection; no later write is allowed.
 use crate::{frame, text};
 use fiscal::{
@@ -103,7 +103,7 @@ impl Session {
             match declared_total {
                 Some(total) if header.maximum != total => return Err(frame::corrupt()),
                 None if header.maximum != 0 => {
-                    // B:207-229: an unknown total may become known only on the
+                    // An unknown total may become known only on the
                     // final frame; an initially declared total may never change.
                     if expected_frame != 1 && header.maximum != header.number {
                         return Err(frame::corrupt());
@@ -112,7 +112,7 @@ impl Session {
                 },
                 Some(_) | None => {},
             }
-            // B:207-229: unknown total is 0 until the final numbered frame.
+            // Unknown total is 0 until the final numbered frame.
             if result.len() + data.len() > 65_536 {
                 return Err(frame::corrupt());
             }

@@ -2,15 +2,25 @@
 use std::future::{Ready, ready};
 
 /// Slint does not detect missing Linux tray hosts; recheck before hiding after shell restarts.
+/// A watcher alone displays nothing: it must report a registered host.
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub(crate) async fn available() -> bool {
-    use zbus::{Connection, fdo::DBusProxy, names::BusName};
+    use zbus::{Connection, fdo::PropertiesProxy, names::InterfaceName};
 
     let check = async {
         let connection = Connection::session().await?;
-        let proxy = DBusProxy::new(&connection).await?;
-        let name = BusName::try_from("org.kde.StatusNotifierWatcher")?;
-        Ok::<bool, zbus::Error>(proxy.name_has_owner(name).await?)
+        let watcher = PropertiesProxy::builder(&connection)
+            .destination("org.kde.StatusNotifierWatcher")?
+            .path("/StatusNotifierWatcher")?
+            .build()
+            .await?;
+        let registered = watcher
+            .get(
+                InterfaceName::from_static_str("org.kde.StatusNotifierWatcher")?,
+                "IsStatusNotifierHostRegistered",
+            )
+            .await?;
+        Ok::<bool, zbus::Error>(bool::try_from(registered)?)
     };
     check.await.unwrap_or(false)
 }

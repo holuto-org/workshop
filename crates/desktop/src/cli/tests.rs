@@ -257,6 +257,36 @@ fn invalid_configuration_is_not_partially_saved() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "Assertions prove behavior; setup propagates I/O"
 )]
+fn changing_the_api_address_forgets_the_token_paired_with_the_previous_one() -> TestResult {
+    for (api_url, token) in [
+        ("https://example.test/", "secret-canary"),
+        ("https://other.example.test", ""),
+    ] {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("state");
+        Settings {
+            api_url: "https://example.test".into(),
+            token: "secret-canary".into(),
+            ..Settings::default()
+        }
+        .save(&StateDir::open(path.clone())?)?;
+        let parsed = parse(["config", "set", "--api-url", api_url].map(OsString::from))?;
+        assert_eq!(execute(parsed.command, &path)?.exit, 0);
+        let saved = Settings::load_at(&path)?.ok_or("missing settings")?;
+        assert_eq!(
+            (saved.api_url.as_str(), saved.token.as_str()),
+            (api_url, token),
+            "a token is kept only for the address it was paired with"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove behavior; setup propagates I/O"
+)]
 fn status_exposes_the_running_apps_published_state_without_configuration_secrets() -> TestResult {
     let temp = tempfile::tempdir()?;
     let dir = StateDir::open(temp.path().join("state"))?;

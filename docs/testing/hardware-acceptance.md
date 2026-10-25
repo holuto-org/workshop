@@ -27,13 +27,9 @@ Bono Online and Point; Elzab Zeta Online, Mera Online and Cube Online.
 Exclude legacy Zeta/D10, T10 (network only), other Posnet models, NoviAPI/XML
 and RNDIS/LAN. A USB hint or marketing name is not qualification.
 
-The evidence register must link each open item to its source gap:
-
-- [Novitus protocol gates, section 8][novitus-protocol] and
-  [native integration gap table][novitus-oss].
-- [Elzab protocol gates][elzab-protocol] and
-  [SDK/integration final gap table][elzab-oss].
-- [USB descriptor evidence, section 4][usb-oss].
+The evidence register must link each open item to the module docs and
+capability gates it qualifies (`crates/novitus/src/profile.rs`,
+`crates/elzab/src/profile.rs` and USB hints in `crates/fiscal/src/link.rs`).
 
 ## Build and automated checks (no hardware)
 
@@ -301,9 +297,3 @@ amounts first. No destructive scenarios in this phase.
 A release qualification record lists the exact pass scope, remaining gates,
 operator/reviewer signatures and evidence locations. Untested models and
 firmware remain candidates; document them as such, not as certified support.
-
-[novitus-protocol]: ../superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/novitus-protocol.md
-[novitus-oss]: ../superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/novitus-oss.md
-[elzab-protocol]: ../superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/elzab-protocol.md
-[elzab-oss]: ../superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/elzab-oss.md
-[usb-oss]: ../superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/usb-oss.md

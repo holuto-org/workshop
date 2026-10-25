@@ -1,7 +1,7 @@
 //! Same-session identity/readiness/VAT/clock checks before every fiscal operation.
 //!
-//! P:9737-10105 online ySR is never confused with legacy YSR. Only a matched
-//! initial LOR transport rejection is certain after dispatch (protocol §4.7).
+//! Online ySR is never confused with legacy YSR. Only a matched initial LOR
+//! transport rejection is certain after dispatch.
 use crate::{
     frame,
     profile::{self, Profile},
@@ -167,7 +167,7 @@ impl Driver for Printer {
         drop(frame::encode("999999999", body.as_bytes())?);
         dispatch(&mut session, &[Step::new(command, body)], journal)?;
         if command == "RRP" {
-            // P:10229-10236 explicitly promises acceptance, not completion.
+            // The protocol promises acceptance, not completion.
             return Err(uncertain(Error::NotReady(
                 "Raport dobowy został przyjęty, ale zakończenie wydruku wymaga \
                  sprawdzenia przez operatora."
@@ -404,9 +404,10 @@ fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
         0,
     )
     .map_err(|_date| frame::corrupt())?;
+    // No offset exists on the wire: fail on DST gaps/folds instead of guessing.
     let timestamp = TimeZone::get("Europe/Warsaw")
         .and_then(|zone| zone.to_ambiguous_timestamp(datetime).unambiguous())
-        .map_err(|_zone| frame::corrupt())?;
+        .map_err(|error| Error::Protocol(format!("Nieprawidłowy zegar drukarki: {error}.")))?;
     let timestamp = Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
         .map_err(|_timestamp| frame::corrupt())?;
     Ok((timestamp, datetime.date()))

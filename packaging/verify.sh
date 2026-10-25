@@ -39,12 +39,12 @@ case "$(uname -s)" in
     [[ $(dpkg-deb -f "${packages[0]}" Package) == workshop ]]
     desktop-file-validate "$tmp/package/usr/share/applications/workshop.desktop"
     python3 packaging/verify-elf.py "$binary" "${packages[0]}"
-    if command -v apt-get >/dev/null; then
+    if [[ ${CI:-} == true ]] && command -v apt-get >/dev/null; then
       sudo apt-get install -y -qq "$(pwd)/${packages[0]}"
       binary=/usr/bin/workshop
     else
-      # Non-Debian developer hosts can verify/launch the extracted installed tree.
-      echo 'No apt-get: launching the extracted package; system installation is only checked on Debian CI.' >&2
+      # Developer hosts verify/launch the extracted installed tree without a system install.
+      echo 'Not Debian CI: launching the extracted package; system installation is only checked on Debian CI.' >&2
     fi
     if LC_ALL=C grep -aFq 'workshop-simulator' "$binary"; then
       echo 'Simulator leaked into package' >&2; exit 1

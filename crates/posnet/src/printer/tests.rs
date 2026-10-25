@@ -1,10 +1,14 @@
-use std::{io, time::Duration};
+use std::{collections::VecDeque, io, time::Duration};
 
-use fiscal::{error::Error, journal::Journal, link::Connection};
+use fiscal::{
+    error::Error,
+    journal::Journal,
+    link::{Connection, Port},
+};
 
 use super::execute;
 use crate::{
-    frame,
+    frame::{self, tests::reply},
     receipt::Step,
     session::Session,
     simulator::{Fault, Hold, Simulator},
@@ -200,5 +204,56 @@ fn silence_without_a_wait_reason_and_unanswered_queries_remain_timeouts() {
         );
         assert_eq!(journal.heard, Vec::<Option<String>>::new());
         assert_eq!(sim.reports().len(), 1);
+    }
+}
+
+/// Sends the fiscal reply only after both status queries, followed by `then`.
+struct LateReply {
+    reads: VecDeque<Vec<u8>>,
+    then: Vec<u8>,
+}
+
+impl Port for LateReply {
+    fn write_all(&mut self, bytes: &[u8], _timeout: Duration) -> io::Result<()> {
+        if frame::decode(bytes).is_ok_and(|(command, _)| command == "!sdev") {
+            self.reads.push_back(reply("dailyrep\t"));
+            self.reads.push_back(self.then.clone());
+        }
+        Ok(())
+    }
+
+    fn read(&mut self, buffer: &mut [u8], _timeout: Duration) -> io::Result<usize> {
+        let bytes = self.reads.pop_front().ok_or(io::ErrorKind::TimedOut)?;
+        buffer[..bytes.len()].copy_from_slice(&bytes);
+        Ok(bytes.len())
+    }
+}
+
+struct Silent;
+
+impl Journal for Silent {
+    fn dispatching(&mut self, _command: &'static str) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn waiting(&mut self, problem: Option<&str>) {
+        panic!("no operator wait was reported, got {problem:?}");
+    }
+}
+
+#[test]
+fn a_confirmed_reply_survives_a_damaged_or_stray_frame_that_follows_it() {
+    for then in [b"\x02!sdev\tds\t0\t#0000\x03".to_vec(), reply("trend\t")] {
+        let mut session = Session::new(Box::new(LateReply {
+            reads: VecDeque::new(),
+            then,
+        }));
+        let step = Step {
+            command: "dailyrep",
+            params: vec![("da", "2026-07-01".to_owned())],
+            timeout: Duration::from_secs(120),
+        };
+        let reply = execute(&mut session, &step, &mut Silent).expect("confirmed report");
+        assert_eq!(reply.fields(), &[]);
     }
 }

@@ -10,7 +10,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc,
-        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -615,15 +615,15 @@ impl Session<'_> {
         }
     }
 
-    /// Drains commands; returns whether stop was requested.
+    /// Drains commands; returns whether stop was requested or the owner is gone.
     fn drain(&mut self, inbox: &Receiver<Message>) -> bool {
-        while let Ok(message) = inbox.try_recv() {
-            match message {
-                Message::Command(command) => self.queue.push_back(command),
-                Message::Stop => return true,
+        loop {
+            match inbox.try_recv() {
+                Ok(Message::Command(command)) => self.queue.push_back(command),
+                Ok(Message::Stop) | Err(TryRecvError::Disconnected) => return true,
+                Err(TryRecvError::Empty) => return false,
             }
         }
-        false
     }
 
     fn poll(&mut self, inbox: &Receiver<Message>) -> Result<Option<Duration>, Error> {

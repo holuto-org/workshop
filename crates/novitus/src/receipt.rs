@@ -1,4 +1,4 @@
-//! Native receipt bodies, N:L5976-L6320,L6837-L7157,L7444-L7470,L7894-L7924.
+//! Native receipt bodies.
 
 use std::time::Duration;
 
@@ -57,7 +57,7 @@ fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Resul
             ));
         }
         let quantity = line.quantity().to_string();
-        // N:L6244-L6259: at most ten numeric digits, not Quantity's larger range.
+        // At most ten numeric digits, not Quantity's larger range.
         if quantity.bytes().filter(u8::is_ascii_digit).count() > 10 || quantity.len() > 16 {
             return Err(Error::Invalid(
                 "Ilość przekracza zakres protokołu Novitus.".to_owned(),
@@ -106,7 +106,7 @@ pub(crate) fn steps(
                 decimal::format(line.total().get(), 2)
             ),
         ));
-        // Explicitly gated experimental allocation from specification §4.4;
+        // Explicitly gated experimental allocation;
         // qualified profiles never enable it (first-match semantics unverified).
         if let Some((_, remaining)) = remaining.iter_mut().find(|(vat, _)| *vat == line.vat()) {
             let amount = (*remaining).min(line.total().get());

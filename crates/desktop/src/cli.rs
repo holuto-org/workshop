@@ -362,7 +362,7 @@ fn config_set(path: &Path, changes: Changes) -> Result<Response, Failure> {
     let dir = StateDir::open(path.to_owned())?;
     let mut settings = Settings::load(&dir)?.unwrap_or_default();
     if let Some(api_url) = changes.api_url {
-        settings.api_url = api_url;
+        settings.set_api_url(&api_url);
     }
     if let Some(port) = changes.port {
         settings.port = port;

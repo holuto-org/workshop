@@ -7,8 +7,8 @@ interruptMode: never
 
 # ElzabSTX
 
-Read `docs/superpowers/specs/2026-10-24-multi-vendor-fiscal-printers/elzab-protocol.md`
-and `elzab-oss.md` before changing native bytes or completion semantics.
+Read the `crates/elzab` module docs before changing native bytes or completion
+semantics.
 
 - Frame CRC covers header, FS and data; CRC-16/ARC, four uppercase hex digits.
   Requests use fresh decimal IDs. Match reply IDs, validate transport status and
@@ -17,7 +17,7 @@ and `elzab-oss.md` before changing native bytes or completion semantics.
   Apply documented empty-header defaults before matching (ID/frame/max 1,
   status SA, transform NDT). Multipart frame numbers must be sequential; a
   declared nonzero maximum cannot change. Unknown maxima remain 0 until the
-  final frame declares its own number (B:207-229).
+  final frame declares its own number.
 - Require read-only `XHR GS w` to report CP1250. Use `fiscal::cp1250`; printable
   repertoire excludes controls and undefined bytes. Reject text separators and
   unrepresentable input without replacement, truncation or transliteration.

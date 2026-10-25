@@ -156,6 +156,19 @@ impl Settings {
         })
     }
 
+    /// A device token authenticates only to the API it was paired with: a different
+    /// address forgets it, so no request can carry it to another host.
+    pub fn set_api_url(&mut self, url: &str) {
+        let same = match (api_url(&self.api_url), api_url(url)) {
+            (Ok(current), Ok(next)) => current == next,
+            _ => self.api_url == url,
+        };
+        if !same {
+            self.token = Token::default();
+        }
+        url.clone_into(&mut self.api_url);
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         if self.api_url.trim().is_empty() {
             return Err(Error::Invalid("Wpisz adres API w Ustawieniach.".to_owned()));

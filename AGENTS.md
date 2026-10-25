@@ -29,8 +29,7 @@ makes guidance untrue, update its home in the same change.
 - **Review priorities**: [`.omp/WATCHDOG.md`](.omp/WATCHDOG.md).
 - **Procedures and concern-specific evidence**:
   [Testing strategy/checklist](docs/testing/README.md), [CI](docs/ci.md),
-  [workflows](docs/workflows.md), [telemetry](docs/telemetry.md),
-  [Windows signing](docs/windows-code-signing.md).
+  [workflows](docs/workflows.md), [telemetry](docs/telemetry.md).
 - **Facts plainly visible in code, helper locations**: Nowhere; search the
   code instead.
 
@@ -94,7 +93,7 @@ and human-only qualification procedure live in
 
 ## API contract
 
-The backend is the Rust project `../backend`, never the legacy `../api`. Its
+The backend is the Rust project `../backend`. Its
 generated `openapi/agent.json` is the `/agent` contract authority. After
 changing backend `/agent`, run `cargo run -p holuto -- openapi` there, then
 `bash scripts/openapi-sync.sh` here (`BACKEND_DIR` overrides the default

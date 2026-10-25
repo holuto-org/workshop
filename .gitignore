@@ -1,3 +1,5 @@
 /target/
 /release/
 /packaging/build/
+# Local agent plans and specs (superpowers); never committed.
+/docs/superpowers/

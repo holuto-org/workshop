@@ -25,7 +25,7 @@ fn frame_round_trip_rejects_bad_checksum() {
 
 #[test]
 fn identity_query_frame_snapshot() {
-    // N:L1230-L1290: identity requests explicitly omit the checksum.
+    // Identity requests explicitly omit the checksum.
     insta::assert_debug_snapshot!(query(b"30#v"), @"
     [
         27,

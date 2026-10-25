@@ -564,6 +564,8 @@ fn queued_next_clicks_fetch_each_page_instead_of_collapsing() {
     let (arrival, release) = hold_http(&holuto, "GET", "/agent/documents");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    // Exact page sequences: no background poll may interleave.
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();
     worker.submit(Command::NextPage);
@@ -682,6 +684,8 @@ fn queued_previous_clicks_reach_the_first_page_instead_of_collapsing() {
     pages(&holuto);
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    // Exact page sequences: no background poll may interleave.
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let _first = receive_until(&events, |event| {
         matches!(event, Event::Documents { page: 1, .. })
@@ -1099,6 +1103,30 @@ fn stop_finishes_the_current_report_before_releasing_the_worker() {
             receipt_number: None
         }
     );
+}
+
+#[test]
+fn a_dropped_worker_handle_finishes_the_report_without_claiming_another_job() {
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    let hold = sim.hold("dailyrep");
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    worker.submit(Command::DailyReport);
+    assert!(hold.reached(WAIT));
+    let id = holuto.enqueue(job_json());
+    drop(worker);
+    hold.release();
+    let _received = receive_until(&events, |event| matches!(event, Event::Stopped));
+    assert_eq!(sim.reports().len(), 1, "the started report finishes");
+    assert_eq!(
+        sim.receipts(),
+        [],
+        "no new fiscal operation after the owner left"
+    );
+    assert_eq!(holuto.job(id)["state"], "queued");
 }
 
 #[test]
@@ -1678,6 +1706,8 @@ fn a_second_next_after_a_failed_fetch_keeps_both_clicks_and_stops_at_the_known_e
         );
         let (_temporary, dir) = state_dir();
         let dir = Arc::new(dir);
+        // Exact page sequences: no background poll may interleave.
+        let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
         let (worker, events) = spawn(&holuto, &sim, &dir);
         let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
         holuto.fault("GET", "/agent/documents", problem(503));
@@ -1711,6 +1741,8 @@ fn a_second_previous_after_a_failed_fetch_reaches_the_first_page() {
     let (arrival, release) = hold_http(&holuto, "GET", "/agent/documents");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    // Exact page sequences: no background poll may interleave.
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();
     worker.submit(Command::NextPage);
@@ -1754,6 +1786,8 @@ fn next_cancels_a_failed_previous_even_when_the_shown_page_has_no_next_cursor() 
     let (arrival, release) = hold_http(&holuto, "GET", "/agent/documents");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    // Exact page sequences: no background poll may interleave.
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();
     worker.submit(Command::NextPage);

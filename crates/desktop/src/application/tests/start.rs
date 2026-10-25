@@ -1,5 +1,3 @@
-use std::{sync::mpsc, thread, time::Duration};
-
 use agent::testing::{Fault, Holuto};
 
 use super::*;

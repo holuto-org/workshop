@@ -1,10 +1,8 @@
 //! Stateful loopback Holuto service, used through the production HTTP client.
 //!
-//! Mirrors backend `crates/fiscal/src/receipts/http.rs:292-310,328-454` (routes,
-//! authentication, serial headers), `receipts/printers.rs:93-121` (serial binding),
-//! `receipts.rs:110-120,153-200` (inflight exclusion, attempt/result idempotency,
-//! unknown upgrades, staff-only resolution), `receipts/repo/jobs.rs:152-174`
-//! (fresh attempt on take), and `platform/src/clock.rs:43-55` (future issue times).
+//! Mirrors the `/agent` contract: routes, authentication, serial headers and
+//! binding, inflight exclusion, attempt/result idempotency, unknown upgrades,
+//! staff-only resolution, a fresh attempt on take and future issue times.
 //! Fixtures intentionally contain synthetic customer data only.
 
 #[cfg(test)]
@@ -311,7 +309,7 @@ impl Holuto {
         state.requests.clone()
     }
 
-    /// Backend receipts.rs:190-194: staff can resolve only UNKNOWN; attempts stay unchanged.
+    /// Staff can resolve only UNKNOWN; attempts stay unchanged.
     pub fn resolve(&self, id: Uuid, receipt_number: Option<&str>) -> Result<(), &'static str> {
         let mut state = locked(&self.state);
         let job = state.jobs.get_mut(&id).ok_or("fiscal_not_found")?;
@@ -329,7 +327,7 @@ impl Holuto {
         Ok(())
     }
 
-    /// `queries/receipts/expire.sql:4-10`: only queued jobs become EXPIRED.
+    /// Only queued jobs become EXPIRED.
     /// A timed-out TAKEN attempt becomes UNKNOWN and can report DONE or UNKNOWN.
     #[expect(clippy::unwrap_used, reason = "expiry targets an inserted fixture")]
     pub fn expire(&self, id: Uuid) {
@@ -535,7 +533,8 @@ fn pair(state: &mut State, request: &RequestLog) -> (u16, Value) {
     (200, json!({"token":token, "printerId":PRINTER_ID}))
 }
 
-// ../backend/crates/fiscal/queries/receipts/queue_blocked_job.sql:8-35.
+// Conflicts: an UNKNOWN job on the same printer, an active job for the same
+// document, or an open job of the other kind for the same order.
 fn blocks_queue(existing: &Value, requested: &Value) -> bool {
     let state = existing["state"].as_str();
     let active = matches!(state, Some("queued" | "taken" | "done" | "unknown"));
@@ -550,7 +549,8 @@ fn blocks_queue(existing: &Value, requested: &Value) -> bool {
                 || (requested["kind"] == "advance" && existing["kind"] == "sale" && active)))
 }
 
-// ../backend/crates/fiscal/queries/receipts/documents.sql:50-64,92-98.
+// Active (queued/taken/done/unknown) jobs for the same order hide a document:
+// sales by any sale or unfinished advance, advances by a sale or the same allocation.
 fn document_available(document: &Value, jobs: &HashMap<Uuid, Value>) -> bool {
     !jobs.values().any(|job| {
         job["orderId"] == document["orderId"]
@@ -597,8 +597,7 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
             let Ok(id) = Uuid::parse_str(&cursor) else {
                 return refused(400, "invalid_cursor");
             };
-            // ../backend/crates/fiscal/queries/receipts/documents.sql:1-26:
-            // resolve the anchor before eligibility removes queued documents.
+            // Resolve the anchor before eligibility removes queued documents.
             let Some(key) = state
                 .documents
                 .iter()
@@ -616,8 +615,7 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
         .and_then(|(_, value)| value.parse::<usize>().ok())
         .unwrap_or(100)
         .clamp(1, 100);
-    // ../backend/crates/fiscal/queries/receipts/documents.sql:111-132;
-    // enum order is advance < sale (../backend/migrations/0010_fiscal.sql:4).
+    // Ordered by the document key; advance sorts before sale.
     let mut eligible: Vec<_> = state
         .documents
         .iter()
@@ -631,7 +629,7 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
         .take(limit)
         .map(|(_, document)| *document)
         .collect();
-    // ../backend/crates/fiscal/src/receipts/repo/documents.rs:39-42.
+    // A next cursor exists only when another eligible document follows.
     let next = eligible
         .get(limit)
         .and_then(|_| eligible.get(limit - 1))
@@ -745,7 +743,7 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         {
             return refused(409, "fiscal_job_conflict");
         }
-        // ../backend/crates/fiscal/src/receipts/queueing.rs:109-120.
+        // Advances require a printer that advertises advance deductions.
         if !job["advances"].as_array().unwrap().is_empty()
             && state.telemetry["capabilities"]["advanceDeductions"] == false
         {
