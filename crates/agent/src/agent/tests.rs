@@ -379,6 +379,34 @@ fn terminal_failed_or_expired_print_needs_same_device_local_acknowledgement() ->
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
+fn orphaned_print_refuses_reports_with_the_local_acknowledgement_not_holuto() -> TestResult {
+    // Holuto staff can resolve only unknown jobs; this one is already failed.
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    server.insert(with(job_json(), &json!({"state": "failed"})));
+    let (_temporary, dir) = state_dir();
+    Journal::new(&dir).save(&Operation::Receipt(claimed(
+        Device::Completed {
+            receipt_number: Some("41".to_owned()),
+        },
+        None,
+    )?))?;
+    let mut agent = agent(&sim, &dir, &server)?;
+    assert!(matches!(
+        agent.run_report(Report::Daily),
+        Err(Error::Blocked(message))
+            if message == "Najpierw wyjaśnij wydrukowany paragon przyciskiem „Wyjaśnij paragon”."
+    ));
+    assert_eq!(sim.reports(), []);
+    assert_eq!(stored(&dir)?.settled, None);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
 fn different_attempt_cannot_settle_or_reprint_a_journal() -> TestResult {
     let sim = Simulator::start();
     let server = Holuto::new();

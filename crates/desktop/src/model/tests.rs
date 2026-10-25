@@ -83,6 +83,39 @@ fn daily_report_confirmation_rechecks_new_readiness_problems() {
 }
 
 #[test]
+fn a_read_only_printer_offers_monthly_and_periodic_reports_but_not_the_daily_report() {
+    let mut model = ready();
+    model.from = "01.10.2025".into();
+    model.to = "24.10.2025".into();
+    model
+        .device
+        .as_mut()
+        .unwrap()
+        .problems
+        .push(Problem::ReadOnly);
+    let mut commands = Vec::new();
+    for action in [
+        Action::DailyReport,
+        Action::MonthlyReport,
+        Action::PeriodicReport,
+    ] {
+        model.request(action);
+        model.confirm(true, |command| commands.push(command));
+        model.command_completed();
+    }
+    assert!(
+        matches!(
+            commands.as_slice(),
+            [
+                Command::MonthlyReport { .. },
+                Command::PeriodicReport { .. }
+            ]
+        ),
+        "{commands:?}"
+    );
+}
+
+#[test]
 fn periodic_dates_require_padded_day_month_and_year_at_least_2000() {
     for (from, to, message) in [
         (
@@ -198,7 +231,7 @@ fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data()
     model.printer_id = Some("printer-42".into());
     model.blocked = true;
     model.report_unresolved = true;
-    model.orphaned_receipt = true;
+    model.orphaned_receipt = Some("Paragon 17".into());
     model.settings.api_url = "https://private-api.example.test".into();
     model.settings.token = "private-token-canary".into();
     model.nip = "1234567890".into();
@@ -231,7 +264,7 @@ fn each_public_status_change_invalidates_the_previous_publication() {
         |model| model.printer_id = Some("printer-42".into()),
         |model| model.blocked = true,
         |model| model.report_unresolved = true,
-        |model| model.orphaned_receipt = true,
+        |model| model.orphaned_receipt = Some("Paragon 17".into()),
     ];
     for change in changes {
         let mut model = Model::new(Settings::default(), today());

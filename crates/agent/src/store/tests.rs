@@ -396,6 +396,40 @@ fn lock_status_does_not_create_missing_state_or_lock() -> TestResult {
 }
 
 #[test]
+fn concurrent_lock_status_checks_never_block_application_start() -> TestResult {
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+    };
+
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("state");
+    drop(StateDir::open(path.clone())?);
+    let done = Arc::new(AtomicBool::new(false));
+    let checker = {
+        let (done, path) = (Arc::clone(&done), path.clone());
+        thread::Builder::new().name("status reader".into()).spawn(
+            move || -> Result<(), String> {
+                while !done.load(Ordering::SeqCst) {
+                    let _running = StateDir::is_locked(&path).map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            },
+        )?
+    };
+    // `workshop status` polling while the app starts must not refuse the start.
+    let opened = (0..2_000).try_for_each(|_| StateDir::open(path.clone()).map(drop));
+    done.store(true, Ordering::SeqCst);
+    let reader = checker.join().map_err(|_panic| "status reader panicked")?;
+    opened?;
+    reader?;
+    Ok(())
+}
+
+#[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "boundary assertions panic while setup uses Result"

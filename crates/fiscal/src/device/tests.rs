@@ -80,6 +80,55 @@ fn daily_report_eligibility_only_ignores_overdue_reports_for_every_vendor() {
 }
 
 #[test]
+fn read_only_mode_still_allows_monthly_and_periodic_reports_and_resolution() {
+    for (problems, ready, daily, periodic, resolvable) in [
+        (vec![], true, true, true, true),
+        (vec![Problem::ReadOnly], false, false, true, true),
+        (vec![Problem::DailyReportOverdue], false, true, false, true),
+        (
+            vec![Problem::ReadOnly, "Brak papieru".into()],
+            false,
+            false,
+            false,
+            false,
+        ),
+    ] {
+        let device = Device {
+            vendor: Vendor::Posnet,
+            model: String::new(),
+            firmware: String::new(),
+            unique_number: "TST0000000001".to_owned(),
+            problems,
+            vat: vec![],
+            capabilities: Capabilities::default(),
+        };
+        let label = format!("{:?}", device.problems);
+        assert_eq!(device.ready(), ready, "{label}");
+        assert_eq!(device.daily_report_allowed(), daily, "{label}");
+        assert_eq!(device.periodic_reports_allowed(), periodic, "{label}");
+        assert_eq!(
+            device.require_periodic_reports().is_ok(),
+            periodic,
+            "{label}"
+        );
+        assert_eq!(device.require_resolvable().is_ok(), resolvable, "{label}");
+    }
+    let read_only = Device {
+        vendor: Vendor::Posnet,
+        model: String::new(),
+        firmware: String::new(),
+        unique_number: "TST0000000001".to_owned(),
+        problems: vec![Problem::ReadOnly],
+        vat: vec![],
+        capabilities: Capabilities::default(),
+    };
+    assert_eq!(
+        read_only.description(),
+        "Drukarka jest w trybie tylko do odczytu"
+    );
+}
+
+#[test]
 fn fiscal_memory_unique_number_uses_exact_ascii_format() {
     for identity in ["ABC1234567890", "ZZZ0000000000"] {
         assert!(valid_unique_number(identity));

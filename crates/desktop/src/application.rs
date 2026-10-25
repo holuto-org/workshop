@@ -131,6 +131,13 @@ impl Application {
     fn launch(&mut self) -> Result<(), slint::PlatformError> {
         self.reload_history();
         self.open()?;
+        #[cfg(unix)]
+        if let Err(error) = quit_on_session_end() {
+            self.model.say(
+                format!("Nie można obsłużyć zamykania sesji: {error}"),
+                Tone::Error,
+            );
+        }
         self.publish_status();
         if self.model.settings.start_on_launch {
             self.start();
@@ -624,6 +631,29 @@ impl Application {
             );
         }
     }
+}
+
+/// Quits cooperatively on logout, shutdown, `kill` and Ctrl+C.
+///
+/// `stop` lets the current operation finish instead of the default action killing
+/// the worker. Handlers are registered before returning, so no later signal falls
+/// back to the default action.
+#[cfg(unix)]
+fn quit_on_session_end() -> Result<(), String> {
+    use async_signal::{Signal, Signals};
+    use futures_lite::StreamExt as _;
+
+    let mut signals = Signals::new([Signal::Term, Signal::Hup, Signal::Int])
+        .map_err(|error| error.to_string())?;
+    let _listening = slint::spawn_local(async move {
+        while let Some(received) = signals.next().await {
+            if received.is_ok() {
+                with_app(|app| app.stop(true));
+            }
+        }
+    })
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn request_close() -> CloseRequestResponse {

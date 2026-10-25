@@ -15,6 +15,7 @@ use crate::{
         with,
     },
 };
+use elzab::simulator::{Fault as ElzabFault, Simulator as ElzabPeer};
 use fiscal::{
     device::Vendor,
     error::Error as PrinterError,
@@ -151,11 +152,7 @@ const OVERDUE: u128 = (1_u128 << 115) | (1_u128 << 102) | (1_u128 << 98) | 4;
 
 fn ignore_waits(_problem: Option<&str>) {}
 
-fn elzab_agent<'dir>(
-    sim: &elzab::simulator::Simulator,
-    holuto: &Holuto,
-    dir: &'dir StateDir,
-) -> Agent<'dir> {
+fn elzab_agent<'dir>(sim: &ElzabPeer, holuto: &Holuto, dir: &'dir StateDir) -> Agent<'dir> {
     let (printer, status) = device::detect(
         sim.link(),
         Connection {
@@ -175,12 +172,12 @@ fn elzab_agent<'dir>(
 
 #[test]
 fn unprinted_overdue_daily_report_is_resolved_on_the_same_printer_and_can_run_again() {
-    let sim = elzab::simulator::Simulator::start();
+    let sim = ElzabPeer::start();
     sim.set_status(0, OVERDUE, 32);
     let holuto = Holuto::new();
     let (_temporary, dir) = state_dir();
     let mut agent = elzab_agent(&sim, &holuto, &dir);
-    sim.fault("RRP", elzab::simulator::Fault::Device(1));
+    sim.fault("RRP", ElzabFault::Device(1));
     assert!(matches!(
         agent.run_report(Report::Daily),
         Err(Error::Printer(PrinterError::Uncertain(_)))
@@ -191,7 +188,10 @@ fn unprinted_overdue_daily_report_is_resolved_on_the_same_printer_and_can_run_ag
     sim.set_status(0, OVERDUE, 32 | 1);
     let journal = fs::read(dir.file("operation.json")).unwrap();
     assert!(
-        matches!(agent.resolve_report(), Err(Error::Printer(PrinterError::NotReady(_)))),
+        matches!(
+            agent.resolve_report(),
+            Err(Error::Printer(PrinterError::NotReady(_)))
+        ),
         "other readiness problems still refuse resolution"
     );
     assert_eq!(fs::read(dir.file("operation.json")).unwrap(), journal);
@@ -204,12 +204,15 @@ fn unprinted_overdue_daily_report_is_resolved_on_the_same_printer_and_can_run_ag
         agent.run_report(Report::Daily),
         Err(Error::Printer(PrinterError::Uncertain(_)))
     ));
-    assert!(sim.daily_pending(), "the overdue daily report is sent again");
+    assert!(
+        sim.daily_pending(),
+        "the overdue daily report is sent again"
+    );
 }
 
 #[test]
 fn orphaned_receipt_on_an_overdue_printer_is_acknowledged_without_printing() {
-    let sim = elzab::simulator::Simulator::start();
+    let sim = ElzabPeer::start();
     sim.set_status(0, OVERDUE, 32);
     let holuto = Holuto::new();
     holuto.insert(with(job_json(), &json!({"state": "failed"})));
@@ -242,7 +245,10 @@ fn orphaned_receipt_on_an_overdue_printer_is_acknowledged_without_printing() {
     let Some(Operation::Receipt(operation)) = Journal::new(&dir).load().unwrap() else {
         panic!("acknowledged evidence stays journaled");
     };
-    assert_eq!(operation.settled.map(|settled| settled.state), Some(JobState::Failed));
+    assert_eq!(
+        operation.settled.map(|settled| settled.state),
+        Some(JobState::Failed)
+    );
     assert_eq!(sim.receipts(), 0);
     assert!(!sim.daily_pending());
 }

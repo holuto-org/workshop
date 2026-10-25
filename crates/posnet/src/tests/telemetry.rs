@@ -20,11 +20,13 @@ use fiscal::{
     driver::Driver,
     error::Error,
     receipt::{PaymentForm, Receipt},
+    report::Report,
 };
+use jiff::civil::date;
 
 use crate::{
     capabilities::capabilities,
-    simulator::Fault,
+    simulator::{Fault, UNIQUE_NUMBER},
     testing::{line, pay},
 };
 
@@ -100,4 +102,40 @@ fn command_traces_include_timeouts_and_device_codes_but_never_fiscal_payloads() 
             "fiscal payload leaked: {sensitive}"
         );
     }
+}
+
+#[test]
+fn a_monthly_report_waits_as_long_as_the_periodic_report_covering_that_month() {
+    let captured = Arc::new(Mutex::new(String::new()));
+    let subscriber = registry().with(Capture(Arc::clone(&captured)));
+    subscriber::with_default(subscriber, || {
+        let sim = simulator();
+        let device = printer(&sim);
+        for report in [
+            Report::Monthly {
+                year: 2026,
+                month: 6,
+            },
+            Report::Periodic {
+                from: date(2026, 6, 1),
+                to: date(2026, 6, 30),
+                summary: false,
+            },
+        ] {
+            device
+                .print_report(report, UNIQUE_NUMBER, &mut Recorder::default())
+                .unwrap();
+        }
+    });
+    let captured = captured.lock().unwrap();
+    let budget = |command: &str| {
+        captured
+            .split(&format!("command=\"{command}\";timeout_ms="))
+            .nth(1)
+            .and_then(|rest| rest.split(';').next())
+            .map(str::to_owned)
+    };
+    let periodic = budget("periodicrepbydates");
+    assert!(periodic.is_some(), "{captured}");
+    assert_eq!(budget("monthlyrep"), periodic);
 }

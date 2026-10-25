@@ -325,7 +325,7 @@ fn novitus_pc2_is_not_adopted_and_a_non_native_dialect_is_unready() {
             .iter()
             .map(|frame| novitus_frame::unframe(frame).unwrap())
             .collect::<Vec<_>>(),
-        [b"30#v".as_slice(), b"50$i"]
+        [b"30#v".as_slice(), b"50$i", b"#c"]
     );
     sim.set_endpoint("PC1");
     sim.set_dialect("0");

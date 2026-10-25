@@ -61,7 +61,9 @@ authorization to skip preflight or switch printers while blocked.
 - **Mismatched attempt/serial, corrupt or unreadable journal**: Fail closed,
   preserving evidence; never delete the file as recovery.
 - **Interrupted report**: Block until explicit report resolution with the same
-  ready printer; resolution prints nothing.
+  ready printer; resolution prints nothing. An overdue daily report or read-only
+  mode alone does not count as not ready for either local resolution, or the
+  report could never run again.
 
 The worker command for the local exception is
 `Command::AcknowledgeOrphanedReceipt`; `Event::Device.orphaned_receipt` exposes
@@ -76,8 +78,10 @@ form before journaling and sending; replay preserves that canonical note.
 A device error naming `trinit` is a certain refusal: without `trend`, no receipt
 can have been issued. Reports are themselves fiscal records: only an `ERR`
 frame rejection naming `dailyrep`, `monthlyrep` or `periodicrepbydates` is
-certain, plus Posnet code 382 naming `dailyrep` (a second consecutive zero daily
-report, refused before printing). Any other execution-error reply, lost reply or
+certain, plus Posnet refusals documented as checked before printing (p. 441):
+code 382 naming `dailyrep` (a second consecutive zero daily report) and date
+validation codes 2042, 2043, 2045, 2046 and 2050 naming `monthlyrep` or
+`periodicrepbydates`. Any other execution-error reply, lost reply or
 wrong-command reply for a report remains uncertain, as does a later
 receipt-command refusal.
 

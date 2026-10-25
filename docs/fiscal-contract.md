@@ -168,8 +168,11 @@ match fresh telemetry, deductions cannot exceed slot sales, and payments must
 exactly cover fiscal value. Amounts must be nonnegative whole grosze within the
 printer's range. Every item name needs a letter, digit or one of `, . / \ %`;
 the printer treats other names as empty (p. 430). A `getrealid` unique number
-written `ABC 1234567890` binds as `ABC1234567890`. Certain report refusals are
-listed in [fiscal safety](testing/fiscal-safety.md#recovery-classification).
+written `ABC 1234567890` binds as `ABC1234567890`. A read-only (`scomm.td`)
+printer refuses sales and daily reports but still prints monthly and periodic
+reports, which the specification permits in that mode; monthly reports get the
+periodic report timeout. Certain report refusals are listed in
+[fiscal safety](testing/fiscal-safety.md#recovery-classification).
 
 Buyer NIP and payment forms follow
 [Posnet POT-I-DEV-37 v5978, pp. 295, 297 and

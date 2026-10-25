@@ -108,7 +108,8 @@ pub enum Event {
         status: Option<Device>,
         blocked: bool,
         report_unresolved: bool,
-        orphaned_receipt: bool,
+        /// Receipt evidence the operator confirms before a local acknowledgement.
+        orphaned_receipt: Option<String>,
     },
     /// Bounded, newest-first snapshot; the GUI never reads worker-owned storage.
     HistoryChanged(Vec<HistoryEntry>),
@@ -163,7 +164,7 @@ impl fmt::Debug for Event {
                 .field("ready", &status.as_ref().map(Device::ready))
                 .field("blocked", blocked)
                 .field("report_unresolved", report_unresolved)
-                .field("orphaned_receipt", orphaned_receipt)
+                .field("orphaned_receipt", &orphaned_receipt.is_some())
                 .finish(),
             Self::HistoryChanged(entries) => f
                 .debug_struct("HistoryChanged")
@@ -500,7 +501,9 @@ fn start_session(
 fn publish_device(agent: &Agent<'_>, sink: &dyn Fn(Event)) {
     let blocked = agent.blocked();
     let report_unresolved = matches!(blocked, Ok(Some(Blocked::Report)));
-    let orphaned_receipt = matches!(blocked, Ok(Some(Blocked::OrphanedReceipt)));
+    let orphaned_receipt = matches!(blocked, Ok(Some(Blocked::OrphanedReceipt)))
+        .then(|| agent.orphan_evidence().map(str::to_owned))
+        .flatten();
     sink(Event::Device {
         status: agent.status().cloned(),
         // An unreadable journal also blocks printing.

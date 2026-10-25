@@ -5,6 +5,9 @@ mod autostart;
 mod end_to_end;
 #[path = "tests/pairing.rs"]
 mod pairing;
+#[cfg(unix)]
+#[path = "tests/signals.rs"]
+mod signals;
 #[cfg(not(target_os = "macos"))]
 #[path = "tests/start.rs"]
 mod start;
@@ -113,7 +116,7 @@ fn ready(app: &Rc<RefCell<Application>>) {
         }),
         blocked: false,
         report_unresolved: false,
-        orphaned_receipt: false,
+        orphaned_receipt: None,
     });
     app.event(Event::Documents {
         items: vec![Document {
@@ -361,7 +364,7 @@ fn quit_completes_when_the_final_status_cannot_be_submitted() -> Result<(), Box<
                 status: None,
                 blocked: true,
                 report_unresolved: false,
-                orphaned_receipt: false,
+                orphaned_receipt: None,
             });
             app.stop(true)
         });
@@ -387,7 +390,7 @@ fn an_older_status_acknowledgement_never_replaces_a_newer_unsubmitted_status()
         status: None,
         blocked: true,
         report_unresolved: false,
-        orphaned_receipt: false,
+        orphaned_receipt: None,
     });
     app.borrow_mut().stop(true)?;
     assert!(
@@ -453,18 +456,24 @@ fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(
     let (_temp, app, window) = fixture()?;
     ready(&app);
     let mut state = app.borrow_mut();
-    state.model.blocked = true;
-    state.model.orphaned_receipt = true;
-    state
-        .model
-        .say("Zlecenie 42 · paragon 17".into(), Tone::Error);
+    state.event(Event::Device {
+        status: None,
+        blocked: true,
+        report_unresolved: false,
+        orphaned_receipt: Some("Paragon 17 został wydrukowany dla zlecenia 42".into()),
+    });
+    // A later error must not replace the evidence the acknowledgement quotes.
+    state.event(Event::Status {
+        text: "Błąd: Holuto niedostępne".into(),
+        tone: Tone::Error,
+    });
     state.sync();
     drop(state);
     button(&window, "Wyjaśnij paragon")?.invoke_accessible_default_action();
     assert!(
         window
             .get_confirm_text()
-            .contains("Zlecenie 42 · paragon 17"),
+            .contains("Paragon 17 został wydrukowany dla zlecenia 42"),
         "acknowledgement identifies the printed receipt"
     );
     assert!(

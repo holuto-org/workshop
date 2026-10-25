@@ -38,6 +38,9 @@ const EXEMPT_BASIS_POINTS: u32 = 10_000;
 const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
 /// `ERR_RD_ZERO`: the printer refuses a second consecutive zero daily report before printing.
 const ZERO_DAILY_REPORT: u32 = 382;
+/// Monthly and periodic report date validation before printing (p. 441): `ERR_REP_PER_DATE_*`
+/// format, start after today, end before fiscalisation, and `ERR_REP_DATE_RANGE`.
+const REPORT_DATE_REFUSALS: [u32; 5] = [2042, 2043, 2045, 2046, 2050];
 /// Non-letter, non-digit characters the printer compares; a name with none of these, no
 /// letter and no digit equals an empty name (p. 430).
 const SIGNIFICANT_SYMBOLS: &str = ",./\\%";
@@ -152,7 +155,11 @@ impl Driver for Printer {
         }
         let mut session = self.session()?;
         let device = read_device(&mut session)?;
-        device.require_ready()?;
+        if matches!(report, Report::Daily) {
+            device.require_ready()?;
+        } else {
+            device.require_periodic_reports()?;
+        }
         device.require_unique_number(unique_number)?;
         let step = match report {
             Report::Daily => {
@@ -175,10 +182,11 @@ impl Driver for Printer {
                 let first = Date::new(year, month, 1).map_err(|error| {
                     Error::Invalid(format!("Nieprawidłowy miesiąc raportu: {error}."))
                 })?;
+                // A monthly report prints the periodic report for that month (p. 216).
                 Step {
                     command: "monthlyrep",
                     params: vec![("da", first.to_string()), ("su", "0".to_owned())],
-                    timeout: REPORT_TIMEOUT,
+                    timeout: PERIODIC_REPORT_TIMEOUT,
                 }
             },
             Report::Periodic { from, to, summary } => Step {
@@ -222,18 +230,16 @@ fn refusal_is_certain(error: &Error, sent: &str) -> bool {
     // Only trend creates the receipt; preflight blocks any transaction left open by trinit.
     // Never reissue it. Reports create the record, so only an ERR rejection or a documented
     // pre-print refusal is certain (pp. 13–15, 441).
+    let Error::Device { code, rejected, .. } = error else {
+        return false;
+    };
     refuses(error, sent)
-        && (sent == "trinit"
-            || (matches!(sent, "dailyrep" | "monthlyrep" | "periodicrepbydates")
-                && matches!(error, Error::Device { rejected: true, .. }))
-            || (sent == "dailyrep"
-                && matches!(
-                    error,
-                    Error::Device {
-                        code: ZERO_DAILY_REPORT,
-                        ..
-                    }
-                )))
+        && match sent {
+            "trinit" => true,
+            "dailyrep" => *rejected || *code == ZERO_DAILY_REPORT,
+            "monthlyrep" | "periodicrepbydates" => *rejected || REPORT_DATE_REFUSALS.contains(code),
+            _ => false,
+        }
 }
 
 fn refuses(error: &Error, sent: &str) -> bool {
@@ -479,7 +485,7 @@ fn device_from(
     }
     problems.extend(mechanism_problem(mechanism.require("pr")?).map(Problem::Blocking));
     if boolean(common.require("td")?)? {
-        problems.push("Drukarka jest w trybie tylko do odczytu".into());
+        problems.push(Problem::ReadOnly);
     }
     if device.require("tl")? != "0" {
         problems.push("Zasoby transakcji są zajęte przez inny interfejs".into());

@@ -7273,9 +7273,11 @@ name = "workshop"
 version = "0.2.0"
 dependencies = [
  "agent",
+ "async-signal",
  "atomicwrites",
  "elzab",
  "fiscal",
+ "futures-lite",
  "i-slint-backend-testing",
  "jiff",
  "novitus",

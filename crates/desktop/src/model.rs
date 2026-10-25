@@ -82,7 +82,8 @@ pub(crate) struct Model {
     pub(crate) device: Option<Device>,
     pub(crate) blocked: bool,
     pub(crate) report_unresolved: bool,
-    pub(crate) orphaned_receipt: bool,
+    /// Evidence the acknowledgement quotes; never the transient status line.
+    pub(crate) orphaned_receipt: Option<String>,
     pub(crate) tab: Tab,
     pub(crate) nip: String,
     pub(crate) message: String,
@@ -102,10 +103,12 @@ pub(crate) struct Model {
 impl Model {
     pub(crate) fn new(settings: Settings, today: Date) -> Self {
         let months = months_before(today);
+        let saved_api_url = settings.api_url.clone();
+        let saved_token = settings.token.clone();
         Self {
-            saved_api_url: settings.api_url.clone(),
-            saved_token: settings.token.clone(),
             settings,
+            saved_api_url,
+            saved_token,
             pairing_code: String::new(),
             pairing: false,
             documents: Table::new(),
@@ -123,7 +126,7 @@ impl Model {
             device: None,
             blocked: false,
             report_unresolved: false,
-            orphaned_receipt: false,
+            orphaned_receipt: None,
             tab: Tab::Settings,
             nip: String::new(),
             message: "Wpisz kod parowania drukarki z Holuto.".into(),
@@ -193,7 +196,7 @@ impl Model {
             printer_id: self.printer_id.clone(),
             blocked: self.blocked,
             report_unresolved: self.report_unresolved,
-            orphaned_receipt: self.orphaned_receipt,
+            orphaned_receipt: self.orphaned_receipt.is_some(),
             updated_at,
         }
     }
@@ -208,7 +211,7 @@ impl Model {
             && snapshot.printer_id == self.printer_id
             && snapshot.blocked == self.blocked
             && snapshot.report_unresolved == self.report_unresolved
-            && snapshot.orphaned_receipt == self.orphaned_receipt
+            && snapshot.orphaned_receipt == self.orphaned_receipt.is_some()
     }
 
     pub(crate) const fn command_completed(&mut self) {
@@ -349,7 +352,11 @@ impl Model {
     }
 
     fn reports_enabled(&self) -> bool {
-        self.queue_enabled() && self.device.as_ref().is_some_and(Device::ready)
+        self.queue_enabled()
+            && self
+                .device
+                .as_ref()
+                .is_some_and(Device::periodic_reports_allowed)
     }
 
     fn daily_report_enabled(&self) -> bool {
@@ -365,7 +372,7 @@ impl Model {
     }
 
     const fn acknowledge_enabled(&self) -> bool {
-        self.accepting() && self.orphaned_receipt
+        self.accepting() && self.orphaned_receipt.is_some()
     }
 
     fn connection_text(&self) -> String {
@@ -432,6 +439,7 @@ impl Model {
                 action: "Usuń blokadę".into(),
             }),
             Action::AcknowledgeOrphanedReceipt => {
+                let evidence = self.orphaned_receipt.as_deref().unwrap_or_default();
                 self.acknowledge_enabled().then(|| Confirmation {
                     command: Command::AcknowledgeOrphanedReceipt,
                     title: "Wyjaśnij paragon".into(),
@@ -441,7 +449,7 @@ impl Model {
                             "Potwierdzenie zapisze lokalne wyjaśnienie i usunie blokadę. ",
                             "Nie wydrukuje paragonu ponownie ani nie zmieni wyniku w Holuto."
                         ),
-                        self.message
+                        evidence
                     ),
                     action: "Potwierdź wyjaśnienie".into(),
                 })

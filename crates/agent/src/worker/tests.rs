@@ -1149,7 +1149,7 @@ fn an_orphaned_print_is_acknowledged_locally_without_reprinting_or_reporting() {
             event,
             Event::Device {
                 blocked: true,
-                orphaned_receipt: true,
+                orphaned_receipt: Some(_),
                 ..
             }
         )
@@ -1161,7 +1161,7 @@ fn an_orphaned_print_is_acknowledged_locally_without_reprinting_or_reporting() {
         event,
         Event::Device {
             blocked: false,
-            orphaned_receipt: false,
+            orphaned_receipt: None,
             ..
         }
     )));
@@ -1197,8 +1197,8 @@ fn an_orphaned_print_is_acknowledged_locally_without_reprinting_or_reporting() {
 }
 
 #[test]
-fn an_orphaned_print_leaves_its_evidence_as_the_latest_status() {
-    // The desktop quotes the latest status in the acknowledgement confirmation.
+fn an_orphaned_print_publishes_its_evidence_with_the_block() {
+    // The desktop quotes this evidence in the acknowledgement confirmation.
     let sim = Simulator::start();
     let holuto = Holuto::new();
     let (_temporary, dir) = state_dir();
@@ -1211,12 +1211,31 @@ fn an_orphaned_print_leaves_its_evidence_as_the_latest_status() {
             event,
             Event::Device {
                 blocked: true,
-                orphaned_receipt: true,
+                orphaned_receipt: Some(_),
                 ..
             }
         )
     });
     let _stopped = stop(worker, &events);
+    let expected = format!(
+        "Paragon 1 został wydrukowany dla zlecenia 10 (zadanie {JOB_ID}), ale Holuto oznaczyło \
+         zadanie jako Failed. Sprawdź wydruk i użyj „Wyjaśnij paragon”."
+    );
+    let published = received.iter().rev().find_map(|event| {
+        if let Event::Device {
+            orphaned_receipt, ..
+        } = event
+        {
+            orphaned_receipt.clone()
+        } else {
+            None
+        }
+    });
+    assert_eq!(
+        published.as_ref(),
+        Some(&expected),
+        "the block carries its evidence"
+    );
     let latest = received.iter().rev().find_map(|event| {
         if let Event::Status { text, .. } = event {
             Some(text.clone())
@@ -1226,10 +1245,8 @@ fn an_orphaned_print_leaves_its_evidence_as_the_latest_status() {
     });
     assert_eq!(
         latest,
-        Some(format!(
-            "Paragon 1 został wydrukowany dla zlecenia 10 (zadanie {JOB_ID}), ale Holuto \
-             oznaczyło zadanie jako Failed. Sprawdź wydruk i użyj „Wyjaśnij paragon”."
-        ))
+        Some(expected),
+        "a generic notice does not replace the evidence in the status bar"
     );
 }
 

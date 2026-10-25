@@ -14,6 +14,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Write as _,
     io::{self, Read as _, Write as _},
+    mem,
     net::{TcpListener, TcpStream},
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
@@ -32,6 +33,11 @@ pub enum Fault {
     Refuse(u32),
     /// Execute once, hold its ACK until `resume`, and expose DLE paper/battery.
     Wait,
+    /// Like `Wait`, but the operator fixes the printer after this many DLE polls report it.
+    WaitPolls(u32),
+    /// Reply, but send the mode-3 ACK only before the next reply; if the host closes first,
+    /// the next connection receives it, as a USB bridge keeps bytes that arrive after close.
+    DeferAck,
     /// Raw replies for fragmentation, coalescing and malformed-frame tests.
     Reply(Vec<u8>),
 }
@@ -57,6 +63,11 @@ struct State {
     receipts: u32,
     reports: u32,
     waiting: bool,
+    resume_after: Option<u32>,
+    /// Bytes owed before the next reply or, after a close, at the next connection.
+    carry: Vec<u8>,
+    /// The current reply's deferred bytes, owed only after it is sent.
+    deferred: Vec<u8>,
     gross: u64,
     paid: u64,
     frames: Vec<Vec<u8>>,
@@ -87,11 +98,57 @@ impl Default for State {
             receipts: 0,
             reports: 0,
             waiting: false,
+            resume_after: None,
+            carry: Vec::new(),
+            deferred: Vec::new(),
             gross: 0,
             paid: 0,
             frames: Vec::new(),
             faults: HashMap::new(),
             fragment: usize::MAX,
+        }
+    }
+}
+impl State {
+    const fn resume(&mut self) {
+        self.waiting = false;
+        self.resume_after = None;
+        self.dle = 0x74;
+    }
+
+    /// Starts an operator wait or defers the ACK, as `fault` describes.
+    fn apply(&mut self, fault: Option<&Fault>, command: &str, response: &mut Vec<u8>) {
+        match fault {
+            Some(Fault::Wait) => {
+                self.waiting = true;
+                self.dle = 0x76;
+            },
+            Some(Fault::WaitPolls(polls)) => {
+                self.waiting = true;
+                self.resume_after = Some(*polls);
+                self.dle = 0x76;
+            },
+            Some(Fault::DeferAck) => {
+                let ack = frame::query(format!("0#Z{command}").as_bytes());
+                if response.ends_with(&ack) {
+                    response.truncate(response.len() - ack.len());
+                    self.deferred = ack;
+                }
+            },
+            _ => {},
+        }
+    }
+
+    /// A `WaitPolls` operator fixes the printer once enough DLE polls reported it.
+    const fn polled(&mut self, byte: u8) {
+        if byte == DLE
+            && let Some(polls) = self.resume_after
+        {
+            if polls <= 1 {
+                self.resume();
+            } else {
+                self.resume_after = Some(polls - 1);
+            }
         }
     }
 }
@@ -217,9 +274,7 @@ impl Simulator {
     }
 
     pub fn resume(&self) {
-        let mut state = lock(&self.state);
-        state.waiting = false;
-        state.dle = 0x74;
+        lock(&self.state).resume();
     }
 }
 impl Drop for Simulator {
@@ -330,6 +385,10 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
     {
         return;
     }
+    let carry = mem::take(&mut lock(state).carry);
+    if stream.write_all(&carry).is_err() {
+        return;
+    }
     let mut pending = Vec::new();
     let mut chunk = [0; 256];
     let mut held_response = None;
@@ -373,27 +432,25 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
                         .faults
                         .remove(&body)
                         .or_else(|| state.faults.remove(command));
-                    let response = if let Some(Fault::Refuse(code)) = fault {
-                        frame::query(format!("{code}#Z{command}").as_bytes())
+                    let mut response = if let Some(Fault::Refuse(code)) = fault {
+                        completion(&state, code, command)
                     } else {
                         answer(&body, command, &mut state)
                     };
-                    if matches!(fault, Some(Fault::Wait)) {
-                        state.waiting = true;
-                        state.dle = 0x76;
-                    }
+                    state.apply(fault.as_ref(), command, &mut response);
                     (raw, response, fault, state.fragment)
                 } else {
                     let raw = vec![pending.remove(0)];
                     let Some(response) = realtime_answer(first, &state) else {
                         return;
                     };
+                    state.polled(first);
                     (raw, response, None, state.fragment)
                 }
             };
             lock(state).frames.push(raw);
             let response = match fault {
-                Some(Fault::Wait) => {
+                Some(Fault::Wait | Fault::WaitPolls(_)) => {
                     held_response = Some(response);
                     continue;
                 },
@@ -401,12 +458,9 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
                 Some(Fault::Disconnect) => return,
                 Some(Fault::Reply(raw)) => raw,
                 Some(Fault::CorruptReply) => corrupt_response(response),
-                Some(Fault::Refuse(_)) | None => response,
+                Some(Fault::Refuse(_) | Fault::DeferAck) | None => response,
             };
-            if response
-                .chunks(fragment)
-                .any(|chunk| stream.write_all(chunk).is_err())
-            {
+            if !send(&mut stream, state, response, fragment) {
                 return;
             }
             if !lock(state).waiting
@@ -420,6 +474,21 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
             return;
         }
     }
+}
+
+/// Writes owed output, then `response`; this reply's own deferral becomes owed afterwards.
+fn send(stream: &mut TcpStream, state: &Mutex<State>, response: Vec<u8>, fragment: usize) -> bool {
+    let response = [mem::take(&mut lock(state).carry), response].concat();
+    if response
+        .chunks(fragment)
+        .any(|chunk| stream.write_all(chunk).is_err())
+    {
+        return false;
+    }
+    let mut state = lock(state);
+    let deferred = mem::take(&mut state.deferred);
+    state.carry.extend(deferred);
+    true
 }
 
 /// Record foreign STX discovery frames without executing them.
@@ -505,7 +574,7 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
         ),
         _ if command == "^c" => {
             let Some(response) = configuration_reply(body, &state.options) else {
-                return frame::query(b"4#Z^c");
+                return completion(state, 4, command);
             };
             (response, true, true)
         },
@@ -524,9 +593,9 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
         ),
         _ if is_fiscal(command) => {
             let code = fiscal_command(body, command, state);
-            return frame::query(format!("{code}#Z{command}").as_bytes());
+            return completion(state, code, command);
         },
-        _ => return frame::query(format!("82#Z{command}").as_bytes()),
+        _ => return completion(state, 82, command),
     };
     let bytes = cp1250::encode(&response).unwrap_or_default();
     let mut raw = if checksum {
@@ -540,9 +609,20 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
     raw
 }
 
+/// Error modes 2–4 send `#Z` completions; power-on mode 0 and mode 1 reply nothing.
+fn completion(state: &State, code: u32, command: &str) -> Vec<u8> {
+    if matches!(state.error_mode, 2..=4) {
+        frame::query(format!("{code}#Z{command}").as_bytes())
+    } else {
+        Vec::new()
+    }
+}
+
 fn fiscal_command(body: &str, command: &str, state: &mut State) -> u32 {
     match command {
-        "$h" if body == "0$h" && !state.transaction => {
+        "$h" if (body == "0$h" || (body.starts_with("0;1$h") && body.ends_with('\r')))
+            && !state.transaction =>
+        {
             state.transaction = true;
             state.ending = false;
             state.gross = 0;
@@ -609,7 +689,6 @@ fn fiscal_command(body: &str, command: &str, state: &mut State) -> u32 {
         },
         "$z" if body.starts_with("100;1$z") && state.transaction && !state.ending => {},
         "$z" if body == "12$z" && state.ending => {},
-        "$w" if body.starts_with("200;0$w") && state.ending => {},
         "$z" if body == "28;0$z" && state.ending => {
             state.receipts += 1;
             state.transaction = false;

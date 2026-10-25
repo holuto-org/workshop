@@ -94,6 +94,8 @@ impl Capabilities {
 pub enum Problem {
     Blocking(String),
     DailyReportOverdue,
+    /// Sales and daily reports are refused; monthly and periodic reports still print.
+    ReadOnly,
 }
 
 impl Problem {
@@ -101,6 +103,7 @@ impl Problem {
         match self {
             Self::Blocking(message) => message,
             Self::DailyReportOverdue => "Wymagany zaległy raport dobowy",
+            Self::ReadOnly => "Drukarka jest w trybie tylko do odczytu",
         }
     }
 }
@@ -146,12 +149,18 @@ impl Device {
 
     /// UI eligibility only; the driver must still run operation-specific preflight.
     pub fn daily_report_allowed(&self) -> bool {
+        self.ready_except(|problem| matches!(problem, Problem::DailyReportOverdue))
+    }
+
+    /// UI eligibility for monthly and periodic reports, which read-only devices still print.
+    pub fn periodic_reports_allowed(&self) -> bool {
+        self.ready_except(|problem| matches!(problem, Problem::ReadOnly))
+    }
+
+    fn ready_except(&self, tolerated: impl Fn(&Problem) -> bool) -> bool {
         valid_unique_number(&self.unique_number)
             && self.vat.iter().all(|rate| rate.legal_letter())
-            && self
-                .problems
-                .iter()
-                .all(|problem| matches!(problem, Problem::DailyReportOverdue))
+            && self.problems.iter().all(tolerated)
     }
 
     pub fn description(&self) -> String {
@@ -182,10 +191,22 @@ impl Device {
         }
     }
 
-    /// Resolving an interrupted operation tolerates only an overdue daily report:
-    /// that report may be the interrupted one, and it cannot run until resolution.
+    /// Refuses monthly and periodic reports unless read-only mode is the only problem.
+    pub fn require_periodic_reports(&self) -> Result<(), Error> {
+        if self.periodic_reports_allowed() {
+            Ok(())
+        } else {
+            Err(Error::NotReady(self.description()))
+        }
+    }
+
+    /// Resolving an interrupted operation tolerates an overdue daily report, which may be
+    /// the interrupted one and cannot run until resolution, and read-only mode, which
+    /// still prints monthly and periodic reports. Resolution never prints.
     pub fn require_resolvable(&self) -> Result<(), Error> {
-        if self.daily_report_allowed() {
+        if self.ready_except(|problem| {
+            matches!(problem, Problem::DailyReportOverdue | Problem::ReadOnly)
+        }) {
             Ok(())
         } else {
             Err(Error::NotReady(self.description()))

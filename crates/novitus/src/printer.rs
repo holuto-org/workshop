@@ -183,7 +183,8 @@ impl Driver for Printer {
     }
 }
 
-/// Discovery sends no fiscal traffic. Reject PC2 before PC1-only ^c reads.
+/// Discovery sends no fiscal traffic. Reject PC2 before PC1-only ^c reads. A non-Novitus
+/// reply ends discovery before any further frame; every Novitus exit settles late ACKs.
 pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
     let mut session = Session::open_discovery(link, connection)?;
     let (model, firmware) = identity(&mut session)?;
@@ -191,10 +192,13 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
         return Ok(None);
     }
     let endpoint = session.command("50$i", TIMEOUT)?;
-    if endpoint.body != "50$IPC1\r" {
-        return Ok(None);
-    }
-    preflight_identity(&mut session, model, firmware, true).map(|checked| Some(checked.device))
+    let device = if endpoint.body == "50$IPC1\r" {
+        Some(preflight_identity(&mut session, model, firmware, true)?.device)
+    } else {
+        None
+    };
+    session.settle_discovery()?;
+    Ok(device)
 }
 
 struct Checked {
@@ -515,7 +519,7 @@ fn uncertain(error: Error) -> Error {
 fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Result<(), Error> {
     let mut result = session.command(&step.body, step.timeout).map(|_reply| ());
     let mut since = None;
-    let mut shown = false;
+    let mut shown = None;
     while matches!(result, Err(Error::Timeout(_))) {
         let cap = since
             .get_or_insert_with(|| Instant::now() + session.operator_wait_limit(OPERATOR_WAIT));
@@ -538,18 +542,15 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
                 result = Err(error);
                 break;
             },
-            Ok(Some(problem)) => {
-                journal.waiting(Some(problem));
-                shown = true;
-            },
-            Ok(None) if shown => {
-                journal.waiting(None);
-                shown = false;
+            // Announce only changes: a persisting problem was already shown.
+            Ok(problem) if problem != shown => {
+                journal.waiting(problem);
+                shown = problem;
             },
             // Only a matching ACK completes; status reads may have queued it.
-            Ok(None) => {},
+            Ok(_) => {},
         }
-        let timeout = if shown {
+        let timeout = if shown.is_some() {
             Duration::from_secs(2)
         } else {
             step.timeout
@@ -558,11 +559,11 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
             step.command,
             (Instant::now() + session.timeout(timeout)).min(*cap),
         );
-        if !shown && matches!(result, Err(Error::Timeout(_))) {
+        if shown.is_none() && matches!(result, Err(Error::Timeout(_))) {
             break;
         }
     }
-    if shown {
+    if shown.is_some() {
         journal.waiting(None);
     }
     result

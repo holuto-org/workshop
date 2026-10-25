@@ -55,9 +55,10 @@ regression that fails without it.
     first/middle/final/footer stage leaves uncertainty and no retry
   - Test shape: Fault matrix; assert effects and exact command sequence
 - **Daily/monthly/periodic reports**
-  - Required guarantee: Exact dates/summary parameters; readiness and same
-    serial; report `ERR` frame rejection naming the command is certain;
-    execution-error/silent/wrong-command failures uncertain
+  - Required guarantee: Exact dates/summary parameters; readiness (read-only
+    still allows monthly/periodic) and same serial; report `ERR` frame
+    rejection or documented pre-print refusal naming the command is certain;
+    other execution-error/silent/wrong-command failures uncertain
   - Test shape: Fixed-clock snapshot + scenario per classification
 
 ## Shared fiscal values and native drivers

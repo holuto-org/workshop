@@ -68,7 +68,8 @@ pub(crate) struct Agent<'dir> {
     /// Requests mid-operation intervention; `None` clears it.
     waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     news: News,
-    orphaned_receipt: bool,
+    /// Evidence of a printed receipt whose job Holuto failed or expired.
+    orphaned_receipt: Option<String>,
     telemetry_changed: bool,
 }
 
@@ -89,7 +90,7 @@ impl<'dir> Agent<'dir> {
             status: None,
             waiting,
             news: News::default(),
-            orphaned_receipt: false,
+            orphaned_receipt: None,
             telemetry_changed: true,
         }
     }
@@ -168,10 +169,17 @@ impl<'dir> Agent<'dir> {
             .load()?
             .filter(Operation::blocks)
             .map(|operation| match operation {
-                Operation::Receipt(_) if self.orphaned_receipt => Blocked::OrphanedReceipt,
+                Operation::Receipt(_) if self.orphaned_receipt.is_some() => {
+                    Blocked::OrphanedReceipt
+                },
                 Operation::Receipt(_) => Blocked::Receipt,
                 Operation::Report(_) => Blocked::Report,
             }))
+    }
+
+    /// Set while `blocked` reports `Blocked::OrphanedReceipt`.
+    pub(crate) fn orphan_evidence(&self) -> Option<&str> {
+        self.orphaned_receipt.as_deref()
     }
 
     /// Retains qualified telemetry after a failed probe; unavailable limits stay local.
@@ -219,8 +227,10 @@ impl<'dir> Agent<'dir> {
         if let Some(blocked) = self.settle()? {
             return Err(Error::Blocked(
                 match blocked {
-                    Blocked::Receipt | Blocked::OrphanedReceipt => {
-                        "Najpierw rozstrzygnij niepotwierdzony paragon w Holuto."
+                    Blocked::Receipt => "Najpierw rozstrzygnij niepotwierdzony paragon w Holuto.",
+                    // Holuto already settled the job; only the local acknowledgement remains.
+                    Blocked::OrphanedReceipt => {
+                        "Najpierw wyjaśnij wydrukowany paragon przyciskiem „Wyjaśnij paragon”."
                     },
                     Blocked::Report => "Najpierw wyjaśnij przerwany raport.",
                 }
@@ -289,7 +299,7 @@ impl<'dir> Agent<'dir> {
     }
 
     fn settle(&mut self) -> Result<Option<Blocked>, Error> {
-        self.orphaned_receipt = false;
+        self.orphaned_receipt = None;
         let mut operation = match self.journal.load()?.filter(Operation::blocks) {
             None => return Ok(None),
             Some(Operation::Report(_)) => return Ok(Some(Blocked::Report)),
@@ -316,13 +326,14 @@ impl<'dir> Agent<'dir> {
         if let Device::Completed { receipt_number } = &operation.device
             && matches!(remote.state, JobState::Failed | JobState::Expired)
         {
-            self.orphaned_receipt = true;
             let number = receipt_number.as_deref().unwrap_or("nieczytelny");
-            self.news.notices.push(format!(
+            let evidence = format!(
                 "Paragon {number} został wydrukowany dla zlecenia {} (zadanie {}), ale Holuto \
                  oznaczyło zadanie jako {:?}. Sprawdź wydruk i użyj „Wyjaśnij paragon”.",
                 remote.order_number, remote.id, remote.state
-            ));
+            );
+            self.news.notices.push(evidence.clone());
+            self.orphaned_receipt = Some(evidence);
             tracing::error!(
                 job_id = %remote.id, state = ?remote.state,
                 "Printed receipt conflicts with terminal Holuto state"
@@ -608,7 +619,7 @@ impl<'dir> Agent<'dir> {
         state: JobState,
         staff_number: Option<&str>,
     ) -> Result<(), Error> {
-        self.orphaned_receipt = false;
+        self.orphaned_receipt = None;
         if let (Device::Completed { receipt_number }, Some(summary)) =
             (&operation.device, &operation.summary)
         {

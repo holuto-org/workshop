@@ -83,7 +83,21 @@ pub(crate) fn steps(
     profile: &Profile,
 ) -> Result<Vec<Step>, Error> {
     validate(receipt, footer, profile)?;
-    let mut steps = vec![Step::new("$h", "0$h".to_owned())];
+    // The company footer is a `$h` additional line, printed after the fiscal logo.
+    let begin = match footer {
+        Some(footer) => {
+            if text::printable_characters(footer)
+                .is_none_or(|length| length > profile.info_line_width)
+            {
+                return Err(Error::Invalid(
+                    "Nazwa firmy nie mieści się w stopce Novitus.".to_owned(),
+                ));
+            }
+            format!("0;1$h{footer}\r")
+        },
+        None => "0$h".to_owned(),
+    };
+    let mut steps = vec![Step::new("$h", begin)];
     if let Some(nip) = receipt.buyer_nip() {
         steps.push(Step::new("$z", format!("100;1$z{nip}\r")));
     }
@@ -145,15 +159,6 @@ pub(crate) fn steps(
         format!("0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r{total}/0/0/{total}/0/"),
     ));
     steps.push(Step::new("$z", "12$z".to_owned()));
-    if let Some(footer) = footer {
-        if text::printable_characters(footer).is_none_or(|length| length > profile.info_line_width)
-        {
-            return Err(Error::Invalid(
-                "Nazwa firmy nie mieści się w stopce Novitus.".to_owned(),
-            ));
-        }
-        steps.push(Step::new("$w", format!("200;0$w{footer}\r")));
-    }
     steps.push(Step::new("$z", "28;0$z".to_owned()));
     Ok(steps)
 }

@@ -28,7 +28,7 @@ fn demo_mode_enables_unqualified_capabilities_through_the_real_driver() {
         assert_eq!(sim.receipts(), 1);
         let frames = fiscal_bodies(&sim);
         assert_eq!(frames.iter().filter(|body| body.contains("@z")).count(), 3);
-        assert!(frames.iter().any(|body| body == "200;0$wWarsztat\r"));
+        assert_eq!(frames.first().unwrap(), "0;1$hWarsztat\r");
         assert_eq!(frames.last().unwrap(), "28;0$z");
         assert_eq!(
             frames.iter().filter(|body| body.contains("$b")).count(),

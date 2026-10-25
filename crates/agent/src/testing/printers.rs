@@ -133,7 +133,6 @@ impl Simulator {
                         b"$b",
                         b"$y",
                         b"$z",
-                        b"$w",
                         b"@z",
                         b"#r",
                         b"#o",

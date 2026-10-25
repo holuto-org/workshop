@@ -118,7 +118,7 @@ fn fiscal_bodies(sim: &Simulator) -> Vec<String> {
         .filter(|body| {
             matches!(
                 identifier(body),
-                Some("$h" | "$l" | "@z" | "$b" | "$y" | "$z" | "$w" | "#r" | "#o")
+                Some("$h" | "$l" | "@z" | "$b" | "$y" | "$z" | "#r" | "#o")
             )
         })
         .collect()
@@ -639,7 +639,7 @@ fn experimental_advance_allocation_and_footer_are_exact_and_gated() {
     assert_eq!(
         fiscal_bodies(&sim),
         [
-            "0$h",
+            "0;1$hŁódź\r",
             "1$lPierwszy\r1\rA/10/10/",
             "1;@zPierwszy\rA\r10/0/",
             "2$lDrugi\r1\rA/20/20/",
@@ -647,7 +647,6 @@ fn experimental_advance_allocation_and_footer_are_exact_and_gated() {
             "1;0$b15/\r",
             "0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r15/0/0/15/0/",
             "12$z",
-            "200;0$wŁódź\r",
             "28;0$z"
         ]
     );
@@ -976,4 +975,69 @@ fn printing_session_selects_mode_three_on_a_power_on_printer() {
     assert_eq!(printed.receipt_number.as_deref(), Some("1"));
     assert_eq!(sim.receipts(), 1);
     assert!(bodies(&sim).iter().any(|body| body == "3#e"));
+}
+
+#[test]
+fn persisting_operator_wait_is_announced_once() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.fault("#r", Fault::WaitPolls(3));
+    let mut journal = Log::default();
+    printer(&sim)
+        .print_report(Report::Daily, "ABC1234567890", &mut journal)
+        .unwrap();
+    assert_eq!(
+        journal.waits,
+        [
+            Some("Brak papieru lub niskie napięcie akumulatora".to_owned()),
+            None
+        ]
+    );
+    assert_eq!(fiscal_bodies(&sim), ["1;26;10;24#r"]);
+    assert_eq!(sim.reports(), 1);
+}
+
+#[test]
+fn discovery_consumes_its_late_acks_before_closing() {
+    // PC1 ends after `52$i`; PC2 returns early after `50$i`.
+    for (endpoint, query) in [("PC1", "52$i"), ("PC2", "50$i")] {
+        let sim = Simulator::start();
+        supported(&sim);
+        sim.set_error_mode(3);
+        sim.set_endpoint(endpoint);
+        sim.fault(query, Fault::DeferAck);
+        let found = identify(sim.link().as_ref(), &connection(&sim)).unwrap();
+        assert_eq!(found.is_some(), endpoint == "PC1");
+        let device = printer(&sim).probe().unwrap();
+        assert_eq!(
+            device.ready(),
+            endpoint == "PC1",
+            "{}",
+            device.description()
+        );
+        if let Some(found) = found {
+            assert_eq!(device.capabilities, found.capabilities);
+        }
+        assert_eq!(sim.receipts(), 0);
+    }
+}
+
+#[test]
+fn discovery_refusal_in_power_on_mode_gets_no_reply_and_is_not_ready() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.fault("52$i", Fault::Refuse(82));
+    let device = identify(sim.link().as_ref(), &connection(&sim))
+        .unwrap()
+        .unwrap();
+    assert!(!device.ready());
+    assert_eq!(
+        device.description(),
+        "Nie można bezpiecznie odczytać możliwości znaków drukarki"
+    );
+    assert_eq!(
+        device.capabilities.allowed_characters,
+        (' '..='~').collect::<String>()
+    );
+    assert!(!bodies(&sim).iter().any(|body| body == "3#e"));
 }

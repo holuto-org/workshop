@@ -26,6 +26,14 @@ pub enum Fault {
     ForeignReply,
     Reply(Vec<u8>),
 }
+/// An accepted daily report prints until the printer has reported it in progress and the
+/// host reconnects; acceptance alone never completes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Daily {
+    Idle,
+    Accepted,
+    Reported,
+}
 #[derive(Debug)]
 struct State {
     model: String,
@@ -42,7 +50,7 @@ struct State {
     receipts: u32,
     reports: u32,
     transaction: bool,
-    daily_pending: bool,
+    daily: Daily,
     gross: u64,
     advances: u64,
     paid: u64,
@@ -65,7 +73,7 @@ impl Default for State {
             receipts: 0,
             reports: 0,
             transaction: false,
-            daily_pending: false,
+            daily: Daily::Idle,
             gross: 0,
             advances: 0,
             paid: 0,
@@ -152,7 +160,7 @@ impl Simulator {
     }
 
     pub fn daily_pending(&self) -> bool {
-        lock(&self.state).daily_pending
+        lock(&self.state).daily != Daily::Idle
     }
 }
 #[derive(Debug)]
@@ -175,6 +183,9 @@ impl Link for SimLink {
             });
         }
         state.connected = true;
+        if state.daily == Daily::Reported {
+            state.daily = Daily::Idle;
+        }
         Ok(Box::new(SimPort {
             state: Arc::clone(&self.state),
             pending: VecDeque::new(),
@@ -285,7 +296,7 @@ fn read(state: &State, body: &str) -> Option<String> {
             if state.transaction {
                 two |= 1_u128 << 68;
             }
-            if state.daily_pending {
+            if state.daily != Daily::Idle {
                 three |= 1;
             }
             format!("\x1dSA1\x1eB{one:X}\x1dSA2\x1eB{two:X}\x1dSA3\x1eB{three:X}")
@@ -323,6 +334,9 @@ fn read(state: &State, body: &str) -> Option<String> {
 }
 fn execute(state: &mut State, body: &str) -> String {
     if let Some(reply) = read(state, body) {
+        if body == "ySR" && state.daily == Daily::Accepted {
+            state.daily = Daily::Reported;
+        }
         return reply;
     }
     let mut fields = body.split('\u{1d}');
@@ -404,7 +418,7 @@ fn execute(state: &mut State, body: &str) -> String {
         },
         "LAL" => String::new(),
         "RRP" if body == "RRP\x1dI1\x1dJ1" => {
-            state.daily_pending = true;
+            state.daily = Daily::Accepted;
             String::new()
         },
         "RPP" if body.ends_with("\x1dS0") => {

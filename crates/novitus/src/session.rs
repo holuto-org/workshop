@@ -296,12 +296,24 @@ impl Session {
                 .is_some_and(|(_, _, ack)| self.discovery || !ack || completed)
                 && let Some(reply) = data.take()
             {
-                if self.discovery && !completed {
+                // Mode 0 never sends this ACK; mode 3 sends it after the data.
+                if self.discovery && !completed && expected.as_ref().is_some_and(|(_, _, ack)| *ack)
+                {
                     self.discovery_ack = query_identifier(command);
                 }
                 return Ok(reply);
             }
         }
+    }
+
+    /// Ends discovery without leaving an optional query ACK unread for the next session:
+    /// `#c` never sends one, and the printer answers in order, so its reply follows any
+    /// pending ACK. A blocked session has an unanswered command and is left as is.
+    pub(crate) fn settle_discovery(&mut self) -> Result<(), Error> {
+        if self.blocked || self.discovery_ack.is_none() {
+            return Ok(());
+        }
+        self.command("#c", TIMEOUT).map(|_reply| ())
     }
 
     /// DLE and ENQ have single-byte replies; DLE2 uses `extended_status`.
@@ -415,7 +427,7 @@ const fn status_matches(request: u8, status: u8) -> bool {
 pub(crate) fn is_fiscal(command: &str) -> bool {
     matches!(
         command,
-        "$h" | "$l" | "$z" | "$b" | "$y" | "$w" | "@z" | "#r" | "#o"
+        "$h" | "$l" | "$z" | "$b" | "$y" | "@z" | "#r" | "#o"
     )
 }
 
@@ -459,7 +471,7 @@ pub(crate) fn identifier(body: &str) -> Option<&str> {
     let rest = body.get(start..)?;
     // Text may follow these identifiers without a separator; do not parse it as command letters.
     if let Some(command) = rest.get(..2)
-        && matches!(command, "$l" | "$w" | "$h" | "$b" | "$y" | "$z" | "@z")
+        && matches!(command, "$l" | "$h" | "$b" | "$y" | "$z" | "@z")
     {
         return Some(command);
     }

@@ -190,8 +190,9 @@ receipt or report stays disabled until the worker finishes that command, so a
 second click cannot queue it twice. Closing the window hides it in the tray and
 releases its memory without stopping processing; reopen from the tray. Without a
 tray, closing keeps the window visible. **Zatrzymaj** stops processing;
-**Zakończ**, the tray's quit and the macOS Dock/⌘Q quit exit. All of them finish
-the current operation first.
+**Zakończ**, the tray's quit, the macOS Dock/⌘Q quit and, on Linux and macOS,
+SIGTERM, SIGHUP or SIGINT (Linux logout or shutdown, Ctrl+C) exit. All of them
+finish the current operation first.
 
 Prices are gross; API quantities and amounts are decimal strings. The schema
 allows unit prices with up to eight decimal places, but this driver requires
@@ -235,13 +236,16 @@ truncated.
   (it expired while the app was down), the app keeps blocking and tells staff
   that nothing was printed, so they can resolve it as failed in the web app.
 - Certain post-send refusals are brand-specific: Posnet initial `trinit`
-  errors and report `ERR` frame rejections; Novitus initial `$h` refusal and
-  daily-report keyboard cancellation (37); Elzab transport rejection of the
-  initial `LOR` only. Later receipt errors remain **unknown**, including Elzab
-  zero-close error 1008. No refusal permits resending. An accepted Elzab
-  `RRP` daily report is always **unknown**, even if counters advance.
+  errors, report `ERR` frame rejections and documented pre-print report
+  refusals (zero daily report, monthly/periodic date validation); Novitus
+  initial `$h` refusal and daily-report keyboard cancellation (37); Elzab
+  transport rejection of the initial `LOR` only. Later receipt errors remain
+  **unknown**, including Elzab zero-close error 1008. No refusal permits
+  resending. An accepted Elzab `RRP` daily report is always **unknown**, even
+  if counters advance.
 - Interrupted reports also block. After inspecting the printout, use **Wyjaśnij
-  raport** with the same printer connected and ready. Resolution prints nothing.
+  raport** with the same printer connected and ready; an overdue daily report
+  or read-only mode does not prevent resolution. Resolution prints nothing.
 - Persist the job, attempt and execution-start timestamp before dispatch;
   persist the result before sending it. A `done` result uses the printer clock
   (`rtcget` on Posnet, `#c` on Novitus, `XCR` on Elzab), interpreted in Polish
@@ -255,8 +259,9 @@ truncated.
   evidence: if the receipt printed but Holuto already marked the job `failed` or
   `expired`, the app keeps the journal, blocks and names the job and receipt
   number. Record the receipt in Holuto, then confirm with **Wyjaśnij paragon**
-  (same printer, connected); it prints and reports nothing. Corrupt or
-  unreadable journals fail closed; deleting the journal is not recovery.
+  (same printer, connected and ready as for reports); it prints and reports
+  nothing. Corrupt or unreadable journals fail closed; deleting the journal is
+  not recovery.
 - History is a display cache that the worker publishes to the window; the window
   never reads it while processing. Report its read/write errors separately; they
   must not prevent settling a server-accepted result.

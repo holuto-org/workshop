@@ -466,7 +466,7 @@ fn monthly_and_periodic_reports_are_explicitly_synchronous() {
 }
 
 #[test]
-fn daily_ack_leaves_pending_state_across_connections() {
+fn accepted_daily_report_stays_pending_until_a_later_connection_has_seen_it() {
     let sim = Simulator::start();
     let driver = printer(&sim);
     assert!(matches!(
@@ -474,11 +474,13 @@ fn daily_ack_leaves_pending_state_across_connections() {
         Err(Error::Uncertain(_))
     ));
     assert!(sim.daily_pending());
-    assert!(!driver.probe().unwrap().ready());
     assert!(matches!(
         driver.print_report(Report::Daily, "ABC1234567890", &mut Log::default()),
         Err(Error::NotReady(_))
     ));
+    // The printout finished; the operator can now resolve the interrupted report.
+    let _resolvable = driver.verify("ABC1234567890").unwrap();
+    assert!(!sim.daily_pending());
     assert_eq!(fiscal(&sim).len(), 1);
 }
 

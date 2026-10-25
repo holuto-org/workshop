@@ -4,6 +4,8 @@ use std::{
     fs::{self, File, TryLockError},
     io::{self, Write as _},
     path::{Path, PathBuf},
+    thread,
+    time::{Duration, Instant},
 };
 
 use atomicwrites::{AtomicFile, OverwriteBehavior};
@@ -11,6 +13,9 @@ use atomicwrites::{AtomicFile, OverwriteBehavior};
 use crate::Error;
 
 const LOCK: &str = "instance.lock";
+/// Status readers hold their shared lock for microseconds; this only bounds a
+/// pathological reader, never a running application.
+const READER_WAIT: Duration = Duration::from_secs(1);
 
 /// Exclusive state-directory lock prevents concurrent printer or journal access.
 #[derive(Debug)]
@@ -44,6 +49,8 @@ impl StateDir {
     }
 
     /// Checks an existing lock without creating a directory or lock file.
+    ///
+    /// Takes only a shared lock, so `open` can tell a reader from a running application.
     pub fn is_locked(path: &Path) -> Result<bool, Error> {
         let lock_path = path.join(LOCK);
         let lock = match File::options().read(true).write(true).open(&lock_path) {
@@ -57,7 +64,7 @@ impl StateDir {
                 });
             },
         };
-        match lock.try_lock() {
+        match lock.try_lock_shared() {
             Ok(()) => Ok(false),
             Err(TryLockError::WouldBlock) => Ok(true),
             Err(TryLockError::Error(source)) => Err(Error::Store {
@@ -93,13 +100,13 @@ impl StateDir {
             path: lock_path.clone(),
             source,
         })?;
-        match lock.try_lock() {
-            Ok(()) => Ok(Self { path, _lock: lock }),
-            Err(TryLockError::WouldBlock) => Err(Error::Blocked(format!(
+        match acquire(&lock) {
+            Ok(true) => Ok(Self { path, _lock: lock }),
+            Ok(false) => Err(Error::Blocked(format!(
                 "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
                 path.display()
             ))),
-            Err(TryLockError::Error(source)) => Err(Error::Store {
+            Err(source) => Err(Error::Store {
                 action: "Nie można zablokować katalogu stanu",
                 path: lock_path,
                 source,
@@ -113,6 +120,32 @@ impl StateDir {
 
     pub(crate) fn file(&self, name: &str) -> PathBuf {
         self.path.join(name)
+    }
+}
+
+/// Takes the exclusive instance lock; `Ok(false)` means another application holds it.
+///
+/// Exclusive contention is either an application (exclusive) or a status reader
+/// (shared, `is_locked`). Only the latter is waited out, so a starting application
+/// never mistakes `workshop status` for a second instance.
+fn acquire(lock: &File) -> io::Result<bool> {
+    let deadline = Instant::now() + READER_WAIT;
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(true),
+            Err(TryLockError::WouldBlock) => {},
+            Err(TryLockError::Error(error)) => return Err(error),
+        }
+        match lock.try_lock_shared() {
+            // Only readers hold it; release before the next exclusive attempt.
+            Ok(()) => lock.unlock()?,
+            Err(TryLockError::WouldBlock) => return Ok(false),
+            Err(TryLockError::Error(error)) => return Err(error),
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        thread::yield_now();
     }
 }
 

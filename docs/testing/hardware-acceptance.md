@@ -211,9 +211,11 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    **Fills:** `Capabilities.zero_total_receipts`; it stays false without a
    successful legal print and vendor reconciliation of zero-close semantics.
 5. **Company text and completion.** Compare company present in header (no
-   footer) with absent (exact full company footer). Novitus expected order:
-   `$b` payments, `$y` ending 3, `12$z`, `200;0$w` lines, `28;0$z` (capture
-   actual sequence); Elzab implemented candidate is `LCL` then `LAL`.
+   footer) with absent (exact full company footer). Novitus candidate: one
+   `$h` additional line (`0;1$h<company>`), printed after the fiscal logo when
+   the printer's administrative settings enable additional lines, then `$b`
+   payments, `$y` ending 3, `12$z`, `28;0$z` (capture actual sequence); Elzab
+   implemented candidate is `LCL` then `LAL`.
    Expected attached label-free text, correct cut and final completion, not
    a detached non-fiscal page. Test different daily company names and widths.
    **Fills:** `Capabilities.company_footer`, Novitus `Profile.info_line_width`
