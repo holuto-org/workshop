@@ -5,10 +5,16 @@ use std::future::{Ready, ready};
 /// A watcher needs a registered host to display the icon.
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub(crate) async fn available() -> bool {
-    use zbus::{Connection, fdo::PropertiesProxy, names::InterfaceName};
+    use std::time::Duration;
+
+    use zbus::{connection, fdo::PropertiesProxy, names::InterfaceName};
 
     let check = async {
-        let connection = Connection::session().await?;
+        // An unresponsive watcher must not leave the close button doing nothing.
+        let connection = connection::Builder::session()?
+            .method_timeout(Duration::from_secs(2))
+            .build()
+            .await?;
         let watcher = PropertiesProxy::builder(&connection)
             .destination("org.kde.StatusNotifierWatcher")?
             .path("/StatusNotifierWatcher")?

@@ -360,7 +360,9 @@ impl Application {
                         .say("Zapisano ustawienia uruchamiania.".into(), Tone::Success);
                 }
             },
-            Ok(preferences::Outcome::Reload(settings)) => {
+            Ok(preferences::Outcome::Reload(mut settings)) => {
+                // A diagnostics choice made after the reload was read is written after it.
+                settings.telemetry_enabled = self.model.settings.telemetry_enabled;
                 self.model.settings = settings;
                 self.model.settings_persisted();
             },
@@ -601,6 +603,11 @@ impl Application {
                 // Operation completion precedes Stopped; joining cannot interrupt printer I/O.
                 if let Some(worker) = self.worker.take() {
                     worker.join();
+                }
+                telemetry::clear_printer();
+                // Pairing and worker failures already reported their outcome.
+                if self.model.stopping && !self.model.pairing && self.model.tone != Tone::Error {
+                    self.model.say("Zatrzymano.".into(), Tone::Info);
                 }
                 self.model.stopped();
                 self.model.pairing = false;

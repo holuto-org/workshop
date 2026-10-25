@@ -184,6 +184,8 @@ impl Model {
         self.in_flight = false;
         // Recheck readiness on reconnect; retain the persisted fiscal block.
         self.device = None;
+        // A new worker pages from the start; never offer a stopped session's rows.
+        self.set_documents(Vec::new(), 1, false);
     }
 
     pub(crate) fn status(&self, updated_at: Timestamp) -> Snapshot {
@@ -539,6 +541,10 @@ impl Model {
                 Command::NextPage | Command::PreviousPage => false,
             };
             if allowed {
+                if matches!(pending.command, Command::Queue { .. }) {
+                    // The buyer NIP belongs to this receipt only.
+                    self.nip.clear();
+                }
                 self.in_flight = true;
                 submit(pending.command);
             }

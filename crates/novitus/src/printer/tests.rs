@@ -378,20 +378,48 @@ fn unqualified_advance_is_refused_before_begin() {
 }
 
 #[test]
-fn daily_report_keyboard_cancel_is_certain_others_uncertain() {
-    for code in [37, 6, 2, 36] {
+fn only_report_refusals_documented_before_printing_are_certain() {
+    let periodic = Report::Periodic {
+        from: "2024-01-02".parse().unwrap(),
+        to: "2024-03-04".parse().unwrap(),
+        summary: false,
+    };
+    for (report, body, code, certain) in [
+        (Report::Daily, "1;26;10;24#r", 37, true),
+        (Report::Daily, "1;26;10;24#r", 36, true),
+        (Report::Daily, "1;26;10;24#r", 35, false),
+        (Report::Daily, "1;26;10;24#r", 6, false),
+        (Report::Daily, "1;26;10;24#r", 4, false),
+        (Report::Daily, "1;26;10;24#r", 2, false),
+        (periodic, "24;1;2;24;3;4;0#o", 4, true),
+        (
+            Report::Monthly {
+                year: 2024,
+                month: 2,
+            },
+            "24;2;1;24;2;29;6#o",
+            4,
+            true,
+        ),
+        (periodic, "24;1;2;24;3;4;0#o", 6, false),
+        (periodic, "24;1;2;24;3;4;0#o", 37, false),
+        (periodic, "24;1;2;24;3;4;0#o", 36, false),
+    ] {
         let sim = Simulator::start();
         supported(&sim);
-        sim.fault("#r", Fault::Refuse(code));
+        sim.fault(body, Fault::Refuse(code));
         let error = printer(&sim)
-            .print_report(Report::Daily, "ABC1234567890", &mut Log::default())
+            .print_report(report, "ABC1234567890", &mut Log::default())
             .unwrap_err();
-        if code == 37 {
-            assert!(matches!(error, Error::Device { code: 37, .. }));
+        if certain {
+            assert!(
+                matches!(error, Error::Device { code: refused, .. } if refused == code),
+                "{body} {code}: {error:?}"
+            );
         } else {
-            assert!(matches!(error, Error::Uncertain(_)), "{code}");
+            assert!(matches!(error, Error::Uncertain(_)), "{body} {code}");
         }
-        assert_eq!(fiscal_bodies(&sim), ["1;26;10;24#r"]);
+        assert_eq!(fiscal_bodies(&sim), [body]);
     }
 }
 
@@ -574,6 +602,39 @@ fn monthly_and_periodic_reports_use_calendar_ranges() {
             "24;1;2;24;3;4;0#o"
         ]
     );
+}
+
+#[test]
+fn periodic_report_past_printer_date_or_inverted_never_dispatches() {
+    let sim = Simulator::start();
+    supported(&sim);
+    let driver = printer(&sim);
+    let periodic = |from: &str, to: &str| Report::Periodic {
+        from: from.parse().unwrap(),
+        to: to.parse().unwrap(),
+        summary: false,
+    };
+    // The simulated printer date is 2026-10-24.
+    for report in [
+        periodic("2026-10-01", "2026-10-25"),
+        periodic("2026-10-20", "2026-10-19"),
+    ] {
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_report(report, "ABC1234567890", &mut log),
+            Err(Error::Invalid(message)) if message == "Nieprawidłowy zakres dat raportu."
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+    }
+    assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+    driver
+        .print_report(
+            periodic("2026-10-24", "2026-10-24"),
+            "ABC1234567890",
+            &mut Log::default(),
+        )
+        .unwrap();
+    assert_eq!(fiscal_bodies(&sim), ["26;10;24;26;10;24;0#o"]);
 }
 
 #[cfg(not(workshop_acceptance))]

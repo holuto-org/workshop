@@ -814,9 +814,7 @@ fn a_failed_queue_command_does_not_delay_the_following_report() {
 #[test]
 fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
     let sim = Simulator::start();
-    sim.set_vat([
-        "23,00", "8,00", "5,00", "0,00", "100,00", "7,00", "101,00",
-    ]);
+    sim.set_vat(["23,00", "8,00", "5,00", "0,00", "100,00", "7,00", "101,00"]);
     let holuto = Holuto::new();
     holuto.fault("POST", "/agent/jobs", problem(503));
     let (_temporary, dir) = state_dir();
@@ -838,7 +836,15 @@ fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
         .iter()
         .filter_map(|event| match event {
             Event::Status { text, .. } => Some(text.as_str()),
-            _ => None,
+            Event::PortDetected { .. }
+            | Event::Connected { .. }
+            | Event::Paired { .. }
+            | Event::PairingFailed { .. }
+            | Event::Documents { .. }
+            | Event::Device { .. }
+            | Event::HistoryChanged(_)
+            | Event::CommandCompleted
+            | Event::Stopped => None,
         })
         .collect();
     assert_eq!(

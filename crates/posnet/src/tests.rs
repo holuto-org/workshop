@@ -3,6 +3,7 @@ use std::io;
 use jiff::civil::date;
 
 use fiscal::{
+    device::Problem,
     driver::Driver,
     error::Error,
     journal::Journal,
@@ -191,6 +192,60 @@ fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
             fiscal_commands(&sim),
             Vec::<String>::new(),
             "{field}={value}"
+        );
+    }
+}
+
+#[test]
+fn an_enabled_posnet_interface_without_windows_1250_refuses_before_journaling() {
+    for (interface, refused) in [
+        ([("id", "2"), ("pr", "0"), ("cp", "1")], true),
+        ([("id", "1"), ("pr", "0"), ("cp", "2")], true),
+        // Disabled and Thermal-protocol interfaces cannot carry this session.
+        ([("id", "0"), ("pr", "0"), ("cp", "2")], false),
+        ([("id", "2"), ("pr", "1"), ("cp", "2")], false),
+    ] {
+        let sim = simulator();
+        let device = printer(&sim);
+        let expected = device.probe().unwrap();
+        sim.fault(
+            "pccfgget",
+            Fault::Reply(
+                interface
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                    .collect(),
+            ),
+        );
+        let mut journal = Recorder::default();
+        let receipt = device.print_receipt(&sale(), &expected, &mut journal);
+        let report = device.print_report(Report::Daily, UNIQUE_NUMBER, &mut journal);
+        if refused {
+            for result in [receipt.map(|_| ()), report] {
+                assert!(
+                    matches!(&result, Err(Error::NotReady(reason))
+                        if reason == "Drukarka nie używa strony kodowej Windows-1250"),
+                    "{interface:?}: {result:?}"
+                );
+            }
+            assert_eq!(journal.stages, Vec::<&str>::new(), "{interface:?}");
+            assert_eq!(fiscal_commands(&sim), Vec::<String>::new(), "{interface:?}");
+        } else {
+            let _printed = receipt.unwrap();
+            report.unwrap();
+        }
+    }
+    // Each interface's own reply decides: neither can hide the other.
+    for (pc1, pc2) in [("0", "2"), ("1", "0")] {
+        let sim = simulator();
+        sim.set_code_page("1", pc1);
+        sim.set_code_page("2", pc2);
+        let device = printer(&sim);
+        let problems = device.probe().unwrap().problems;
+        assert!(
+            matches!(problems.as_slice(), [Problem::Blocking(reason)]
+                if reason == "Drukarka nie używa strony kodowej Windows-1250"),
+            "PC1 cp{pc1}, PC2 cp{pc2}: {problems:?}"
         );
     }
 }

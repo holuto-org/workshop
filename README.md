@@ -113,7 +113,8 @@ operator. Configure the printer manually; discovery never changes its settings.
 ### Posnet
 
 Temo Online: **PC services → USB → POSNET → Windows 1250**, 9600 baud.
-Advances, zero-total receipts and company footers are supported.
+Workshop stays not ready while any PC interface set to POSNET uses another
+code page. Advances, zero-total receipts and company footers are supported.
 
 ### Novitus
 
@@ -164,7 +165,7 @@ It never scans with an unresolved operation: the device must not change.
 
 - **Do wydruku** — eligible advances and sales for the printer's branch, showing
   kind, amount and legal deadline; overdue documents are marked. Queue a
-  document with an optional buyer NIP;
+  document with an optional buyer NIP, which clears after each queued receipt;
   Holuto derives payments and advance deductions. Unpaid final-sale balances
   print as credit. Receipt lines and totals are not locally editable. Documents
   above the printer's amount limit remain listed but cannot execute. Each poll

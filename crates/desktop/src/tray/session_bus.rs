@@ -4,9 +4,10 @@ use std::{
     env,
     error::Error,
     process::Command as ProcessCommand,
-    sync::Arc,
+    sync::{Arc, mpsc},
     task::{Context, Poll, Wake, Waker},
     thread::{self, Thread},
+    time::Duration,
 };
 use zbus::Connection;
 
@@ -109,6 +110,18 @@ fn tray_availability_requires_a_registered_status_notifier_host() -> Result<(), 
         assert!(
             !available().await,
             "a vanished host must no longer allow hiding"
+        );
+        // A watcher that owns the name but never answers, like a frozen shell extension.
+        let hung = Connection::session().await?;
+        hung.request_name("org.kde.StatusNotifierWatcher").await?;
+        let (sender, probed) = mpsc::channel();
+        let _probe = thread::Builder::new()
+            .name("tray probe".into())
+            .spawn(move || sender.send(run(available())))?;
+        assert_eq!(
+            probed.recv_timeout(Duration::from_secs(10)),
+            Ok(false),
+            "an unresponsive watcher must not leave the close button doing nothing"
         );
         Ok::<(), Box<dyn Error>>(())
     })

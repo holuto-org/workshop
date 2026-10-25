@@ -47,7 +47,8 @@ Structured diagnostics use an allowlist:
   release/environment, start/duration and healthy/error/crash/exit status
   needed for crash-free-session accounting.
 - **Device context**: Holuto printer ID and physical device serial as tags
-  once known; these are device identifiers, not anonymous data.
+  once connected, cleared when processing stops; these are device identifiers,
+  not anonymous data.
 - **Native crash**: Fatal event and native minidump, with matching
   release/debug identifiers and available allowlisted context; see the memory
   privacy warning below.
@@ -114,6 +115,7 @@ inherit later scope changes
 Client shutdown and native-reporter flushing use a **500 ms** timeout.
 The bounded best-effort transport keeps SDK HTTP ownership and disposal off the
 application thread; it may drop diagnostics rather than delay fiscal shutdown.
+Like Holuto requests, it uses the environment proxy (`HTTPS_PROXY`/`ALL_PROXY`).
 Structured capture/transport tests do not verify native minidump delivery.
 
 ## Release and debug files

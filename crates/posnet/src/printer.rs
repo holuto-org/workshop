@@ -41,6 +41,8 @@ const ZERO_DAILY_REPORT: u32 = 382;
 /// Non-letter, non-digit characters the printer compares; a name with none of these, no
 /// letter and no digit equals an empty name (p. 430).
 const SIGNIFICANT_SYMBOLS: &str = ",./\\%";
+/// `pccfgget` `pi` numbers of the PC1 and PC2 interfaces (p. 155).
+const PC_INTERFACES: [&str; 2] = ["1", "2"];
 
 #[derive(Debug)]
 pub struct Printer {
@@ -470,7 +472,20 @@ fn read_status(session: &mut Session) -> Result<(Device, bool), Error> {
     let common = session.command("scomm", &[], DEFAULT_TIMEOUT)?;
     let transaction = session.command("strns", &[], DEFAULT_TIMEOUT)?;
     let vat = session.command("vatget", &[], DEFAULT_TIMEOUT)?;
-    device_from(&identity, &device, &mechanism, &common, &transaction, &vat).map_err(|error| {
+    let interfaces = PC_INTERFACES
+        .iter()
+        .map(|number| session.command("pccfgget", &[("pi", (*number).to_owned())], DEFAULT_TIMEOUT))
+        .collect::<Result<Vec<_>, Error>>()?;
+    device_from(
+        &identity,
+        &device,
+        &mechanism,
+        &common,
+        &transaction,
+        &vat,
+        &interfaces,
+    )
+    .map_err(|error| {
         Error::Protocol(format!(
             "Niepełna lub nieprawidłowa odpowiedź statusu drukarki: {error}"
         ))
@@ -484,6 +499,7 @@ fn device_from(
     common: &Reply,
     transaction: &Reply,
     vat: &Reply,
+    interfaces: &[Reply],
 ) -> Result<(Device, bool), Error> {
     let name = identity.require("nm")?.to_owned();
     let version = identity.require("vr")?.to_owned();
@@ -540,6 +556,14 @@ fn device_from(
     if !rates.iter().any(|rate| rate.active()) {
         problems.push("Brak aktywnych stawek VAT".into());
     }
+    if interfaces
+        .iter()
+        .map(foreign_code_page)
+        .collect::<Result<Vec<_>, Error>>()?
+        .contains(&true)
+    {
+        problems.push("Drukarka nie używa strony kodowej Windows-1250".into());
+    }
     let device = Device {
         vendor: Vendor::Posnet,
         model: name,
@@ -550,6 +574,14 @@ fn device_from(
         capabilities: capabilities(),
     };
     Ok((device, fiscal))
+}
+
+/// The session's PC interface is not identifiable, so every enabled Posnet-protocol
+/// interface must use WIN1250 (`cp0`, pp. 153–155); text is always sent in Windows-1250.
+fn foreign_code_page(interface: &Reply) -> Result<bool, Error> {
+    Ok(interface.require("id")? != "0"
+        && interface.require("pr")? == "0"
+        && interface.require("cp")? != "0")
 }
 
 /// Mechanism `pr` codes (spec p. 384); `None` when ready.

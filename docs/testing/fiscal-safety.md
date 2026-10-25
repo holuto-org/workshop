@@ -79,9 +79,11 @@ A device error naming `trinit` is a certain refusal: without `trend`, no receipt
 can have been issued. Reports are themselves fiscal records: only an `ERR`
 frame rejection naming `dailyrep`, `monthlyrep` or `periodicrepbydates` is
 certain, plus Posnet code 382 naming `dailyrep` (a second consecutive zero daily
-report, refused before printing). Any other execution-error reply, lost reply or
-wrong-command reply for a report remains uncertain, as does a later
-receipt-command refusal.
+report, refused before printing). Novitus `$h` refusals are certain; for reports
+only codes 36 and 37 naming `#r` (zero daily report already recorded, keyboard
+cancel) and 4 naming `#o` (invalid range or no fiscal records in it) are. Any
+other execution-error reply, lost reply or wrong-command reply for a report
+remains uncertain, as does a later receipt-command refusal.
 
 Table-test each state/command pair, then use `proptest-state-machine` to
 generate claim/dispatch/complete/report/restart/reconcile/acknowledge sequences.

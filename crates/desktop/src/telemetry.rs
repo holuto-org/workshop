@@ -160,6 +160,18 @@ pub(crate) fn printer(printer_id: &str, unique_number: &str) {
     });
 }
 
+/// Forgets the stopped worker's printer so later issues are not attributed to it.
+pub(crate) fn clear_printer() {
+    sentry::configure_scope(|scope| {
+        scope.remove_tag("printer_id");
+        scope.remove_tag("device_unique_number");
+    });
+    sentry::with_integration(|integration: &MinidumpIntegration, _| {
+        integration.set_tag("printer_id".into(), None);
+        integration.set_tag("device_unique_number".into(), None);
+    });
+}
+
 struct HttpTransport;
 impl TransportFactory for HttpTransport {
     fn create_transport_with_options(&self, options: TransportOptions) -> Arc<dyn Transport> {

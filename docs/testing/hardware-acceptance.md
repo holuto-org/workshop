@@ -144,7 +144,9 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
    company-footer prerequisite. Do not program VAT to manufacture a test.
 7. **Code page and repertoire.** Read Novitus options 91/92: both `1`;
    `52$i` attr1 bit `0x0200` enables full CP1250, otherwise ASCII only.
-   Elzab `XHR` w must be `ACP1250`; Posnet uses Windows-1250. Record any
+   Elzab `XHR` w must be `ACP1250`; Posnet `pccfgget` `pi1` and `pi2` must
+   report `cp0` on every enabled POSNET-protocol interface, and the
+   connected interface must be one of them. Record any
    input/output asymmetry, unsupported glyphs, undefined bytes and font effects.
    Expected: no translation, substitution or truncation. **Fills:**
    `Capabilities.allowed_characters` and Novitus `enable_full_cp1250` evidence;

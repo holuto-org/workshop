@@ -1,12 +1,16 @@
 use std::{
+    env,
     error::Error,
+    io::{self, BufRead as _, BufReader},
+    net::TcpListener,
+    process::Command,
     sync::{Mutex, PoisonError, mpsc},
     thread,
     time::Duration,
 };
 
 use sentry::{
-    Envelope, Transport,
+    ClientOptions, Envelope, Transport, TransportFactory as _, TransportOptions,
     protocol::{EnvelopeItem, Event},
 };
 
@@ -339,6 +343,60 @@ fn admitted_zero_timeout_shutdown_never_waits_for_acknowledgement() -> Result<()
     assert!(
         caller.join().is_ok(),
         "zero-timeout shutdown caller completed"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions verify behavior while fixture failures propagate"
+)]
+fn envelopes_follow_the_environment_proxy() -> Result<(), Box<dyn Error>> {
+    const CHILD: &str = "WORKSHOP_TELEMETRY_PROXY_CHILD";
+    if env::var_os(CHILD).is_some() {
+        let options = ClientOptions::new().dsn("https://public@ingest.example.invalid/1");
+        let transport = super::HttpTransport.create_transport_with_options(
+            TransportOptions::try_from_client_options(&options).ok_or("missing DSN")?,
+        );
+        transport.send_envelope(envelope("proxied"));
+        let _flushed = transport.flush(WAIT);
+        return Ok(());
+    }
+    let proxy = TcpListener::bind("127.0.0.1:0")?;
+    let address = format!("http://{}", proxy.local_addr()?);
+    let (received, request) = mpsc::channel();
+    let _accepting = thread::Builder::new()
+        .name("telemetry-proxy-test".into())
+        .spawn(move || -> io::Result<()> {
+            let (stream, _peer) = proxy.accept()?;
+            let mut line = String::new();
+            let _read = BufReader::new(stream).read_line(&mut line)?;
+            let _receiver_gone = received.send(line);
+            Ok(())
+        })?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "proxy environment is isolated in a child test process"
+    )]
+    let status = Command::new(env::current_exe()?)
+        .args([
+            "--exact",
+            "telemetry::transport::tests::envelopes_follow_the_environment_proxy",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("HTTPS_PROXY", &address)
+        .env("https_proxy", &address)
+        .env("NO_PROXY", "")
+        .env("no_proxy", "")
+        .status()?;
+    assert!(status.success(), "proxied child sends without failing");
+    assert!(
+        request
+            .recv_timeout(WAIT)?
+            .starts_with("CONNECT ingest.example.invalid:443 "),
+        "diagnostics reach Sentry through the configured proxy"
     );
     Ok(())
 }

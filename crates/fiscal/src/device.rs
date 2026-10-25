@@ -96,7 +96,9 @@ pub enum Problem {
     DailyReportOverdue,
     /// Sales and daily reports are refused. Monthly and periodic reports print only when
     /// `periodic_reports` is set, i.e. the driver's specification permits them in this mode.
-    ReadOnly { periodic_reports: bool },
+    ReadOnly {
+        periodic_reports: bool,
+    },
 }
 
 impl Problem {
@@ -156,9 +158,12 @@ impl Device {
     /// UI eligibility for monthly and periodic reports, which some read-only devices still print.
     pub fn periodic_reports_allowed(&self) -> bool {
         self.ready_except(|problem| {
-            matches!(problem, Problem::ReadOnly {
-                periodic_reports: true
-            })
+            matches!(
+                problem,
+                Problem::ReadOnly {
+                    periodic_reports: true
+                }
+            )
         })
     }
 
@@ -211,7 +216,10 @@ impl Device {
     /// would otherwise block resolution indefinitely. Resolution never prints.
     pub fn require_resolvable(&self) -> Result<(), Error> {
         if self.ready_except(|problem| {
-            matches!(problem, Problem::DailyReportOverdue | Problem::ReadOnly { .. })
+            matches!(
+                problem,
+                Problem::DailyReportOverdue | Problem::ReadOnly { .. }
+            )
         }) {
             Ok(())
         } else {

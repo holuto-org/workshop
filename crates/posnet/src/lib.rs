@@ -1,7 +1,8 @@
 //! Posnet Temo Online driver over a serial port.
 //!
 //! Each operation verifies identity, fiscal mode, header, mechanism, command queue,
-//! transaction state and VAT table in an exclusive session before fiscal commands.
+//! transaction state, VAT table and Windows-1250 PC interfaces in an exclusive session
+//! before fiscal commands.
 //! Commands are never retried; a lost reply leaves the outcome uncertain.
 //! The caller's [`Journal`](fiscal::journal::Journal) persists intent before each command.
 

@@ -30,8 +30,8 @@ impl TransportFactory for HttpTransport {
         let capacity = options.transport_channel_capacity.map_or(30, Into::into);
         Arc::new(DetachedTransport::spawn(
             move || {
+                // Default config follows the environment proxy, like the Holuto client.
                 let config = Agent::config_builder()
-                    .proxy(None)
                     .max_redirects(0)
                     .timeout_global(Some(Duration::from_secs(3)))
                     .middleware(consent)

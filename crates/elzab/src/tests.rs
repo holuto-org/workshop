@@ -502,6 +502,39 @@ fn monthly_and_periodic_reports_are_explicitly_synchronous() {
 }
 
 #[test]
+fn periodic_report_past_printer_date_or_inverted_never_dispatches() {
+    use jiff::civil::date;
+    let sim = Simulator::start();
+    let driver = printer(&sim);
+    let periodic = |from, to| Report::Periodic {
+        from,
+        to,
+        summary: false,
+    };
+    // The simulated printer date is 2026-10-24.
+    for report in [
+        periodic(date(2026, 10, 1), date(2026, 10, 25)),
+        periodic(date(2026, 10, 20), date(2026, 10, 19)),
+    ] {
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_report(report, "ABC1234567890", &mut log),
+            Err(Error::Invalid(message)) if message == "Nieprawidłowy zakres dat raportu."
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+    }
+    assert_eq!(fiscal(&sim), Vec::<String>::new());
+    driver
+        .print_report(
+            periodic(date(2026, 10, 24), date(2026, 10, 24)),
+            "ABC1234567890",
+            &mut Log::default(),
+        )
+        .unwrap();
+    assert_eq!(fiscal(&sim), ["RPP\x1dE1\x1dFE261024\x1eF261024\x1dS0"]);
+}
+
+#[test]
 fn accepted_daily_report_stays_pending_until_a_later_connection_has_seen_it() {
     let sim = Simulator::start();
     let driver = printer(&sim);

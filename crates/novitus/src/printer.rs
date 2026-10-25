@@ -510,16 +510,21 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
             return Err(if index == 0 { error } else { uncertain(error) });
         }
         if let Err(error) = execute(session, step, journal) {
-            // Begin prints nothing; daily-report error 37 confirms cancellation before printing.
             let certain = index == 0 && refusal_is_certain(&error, step.command);
             return Err(if certain { error } else { uncertain(error) });
         }
     }
     Ok(())
 }
+/// Refusals the specification places before any printing.
+///
+/// `$h` prints nothing; daily report 36 (zero totals, already recorded today) and 37
+/// (keyboard cancel); periodic report 4 (invalid dates or no fiscal records in the range).
 fn refusal_is_certain(error: &Error, sent: &str) -> bool {
-    matches!(error, Error::Device { command, code, .. }
-        if command == sent && (sent == "$h" || (sent == "#r" && *code == 37)))
+    matches!(error, Error::Device { command, code, .. } if command == sent && matches!(
+        (sent, code),
+        ("$h", _) | ("#r", 36 | 37) | ("#o", 4)
+    ))
 }
 fn uncertain(error: Error) -> Error {
     Error::Uncertain(Box::new(error))

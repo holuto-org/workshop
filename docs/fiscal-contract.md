@@ -167,7 +167,10 @@ close at zero without payment commands. Before dispatch, slot/rate pairs must
 match fresh telemetry, deductions cannot exceed slot sales, and payments must
 exactly cover fiscal value. Amounts must be nonnegative whole grosze within the
 printer's range. Every item name needs a letter, digit or one of `, . / \ %`;
-the printer treats other names as empty (p. 430). A `getrealid` unique number
+the printer treats other names as empty (p. 430). Every enabled PC interface
+using the POSNET protocol must report Windows-1250 (`pccfgget` `cp0`,
+pp. 153–155) because the session's interface cannot be identified and all text
+is sent in Windows-1250. A `getrealid` unique number
 written `ABC 1234567890` binds as `ABC1234567890`. A read-only (`scomm.td`)
 printer refuses sales and daily reports but still prints monthly and periodic
 reports, which the specification permits in that mode; monthly reports get the

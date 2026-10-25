@@ -16,6 +16,7 @@ use std::{
     error::Error,
     fs,
     sync::{
+        Mutex, PoisonError,
         atomic::{AtomicUsize, Ordering},
         mpsc,
     },
@@ -28,6 +29,7 @@ use fiscal::device::{Device, Vendor};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use jiff::Timestamp;
 use posnet::{capabilities::capabilities, simulator::Simulator};
+use sentry::{Client, ClientOptions, Envelope, Hub, Level, Transport, protocol::EnvelopeItem};
 use slint::{
     Model as _,
     platform::{Key, WindowEvent},
@@ -166,6 +168,11 @@ fn queue_confirmation_shows_amount_nip_and_local_pending_state() -> Result<(), B
         Some(false),
         "confirmed receipt waits for worker acknowledgement"
     );
+    assert_eq!(
+        window.get_nip().as_str(),
+        "",
+        "a submitted buyer NIP is not carried over to the next receipt"
+    );
     app.borrow_mut().event(Event::CommandCompleted);
     app.borrow().sync();
     assert_eq!(
@@ -214,6 +221,164 @@ fn paging_buttons_reflect_the_worker_page() -> Result<(), Box<dyn Error>> {
         button(&window, "Następna strona")?.accessible_enabled(),
         Some(false),
         "last page has no successor"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<(), Box<dyn Error>>
+{
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    let mut state = app.borrow_mut();
+    let items = state.model.documents().to_vec();
+    state.event(Event::Documents {
+        items,
+        page: 3,
+        has_next: true,
+    });
+    state.event(Event::Stopped);
+    // A new worker's pager starts at the first page.
+    state.event(Event::Connected {
+        printer_id: "printer-42".into(),
+        unique_number: "TST0000000042".into(),
+        port: "test".into(),
+    });
+    state.sync();
+    drop(state);
+    assert_eq!(window.get_page_label().as_str(), "Strona 1");
+    assert_eq!(
+        button(&window, "Poprzednia strona")?.accessible_enabled(),
+        Some(false),
+        "the new session has no previous page"
+    );
+    assert!(
+        app.borrow().model.documents().is_empty(),
+        "documents from the stopped session are not offered for printing"
+    );
+    assert_eq!(
+        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
+        Some(false),
+        "no stale selection can be queued"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn stopped_worker_replaces_progress_text_but_keeps_errors() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    let mut state = app.borrow_mut();
+    // State left by `stop` while the worker finishes its operation.
+    state.model.running = true;
+    state.model.stopping = true;
+    state.model.say(
+        "Zatrzymywanie po zakończeniu bieżącej operacji…".into(),
+        Tone::Info,
+    );
+    state.event(Event::Stopped);
+    state.sync();
+    assert_eq!(
+        window.get_status().as_str(),
+        "Zatrzymano.",
+        "a requested stop reports completion"
+    );
+    state.model.running = true;
+    state.event(Event::Status {
+        text: "Błąd: brak połączenia".into(),
+        tone: Tone::Error,
+    });
+    state.event(Event::Stopped);
+    state.sync();
+    assert_eq!(
+        window.get_status().as_str(),
+        "Błąd: brak połączenia",
+        "a worker failure stays visible after it stops"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn issues_after_stop_carry_no_previous_printer_identity() -> Result<(), Box<dyn Error>> {
+    #[derive(Default)]
+    struct Capture(Mutex<Vec<Envelope>>);
+    impl Transport for Capture {
+        fn send_envelope(&self, envelope: Envelope) {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(envelope);
+        }
+    }
+    let (_temp, app, _window) = fixture()?;
+    let capture = Arc::new(Capture::default());
+    let client = Arc::new(Client::from(
+        ClientOptions::new()
+            .dsn("https://public@example.invalid/1")
+            .transport(Arc::clone(&capture)),
+    ));
+    let hub = Arc::new(Hub::new(Some(Arc::clone(&client)), Arc::default()));
+    Hub::run(hub, || {
+        ready(&app);
+        app.borrow_mut().event(Event::Stopped);
+        // E.g. the next worker fails on another printer before it connects.
+        let _id = sentry::capture_message("Worker operation failed", Level::Error);
+        assert!(client.flush(Some(Duration::from_secs(1))));
+    });
+    let envelopes = capture.0.lock().map_err(|error| error.to_string())?;
+    let event = envelopes
+        .iter()
+        .flat_map(Envelope::items)
+        .find_map(|item| {
+            if let EnvelopeItem::Event(event) = item {
+                Some(event)
+            } else {
+                None
+            }
+        })
+        .ok_or("missing issue")?;
+    assert!(
+        !event.tags.contains_key("printer_id") && !event.tags.contains_key("device_unique_number"),
+        "a failure after Stop must not be attributed to the stopped printer"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn reload_after_pairing_keeps_a_diagnostics_choice_made_meanwhile() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture_with_event_loop()?;
+    // `Paired` submits Reload; the opt-out is written only after Reload has read the file.
+    assert!(
+        app.borrow_mut()
+            .write_settings(preferences::Request::Reload)
+    );
+    control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
+        .invoke_accessible_default_action();
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    assert!(
+        !app.borrow().model.settings.telemetry_enabled,
+        "the reloaded settings must not restore diagnostics, which a later Save would persist"
+    );
+    assert!(
+        !window.get_telemetry_enabled(),
+        "checkbox shows the opt-out"
     );
     Ok(())
 }

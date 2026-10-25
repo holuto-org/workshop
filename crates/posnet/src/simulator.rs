@@ -123,6 +123,8 @@ struct State {
     held: Option<Held>,
     holding: Option<String>,
     paper_out: bool,
+    /// `pccfgget` `cp` per `pi` interface number; WIN1250 (`0`) otherwise.
+    code_pages: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -268,6 +270,15 @@ impl Simulator {
     /// Without paper, status queries still answer; printing commands wait without replying.
     pub fn set_paper(&self, present: bool) {
         self.state().paper_out = !present;
+    }
+
+    /// Sets `pccfgget` `cp` for PC interface `"1"` or `"2"` only.
+    pub fn set_code_page(&self, interface: &str, code_page: &str) {
+        drop(
+            self.state()
+                .code_pages
+                .insert(interface.to_owned(), code_page.to_owned()),
+        );
     }
 
     /// Holds the next matching command before execution until [`Hold::release`].
@@ -670,6 +681,8 @@ impl State {
                 ("fe", if self.footer_open { "1" } else { "0" }),
             ]),
             "hdrget" => vec![("tx".to_owned(), self.header.clone())],
+            // Both PC interfaces: USB, Posnet protocol, WIN1250 (p. 155).
+            "pccfgget" => reply(&[("id", "2"), ("no", "1"), ("pr", "0"), ("cp", "0")]),
             "scnt" => vec![("bt".to_owned(), self.receipts.len().to_string())],
             "vatget" => ["va", "vb", "vc", "vd", "ve", "vf", "vg"]
                 .iter()
@@ -704,7 +717,14 @@ impl State {
     }
 
     fn handle(&mut self, command: &str, reply_params: &Reply) -> Result<Vec<(String, String)>, ()> {
-        if let Some(answer) = self.query(command) {
+        if let Some(mut answer) = self.query(command) {
+            let interface = reply_params.get("pi").unwrap_or("1");
+            if command == "pccfgget"
+                && let Some(code_page) = self.code_pages.get(interface)
+            {
+                answer.retain(|(key, _)| key != "cp");
+                answer.push(("cp".to_owned(), code_page.clone()));
+            }
             return Ok(answer);
         }
         let params = params(reply_params);
