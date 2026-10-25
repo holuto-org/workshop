@@ -121,8 +121,6 @@ case $os in
       x86_64|arm64) ;;
       *) fail "Unsupported macOS architecture: $arch" ;;
     esac
-    require sw_vers
-    require sysctl
     # uname reports x86_64 under Rosetta; the hardware capability selects native ARM.
     native_arm=$(sysctl -n hw.optional.arm64 2>/dev/null) || native_arm=0
     [[ $native_arm == 0 || $native_arm == 1 ]] || fail 'Cannot determine native macOS architecture.'
@@ -178,9 +176,8 @@ require curl
 require pgrep
 check_not_running
 if [[ $os == Linux ]]; then
-  for command in sudo apt dpkg dpkg-deb dpkg-query sha256sum; do require "$command"; done
+  require sudo
 else
-  for command in hdiutil ditto shasum readlink xattr; do require "$command"; done
   [[ ! -L $target ]] || fail 'The target app is a symbolic link; refusing to replace it.'
   [[ ! -e $target || -d $target ]] || fail 'The target app is not a directory.'
   check_launcher
@@ -245,7 +242,6 @@ else
     { mounted=0; fail 'Could not mount the verified disk image; nothing was installed.'; }
   source_app="$mountpoint/Holuto Workshop.app"
   [[ -d $source_app && ! -L $source_app ]] || fail 'The disk image does not contain Holuto Workshop.app.'
-  require /usr/libexec/PlistBuddy
   bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$source_app/Contents/Info.plist")
   [[ $bundle_version == "$version" ]] || fail 'App version does not match the release.'
   [[ -x $source_app/Contents/MacOS/workshop ]] || fail 'The app executable is missing.'
@@ -261,9 +257,7 @@ else
   staging=$(mktemp -d "$HOME/Applications/.workshop-install.XXXXXXXX")
   ditto "$source_app" "$staging/Holuto Workshop.app"
   mkdir -p "$HOME/.local/bin"
-  check_launcher
   check_not_running
-  [[ ! -L $target ]] || fail 'The target became a symbolic link; refusing to replace it.'
   if [[ -e $target ]]; then
     backup="$staging/previous.app"
     mv -- "$target" "$backup"

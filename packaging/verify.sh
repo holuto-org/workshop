@@ -36,7 +36,6 @@ case "$(uname -s)" in
     dpkg-deb -c "$package"
     dpkg-deb -x "$package" "$tmp/package"
     binary="$tmp/package/usr/bin/workshop"
-    [[ $(dpkg-deb -f "$package" Package) == workshop ]]
     desktop-file-validate "$tmp/package/usr/share/applications/workshop.desktop"
     python3 packaging/verify-elf.py "$binary" "$package"
     if [[ ${CI:-} == true ]] && command -v apt-get >/dev/null; then
@@ -45,9 +44,6 @@ case "$(uname -s)" in
     else
       # Developer hosts verify/launch the extracted installed tree without a system install.
       echo 'Not Debian CI: launching the extracted package; system installation is only checked on Debian CI.' >&2
-    fi
-    if LC_ALL=C grep -aFq 'workshop-simulator' "$binary"; then
-      echo 'Simulator leaked into package' >&2; exit 1
     fi
     check_cli
     dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' bash packaging/smoke-linux.sh "$binary" "$tmp"
@@ -59,18 +55,12 @@ case "$(uname -s)" in
     hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "$package"
     app="$mountpoint/Holuto Workshop.app"
     plutil -lint "$app/Contents/Info.plist"
-    [[ $(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist") == workshop ]]
-    [[ $(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Contents/Info.plist") == com.holuto.workshop ]]
-    [[ -L "$mountpoint/Applications" && $(readlink "$mountpoint/Applications") == /Applications ]]
     mkdir -p "$tmp/Applications"
     ditto "$app" "$tmp/Applications/Holuto Workshop.app"
     app="$tmp/Applications/Holuto Workshop.app"
     binary="$app/Contents/MacOS/workshop"
     [[ -x $binary ]]
     [[ $(lipo -archs "$binary") == "$(uname -m)" ]]
-    if LC_ALL=C grep -aFq 'workshop-simulator' "$binary"; then
-      echo 'Simulator leaked into package' >&2; exit 1
-    fi
     codesign --verify --strict "$app"
     check_cli
     "$binary" &

@@ -37,7 +37,7 @@ fn realtime_status_bits_decode_paper_and_cover() {
     let dle = DleStatus::decode(0x77).unwrap();
     assert!(dle.online && dle.paper_or_battery && dle.mechanism_error);
     let enq = EnqStatus::decode(0x6F).unwrap();
-    assert!(enq.fiscal && enq.command_ok && enq.transaction && enq.finalized);
+    assert!(enq.fiscal && enq.transaction);
     assert!(DleStatus::decode(0x60).is_err());
     assert!(EnqStatus::decode(0x70).is_err());
 }
@@ -77,8 +77,6 @@ fn initializes_once_and_reads_queries_and_realtime() {
         session.extended_status().unwrap(),
         ExtendedStatus {
             last_error: 0,
-            last_print: 0,
-            last_receipt: 0,
             flags_wire: [0; 4]
         }
     );

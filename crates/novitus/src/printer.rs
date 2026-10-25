@@ -8,7 +8,7 @@ use std::{
 
 use fiscal::{
     decimal,
-    device::{Capabilities, Device, Problem, VatKind, VatRate, Vendor},
+    device::{Device, Problem, VatKind, VatRate, Vendor},
     driver::Driver,
     error::Error,
     journal::{Journal, Printed},
@@ -227,9 +227,8 @@ fn preflight_identity(
     let mut profile = profile::lookup(&model, &firmware);
     let capabilities = profile
         .as_ref()
-        .map_or_else(unqualified_capabilities, |profile| {
-            profile.capabilities.clone()
-        });
+        .map(|profile| profile.capabilities.clone())
+        .unwrap_or_default();
     let mut device = Device {
         vendor: Vendor::Novitus,
         model,
@@ -347,19 +346,6 @@ fn full_cp1250(body: &str) -> bool {
             .next()
             .and_then(|field| u32::from_str_radix(field, 16).ok())
             .is_some_and(|attr1| attr1 & 0x0200 != 0)
-}
-const fn unqualified_capabilities() -> Capabilities {
-    Capabilities {
-        max_item_name: 0,
-        max_lines: 0,
-        max_company_name: 0,
-        max_buyer_nip: 0,
-        max_quantity_decimals: 0,
-        allowed_characters: String::new(),
-        advance_deductions: false,
-        zero_total_receipts: false,
-        company_footer: false,
-    }
 }
 fn read_readiness(session: &mut Session, problems: &mut Vec<Problem>) -> Result<(), Error> {
     let mode = session.command("11$i", TIMEOUT)?;

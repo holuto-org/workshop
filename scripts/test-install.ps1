@@ -44,7 +44,6 @@ function Set-Content { throw 'Unexpected write during dry-run' }
 
 # A wrong branch here would download, write, or choose a different asset/tag.
 $userPathBefore = [Environment]::GetEnvironmentVariable('Path', 'User')
-$processPathBefore = [Environment]::GetEnvironmentVariable('Path', 'Process')
 $output = (Invoke-HolutoInstall -Release 'v1.2.3' -DryRun | Out-String)
 Assert-True ($output.Contains('https://github.com/holuto-org/workshop/releases/download/v1.2.3/workshop-win-x64.exe')) 'Dry-run did not pin the exact asset URL'
 Assert-True ($output.Contains('SHA256SUMS.txt')) 'Dry-run omitted checksum verification'
@@ -59,7 +58,6 @@ $output = (Invoke-HolutoInstall -DryRun | Out-String)
 Assert-True ($script:latestRequests -eq 1) 'Default release must resolve latest exactly once'
 Assert-True ($output.Contains('/download/v1.2.3/workshop-win-x64.exe')) 'Latest was not pinned'
 Assert-True ([Environment]::GetEnvironmentVariable('Path', 'User') -ceq $userPathBefore) 'Dry-run changed user PATH'
-Assert-True ([Environment]::GetEnvironmentVariable('Path', 'Process') -ceq $processPathBefore) 'Dry-run changed process PATH'
 
 # Not $release: dot-sourcing left the validated $Release parameter in this scope, and names ignore case.
 foreach ($candidate in @('', 'latest', '1.2.3', 'V1.2.3', 'v1.2', 'v01.2.3', 'v1.02.3', 'v1.2.03', 'v1.2.3/other', 'v1.2.3?x=1', 'v1.2.3-rc1', "v1.2.3`n")) {
@@ -261,9 +259,7 @@ try {
     $shortcutPath = Join-Path $script:platform.Programs 'Holuto Workshop.lnk'
     Assert-True ($script:shortcuts.Count -eq 1 -and $script:shortcuts[0] -ceq "$shortcutPath -> $installedExe") 'Start Menu shortcut does not target the installed executable'
     Assert-True ($script:userPath.Count -eq 1 -and $script:userPath[0] -ceq $installDir) 'User PATH was not given the install directory'
-    Assert-True (([Environment]::GetEnvironmentVariable('Path', 'Process') -split ';') -contains $installDir) 'Process PATH was not given the install directory'
 } finally {
-    [Environment]::SetEnvironmentVariable('Path', $processPathBefore, 'Process')
     $env:TMP = $savedTemp.TMP; $env:TEMP = $savedTemp.TEMP; $env:TMPDIR = $savedTemp.TMPDIR
     Remove-Item -LiteralPath $installRoot -Recurse -Force
 }

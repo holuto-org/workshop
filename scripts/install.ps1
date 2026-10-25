@@ -37,18 +37,15 @@ function Assert-HolutoPlatform {
         throw 'Only native Windows x64 is supported; ARM and x64 emulation on ARM are not supported.'
     }
     if ($Platform.IsAdministrator -and -not $DryRun) { throw 'Run this per-user installer from a non-elevated PowerShell, not as administrator.' }
-    if (-not $Platform.LocalAppData -or -not $Platform.Programs -or
-        -not [IO.Path]::IsPathRooted($Platform.LocalAppData) -or -not [IO.Path]::IsPathRooted($Platform.Programs)) {
-        throw 'Windows did not provide absolute per-user installation and Start Menu paths.'
+    if (-not $Platform.LocalAppData -or -not $Platform.Programs) {
+        throw 'Windows did not provide per-user installation and Start Menu paths.'
     }
 }
 
 function Get-HolutoReleaseFromRedirect {
     param([string]$Location)
     # Only the tag is used; downloads always go to the fixed repository URL.
-    $uri = New-Object Uri([Uri]'https://github.com', $Location)
-    if ($uri.Scheme -ne 'https' -or $uri.Host -cne 'github.com' -or
-        $uri.AbsolutePath -cnotmatch '\A/holuto-org/workshop/releases/tag/(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\z') {
+    if ($Location -cnotmatch '\A(?:https://github\.com)?/holuto-org/workshop/releases/tag/(v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\z') {
         throw 'Unexpected latest-release redirect; specify -Release vX.Y.Z explicitly.'
     }
     return $Matches[1]
@@ -176,7 +173,7 @@ function Invoke-HolutoInstall {
     $shortcutPath = Join-Path $platform.Programs 'Holuto Workshop.lnk'
     Write-Output "Install target: $target"
     Write-Output "Start Menu shortcut: $shortcutPath"
-    Write-Output "User PATH: add $directory if absent (also update this PowerShell process)."
+    Write-Output "User PATH: add $directory if absent."
     if ($platform.IsAdministrator) { Write-Output 'Dry-run only: actual installation requires a non-elevated PowerShell, not administrator.' }
     $previousProtocol = [Net.ServicePointManager]::SecurityProtocol
     $temporary = $null
@@ -195,7 +192,7 @@ function Invoke-HolutoInstall {
             Write-Output "DRY RUN: If gh exists: gh attestation verify <unique-temp>\$asset --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master (failure is fatal)."
             Write-Output 'DRY RUN: Only if gh is absent, warn and use weaker checksum-only integrity.'
             Write-Output "DRY RUN: Refuse a running app or a newer installed version; stage the verified EXE with an Internet Zone.Identifier and atomically replace $target; create shortcut with WScript.Shell."
-            Write-Output "DRY RUN: Append $directory to user PATH and process PATH only if absent, preserving existing entries."
+            Write-Output "DRY RUN: Append $directory to user PATH only if absent, preserving existing entries."
             Write-Output 'DRY RUN: No downloads or installation writes; the app will not be launched.'
             return
         }
@@ -234,12 +231,8 @@ function Invoke-HolutoInstall {
         $staged = $null
         New-HolutoShortcut -Path $shortcutPath -Target $target
         Update-HolutoUserPath -Directory $directory
-        $current = [Environment]::GetEnvironmentVariable('Path', 'Process')
-        $updated = Get-HolutoPathWithDirectory -Path $current -Directory $directory
-        if ($updated -cne $current) { [Environment]::SetEnvironmentVariable('Path', $updated, 'Process') }
-        Write-Output 'Installation complete. The app was not launched. Open Holuto Workshop from the Start Menu, or run workshop, when ready.'
+        Write-Output 'Installation complete. The app was not launched. Open Holuto Workshop from the Start Menu, or run workshop in a new terminal, when ready.'
         Write-Output 'Internet-zone protection is retained. If SmartScreen appears, review the publisher and approve manually only if you trust this release; do not disable protection.'
-        Write-Output 'If script signing policy prevents this installer, use the verified release EXE and create a per-user shortcut manually; do not bypass execution policy.'
     } finally {
         [Net.ServicePointManager]::SecurityProtocol = $previousProtocol
         if ($staged -and [IO.File]::Exists($staged)) { [IO.File]::Delete($staged) }

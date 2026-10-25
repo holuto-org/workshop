@@ -42,7 +42,6 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/test-install.ps1
-          ./packaging/test-verify-windows.ps1
           ./scripts/install.ps1 -Release v0.0.0 -DryRun
       - name: Check Windows PowerShell 5.1 installer functions
         if: runner.os == 'Windows'

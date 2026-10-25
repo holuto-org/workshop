@@ -10,7 +10,7 @@ use crate::{
 };
 use fiscal::{
     decimal,
-    device::{Capabilities, Device, Problem, VatKind, VatRate, Vendor},
+    device::{Device, Problem, VatKind, VatRate, Vendor},
     driver::Driver,
     error::Error,
     journal::{Journal, Printed},
@@ -166,7 +166,6 @@ impl Driver for Printer {
                 )
             },
         };
-        drop(frame::encode("999999999", body.as_bytes())?);
         dispatch(&mut session, &[Step::new(command, body)], journal)?;
         if command == "RRP" {
             // The protocol promises acceptance, not completion.
@@ -222,7 +221,8 @@ fn preflight_identity(
     let mut profile = profile::lookup(&model);
     let capabilities = profile
         .as_ref()
-        .map_or_else(empty_capabilities, |p| p.capabilities.clone());
+        .map(|p| p.capabilities.clone())
+        .unwrap_or_default();
     let mut device = Device {
         vendor: Vendor::Elzab,
         model,
@@ -315,19 +315,6 @@ fn preflight_identity(
         header,
         date,
     })
-}
-const fn empty_capabilities() -> Capabilities {
-    Capabilities {
-        max_item_name: 0,
-        max_lines: 0,
-        max_company_name: 0,
-        max_buyer_nip: 0,
-        max_quantity_decimals: 0,
-        allowed_characters: String::new(),
-        advance_deductions: false,
-        zero_total_receipts: false,
-        company_footer: false,
-    }
 }
 fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(), Error> {
     let mut packages = [None; 3];

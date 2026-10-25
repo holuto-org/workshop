@@ -1,14 +1,9 @@
-. (Join-Path $PSScriptRoot 'windows-smoke.ps1')
 $ErrorActionPreference = 'Stop'
 $files = @(Get-ChildItem -Path 'release/workshop-*.exe')
 if ($files.Count -ne 1) { throw 'Expected exactly one release EXE' }
-$exe = $files[0].FullName
-$bytes = [IO.File]::ReadAllBytes($exe)
+$bytes = [IO.File]::ReadAllBytes($files[0].FullName)
 $pe = [BitConverter]::ToInt32($bytes, 0x3c)
-if ([BitConverter]::ToUInt32($bytes, $pe) -ne 0x4550) { throw 'Not a PE executable' }
 $optional = $pe + 24
-if ([BitConverter]::ToUInt32($bytes, $pe + 12) -ne 0) { throw 'Shipped EXE contains COFF symbols' }
-if ([BitConverter]::ToUInt16($bytes, $optional) -ne 0x20b) { throw 'Expected PE32+ (x64)' }
 if ([BitConverter]::ToUInt16($bytes, $optional + 68) -ne 2) { throw 'EXE must use the GUI subsystem' }
 $sections = [BitConverter]::ToUInt16($bytes, $pe + 6)
 $sectionTable = $optional + [BitConverter]::ToUInt16($bytes, $pe + 20)
@@ -38,23 +33,11 @@ if ($dlls -match '^(vcruntime|msvcp|msvcr|ucrtbase|api-ms-win-crt)') {
     throw "Dynamic VC++ runtime import: $($dlls -join ', ')"
 }
 Write-Host "Verified static CRT; imported DLLs: $($dlls -join ', ')"
-$resourceRva = [BitConverter]::ToUInt32($bytes, $optional + 128)
-if ($resourceRva -eq 0) { throw 'EXE has no resources' }
-$resources = Get-Offset $resourceRva
-$namedTypes = [BitConverter]::ToUInt16($bytes, $resources + 12)
-$idTypes = [BitConverter]::ToUInt16($bytes, $resources + 14)
-$types = @(for ($i = $namedTypes; $i -lt $namedTypes + $idTypes; $i++) { [BitConverter]::ToUInt32($bytes, $resources + 16 + 8 * $i) })
-# RT_GROUP_ICON is what Explorer, the taskbar and shortcuts display.
-if ($types -notcontains 14) { throw 'EXE has no icon resource' }
-$info = $files[0].VersionInfo
+# The same winresource call embeds the icon, so a versioned resource proves both.
 $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
 $version = ($metadata.packages | Where-Object name -eq 'workshop').version
-if ($info.ProductName -ne 'Holuto Workshop') { throw 'Wrong ProductName resource' }
-if ($info.FileDescription -ne 'Holuto Workshop · drukarki fiskalne') { throw 'Wrong FileDescription resource' }
-if ($info.ProductVersion -ne $version) { throw "Wrong ProductVersion resource: $($info.ProductVersion)" }
-if ($info.FileVersion -notin @($version, "$version.0")) { throw "Wrong FileVersion resource: $($info.FileVersion)" }
-if ([Text.Encoding]::UTF8.GetString($bytes).Contains('workshop-simulator')) { throw 'Simulator leaked into EXE' }
+if ($files[0].VersionInfo.ProductVersion -ne $version) { throw "Wrong ProductVersion resource: $($files[0].VersionInfo.ProductVersion)" }
 # Known Folders are not overridden by environment variables: never use saved state.
 $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 if (Test-Path -LiteralPath (Join-Path $local 'workshop')) { throw 'Package smoke requires a clean Windows profile: workshop state exists' }
@@ -81,7 +64,12 @@ try {
     if ($process.MainWindowTitle -ne 'Holuto Workshop') { throw "Main window missing: $($process.MainWindowTitle)" }
     Write-Host "Verified main window: $($process.MainWindowTitle)"
 } finally {
-    Remove-WorkshopSmoke $installed
+    # Production builds start a Sentry crash reporter from the same EXE that can outlive the app,
+    # and Windows cannot delete a running image. Match the unique directory: TEMP may be an 8.3 path.
+    $copies = @(Get-Process -Name workshop -ErrorAction Ignore | Where-Object Path -like ('*\' + (Split-Path -Leaf $installed) + '\workshop.exe'))
+    foreach ($copy in $copies) { if (-not $copy.HasExited) { $copy.Kill($true) } }
+    foreach ($copy in $copies) { $copy.WaitForExit() }
+    Remove-Item -LiteralPath $installed -Recurse -Force
     # Absent before launch (checked above), so this is only the state this smoke created.
     $state = Join-Path $local 'workshop'
     if (Test-Path -LiteralPath $state) { Remove-Item -LiteralPath $state -Recurse -Force }

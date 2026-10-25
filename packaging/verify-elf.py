@@ -20,9 +20,6 @@ owners = {
     "ld-linux-aarch64.so.1": "libc6",
     "libgcc_s.so.1": "libgcc-s1",
     "libfontconfig.so.1": "libfontconfig1",
-    "libfreetype.so.6": "libfreetype6",
-    "libudev.so.1": "libudev1",
-    "libstdc++.so.6": "libstdc++6",
 }
 needed = re.findall(r"\(NEEDED\).*\[(.*?)\]", dynamic)
 assert needed, "ELF dependency inspection found no NEEDED entries"

@@ -12,7 +12,7 @@ const END_TIMEOUT: Duration = Duration::from_secs(30);
 const ADVANCE_NAME: &str = "Zaliczka";
 const MOBILE_NAME: &str = "Płatność mobilna";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Step {
     pub command: &'static str,
     pub params: Vec<(&'static str, String)>,

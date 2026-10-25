@@ -67,7 +67,8 @@ impl VatRate {
 }
 
 /// What a device accepts. Limits are counts of characters (Unicode scalar values).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The default accepts nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
     pub max_item_name: usize,
     pub max_lines: usize,

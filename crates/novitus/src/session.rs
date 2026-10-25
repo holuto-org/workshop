@@ -48,15 +48,9 @@ impl DleStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent protocol status bits"
-)]
 pub struct EnqStatus {
     pub fiscal: bool,
-    pub command_ok: bool,
     pub transaction: bool,
-    pub finalized: bool,
 }
 impl EnqStatus {
     pub fn decode(byte: u8) -> Result<Self, Error> {
@@ -65,9 +59,7 @@ impl EnqStatus {
         }
         Ok(Self {
             fiscal: byte & 8 != 0,
-            command_ok: byte & 4 != 0,
             transaction: byte & 2 != 0,
-            finalized: byte & 1 != 0,
         })
     }
 }
@@ -75,8 +67,6 @@ impl EnqStatus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExtendedStatus {
     pub last_error: u32,
-    pub last_print: u32,
-    pub last_receipt: u32,
     /// DLE2 bytes in arrival order; mapping to the manual's byte labels is unverified.
     pub flags_wire: [u8; 4],
 }
@@ -87,8 +77,9 @@ impl ExtendedStatus {
             .ok_or_else(frame::corrupt)?
             .split(';');
         let last_error = decimal(fields.next())?;
-        let last_print = decimal(fields.next())?;
-        let last_receipt = decimal(fields.next())?;
+        // Last printout and receipt numbers: validated, unused.
+        let _last_print = decimal(fields.next())?;
+        let _last_receipt = decimal(fields.next())?;
         let flags = fields
             .next()
             .filter(|flags| flags.len() == 8 && flags.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -101,8 +92,6 @@ impl ExtendedStatus {
         }
         Ok(Self {
             last_error,
-            last_print,
-            last_receipt,
             flags_wire,
         })
     }
