@@ -257,7 +257,7 @@ impl<'dir> Agent<'dir> {
         }
         let remote = self.api.job(operation.job_id)?;
         remote
-            .check(self.api.printer_id())
+            .check(self.api.printer_id(), None)
             .map_err(|problem| reconcile_error(&problem))?;
         if remote.attempt != Some(operation.attempt) {
             return Err(reconcile_error(
@@ -348,7 +348,11 @@ impl<'dir> Agent<'dir> {
         );
         let _entered = span.enter();
         tracing::info!(job_id = %job.id, "Job claimed");
-        job.check(self.api.printer_id())
+        let max_lines = self
+            .status
+            .as_ref()
+            .map(|device| device.capabilities.max_lines);
+        job.check(self.api.printer_id(), max_lines)
             .map_err(|problem| invalid_job(job.id, &problem))?;
         let (JobState::Taken, Some(attempt)) = (job.state, job.attempt) else {
             return Err(invalid_job(
@@ -599,7 +603,7 @@ impl<'dir> Agent<'dir> {
         let _status = self.printer.verify(&operation.device_serial)?;
         let remote = self.api.job(operation.job_id)?;
         remote
-            .check(self.api.printer_id())
+            .check(self.api.printer_id(), None)
             .map_err(|problem| reconcile_error(&problem))?;
         if remote.attempt != Some(operation.attempt)
             || !matches!(remote.state, JobState::Failed | JobState::Expired)

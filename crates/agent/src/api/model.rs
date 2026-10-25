@@ -153,7 +153,13 @@ impl JobState {
 }
 
 impl Job {
-    pub(crate) fn check(&self, printer_id: Option<Uuid>) -> Result<(), String> {
+    /// `max_lines` is the connected device's limit; paths without a device (recovery) pass
+    /// `None` and only require a nonempty job.
+    pub(crate) fn check(
+        &self,
+        printer_id: Option<Uuid>,
+        max_lines: Option<usize>,
+    ) -> Result<(), String> {
         if printer_id != Some(self.printer_id) {
             return Err("zadanie innej drukarki".to_owned());
         }
@@ -163,6 +169,11 @@ impl Job {
         }
         if self.lines.is_empty() {
             return Err("zadanie musi mieć co najmniej jedną pozycję".to_owned());
+        }
+        if let Some(max) = max_lines
+            && self.lines.len() > max
+        {
+            return Err(format!("zadanie musi mieć od 1 do {max} pozycji"));
         }
         if self.kind == ReceiptKind::Advance && !self.advances.is_empty() {
             return Err("zaliczka nie może odliczać zaliczek".to_owned());

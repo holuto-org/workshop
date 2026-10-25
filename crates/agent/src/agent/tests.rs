@@ -410,6 +410,45 @@ fn different_attempt_cannot_settle_or_reprint_a_journal() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
+fn oversized_job_is_rejected_as_invalid_without_journal_or_result() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let line = json!({
+        "name": "Pozycja", "quantity": "1", "unitPrice": "0.01",
+        "total": "0.01", "vatRate": "23", "vatSlot": 0
+    });
+    let changes = json!({"lines": vec![line; 501], "total": "5.01"});
+    let _id = server.enqueue(with(job_json(), &changes));
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, &server)?;
+    let outcome = agent.step();
+    assert!(
+        matches!(&outcome, Err(Error::Blocked(message)) if *message == format!(
+            "Nieprawidłowe zadanie {JOB_ID} z Holuto: zadanie musi mieć od 1 do 500 pozycji. \
+             Nie drukuję go."
+        )),
+        "{outcome:?}"
+    );
+    assert!(
+        !dir.file("operation.json").exists(),
+        "an invalid job is never journaled"
+    );
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|request| !request.path.ends_with("/result")),
+        "no terminal result is sent for an invalid job"
+    );
+    assert!(sim.receipts().is_empty(), "invalid job never prints");
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
 fn invalid_money_vat_or_text_fails_before_fiscal_commands() -> TestResult {
     for changes in [
         json!({"total":"249.99"}),
