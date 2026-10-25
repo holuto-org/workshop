@@ -122,3 +122,25 @@ fn refreshing_a_page_keeps_the_selected_sort_direction() {
         "new data must not reset the operator's sort"
     );
 }
+
+#[test]
+fn document_deadlines_sort_independently_and_overdue_is_explicit() {
+    let mut document = Document {
+        kind: agent::documents::ReceiptKind::Sale,
+        order_id: uuid::Uuid::nil(),
+        order_number: 1,
+        allocation_id: None,
+        amount: 100,
+        customer_name: None,
+        occurred_at: Timestamp::UNIX_EPOCH,
+        due_at: Timestamp::UNIX_EPOCH,
+        is_overdue: false,
+    };
+    let earlier = document.clone();
+    document.due_at = "2026-10-24T10:00:00Z".parse().unwrap();
+    assert_eq!(document.compare(&earlier, 4), Ordering::Greater);
+    assert!(!document.cells()[4].contains("PO TERMINIE"));
+    document.is_overdue = true;
+    assert!(document.cells()[4].starts_with("PO TERMINIE · "));
+    assert!(document.cells()[4].contains("24.10.2026"));
+}

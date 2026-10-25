@@ -1033,7 +1033,8 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
     };
     let document: Document = serde_json::from_value(json!({
         "kind": "sale", "orderId": JOB_ID, "orderNumber": 10, "allocationId": null,
-        "amount": "9876.54", "customerName": "PrivateCustomer", "occurredAt": "2025-01-02T12:00:00Z",
+        "amount": "9876.54", "customerName": "PrivateCustomer",
+        "occurredAt": "2025-01-02T12:00:00Z",
         "dueAt": "2025-01-02T12:00:00Z",
         "isOverdue": false
     }))?;
@@ -1172,5 +1173,37 @@ fn orphan_acknowledgement_requires_the_same_vendor_and_serial() -> TestResult {
         assert_eq!(server.requests().len(), requests);
         assert_eq!(sim.receipts(), []);
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove terminal recovery never reprints."
+)]
+fn voided_completed_receipt_settles_without_orphan_acknowledgement() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    server.insert(with(job_json(), &json!({"state":"voided"})));
+    let (_temporary, dir) = state_dir();
+    Journal::new(&dir).save(&Operation::Receipt(claimed(
+        Device::Completed {
+            receipt_number: Some("41".to_owned()),
+        },
+        None,
+    )?))?;
+    let mut agent = agent(&sim, &dir, &server)?;
+    assert_eq!(agent.settle()?, None);
+    assert_eq!(
+        stored(&dir)?.settled.as_ref().map(|value| value.state),
+        Some(JobState::Voided)
+    );
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|request| !request.path.ends_with("/result"))
+    );
+    assert!(sim.receipts().is_empty());
     Ok(())
 }

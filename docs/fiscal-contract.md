@@ -51,8 +51,11 @@ Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
 ```
 
 `vendor` is `"posnet"`, `"novitus"` or `"elzab"` and binds alongside the physical
-unique number. `vatRates` is the actual device table, with letters A–G and rates `"23"`, `"8"`, `"5"`, `"0"` or `"zw"`. Each
-session replaces the backend mapping. A–E mean 23%, 8%, 5%, 0% and exempt respectively; F/G retain other programmed rates. Illegal A–E assignments remain visible locally as not ready and are not uploaded. `maxItemNameLength`,
+unique number. `vatRates` is the actual device table, with letters A–G and rates `"23"`,
+`"8"`, `"5"`, `"0"` or `"zw"`. Each
+session replaces the backend mapping. A–E mean 23%, 8%, 5%, 0% and exempt respectively;
+F/G retain other programmed rates. Illegal A–E assignments remain visible locally as not
+ready and are not uploaded. `maxItemNameLength`,
 `maxLinesPerReceipt`, `maxCompanyNameLength`, `allowedCharacters` (all printable
 characters, NFC), `maxQuantityDecimals` (0–8) and `capabilities` are required
 before queueing. The backend rejects names outside the limits, excessive
@@ -65,7 +68,8 @@ failed.
 
 Sessions bind the fiscal memory unique number (`^[A-Z]{3}[0-9]{10}$`) and vendor; a mismatch
 fails with 403 `fiscal_unique_number_mismatch` or `fiscal_vendor_mismatch`.
-Bodyless `POST /agent/heartbeat` returns 204; it and other authenticated requests carry the same `X-Device-Unique-Number` header; device swaps are rejected
+Bodyless `POST /agent/heartbeat` returns 204; it and other authenticated requests carry
+the same `X-Device-Unique-Number` header; device swaps are rejected
 before taking or printing jobs.
 
 - **`GET /agent/documents?limit=100[&cursor=…]`**:
@@ -152,7 +156,8 @@ exactly cover fiscal value. Amounts must be nonnegative whole grosze within the
 printer's range.
 
 Buyer NIP and payment forms follow
-[Posnet POT-I-DEV-37 v5978, pp. 295, 297 and 314](<https://raw.githubusercontent.com/kashiash/PosnetLibrary/master/DOCS/pot-i-dev-37-5978-specyfikacja-protokolu-posnet-online-mr2021-2%20(1).pdf>)
+[Posnet POT-I-DEV-37 v5978, pp. 295, 297 and
+314](<https://raw.githubusercontent.com/kashiash/PosnetLibrary/master/DOCS/pot-i-dev-37-5978-specyfikacja-protokolu-posnet-online-mr2021-2%20(1).pdf>)
 (Online MR2021; Temo Online), the output oracle for Posnet tests. No vendor SDK
 or specification is redistributed.
 
@@ -185,4 +190,7 @@ failure, and every accepted daily `RRP`, is unknown until a person resolves it.
 
 ## Advisory deadlines and voided receipts
 
-The documents table displays `dueAt` and marks `isOverdue` explicitly. Deadlines never queue or print anything; staff still choose every document. A `voided` job is a terminal, already-printed receipt cancelled in the obvious-mistake register. Recovery acknowledges its local journal without printing or reporting a replacement.
+The documents table displays `dueAt` and marks `isOverdue` explicitly. Deadlines never
+queue or print anything; staff still choose every document. A `voided` job is a terminal,
+already-printed receipt cancelled in the obvious-mistake register. Recovery acknowledges
+its local journal without printing or reporting a replacement.

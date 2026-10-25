@@ -310,3 +310,42 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove durable one-time identity migration."
+)]
+fn legacy_identity_keys_migrate_without_losing_journal_evidence() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    for original in [
+        include_str!("fixtures/receipt-dispatching.json"),
+        include_str!("fixtures/report-dispatching.json"),
+    ] {
+        let legacy = original.replace("device_unique_number", "device_serial");
+        fs::write(dir.file("operation.json"), &legacy)?;
+        let mut journal = Journal::new(&dir);
+        let operation = journal
+            .load()?
+            .expect("A valid legacy record must remain recoverable");
+        let saved = fs::read_to_string(dir.file("operation.json"))?;
+        assert!(!saved.contains("\"device_serial\""));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&saved)?,
+            serde_json::to_value(operation)?
+        );
+        for corrupt in [
+            legacy.replace("POS0000123456", "OLD"),
+            legacy.replace(
+                "\"device_serial\":",
+                "\"device_unique_number\":\"POS0000123456\",\"device_serial\":",
+            ),
+        ] {
+            fs::write(dir.file("operation.json"), &corrupt)?;
+            assert!(matches!(journal.load(), Err(crate::Error::Blocked(_))));
+            assert_eq!(fs::read_to_string(dir.file("operation.json"))?, corrupt);
+        }
+    }
+    Ok(())
+}

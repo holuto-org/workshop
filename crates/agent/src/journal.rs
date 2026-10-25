@@ -231,18 +231,23 @@ impl<'dir> Journal<'dir> {
         };
         let invalid = || {
             Error::Blocked(
-            "Uszkodzony rejestr operacji lub nieobsługiwany format. \
-             Drukowanie zablokowane; nie usuwaj pliku.".to_owned(),
-        )
+                "Uszkodzony rejestr operacji lub nieobsługiwany format. \
+             Drukowanie zablokowane; nie usuwaj pliku."
+                    .to_owned(),
+            )
         };
-        let operation: Operation=serde_json::from_slice(&bytes).map_err(|_|invalid())?;
-        let migrated=bytes.windows(b"\"device_serial\"".len()).any(|key|key==b"\"device_serial\"");
+        let operation: Operation = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        let migrated = bytes
+            .windows(b"\"device_serial\"".len())
+            .any(|key| key == b"\"device_serial\"");
         if migrated {
-            let identity=match &operation {
-                Operation::Receipt(receipt)=>&receipt.device_unique_number,
-                Operation::Report(report)=>&report.device_unique_number,
+            let identity = match &operation {
+                Operation::Receipt(receipt) => &receipt.device_unique_number,
+                Operation::Report(report) => &report.device_unique_number,
             };
-            if !fiscal::device::valid_unique_number(identity) {return Err(invalid());}
+            if !fiscal::device::valid_unique_number(identity) {
+                return Err(invalid());
+            }
             self.save(&operation)?;
         }
         Ok(Some(operation))

@@ -70,7 +70,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("PrinterLimit", "u32"), // Keep nullable limits' existing zero/domain checks.
         ("QuantityDecimals", "u8"), // Keep the driver's native precision.
         ("FiscalVendor", "fiscal::device::Vendor"), // Shared driver identity.
-        ("VatSlotNumber", "u8"), // Backend slots are checked before reaching the printer.
         ("FiscalReceiptKind", "crate::documents::ReceiptKind"), // Shared document/journal identity.
         ("FiscalPaymentForm", "fiscal::receipt::PaymentForm"), // Shared payment identity.
         ("AgentDocument", "crate::documents::Document"), // Keep integer-grosze domain conversion.

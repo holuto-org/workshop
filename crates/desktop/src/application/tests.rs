@@ -98,7 +98,7 @@ fn ready(app: &Rc<RefCell<Application>>) {
     let mut app = app.borrow_mut();
     app.event(Event::Connected {
         printer_id: "printer-42".into(),
-        unique_number: "SERIAL42".into(),
+        unique_number: "TST0000000042".into(),
         port: "test".into(),
     });
     app.event(Event::Device {
@@ -106,7 +106,7 @@ fn ready(app: &Rc<RefCell<Application>>) {
             vendor: Vendor::Posnet,
             model: "TEMO".into(),
             firmware: "32.01".into(),
-            unique_number: "SERIAL42".into(),
+            unique_number: "TST0000000042".into(),
             problems: Vec::new(),
             vat: Vec::new(),
             capabilities: capabilities(),
