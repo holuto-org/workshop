@@ -1,5 +1,6 @@
 use std::{collections::BTreeSet, fmt::Debug};
 
+use fiscal::device::Vendor;
 use serde_json::{Value, json};
 
 use super::{validate_request, validate_response};
@@ -194,7 +195,7 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
     let mut value = status_json();
     value["printer"]["name"] = json!("PRIVATE-PRINTER-NAME");
     let status: PrinterStatus = serde_json::from_value(value).unwrap();
-    let mut telemetry = Telemetry::new("PRIVATE-DEVICE-SERIAL");
+    let mut telemetry = Telemetry::new("PRIVATE-DEVICE-SERIAL", Vendor::Posnet);
     telemetry.model = "PRIVATE-MODEL".into();
     let slot: VatSlotRate = serde_json::from_value(json!({"slot":0,"vatRate":"23"})).unwrap();
     let queue: QueueForm = serde_json::from_value(json!({

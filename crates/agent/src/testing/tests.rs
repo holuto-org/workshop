@@ -42,6 +42,101 @@ fn document(order: Uuid, allocation: Option<Uuid>, occurred_at: &str) -> Value {
     clippy::panic_in_result_fn,
     reason = "boundary assertions panic while setup and HTTP failures use Result"
 )]
+fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creating_work()
+-> TestResult {
+    for (advances, zero, precision, changes, code) in [
+        (
+            false,
+            true,
+            8,
+            json!({
+                "advances": [{"vatSlot": 0, "vatRate": "23", "amount": "100.00"}],
+                "payments": [{"form": "card", "amount": "150.00"}]
+            }),
+            "fiscal_printer_advances_unsupported",
+        ),
+        (
+            true,
+            false,
+            8,
+            json!({
+                "advances": [
+                    {"vatSlot": 0, "vatRate": "23", "amount": "200.00"},
+                    {"vatSlot": 1, "vatRate": "8", "amount": "50.00"}
+                ], "payments": []
+            }),
+            "fiscal_printer_zero_total_unsupported",
+        ),
+        (
+            true,
+            true,
+            3,
+            json!({
+                "lines": [{"name": "Usługa", "quantity": "1.0001", "unitPrice": "250.00",
+                    "total": "250.03", "vatRate": "23", "vatSlot": 0}],
+                "total": "250.03", "payments": [{"form": "card", "amount": "250.03"}]
+            }),
+            "fiscal_printer_quantity_precision",
+        ),
+    ] {
+        let server = Holuto::new();
+        server.queue_job(with(job_json(), &changes));
+        let mut telemetry = telemetry();
+        telemetry.capabilities.advance_deductions = advances;
+        telemetry.capabilities.zero_total_receipts = zero;
+        telemetry.max_quantity_decimals = precision;
+        let mut api = Api::new(server.url(), server.token(), "DEMO0000001")?;
+        api.session(&telemetry)?;
+        let document: Document =
+            serde_json::from_value(document(ORDER_ID, None, "2026-10-16T10:00:00Z"))?;
+        let result = api.queue(&queue_form(&document, None)?);
+        assert!(
+            matches!(&result,
+                Err(ApiError::Status { status: 409, detail: Some(detail) }) if detail == code),
+            "{result:?}"
+        );
+        assert!(matches!(api.job(Uuid::from_u128(100)),
+                Err(ApiError::Status { status: 404, detail: Some(detail) })
+                    if detail == "fiscal_not_found"));
+        assert!(api.take()?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "boundary assertions panic while setup and HTTP failures use Result"
+)]
+fn queue_precision_ignores_trailing_zeros_and_accepts_the_device_boundary() -> TestResult {
+    for quantity in ["1.123000", "1.123"] {
+        let server = Holuto::new();
+        server.queue_job(with(
+            job_json(),
+            &json!({
+                "lines": [{"name": "Usługa", "quantity": quantity, "unitPrice": "100.00",
+                    "total": "112.30", "vatRate": "23", "vatSlot": 0}],
+                "total": "112.30", "payments": [{"form": "card", "amount": "112.30"}]
+            }),
+        ));
+        let mut telemetry = telemetry();
+        telemetry.max_quantity_decimals = 3;
+        let mut api = Api::new(server.url(), server.token(), "DEMO0000001")?;
+        api.session(&telemetry)?;
+        let document: Document =
+            serde_json::from_value(document(ORDER_ID, None, "2026-10-16T10:00:00Z"))?;
+        api.queue(&queue_form(&document, None)?)?;
+        let job = api.take()?.ok_or("missing queued job")?;
+        assert_eq!(job.lines.first().ok_or("missing line")?.quantity, quantity);
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "boundary assertions panic while setup and HTTP failures use Result"
+)]
 #[expect(
     clippy::too_many_lines,
     reason = "literal backend conflict matrix and refused-write evidence stay visible together"

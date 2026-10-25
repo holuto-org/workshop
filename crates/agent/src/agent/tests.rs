@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, error::Error as StdError, fs, io::ErrorKind};
 
-use fiscal::{error::Error as PrinterError, link::Connection, money::Grosze, report::Report};
+use fiscal::{error::Error as PrinterError, money::Grosze, report::Report};
 use posnet::{
-    printer::Printer,
+    capabilities::capabilities,
     simulator::{Fault as DeviceFault, SERIAL, Simulator},
 };
 use serde_json::json;
@@ -10,7 +10,7 @@ use serde_json::json;
 use super::{Agent, Blocked};
 use crate::{
     Error,
-    api::{Api, ApiError},
+    api::{Api, ApiError, model::JobState},
     documents::{BuyerNip, Document},
     history::{self, HistoryEntry},
     journal::{Device, JobResult, Journal, Operation, ReceiptOperation, ReportOperation, Summary},
@@ -22,14 +22,7 @@ type TestResult = Result<(), Box<dyn StdError>>;
 fn waiting(_message: Option<&str>) {}
 fn agent<'a>(sim: &Simulator, dir: &'a StateDir, server: &Holuto) -> Result<Agent<'a>, Error> {
     let api = Api::new(server.url(), server.token(), SERIAL)?;
-    let printer = Printer::new(
-        sim.link(),
-        Connection {
-            port: sim.address().to_owned(),
-            baud_rate: 9600,
-        },
-    );
-    let mut agent = Agent::new(Box::new(printer), api, dir, &waiting);
+    let mut agent = Agent::new(sim.driver(), api, dir, &waiting);
     let status = agent.printer.probe()?;
     let _notices = agent.describe(status)?;
     agent.session()?;
@@ -402,6 +395,116 @@ fn different_attempt_cannot_settle_or_reprint_a_journal() -> TestResult {
     );
     assert_eq!(stored(&dir)?, operation);
     assert!(sim.receipts().is_empty(), "attempt mismatch never prints");
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn telemetry_reports_device_vendor_capabilities_and_precision() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, &server)?;
+    let _delay = agent.step()?;
+    for request in server
+        .requests()
+        .iter()
+        .filter(|request| matches!(request.path.as_str(), "/agent/session" | "/agent/heartbeat"))
+    {
+        assert_eq!(request.body["vendor"], "posnet");
+        assert_eq!(request.body["maxQuantityDecimals"], 8);
+        assert_eq!(
+            request.body["capabilities"],
+            json!({"advanceDeductions": true, "zeroTotalReceipts": true})
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn claimed_job_needing_unqualified_capability_fails_without_fiscal_commands() -> TestResult {
+    for (advances, zero, precision, changes, reason) in [
+        (
+            false,
+            true,
+            8,
+            json!({
+                "advances": [{"vatSlot": 0, "vatRate": "23", "amount": "100.00"}],
+                "payments": [{"form": "card", "amount": "150.00"}]
+            }),
+            "Drukarka nie obsługuje rozliczenia zaliczek.",
+        ),
+        (
+            true,
+            false,
+            8,
+            json!({
+                "advances": [
+                    {"vatSlot": 0, "vatRate": "23", "amount": "200.00"},
+                    {"vatSlot": 1, "vatRate": "8", "amount": "50.00"}
+                ], "payments": []
+            }),
+            "Drukarka nie obsługuje paragonu opłaconego w całości zaliczkami.",
+        ),
+        (
+            true,
+            true,
+            3,
+            json!({
+                "lines": [{"name": "Usługa", "quantity": "1.0001", "unitPrice": "250.00",
+                    "total": "250.03", "vatRate": "23", "vatSlot": 0}],
+                "total": "250.03", "payments": [{"form": "card", "amount": "250.03"}]
+            }),
+            "Ilość może mieć najwyżej 3 miejsc po przecinku.",
+        ),
+    ] {
+        let sim = Simulator::start();
+        let mut capabilities = capabilities();
+        capabilities.advance_deductions = advances;
+        capabilities.zero_total_receipts = zero;
+        capabilities.max_quantity_decimals = precision;
+        sim.set_capabilities(capabilities);
+        let server = Holuto::new();
+        let _id = server.enqueue(with(job_json(), &changes));
+        let (_temporary, dir) = state_dir();
+        let mut agent = agent(&sim, &dir, &server)?;
+        let _delay = agent.step()?;
+        assert_eq!(server.job(JOB_ID)["state"], "failed");
+        assert_eq!(server.job(JOB_ID)["result"], reason);
+        let operation = stored(&dir)?;
+        assert_eq!(operation.device, Device::NotStarted);
+        assert_eq!(operation.result, Some(JobResult::failed(reason)));
+        assert_eq!(
+            operation.settled.as_ref().map(|value| value.state),
+            Some(JobState::Failed)
+        );
+        assert_eq!(sim.receipts(), []);
+        assert!(sim.frames().iter().all(|frame| {
+            [
+                "trinit",
+                "trnipset",
+                "trline",
+                "tradvance",
+                "trpayment",
+                "trend",
+                "trftrln",
+                "trftrend",
+            ]
+            .iter()
+            .all(|command| {
+                !frame
+                    .windows(command.len())
+                    .any(|part| part == command.as_bytes())
+            })
+        }));
+    }
     Ok(())
 }
 

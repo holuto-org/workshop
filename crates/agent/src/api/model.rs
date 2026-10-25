@@ -4,7 +4,7 @@
 //! `Option::deserialize` requires nullable fields to be present; plain `Option` does not.
 
 use fiscal::{
-    device::{Device, VatKind, VatRate},
+    device::{Device, VatKind, VatRate, Vendor},
     receipt::VAT_SLOTS,
 };
 use uuid::Uuid;
@@ -30,6 +30,7 @@ mod wire {
 pub type VatCode = wire::VatCode;
 pub type VatSlotRate = wire::VatSlotRate;
 pub type Telemetry = wire::Telemetry;
+pub type PrinterCapabilities = wire::PrinterCapabilities;
 pub type PrinterStatus = wire::PrinterStatus;
 pub type PrinterInfo = wire::PrinterInfo;
 pub type JobState = wire::JobState;
@@ -76,17 +77,23 @@ impl VatCode {
 
 impl Telemetry {
     /// Device identity and limits stay empty until [`Self::describe`] reads them.
-    pub fn new(serial: &str) -> Self {
+    pub fn new(serial: &str, vendor: Vendor) -> Self {
         Self {
             allowed_characters: String::new(),
             app_version: APP_VERSION,
+            capabilities: PrinterCapabilities {
+                advance_deductions: false,
+                zero_total_receipts: false,
+            },
             firmware: String::new(),
             max_company_name_length: 0,
             max_item_name_length: 0,
             max_lines_per_receipt: 0,
+            max_quantity_decimals: 0,
             model: String::new(),
             serial: serial.to_owned(),
             vat_slots: Vec::new(),
+            vendor,
         }
     }
 
@@ -94,9 +101,15 @@ impl Telemetry {
     /// active rates Holuto does not support.
     pub(crate) fn describe(&mut self, device: &Device) -> Vec<String> {
         let (slots, skipped) = printer_slots(&device.vat);
+        self.vendor = device.vendor;
         device.model.clone_into(&mut self.model);
         device.firmware.clone_into(&mut self.firmware);
         let capabilities = &device.capabilities;
+        self.max_quantity_decimals = capabilities.max_quantity_decimals;
+        self.capabilities = PrinterCapabilities {
+            advance_deductions: capabilities.advance_deductions,
+            zero_total_receipts: capabilities.zero_total_receipts,
+        };
         self.max_item_name_length = capabilities.max_item_name;
         self.max_lines_per_receipt = capabilities.max_lines;
         self.max_company_name_length = capabilities.max_company_name;
@@ -116,6 +129,12 @@ impl PrinterInfo {
             .is_some_and(|paired| paired != serial)
         {
             return Err("sparowano z inną drukarką".to_owned());
+        }
+        if self
+            .max_quantity_decimals
+            .is_some_and(|decimals| decimals > 8)
+        {
+            return Err("nieprawidłowa precyzja ilości drukarki".to_owned());
         }
         if [
             self.max_item_name_length,

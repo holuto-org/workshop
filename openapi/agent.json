@@ -1075,6 +1075,14 @@
           "sale"
         ]
       },
+      "FiscalVendor": {
+        "type": "string",
+        "enum": [
+          "posnet",
+          "novitus",
+          "elzab"
+        ]
+      },
       "Health": {
         "type": "object",
         "required": [
@@ -1352,6 +1360,9 @@
       "Printer": {
         "type": "object",
         "required": [
+          "vendor",
+          "maxQuantityDecimals",
+          "capabilities",
           "maxItemNameLength",
           "maxCompanyNameLength",
           "maxLinesPerReceipt",
@@ -1388,6 +1399,16 @@
           },
           "branchId": {
             "$ref": "#/components/schemas/BranchId"
+          },
+          "capabilities": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrinterCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "deviceSerial": {
             "oneOf": [
@@ -1442,6 +1463,16 @@
               }
             ]
           },
+          "maxQuantityDecimals": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuantityDecimals"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "model": {
             "oneOf": [
               {
@@ -1460,6 +1491,32 @@
             "items": {
               "$ref": "#/components/schemas/VatSlot"
             }
+          },
+          "vendor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FiscalVendor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrinterCapabilities": {
+        "type": "object",
+        "required": [
+          "advanceDeductions",
+          "zeroTotalReceipts"
+        ],
+        "properties": {
+          "advanceDeductions": {
+            "type": "boolean"
+          },
+          "zeroTotalReceipts": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -1536,6 +1593,14 @@
           }
         },
         "additionalProperties": false
+      },
+      "QuantityDecimals": {
+        "type": "integer",
+        "examples": [
+          3
+        ],
+        "maximum": 8,
+        "minimum": 0
       },
       "ReceiptLine": {
         "type": "object",
@@ -1638,6 +1703,9 @@
       "Telemetry": {
         "type": "object",
         "required": [
+          "vendor",
+          "maxQuantityDecimals",
+          "capabilities",
           "maxItemNameLength",
           "maxCompanyNameLength",
           "maxLinesPerReceipt",
@@ -1655,6 +1723,9 @@
           "appVersion": {
             "$ref": "#/components/schemas/Code"
           },
+          "capabilities": {
+            "$ref": "#/components/schemas/PrinterCapabilities"
+          },
           "firmware": {
             "$ref": "#/components/schemas/Code"
           },
@@ -1667,6 +1738,9 @@
           "maxLinesPerReceipt": {
             "$ref": "#/components/schemas/PrinterLimit"
           },
+          "maxQuantityDecimals": {
+            "$ref": "#/components/schemas/QuantityDecimals"
+          },
           "model": {
             "$ref": "#/components/schemas/Code"
           },
@@ -1678,6 +1752,9 @@
             "items": {
               "$ref": "#/components/schemas/VatSlot"
             }
+          },
+          "vendor": {
+            "$ref": "#/components/schemas/FiscalVendor"
           }
         },
         "additionalProperties": false

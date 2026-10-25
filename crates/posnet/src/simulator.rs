@@ -20,15 +20,19 @@ use jiff::{Timestamp, tz::TimeZone};
 
 use fiscal::{
     decimal,
+    device::{Capabilities, Device, Vendor},
+    driver::Driver,
     error::Error,
-    link::{Link, Port},
-    receipt::Quantity,
+    journal::{Journal, Printed},
+    link::{Connection, Link, Port},
+    receipt::{Quantity, Receipt},
+    report::Report,
 };
 
 use crate::{
     capabilities::MAX_BUYER_NIP,
     frame::{self, ETX, MAX_FRAME, Reply},
-    printer::PRINTER_ZONE,
+    printer::{PRINTER_ZONE, Printer},
     text,
 };
 
@@ -101,6 +105,7 @@ impl Default for Clock {
 #[derive(Debug, Default)]
 struct State {
     header: String,
+    capabilities: Option<Capabilities>,
     vat: [String; 7],
     clock: Clock,
     timestamp: Option<Timestamp>,
@@ -185,6 +190,25 @@ impl Simulator {
 
     pub fn address(&self) -> &str {
         &self.address
+    }
+
+    /// Real Posnet driver against this peer, with an optional test-only qualification profile.
+    pub fn driver(&self) -> Box<dyn Driver> {
+        Box::new(SimDriver {
+            printer: Printer::new(
+                self.link(),
+                Connection {
+                    port: self.address.clone(),
+                    baud_rate: 9600,
+                },
+            ),
+            state: Arc::clone(&self.state),
+        })
+    }
+
+    /// Overrides the advertised profile without changing production driver qualification.
+    pub fn set_capabilities(&self, capabilities: Capabilities) {
+        self.state().capabilities = Some(capabilities);
     }
 
     pub fn link(&self) -> Arc<dyn Link> {
@@ -286,6 +310,59 @@ impl Simulator {
 
     fn state(&self) -> MutexGuard<'_, State> {
         lock(&self.state)
+    }
+}
+
+#[derive(Debug)]
+struct SimDriver {
+    printer: Printer,
+    state: Arc<Mutex<State>>,
+}
+
+impl SimDriver {
+    fn describe(&self, mut device: Device) -> Device {
+        if let Some(capabilities) = &lock(&self.state).capabilities {
+            device.capabilities = capabilities.clone();
+        }
+        device
+    }
+}
+
+impl Driver for SimDriver {
+    fn vendor(&self) -> Vendor {
+        self.printer.vendor()
+    }
+
+    fn connection(&self) -> &Connection {
+        self.printer.connection()
+    }
+
+    fn probe(&self) -> Result<Device, Error> {
+        self.printer.probe().map(|device| self.describe(device))
+    }
+
+    fn verify(&self, serial: &str) -> Result<Device, Error> {
+        self.printer
+            .verify(serial)
+            .map(|device| self.describe(device))
+    }
+
+    fn print_receipt(
+        &self,
+        receipt: &Receipt,
+        expected: &Device,
+        journal: &mut dyn Journal,
+    ) -> Result<Printed, Error> {
+        self.printer.print_receipt(receipt, expected, journal)
+    }
+
+    fn print_report(
+        &self,
+        report: Report,
+        serial: &str,
+        journal: &mut dyn Journal,
+    ) -> Result<(), Error> {
+        self.printer.print_report(report, serial, journal)
     }
 }
 

@@ -80,7 +80,7 @@ impl<'dir> Agent<'dir> {
         dir: &'dir StateDir,
         waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     ) -> Self {
-        let telemetry = Telemetry::new(api.serial());
+        let telemetry = Telemetry::new(api.serial(), printer.vendor());
         Self {
             printer,
             api,
@@ -442,6 +442,9 @@ impl<'dir> Agent<'dir> {
     }
 
     fn receipt(&self, job: &Job, capabilities: &Capabilities) -> Result<Receipt, String> {
+        if !job.advances.is_empty() && !capabilities.advance_deductions {
+            return Err("Drukarka nie obsługuje rozliczenia zaliczek.".to_owned());
+        }
         let rates = &self.telemetry.vat_slots;
         let slot_rate = |slot: u8, rate| {
             rates
@@ -506,7 +509,7 @@ impl<'dir> Agent<'dir> {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Receipt::new(
+        let receipt = Receipt::new(
             lines,
             advances,
             payments,
@@ -514,7 +517,13 @@ impl<'dir> Agent<'dir> {
             &job.company_name,
             capabilities,
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+        if receipt.fiscal_total() == Grosze::ZERO && !capabilities.zero_total_receipts {
+            return Err(
+                "Drukarka nie obsługuje paragonu opłaconego w całości zaliczkami.".to_owned(),
+            );
+        }
+        Ok(receipt)
     }
 
     fn report(&mut self, operation: &mut ReceiptOperation, result: JobResult) -> Result<(), Error> {

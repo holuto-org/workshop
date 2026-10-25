@@ -45,7 +45,7 @@ const TOKEN: &str = "synthetic-device-token";
 /// Posnet telemetry for the pairing `serial`, as the agent sends it once connected.
 #[cfg(test)]
 pub(crate) fn telemetry(serial: &str) -> Telemetry {
-    let mut telemetry = Telemetry::new(serial);
+    let mut telemetry = Telemetry::new(serial, Vendor::Posnet);
     let _skipped = telemetry.describe(&Device {
         vendor: Vendor::Posnet,
         model: "POSNET TEMO ONLINE".to_owned(),
@@ -98,12 +98,14 @@ pub struct RequestLog {
 struct State {
     serial: Option<String>,
     unauthorized: bool,
+    vendor: Option<String>,
     pairing: Option<(String, Instant)>,
     pairing_throttled: bool,
     pairing_attempts: VecDeque<Instant>,
     paired_token: Option<String>,
     token_generation: u64,
     jobs: HashMap<Uuid, Value>,
+    queue_job: Option<Value>,
     queue: VecDeque<Uuid>,
     reported: HashMap<Uuid, Value>,
     documents: Vec<Value>,
@@ -232,6 +234,11 @@ impl Holuto {
 
     pub fn documents(&self, documents: Vec<Value>) {
         locked(&self.state).documents = documents;
+    }
+
+    /// Synthetic backend snapshot used by queue requests.
+    pub fn queue_job(&self, job: Value) {
+        locked(&self.state).queue_job = Some(job);
     }
 
     pub fn page(&self, cursor: Option<&str>, page: Value) {
@@ -654,11 +661,19 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         if state.serial.as_deref().is_some_and(|bound| bound != serial) {
             return refused(403, "fiscal_serial_mismatch");
         }
+        let vendor = request.body["vendor"].as_str().unwrap();
+        if state.vendor.as_deref().is_some_and(|bound| bound != vendor) {
+            return refused(403, "fiscal_vendor_mismatch");
+        }
+        state.vendor = Some(vendor.to_owned());
         state.serial = Some(serial.to_owned());
         state.telemetry = request.body.clone();
         let mut status = status_json();
         status["printer"]["deviceSerial"] = json!(serial);
         for name in [
+            "vendor",
+            "maxQuantityDecimals",
+            "capabilities",
             "model",
             "firmware",
             "appVersion",
@@ -700,10 +715,21 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         return (204, Value::Null);
     }
     if path == "/agent/jobs" && request.method == "POST" {
-        if state.telemetry["maxItemNameLength"].is_null() {
+        if [
+            "vendor",
+            "maxQuantityDecimals",
+            "capabilities",
+            "maxItemNameLength",
+            "maxLinesPerReceipt",
+            "maxCompanyNameLength",
+            "allowedCharacters",
+        ]
+        .iter()
+        .any(|field| state.telemetry[field].is_null())
+        {
             return refused(409, "fiscal_printer_limits_unknown");
         }
-        let mut job = job_json();
+        let mut job = state.queue_job.clone().unwrap_or_else(job_json);
         let id = Uuid::from_u128(100 + u128::try_from(state.jobs.len()).unwrap());
         job["id"] = json!(id);
         for field in ["orderId", "kind", "allocationId", "buyerNip"] {
@@ -715,6 +741,29 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
             .any(|existing| blocks_queue(existing, &job))
         {
             return refused(409, "fiscal_job_conflict");
+        }
+        // ../backend/crates/fiscal/src/receipts/queueing.rs:109-120.
+        if !job["advances"].as_array().unwrap().is_empty()
+            && state.telemetry["capabilities"]["advanceDeductions"] == false
+        {
+            return refused(409, "fiscal_printer_advances_unsupported");
+        }
+        if job["payments"].as_array().unwrap().is_empty()
+            && state.telemetry["capabilities"]["zeroTotalReceipts"] == false
+        {
+            return refused(409, "fiscal_printer_zero_total_unsupported");
+        }
+        let decimals = state.telemetry["maxQuantityDecimals"].as_u64().unwrap();
+        if job["lines"].as_array().unwrap().iter().any(|line| {
+            line["quantity"]
+                .as_str()
+                .unwrap()
+                .split_once('.')
+                .is_some_and(|(_, fraction)| {
+                    u64::try_from(fraction.trim_end_matches('0').len()).unwrap() > decimals
+                })
+        }) {
+            return refused(409, "fiscal_printer_quantity_precision");
         }
         job["state"] = json!("queued");
         job["attempt"] = Value::Null;
@@ -811,6 +860,8 @@ pub fn with(mut value: Value, changes: &Value) -> Value {
 pub fn printer_json() -> Value {
     json!({
         "id": PRINTER_ID, "branchId": Uuid::from_u128(11), "name": "Workshop",
+        "vendor": "posnet", "maxQuantityDecimals": 8,
+        "capabilities": {"advanceDeductions": true, "zeroTotalReceipts": true},
         "deviceSerial": "DEMO0000001", "model": "POSNET TEMO ONLINE", "firmware": "32.01",
         "appVersion": "0.2.0", "vatSlots": [], "maxItemNameLength": 80,
         "maxLinesPerReceipt": 500, "maxCompanyNameLength": 40,

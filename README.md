@@ -235,6 +235,7 @@ Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
 ```json
 {
   "serial": "device-serial",
+  "vendor": "posnet",
   "model": "POSNET TEMO ONLINE",
   "firmware": "32.01",
   "appVersion": "0.2.0",
@@ -245,26 +246,39 @@ Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
   "maxItemNameLength": 80,
   "maxLinesPerReceipt": 500,
   "maxCompanyNameLength": 40,
+  "maxQuantityDecimals": 8,
+  "capabilities": {
+    "advanceDeductions": true,
+    "zeroTotalReceipts": true
+  },
   "allowedCharacters": " !\"#$%&'()*+,-./0123…"
 }
 ```
 
-`vatSlots` is the actual device table (Temo Online has slots 0–6, A–G; the
-contract allows 0–15), rates `"23"`, `"8"`, `"5"`, `"0"` or `"zw"`. Each
+`vendor` is `"posnet"`, `"novitus"` or `"elzab"` and binds alongside the physical
+serial. `vatSlots` is the actual device table (Temo Online has slots 0–6, A–G;
+the contract allows 0–15), rates `"23"`, `"8"`, `"5"`, `"0"` or `"zw"`. Each
 session/heartbeat replaces the backend mapping. `maxItemNameLength`,
-`maxLinesPerReceipt`, `maxCompanyNameLength` and `allowedCharacters` (all
-printable characters, NFC) are required before queueing; the backend rejects
-line or company names outside these limits. The protocol cannot report them, so each
-driver publishes them as `fiscal::device::Capabilities`, which also validate receipts
-before printer I/O. `posnet::capabilities` defines the documented Temo Online limits:
-80-character item names (`trline`), 500 lines (`trinit`), 40-character company footer lines
-(`trftrln`) and printable CP1250 from 0x20–0xFF, excluding DEL, no-break space,
-soft hyphen and the bytes the protocol prints as table-drawing glyphs
+`maxLinesPerReceipt`, `maxCompanyNameLength`, `allowedCharacters` (all printable
+characters, NFC), `maxQuantityDecimals` (0–8) and `capabilities` are required
+before queueing. The backend rejects names outside the limits, excessive
+quantity precision (ignoring trailing zeros), advance deductions without
+`advanceDeductions`, and fully prepaid sales without `zeroTotalReceipts`
+(409 `fiscal_printer_quantity_precision`, `fiscal_printer_advances_unsupported`,
+`fiscal_printer_zero_total_unsupported`). The agent independently checks the
+fresh device profile before any fiscal command and reports unprintable jobs as
+failed. These limits come from each driver's `fiscal::device::Capabilities`;
+the wire capabilities contain only the two receipt flags, not `company_footer`.
+`posnet::capabilities` defines the documented Temo Online limits: eight quantity
+decimals, 80-character item names (`trline`), 500 lines (`trinit`),
+40-character company footer lines (`trftrln`) and printable CP1250 from
+0x20–0xFF, excluding DEL, no-break space, soft hyphen and table-drawing glyphs
 (`¤ ¨ ˛ ´ ¸`, POT-I-DEV-37 p. 14).
 
-Session/heartbeat bind and verify the physical serial; pairing with another live
-printer fails with 409. Other requests carry the same `X-Device-Serial` header;
-device swaps are rejected before taking or printing jobs.
+Session/heartbeat bind and verify the physical serial and vendor; a mismatch
+fails with 403 `fiscal_serial_mismatch` or `fiscal_vendor_mismatch`.
+Other requests carry the same `X-Device-Serial` header; device swaps are rejected
+before taking or printing jobs.
 
 - **`GET /agent/documents?limit=100[&cursor=…]`**:
   `{items:[{kind, orderId, orderNumber, allocationId, amount, customerName,`

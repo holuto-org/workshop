@@ -1,5 +1,6 @@
 use std::{env, error::Error as StdError, process::Command, sync::Arc};
 
+use fiscal::device::Vendor;
 use sentry_core::{
     Client, ClientOptions, Envelope, Hub, Scope, TransactionContext, Transport, start_transaction,
 };
@@ -23,6 +24,44 @@ fn telemetry() -> Telemetry {
 }
 fn api(server: &Holuto) -> Result<Api, Error> {
     Api::new(server.url(), server.token(), "DEMO0000001")
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn vendor_binding_round_trips_all_vendors_and_refuses_device_swaps() -> TestResult {
+    for (vendor, name) in [
+        (Vendor::Posnet, "posnet"),
+        (Vendor::Novitus, "novitus"),
+        (Vendor::Elzab, "elzab"),
+    ] {
+        let server = Holuto::new();
+        let mut api = api(&server)?;
+        let mut telemetry = telemetry();
+        telemetry.vendor = vendor;
+        api.session(&telemetry)?;
+        api.heartbeat(&telemetry)?;
+        assert_eq!(
+            server.requests().first().ok_or("no session")?.body["vendor"],
+            name
+        );
+        telemetry.vendor = if vendor == Vendor::Posnet {
+            Vendor::Novitus
+        } else {
+            Vendor::Posnet
+        };
+        assert!(matches!(api.heartbeat(&telemetry),
+                Err(ApiError::Status { status: 403, detail: Some(detail) })
+                    if detail == "fiscal_vendor_mismatch"));
+        telemetry.vendor = vendor;
+        telemetry.serial = "OTHER-SERIAL".to_owned();
+        assert!(matches!(api.heartbeat(&telemetry),
+                Err(ApiError::Status { status: 403, detail: Some(detail) })
+                    if detail == "fiscal_serial_mismatch"));
+    }
+    Ok(())
 }
 
 #[test]
@@ -324,6 +363,7 @@ fn malformed_nullable_session_fields_and_foreign_serial_are_rejected() -> TestRe
     for changes in [
         json!({"deviceSerial":"OTHER"}),
         json!({"maxItemNameLength":0}),
+        json!({"maxQuantityDecimals":9}),
         json!({"allowedCharacters":""}),
     ] {
         let server = Holuto::new();
