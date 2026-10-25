@@ -55,6 +55,7 @@ struct State {
     advances: u64,
     paid: u64,
     fragment: usize,
+    permission: u32,
 }
 impl Default for State {
     fn default() -> Self {
@@ -78,6 +79,7 @@ impl Default for State {
             advances: 0,
             paid: 0,
             fragment: usize::MAX,
+            permission: 0,
         }
     }
 }
@@ -141,6 +143,11 @@ impl Simulator {
 
     pub fn set_status(&self, one: u128, two: u128, three: u32) {
         lock(&self.state).status = [one, two, u128::from(three)];
+    }
+
+    /// Nested `LPC` B code while no receipt is open; 0 permits opening.
+    pub fn set_receipt_permission(&self, code: u32) {
+        lock(&self.state).permission = code;
     }
 
     pub fn set_fragment_size(&self, size: usize) {
@@ -328,7 +335,14 @@ fn read(state: &State, body: &str) -> Option<String> {
         "XCR" => format!("\x1dA{}", state.clock),
         "SER" => format!("\x1dJ{}", state.receipts),
         "RNR" => format!("\x1dA{}", state.reports + 1),
-        "LPC" => format!("\x1dB{}", if state.transaction { 483 } else { 0 }),
+        "LPC" => format!(
+            "\x1dB{}",
+            if state.transaction {
+                483
+            } else {
+                state.permission
+            }
+        ),
         _ => return None,
     })
 }

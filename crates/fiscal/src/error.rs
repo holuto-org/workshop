@@ -5,6 +5,9 @@ pub enum Error {
     /// Refused before any command reached the printer.
     #[error("{0}")]
     Invalid(String),
+    /// A printer answered identification with an unsupported model; nothing else was sent.
+    #[error("{0}")]
+    Unsupported(String),
     #[error("Nie wykryto drukarki.")]
     NoPort,
     #[error("Nie można połączyć z drukarką {port}: {source}")]

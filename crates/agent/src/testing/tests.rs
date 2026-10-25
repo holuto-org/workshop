@@ -826,3 +826,75 @@ fn backend_result_normalizes_code_and_compares_replays_at_microsecond_precision(
     );
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_result_refuses_text_it_cannot_store_without_committing() -> TestResult {
+    for (state, field, value, code) in [
+        (
+            "done",
+            "receiptNumber",
+            "12\u{200b}34",
+            "invalid_characters",
+        ),
+        (
+            "done",
+            "receiptNumber",
+            "12\u{2028}34",
+            "invalid_characters",
+        ),
+        ("done", "receiptNumber", " \u{3000} ", "blank"),
+        ("failed", "result", "Błąd\u{200b}", "invalid_characters"),
+        ("failed", "result", " \u{3000} ", "blank"),
+    ] {
+        let server = Holuto::new();
+        server.insert(job_json());
+        let _api = api(&server)?;
+        let done = state == "done";
+        let mut form = json!({
+            "attempt": super::ATTEMPT, "state": state, "result": null, "receiptNumber": null,
+            "issuedAt": if done { json!("2025-01-02T12:00:00Z") } else { Value::Null },
+        });
+        form[field] = json!(value);
+        let (status, _, body) = raw(
+            &server,
+            "POST",
+            &format!("/agent/jobs/{JOB_ID}/result"),
+            Some(b"DEM0000000001"),
+            Some(server.token()),
+            &form,
+        )?;
+        assert_eq!(
+            (
+                status,
+                &body["errors"][0]["pointer"],
+                &body["errors"][0]["code"]
+            ),
+            (400, &json!(format!("/{field}")), &json!(code)),
+            "{field} {value:?}"
+        );
+        assert_eq!(server.job(JOB_ID)["state"], "taken", "{field} {value:?}");
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_jobs_of_another_printer_are_invisible_and_never_block_take() -> TestResult {
+    let server = Holuto::new();
+    server.insert(with(job_json(), &json!({"printerId": OTHER_PRINTER})));
+    let own = server.enqueue(with(job_json(), &json!({"id": Uuid::from_u128(200)})));
+    let api = api(&server)?;
+    assert!(matches!(
+        api.job(JOB_ID),
+        Err(ApiError::Status { status: 404, .. })
+    ));
+    assert_eq!(api.take()?.map(|job| job.id), Some(own));
+    Ok(())
+}

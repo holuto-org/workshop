@@ -14,6 +14,13 @@ use crate::store::StateDir;
 #[cfg(test)]
 use fiscal::device::{Device, Vendor};
 use icu_normalizer::ComposingNormalizerBorrowed;
+use icu_properties::{
+    CodePointSetData,
+    props::{
+        DefaultIgnorableCodePoint, EmojiComponent, JoinControl, NoncharacterCodePoint,
+        VariationSelector,
+    },
+};
 use jiff::Timestamp;
 #[cfg(test)]
 use posnet::capabilities::capabilities;
@@ -748,25 +755,27 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         return documents_page(state, &url);
     }
     if path == "/agent/jobs/take" && request.method == "POST" {
+        let paired = |job: &Value| job["printerId"] == json!(PRINTER_ID);
         if state
             .jobs
             .values()
-            .any(|job| matches!(job["state"].as_str(), Some("taken" | "unknown")))
+            .any(|job| paired(job) && matches!(job["state"].as_str(), Some("taken" | "unknown")))
         {
             return (204, Value::Null);
         }
-        while let Some(id) = state.queue.pop_front() {
-            let job = state.jobs.get_mut(&id).unwrap();
-            if job["state"] != "queued" {
-                continue;
-            }
-            state.attempt += 1;
-            job["attempt"] = json!(Uuid::from_u128(8 + state.attempt));
-            job["takenAt"] = json!(Timestamp::now());
-            job["state"] = json!("taken");
-            return (200, job.clone());
-        }
-        return (204, Value::Null);
+        let next = state.queue.iter().position(|id| {
+            let job = &state.jobs[id];
+            paired(job) && job["state"] == "queued"
+        });
+        let Some(id) = next.and_then(|index| state.queue.remove(index)) else {
+            return (204, Value::Null);
+        };
+        state.attempt += 1;
+        let job = state.jobs.get_mut(&id).unwrap();
+        job["attempt"] = json!(Uuid::from_u128(8 + state.attempt));
+        job["takenAt"] = json!(Timestamp::now());
+        job["state"] = json!("taken");
+        return (200, job.clone());
     }
     if path == "/agent/jobs" && request.method == "POST" {
         if (request.body["kind"] == "advance") == request.body["allocationId"].is_null() {
@@ -832,6 +841,9 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
     let Some(job) = state.jobs.get_mut(&id) else {
         return refused(404, "fiscal_not_found");
     };
+    if job["printerId"] != json!(PRINTER_ID) {
+        return refused(404, "fiscal_not_found");
+    }
     match (request.method.as_str(), parts.next()) {
         ("GET", None) => (200, job.clone()),
         ("POST", Some("result")) => {
@@ -849,23 +861,16 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
                 form["issuedAt"] = json!(at);
             }
             if let Some(number) = form["receiptNumber"].as_str() {
-                form["receiptNumber"] = json!(
-                    ComposingNormalizerBorrowed::new_nfkc()
-                        .normalize(number)
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                );
+                match backend_text(number, false) {
+                    Ok(number) => form["receiptNumber"] = json!(number),
+                    Err(code) => return invalid("/receiptNumber", code),
+                }
             }
             if let Some(note) = form["result"].as_str() {
-                let multiline = note
-                    .replace("\r\n", "\n")
-                    .replace(['\u{2028}', '\u{2029}'], "\n");
-                form["result"] = json!(
-                    ComposingNormalizerBorrowed::new_nfc()
-                        .normalize(&multiline)
-                        .trim()
-                );
+                match backend_text(note, true) {
+                    Ok(note) => form["result"] = json!(note),
+                    Err(code) => return invalid("/result", code),
+                }
             }
             if job["attempt"] != form["attempt"] {
                 return refused(409, "fiscal_job_conflict");
@@ -890,6 +895,55 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         },
         _ => refused(404, "fiscal_not_found"),
     }
+}
+
+/// Holuto's rules for `Code` (NFKC, single line, 64 chars) and `Note` (NFC, multiline,
+/// 2000 chars): normalized text is echoed; blank, oversized or invisible text is refused.
+fn backend_text(value: &str, note: bool) -> Result<String, &'static str> {
+    let max = if note { 2000 } else { 64 };
+    if value.chars().nth(max).is_some() {
+        return Err("too_long");
+    }
+    let value = if note {
+        ComposingNormalizerBorrowed::new_nfc().normalize(value)
+    } else {
+        ComposingNormalizerBorrowed::new_nfkc().normalize(value)
+    };
+    let value = if note {
+        value
+            .replace("\r\n", "\n")
+            .replace(['\u{2028}', '\u{2029}'], "\n")
+    } else if value.contains(['\u{2028}', '\u{2029}']) {
+        return Err("invalid_characters");
+    } else {
+        value.into_owned()
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("blank");
+    }
+    let invisible = |c: char| {
+        (CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(c)
+            || CodePointSetData::new::<NoncharacterCodePoint>().contains(c))
+            && !CodePointSetData::new::<JoinControl>().contains(c)
+            && !CodePointSetData::new::<VariationSelector>().contains(c)
+            && !CodePointSetData::new::<EmojiComponent>().contains(c)
+    };
+    if value
+        .chars()
+        .any(|c| (c.is_control() && !(note && matches!(c, '\n' | '\t'))) || invisible(c))
+    {
+        return Err("invalid_characters");
+    }
+    let value = if note {
+        value.to_owned()
+    } else {
+        value.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    if value.chars().nth(max).is_some() {
+        return Err("too_long");
+    }
+    Ok(value)
 }
 
 pub fn job_json() -> Value {

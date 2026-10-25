@@ -227,17 +227,17 @@ fn identify_accepts_online_models_only() {
     for model in [
         "ELZAB ZETA",
         "ELZAB MERA+",
-        "POSNET TEMO ONLINE",
+        "ELZAB Zeta Online",
         "ELZAB UNKNOWN ONLINE",
     ] {
         let sim = Simulator::start();
         sim.set_identity(model, "MD06.02");
-        assert!(
-            identify(sim.link().as_ref(), &connection(&sim))
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(fiscal(&sim), Vec::<String>::new());
+        assert!(matches!(
+            identify(sim.link().as_ref(), &connection(&sim)),
+            Err(Error::Unsupported(message))
+                if message.contains(model) && message.contains("MD06.02")
+        ));
+        assert_eq!(bodies(&sim), ["XTR"], "nothing beyond identification");
     }
 }
 #[test]
@@ -410,6 +410,26 @@ fn fresh_identity_vat_status_and_header_are_required() {
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
 }
+#[test]
+fn nested_lpc_refusal_prevents_open_while_status_reports_ready() {
+    let sim = Simulator::start();
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    sim.set_receipt_permission(1203);
+    assert!(driver.probe().unwrap().ready());
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&receipt(0, false), &expected, &mut log),
+        Err(Error::NotReady(message)) if message.contains("1203")
+    ));
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal(&sim), Vec::<String>::new());
+    sim.set_receipt_permission(0);
+    driver
+        .print_receipt(&receipt(0, false), &expected, &mut Log::default())
+        .unwrap();
+    assert_eq!(sim.receipts(), 1);
+}
 
 #[test]
 fn every_document_and_mechanism_blocker_prevents_dispatch() {
@@ -532,6 +552,31 @@ fn periodic_report_past_printer_date_or_inverted_never_dispatches() {
         )
         .unwrap();
     assert_eq!(fiscal(&sim), ["RPP\x1dE1\x1dFE261024\x1eF261024\x1dS0"]);
+}
+
+#[test]
+fn monthly_report_of_the_printer_month_never_dispatches() {
+    let sim = Simulator::start();
+    let driver = printer(&sim);
+    let monthly = |month| Report::Monthly { year: 2026, month };
+    // Printer dates 2026-10-24 and 2026-10-31: October has not ended on the printer.
+    for clock in ["261024120000", "261031235959"] {
+        sim.set_clock(clock);
+        for month in [10, 11] {
+            let mut log = Log::default();
+            assert!(matches!(
+                driver.print_report(monthly(month), "ABC1234567890", &mut log),
+                Err(Error::Invalid(message))
+                    if message == "Raport miesięczny wymaga zakończonego miesiąca."
+            ));
+            assert_eq!(log.commands, Vec::<&str>::new());
+        }
+    }
+    assert_eq!(fiscal(&sim), Vec::<String>::new());
+    driver
+        .print_report(monthly(9), "ABC1234567890", &mut Log::default())
+        .unwrap();
+    assert_eq!(fiscal(&sim), ["RPP\x1dE1\x1dFB2609\x1dS0"]);
 }
 
 #[test]

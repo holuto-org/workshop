@@ -180,11 +180,17 @@ impl Driver for Printer {
 }
 
 /// XTR model-name matching only; reused legacy numeric IDs never qualify ONLINE.
+///
+/// A valid XTR reply means an Elzab answered, so an unlisted model is reported by name
+/// instead of as an absent printer; no further command is sent to it.
 pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
     let mut session = Session::open(link, connection)?;
     let (model, firmware) = identity(&mut session)?;
     if profile::lookup(&model).is_none() {
-        return Ok(None);
+        return Err(Error::Unsupported(format!(
+            "Nieobsługiwany model drukarki Elzab: {model} (oprogramowanie {firmware}). \
+             Obsługiwane są Elzab Zeta, Mera i Cube ONLINE."
+        )));
     }
     Ok(Some(
         preflight_identity(&mut session, model, firmware, false)?.device,

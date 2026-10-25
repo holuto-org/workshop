@@ -216,6 +216,59 @@ fn mixed_candidates_respect_hints_and_skip_foreign_devices() {
     assert_eq!(posnet.frames(), Vec::<Vec<u8>>::new());
 }
 
+#[test]
+fn unsupported_elzab_model_is_reported_instead_of_a_later_silent_port() {
+    let elzab = Simulator::start(Vendor::Elzab);
+    if let Simulator::Elzab(sim) = &elzab {
+        sim.set_identity("ELZAB Zeta Online", "MD06.02");
+    }
+    let foreign = Simulator::start(Vendor::Novitus);
+    if let Simulator::Novitus(sim) = &foreign {
+        sim.set_identity("OTHER BRAND", "1.60");
+    }
+    let link = RoutingLink::new(vec![
+        (
+            Candidate {
+                port: elzab.address().to_owned(),
+                hint: None,
+            },
+            elzab.link(),
+        ),
+        (
+            Candidate {
+                port: foreign.address().to_owned(),
+                hint: None,
+            },
+            foreign.link(),
+        ),
+    ]);
+    let error = detect(
+        Arc::<RoutingLink>::clone(&link),
+        connection("missing"),
+        None,
+        true,
+    )
+    .err()
+    .unwrap();
+    assert!(
+        matches!(&error, Error::Unsupported(message) if message.contains("ELZAB Zeta Online")),
+        "{error:?}"
+    );
+    // Novitus is never probed on a port where Elzab already answered.
+    assert_eq!(
+        *link.opened.lock().unwrap(),
+        [
+            "missing",
+            elzab.address(),
+            elzab.address(),
+            foreign.address(),
+            foreign.address(),
+            foreign.address()
+        ]
+    );
+    assert_eq!(elzab.fiscal_frames(), Vec::<Vec<u8>>::new());
+}
+
 #[derive(Debug)]
 struct Denied;
 impl Link for Denied {

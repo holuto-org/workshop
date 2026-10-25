@@ -185,7 +185,17 @@ fn completed_crash_recovers_done_and_preserves_printer_issue_time() -> TestResul
     let mut agent = agent(&sim, &dir, &server)?;
     assert_eq!(agent.settle()?, None);
     assert_eq!(server.job(JOB_ID)["receiptNumber"], "41");
-    assert_eq!(stored(&dir)?.issued_at, operation.issued_at);
+    let reported: Vec<_> = server
+        .requests()
+        .into_iter()
+        .filter(|request| request.path.ends_with("/result"))
+        .map(|request| request.body["issuedAt"].clone())
+        .collect();
+    assert_eq!(
+        reported,
+        [json!("2025-01-02T12:00:00Z")],
+        "recovery reports the journaled printer time, not the recovery time"
+    );
     assert!(
         sim.receipts().is_empty(),
         "recovery records evidence without printing"
@@ -1031,9 +1041,18 @@ fn orphan_acknowledgement_rechecks_the_server_printer_binding() -> TestResult {
     Journal::new(&dir).save(&Operation::Receipt(operation.clone()))?;
     let mut agent = agent(&sim, &dir, &server)?;
     assert_eq!(agent.settle()?, Some(Blocked::OrphanedReceipt));
-    server.set_job(
-        JOB_ID,
+    // Holuto answers 404 for another printer's job; script a misbound reply instead.
+    let foreign = with(
+        server.job(JOB_ID),
         &json!({"printerId": "00000000-0000-0000-0000-000000000099"}),
+    );
+    server.fault(
+        "GET",
+        &format!("/agent/jobs/{JOB_ID}"),
+        Fault::Body {
+            status: 200,
+            body: serde_json::to_vec(&foreign)?,
+        },
     );
     let expected = concat!(
         "Nie można uzgodnić niepotwierdzonego paragonu z Holuto: ",

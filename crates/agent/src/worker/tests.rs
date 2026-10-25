@@ -739,6 +739,7 @@ fn a_failed_page_fetch_retains_the_requested_navigation_for_refresh() {
     pages(&holuto);
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let _first = receive_until(&events, |event| {
         matches!(event, Event::Documents { page: 1, .. })
@@ -764,6 +765,7 @@ fn an_emptied_later_page_returns_to_the_first_page() {
     holuto.page(Some("after 1/+"), json!({"items": [], "nextCursor": null}));
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
     worker.submit(Command::NextPage);
@@ -990,6 +992,7 @@ fn documents_still_page_when_the_printer_probe_is_failing() {
     pages(&holuto);
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
     sim.fault("getrealid", PrinterFault::Error);

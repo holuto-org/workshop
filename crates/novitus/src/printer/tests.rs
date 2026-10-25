@@ -637,6 +637,32 @@ fn periodic_report_past_printer_date_or_inverted_never_dispatches() {
     assert_eq!(fiscal_bodies(&sim), ["26;10;24;26;10;24;0#o"]);
 }
 
+#[test]
+fn monthly_report_of_the_printer_month_never_dispatches() {
+    let sim = Simulator::start();
+    supported(&sim);
+    let driver = printer(&sim);
+    let monthly = |month| Report::Monthly { year: 2026, month };
+    // Printer dates 2026-10-24 and 2026-10-31: October has not ended on the printer.
+    for clock in ["26;10;24;12;0;0", "26;10;31;23;59;59"] {
+        sim.set_clock(clock);
+        for month in [10, 11] {
+            let mut log = Log::default();
+            assert!(matches!(
+                driver.print_report(monthly(month), "ABC1234567890", &mut log),
+                Err(Error::Invalid(message))
+                    if message == "Raport miesięczny wymaga zakończonego miesiąca."
+            ));
+            assert_eq!(log.commands, Vec::<&str>::new());
+        }
+    }
+    assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+    driver
+        .print_report(monthly(9), "ABC1234567890", &mut Log::default())
+        .unwrap();
+    assert_eq!(fiscal_bodies(&sim), ["26;9;1;26;9;30;6#o"]);
+}
+
 #[cfg(not(workshop_acceptance))]
 #[test]
 fn unqualified_footer_is_refused_before_begin() {

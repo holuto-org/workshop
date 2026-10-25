@@ -215,6 +215,7 @@ fn every_durable_operation_state_reads_and_writes_its_reviewed_golden_file() -> 
             blocks,
             "recovery must preserve the fixture's blocked/settled state: {name}"
         );
+        fs::remove_file(dir.file("operation.json"))?;
         journal.save(&expected)?;
         assert_eq!(
             fs::read(dir.file("operation.json"))?,
