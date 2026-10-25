@@ -18,6 +18,7 @@ use std::{
 
 use fiscal::{
     device::{Device, Vendor},
+    driver::Driver,
     error::Error as PrinterError,
     link::{Connection, Link},
     report::Report,
@@ -220,7 +221,7 @@ impl Worker {
         S: Fn(Event) + Send + Sync + 'static,
     {
         Self::start(dir, sink, false, move |dir, inbox, sink| {
-            run(dir, &settings, link, inbox, sink)
+            run(dir, &settings, &link, inbox, sink)
         })
     }
 
@@ -352,7 +353,7 @@ fn pairing_failed(error: &Error) -> Event {
 fn run(
     dir: &StateDir,
     settings: &Settings,
-    link: Arc<dyn Link>,
+    link: &Arc<dyn Link>,
     inbox: &Receiver<Message>,
     sink: &(dyn Fn(Event) + Sync),
 ) -> Result<(), Error> {
@@ -370,23 +371,11 @@ fn run(
             });
         },
     }
-    // Unresolved operations forbid switching devices or scanning other ports.
-    let blocking = Journal::new(dir).load()?.filter(Operation::blocks);
-    let remembered = blocking.as_ref().map_or(settings.vendor, |operation| {
-        Some(match operation {
-            Operation::Receipt(receipt) => receipt.vendor,
-            Operation::Report(report) => report.vendor,
-        })
-    });
-    let (printer, status) = device::detect(
-        link,
-        Connection {
-            port: settings.port.clone(),
-            baud_rate: settings.baud_rate,
-        },
-        remembered,
-        blocking.is_none(),
-    )?;
+    let mut queue = VecDeque::new();
+    let Some((printer, status)) = detect_printer(dir, settings, link, inbox, sink, &mut queue)?
+    else {
+        return Ok(());
+    };
     let port = printer.connection().port.clone();
     if port != settings.port || Some(status.vendor) != settings.vendor {
         sink(Event::PortDetected {
@@ -418,7 +407,6 @@ fn run(
     };
     let mut agent = Agent::new(printer, api, dir, &waiting);
     let notices = agent.describe(status.clone())?;
-    let mut queue = VecDeque::new();
     if !start_session(&mut agent, inbox, sink, &mut queue)? {
         return Ok(());
     }
@@ -492,12 +480,8 @@ fn start_session(
             },
             Err(error) => return Err(error),
         };
-        loop {
-            match inbox.recv_timeout(cadence.remaining(Cadence::now())) {
-                Ok(Message::Command(command)) => queue.push_back(command),
-                Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => return Ok(false),
-                Err(RecvTimeoutError::Timeout) => break,
-            }
+        if !wait(&cadence, inbox, queue) {
+            return Ok(false);
         }
         if refresh {
             match agent.refresh() {
@@ -514,6 +498,63 @@ fn start_session(
                     tone: Tone::Error,
                 }),
             }
+        }
+    }
+}
+
+type Detected = (Box<dyn Driver>, Device);
+
+/// A printer switched on after an unattended login start must not end processing.
+/// Detection sends only read-only identity probes, so repeating it is safe; `None` means stop.
+fn detect_printer(
+    dir: &StateDir,
+    settings: &Settings,
+    link: &Arc<dyn Link>,
+    inbox: &Receiver<Message>,
+    sink: &dyn Fn(Event),
+    queue: &mut VecDeque<Command>,
+) -> Result<Option<Detected>, Error> {
+    // Unresolved operations forbid switching devices or scanning other ports.
+    let blocking = Journal::new(dir).load()?.filter(Operation::blocks);
+    let remembered = blocking.as_ref().map_or(settings.vendor, |operation| {
+        Some(match operation {
+            Operation::Receipt(receipt) => receipt.vendor,
+            Operation::Report(report) => report.vendor,
+        })
+    });
+    loop {
+        let connection = Connection {
+            port: settings.port.clone(),
+            baud_rate: settings.baud_rate,
+        };
+        let error =
+            match device::detect(Arc::clone(link), connection, remembered, blocking.is_none()) {
+                Ok(found) => return Ok(Some(found)),
+                Err(error) => error,
+            };
+        // Counted from the failure, before announcing it: scanning silent ports can outlast
+        // the interval.
+        let cadence = Cadence {
+            due: Cadence::now() + RETRY,
+        };
+        tracing::warn!("Printer unavailable at start; retrying in 15 seconds");
+        sink(Event::Status {
+            text: format!("Drukarka niedostępna: {error}. Ponowna próba za 15 sekund."),
+            tone: Tone::Error,
+        });
+        if !wait(&cadence, inbox, queue) {
+            return Ok(None);
+        }
+    }
+}
+
+/// Queues commands until the retry is due; `false` means stop.
+fn wait(cadence: &Cadence, inbox: &Receiver<Message>, queue: &mut VecDeque<Command>) -> bool {
+    loop {
+        match inbox.recv_timeout(cadence.remaining(Cadence::now())) {
+            Ok(Message::Command(command)) => queue.push_back(command),
+            Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => return false,
+            Err(RecvTimeoutError::Timeout) => return true,
         }
     }
 }

@@ -345,8 +345,12 @@ fn blocked_worker_never_enumerates_or_switches_to_an_available_printer() {
             move |event| sender.send(event).unwrap(),
         )
         .unwrap();
-        let _stopped = receive_until(&events, |event| matches!(event, Event::Stopped));
-        worker.join();
+        let _retrying = receive_until(&events, |event| {
+            matches!(event,
+                Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
+            )
+        });
+        let _stopped = stop(worker, &events);
         assert_eq!(*link.opened.lock().unwrap(), ["unavailable"]);
         assert_eq!(link.enumeration_count(), 0);
         assert_eq!(alternate.frames(), Vec::<Vec<u8>>::new());

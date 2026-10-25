@@ -19,7 +19,7 @@ pub struct Session {
     port: Box<dyn Port>,
     /// Bytes beyond the last frame, retained for the next reply.
     pending: Vec<u8>,
-    #[cfg(any(test, feature = "simulator"))]
+    /// Simulator time scaling; always 1 for serial links.
     time_scale: u32,
 }
 
@@ -36,25 +36,24 @@ impl Session {
         if connection.port.trim().is_empty() {
             return Err(Error::NoPort);
         }
-        let session = Self::new(link.open(&connection.port, connection.baud_rate)?);
         #[cfg(any(test, feature = "simulator"))]
-        let session = Self {
-            time_scale: link.time_scale().max(1),
-            ..session
-        };
-        Ok(session)
+        let time_scale = link.time_scale().max(1);
+        #[cfg(not(any(test, feature = "simulator")))]
+        let time_scale = 1;
+        Ok(Self {
+            time_scale,
+            ..Self::new(link.open(&connection.port, connection.baud_rate)?)
+        })
     }
 
     pub(crate) fn new(port: Box<dyn Port>) -> Self {
         Self {
             port,
             pending: Vec::new(),
-            #[cfg(any(test, feature = "simulator"))]
             time_scale: 1,
         }
     }
 
-    #[cfg(any(test, feature = "simulator"))]
     pub(crate) fn timeout(&self, duration: Duration) -> Duration {
         if self.time_scale == 1 {
             duration
@@ -63,27 +62,12 @@ impl Session {
         }
     }
 
-    #[cfg(not(any(test, feature = "simulator")))]
-    #[expect(
-        clippy::unused_self,
-        reason = "production keeps the session API without a timing override"
-    )]
-    pub(crate) const fn timeout(&self, duration: Duration) -> Duration {
-        duration
-    }
-
-    #[cfg(any(test, feature = "simulator"))]
+    /// Only simulator ports extend the operator-wait cap, for explicit holds.
     pub(crate) fn operator_wait_limit(&self, duration: Duration) -> Duration {
-        self.port.operator_wait_limit(self.timeout(duration))
-    }
-
-    #[cfg(not(any(test, feature = "simulator")))]
-    #[expect(
-        clippy::unused_self,
-        reason = "production keeps the session API without a timing override"
-    )]
-    pub(crate) const fn operator_wait_limit(&self, duration: Duration) -> Duration {
-        duration
+        let limit = self.timeout(duration);
+        #[cfg(any(test, feature = "simulator"))]
+        let limit = self.port.operator_wait_limit(limit);
+        limit
     }
 
     pub fn command(

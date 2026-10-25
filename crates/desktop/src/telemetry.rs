@@ -260,6 +260,7 @@ fn message(text: Option<&str>) -> &str {
             | "Worker operation requires attention"
             | "Worker operation failed"
             | "Holuto session unavailable; retrying in 15 seconds"
+            | "Printer unavailable at start; retrying in 15 seconds"
             | "Printed receipt conflicts with terminal Holuto state"
             | "Holuto rejected completed fiscal evidence"
             | "Operator acknowledged orphaned receipt; no command reissued"),

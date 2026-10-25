@@ -317,8 +317,9 @@ impl<'dir> Agent<'dir> {
             )));
         }
         let remote = self.api.job(operation.job_id)?;
+        // Binding, attempt and evidence decide settlement; job shape was judged at claim time.
         remote
-            .check(self.api.printer_id(), None)
+            .check_printer(self.api.printer_id())
             .map_err(|problem| reconcile_error(&problem))?;
         if remote.attempt != Some(operation.attempt) {
             return Err(reconcile_error(
@@ -405,11 +406,7 @@ impl<'dir> Agent<'dir> {
         );
         let _entered = span.enter();
         tracing::info!(job_id = %job.id, "Job claimed");
-        let max_lines = self
-            .status
-            .as_ref()
-            .map(|device| device.capabilities.max_lines);
-        job.check(self.api.printer_id(), max_lines)
+        job.check_printer(self.api.printer_id())
             .map_err(|problem| invalid_job(job.id, &problem))?;
         let (JobState::Taken, Some(attempt)) = (job.state, job.attempt) else {
             return Err(invalid_job(
@@ -500,6 +497,8 @@ impl<'dir> Agent<'dir> {
     }
 
     fn receipt(&self, job: &Job, capabilities: &Capabilities) -> Result<Receipt, String> {
+        job.check(Some(capabilities.max_lines))
+            .map_err(|problem| format!("Nieprawidłowe zadanie z Holuto: {problem}."))?;
         if !job.advances.is_empty() && !capabilities.advance_deductions {
             return Err("Drukarka nie obsługuje rozliczenia zaliczek.".to_owned());
         }
@@ -673,7 +672,7 @@ impl<'dir> Agent<'dir> {
         let _status = self.printer.verify(&operation.device_unique_number)?;
         let remote = self.api.job(operation.job_id)?;
         remote
-            .check(self.api.printer_id(), None)
+            .check_printer(self.api.printer_id())
             .map_err(|problem| reconcile_error(&problem))?;
         if remote.attempt != Some(operation.attempt)
             || !matches!(remote.state, JobState::Failed | JobState::Expired)

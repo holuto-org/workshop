@@ -983,7 +983,7 @@ pub fn printer_json() -> Value {
 }
 pub fn status_json() -> Value {
     json!({
-        "printer": printer_json(), "isOnline": true,
+        "printer": printer_json(), "isOnline": true, "isDeleted": false,
         "lastSeenAt": "2026-10-16T10:00:00Z", "updatedAt": "2026-10-16T09:00:00Z"
     })
 }

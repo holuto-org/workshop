@@ -185,17 +185,19 @@ It never scans with an unresolved operation: the device must not change.
   controls.
 
 Polling runs every **3 seconds**, or **15 seconds** after errors or while
-blocked. If Holuto is unreachable, times out (408), rate-limits (429) or answers
-5xx when processing starts, the app retries every 15 seconds and shows a notice;
-a 401 stops processing. A confirmed receipt or report stays disabled until the
+blocked. If the printer does not answer, or Holuto is unreachable, times out
+(408), rate-limits (429) or answers 5xx when processing starts, the app retries
+every 15 seconds and shows a notice; a 401 stops processing. A confirmed receipt
+or report stays disabled until the
 worker finishes that command, so a second click cannot queue it twice. Closing
 the window hides it in the tray and releases its memory without stopping
 processing; reopen from the tray. Without a tray icon, closing keeps the window
 visible; on Linux this includes an icon that could not register because the
 desktop's tray started after the app.
 **Zatrzymaj** stops processing; **Zakończ**, the tray's quit, the macOS Dock/⌘Q
-quit and, on Linux and macOS, SIGTERM, SIGHUP or SIGINT (Linux logout or
-shutdown, Ctrl+C) exit. All of them finish the current operation first.
+quit, macOS logout, restart or shutdown (macOS waits instead of being cancelled)
+and, on Linux and macOS, SIGTERM, SIGHUP or SIGINT (Linux logout or shutdown,
+Ctrl+C) exit. All of them finish the current operation first.
 
 Prices are gross; API quantities and amounts are decimal strings. The schema
 allows unit prices with up to eight decimal places, but this driver requires

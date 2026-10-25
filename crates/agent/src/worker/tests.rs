@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::BTreeMap,
     fmt, fs,
+    io::ErrorKind,
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver, Sender},
@@ -444,6 +445,107 @@ fn startup_server_failure_is_a_notice_and_can_be_stopped_during_the_retry_wait()
             .collect::<Vec<_>>(),
         ["/agent/session"]
     );
+}
+
+#[test]
+fn printer_unavailable_at_start_is_retried_until_it_answers() {
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    // Another holder keeps the port unopenable, like a printer switched on after login.
+    let busy = sim.link().open(sim.address(), 9600).unwrap();
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let clock = Arc::new(Mutex::new(Instant::now()));
+    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let received = receive_until(&events, |event| {
+        matches!(event,
+            Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
+        )
+    });
+    assert!(matches!(
+        received.last(),
+        Some(Event::Status { tone: Tone::Error, text })
+            if text.starts_with("Drukarka niedostępna: ")
+    ));
+    assert!(
+        holuto.requests().is_empty(),
+        "no Holuto session without a printer"
+    );
+    drop(busy);
+    *clock.lock().unwrap() += Duration::from_secs(15);
+    worker.submit(Command::NextPage);
+    let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    assert!(received.iter().any(
+        |event| matches!(event, Event::Connected { unique_number, .. }
+                if unique_number == UNIQUE_NUMBER)
+    ));
+    let _stopped = stop(worker, &events);
+}
+
+/// Discovery that spends the whole retry interval, like several silent ports.
+#[derive(Debug)]
+struct SlowAbsentLink {
+    clock: Arc<Mutex<Instant>>,
+    opened: Mutex<usize>,
+}
+
+impl Link for SlowAbsentLink {
+    #[expect(
+        clippy::unwrap_in_result,
+        reason = "a poisoned test lock is a test failure, not a link error"
+    )]
+    fn open(&self, port: &str, _baud_rate: u32) -> Result<Box<dyn Port>, PrinterError> {
+        *self.opened.lock().unwrap() += 1;
+        *self.clock.lock().unwrap() += Duration::from_secs(20);
+        Err(PrinterError::Open {
+            port: port.to_owned(),
+            source: ErrorKind::NotFound.into(),
+        })
+    }
+
+    fn candidates(&self) -> Vec<Candidate> {
+        Vec::new()
+    }
+}
+
+#[test]
+fn slow_startup_detection_still_waits_the_full_retry_interval() {
+    let holuto = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let clock = Arc::new(Mutex::new(Instant::now()));
+    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
+    let link = Arc::new(SlowAbsentLink {
+        clock: Arc::clone(&clock),
+        opened: Mutex::new(0),
+    });
+    let (sender, events) = mpsc::channel();
+    let worker = Worker::spawn(
+        Arc::new(dir),
+        Settings {
+            api_url: holuto.url().to_owned(),
+            token: holuto.token().into(),
+            port: "silent".to_owned(),
+            vendor: Some(Vendor::Posnet),
+            ..Settings::default()
+        },
+        Arc::<SlowAbsentLink>::clone(&link),
+        move |event| sender.send(event).unwrap(),
+    )
+    .unwrap();
+    let _retrying = receive_until(&events, |event| {
+        matches!(event,
+            Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
+        )
+    });
+    // Wakes the wait without moving the clock: the retry is still 15 s away.
+    worker.submit(Command::NextPage);
+    let stopped = stop(worker, &events);
+    assert!(
+        matches!(stopped.as_slice(), [Event::Stopped]),
+        "{stopped:?}"
+    );
+    assert_eq!(*link.opened.lock().unwrap(), 1);
 }
 
 #[test]

@@ -991,6 +991,36 @@ fn a_trinit_execution_error_has_no_receipt_and_its_open_transaction_blocks_prefl
 }
 
 #[test]
+fn sale_blocks_the_preflight_cannot_see_tell_the_operator_what_to_fix() {
+    for (command, code, shown) in [
+        (
+            "trinit",
+            383,
+            "Drukarka zwróciła błąd 383 (trinit). Brak raportu dobowego za poprzedni dzień \
+             sprzedaży. Wykonaj raport dobowy.",
+        ),
+        (
+            "trline",
+            2106,
+            "Drukarka zwróciła błąd 2106 (trline). Towar zablokowany: tę nazwę sprzedano \
+             wcześniej w niższej stawce VAT, a drukarka nie pozwala jej podwyższyć. Zmień nazwę \
+             pozycji.\nWynik operacji wymaga sprawdzenia. Nie wysyłaj jej ponownie przed \
+             sprawdzeniem drukarki.",
+        ),
+    ] {
+        let sim = simulator();
+        sim.fault(command, Fault::Refused(code));
+        let device = printer(&sim);
+        let expected = device.probe().unwrap();
+        let error = device
+            .print_receipt(&sale(), &expected, &mut Recorder::default())
+            .unwrap_err();
+        assert_eq!(error.to_string(), shown, "{command} {code}");
+        assert_eq!(sim.receipts(), vec![]);
+    }
+}
+
+#[test]
 fn a_spaced_unique_number_binds_in_its_canonical_form() {
     for (reported, bound, ready) in [
         ("DEM 0000000001", UNIQUE_NUMBER, true),

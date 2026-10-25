@@ -312,8 +312,8 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
                     );
                     assert_eq!(
                         reply,
-                        NSApplicationTerminateReply::TerminateCancel,
-                        "AppKit cannot terminate before the worker finishes"
+                        NSApplicationTerminateReply::TerminateLater,
+                        "AppKit holds termination until the worker finishes; Cancel aborts logout"
                     );
                 }
                 with_app(move |app| {

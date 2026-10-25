@@ -171,14 +171,16 @@ impl JobState {
     }
 }
 impl Job {
-    pub(crate) fn check(
-        &self,
-        printer_id: Option<Uuid>,
-        max_lines: Option<usize>,
-    ) -> Result<(), String> {
+    /// Holuto's binding of this job to the paired printer.
+    pub(crate) fn check_printer(&self, printer_id: Option<Uuid>) -> Result<(), String> {
         if printer_id != Some(self.printer_id) {
             return Err("zadanie innej drukarki".to_owned());
         }
+        Ok(())
+    }
+
+    /// Job shape; a claimed job that breaks it fails before any fiscal command.
+    pub(crate) fn check(&self, max_lines: Option<usize>) -> Result<(), String> {
         self.kind.check_allocation(self.allocation_id)?;
         if self.order_number <= 0 {
             return Err("numer zlecenia musi być dodatni".to_owned());

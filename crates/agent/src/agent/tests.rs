@@ -559,7 +559,7 @@ fn claimed_job_needing_unqualified_capability_fails_without_fiscal_commands() ->
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn oversized_job_is_rejected_as_invalid_without_journal_or_result() -> TestResult {
+fn oversized_claim_fails_without_fiscal_commands_and_frees_the_queue() -> TestResult {
     let sim = Simulator::start();
     let server = Holuto::new();
     let line = json!({
@@ -567,29 +567,65 @@ fn oversized_job_is_rejected_as_invalid_without_journal_or_result() -> TestResul
         "total": "0.01", "vatRate": "23", "vatLetter": "A"
     });
     let changes = json!({"lines": vec![line; 501], "total": "5.01"});
-    let _id = server.enqueue(with(job_json(), &changes));
+    let oversized = server.enqueue(with(job_json(), &changes));
+    let next = server.enqueue(with(
+        job_json(),
+        &json!({"id": "00000000-0000-0000-0000-000000000063"}),
+    ));
     let (_temporary, dir) = state_dir();
     let mut agent = agent(&sim, &dir, &server)?;
-    let outcome = agent.step();
-    assert!(
-        matches!(&outcome, Err(Error::Blocked(message)) if *message == format!(
-            "Nieprawidłowe zadanie {JOB_ID} z Holuto: zadanie musi mieć od 1 do 500 pozycji. \
-             Nie drukuję go."
-        )),
-        "{outcome:?}"
+    let _delay = agent.step()?;
+    let failed = server.job(oversized);
+    assert_eq!(
+        failed["state"], "failed",
+        "a certain failure, not a stalled claim"
     );
-    assert!(
-        !dir.file("operation.json").exists(),
-        "an invalid job is never journaled"
+    assert_eq!(
+        failed["result"],
+        "Nieprawidłowe zadanie z Holuto: zadanie musi mieć od 1 do 500 pozycji."
     );
-    assert!(
-        server
-            .requests()
-            .iter()
-            .all(|request| !request.path.ends_with("/result")),
-        "no terminal result is sent for an invalid job"
-    );
+    assert_eq!(stored(&dir)?.device, Device::NotStarted);
     assert!(sim.receipts().is_empty(), "invalid job never prints");
+    let _delay = agent.step()?;
+    assert_eq!(
+        server.job(next)["state"],
+        "done",
+        "the next job is claimed and printed"
+    );
+    assert_eq!(sim.receipts().len(), 1);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn malformed_claim_with_lost_failure_acknowledgement_settles_after_restart() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let _id = server.enqueue(with(job_json(), &json!({"buyerNip": "123"})));
+    server.fault(
+        "POST",
+        &format!("/agent/jobs/{JOB_ID}/result"),
+        Fault::DropAfterCommit,
+    );
+    let (_temporary, dir) = state_dir();
+    let mut first = agent(&sim, &dir, &server)?;
+    assert!(
+        matches!(first.step(), Err(Error::Api(_))),
+        "lost acknowledgement"
+    );
+    assert_eq!(server.job(JOB_ID)["state"], "failed");
+    drop(first);
+    let mut recovered = agent(&sim, &dir, &server)?;
+    assert_eq!(
+        recovered.settle()?,
+        None,
+        "job shape never blocks reconciliation"
+    );
+    assert!(stored(&dir)?.settled.is_some());
+    assert!(sim.receipts().is_empty(), "a refused claim never prints");
     Ok(())
 }
 

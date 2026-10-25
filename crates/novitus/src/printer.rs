@@ -533,8 +533,7 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
     let mut since = None;
     let mut shown = None;
     while matches!(result, Err(Error::Timeout(_))) {
-        let cap = since
-            .get_or_insert_with(|| Instant::now() + session.operator_wait_limit(OPERATOR_WAIT));
+        let cap = since.get_or_insert_with(|| Instant::now() + session.timeout(OPERATOR_WAIT));
         if Instant::now() >= *cap {
             break;
         }

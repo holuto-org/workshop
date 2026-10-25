@@ -110,7 +110,7 @@ pub struct Session {
     discovery: bool,
     discovery_ack: Option<&'static str>,
     blocked: bool,
-    #[cfg(any(test, feature = "simulator"))]
+    /// Simulator time scaling; always 1 for serial links.
     time_scale: u32,
 }
 impl fmt::Debug for Session {
@@ -139,6 +139,10 @@ impl Session {
         if connection.port.trim().is_empty() {
             return Err(Error::NoPort);
         }
+        #[cfg(any(test, feature = "simulator"))]
+        let time_scale = link.time_scale().max(1);
+        #[cfg(not(any(test, feature = "simulator")))]
+        let time_scale = 1;
         Ok(Self {
             port: link.open(&connection.port, connection.baud_rate)?,
             pending: Vec::new(),
@@ -147,35 +151,16 @@ impl Session {
             discovery: true,
             discovery_ack: None,
             blocked: false,
-            #[cfg(any(test, feature = "simulator"))]
-            time_scale: link.time_scale().max(1),
+            time_scale,
         })
     }
 
-    #[cfg(any(test, feature = "simulator"))]
     pub fn timeout(&self, duration: Duration) -> Duration {
         if self.time_scale == 1 {
             duration
         } else {
             (duration / self.time_scale).max(Duration::from_millis(100))
         }
-    }
-
-    #[cfg(not(any(test, feature = "simulator")))]
-    #[expect(clippy::unused_self, reason = "production has no timing override")]
-    pub const fn timeout(&self, duration: Duration) -> Duration {
-        duration
-    }
-
-    #[cfg(any(test, feature = "simulator"))]
-    pub fn operator_wait_limit(&self, duration: Duration) -> Duration {
-        self.port.operator_wait_limit(self.timeout(duration))
-    }
-
-    #[cfg(not(any(test, feature = "simulator")))]
-    #[expect(clippy::unused_self, reason = "production has no timing override")]
-    pub const fn operator_wait_limit(&self, duration: Duration) -> Duration {
-        duration
     }
 
     /// Returns data and, where required, a matching mode-3 completion.

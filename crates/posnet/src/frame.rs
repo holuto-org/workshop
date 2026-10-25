@@ -224,9 +224,18 @@ fn parameter(field: &str) -> String {
 const fn explanation(code: u32) -> &'static str {
     match code {
         382 => " Nie można wykonać dwóch kolejnych zerowych raportów dobowych.",
+        383 => " Brak raportu dobowego za poprzedni dzień sprzedaży. Wykonaj raport dobowy.",
+        387 => " Sprzedaż zablokowana. Brak miejsca w pamięci.",
+        484 => " Minął czas pracy kasy, sprzedaż zablokowana.",
+        488 => " Subskrypcja wygasła, sprzedaż zablokowana.",
         1039 | 2904 => " Pamięć chroniona zapełniona.",
         2036 => " Urządzenie w stanie tylko do odczytu.",
         2098 => " Pamięć fiskalna zapełniona.",
+        // Selling a name at a higher rate after a lower one (p. 296).
+        2106 => {
+            " Towar zablokowany: tę nazwę sprzedano wcześniej w niższej stawce VAT, a drukarka \
+             nie pozwala jej podwyższyć. Zmień nazwę pozycji."
+        },
         3728 => " Upłynął termin ważności certyfikatu.",
         3733 => " Sprzedaż zablokowana. Brak przekazanych kluczy do Repozytorium.",
         3735 => " Sprzedaż zablokowana. Wgraj nowe certyfikaty.",

@@ -541,6 +541,9 @@ impl Application {
                 !settled.processing && !settled.connected && self.model.status_matches(settled)
             })
         {
+            // A held AppKit termination ignores the event-loop quit; only its reply exits.
+            #[cfg(target_os = "macos")]
+            macos::quit();
             slint::quit_event_loop().map_err(|error| error.to_string())?;
         }
         Ok(())

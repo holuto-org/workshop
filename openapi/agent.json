@@ -1531,9 +1531,14 @@
           "printer",
           "isOnline",
           "lastSeenAt",
-          "updatedAt"
+          "updatedAt",
+          "isDeleted"
         ],
         "properties": {
+          "isDeleted": {
+            "type": "boolean",
+            "description": "ID lookups resolve deleted printers; they can no longer pair, queue or print."
+          },
           "isOnline": {
             "type": "boolean"
           },

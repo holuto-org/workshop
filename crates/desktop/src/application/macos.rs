@@ -1,8 +1,13 @@
-//! Route Cmd+Q and Dock Quit through cooperative shutdown.
+//! Route Cmd+Q, Dock Quit, logout, restart and shutdown through cooperative shutdown.
 //!
 //! Recheck our hook on the current winit delegate before each worker starts;
 //! missing or foreign termination policies fail closed.
-use std::{mem, ptr};
+//!
+//! `AppKit`'s termination is held, never refused: `TerminateCancel` would abort a
+//! logout, restart or shutdown. While it is held `AppKit` runs a nested run loop that
+//! ignores `[NSApp stop:]`, so only `replyToApplicationShouldTerminate:` may end it:
+//! <https://developer.apple.com/documentation/appkit/nsapplication/terminatereply/terminatelater>.
+use std::{cell::Cell, mem, ptr};
 
 use objc2::{
     MainThreadMarker, ffi,
@@ -69,12 +74,47 @@ fn implementation() -> Imp {
     }
 }
 
+/// `AppKit`'s termination request, from `should_terminate` until it is answered.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Request {
+    None,
+    /// `should_terminate` is still running; `quit` cannot reply before it returns.
+    Asking,
+    Approved,
+    Held,
+}
+
+thread_local! {
+    static REQUEST: Cell<Request> = const { Cell::new(Request::None) };
+}
+
 pub(super) extern "C-unwind" fn should_terminate(
     _: &AnyObject,
     _: Sel,
     _: &AnyObject,
 ) -> NSApplicationTerminateReply {
+    REQUEST.set(Request::Asking);
     with_app(|application| application.stop(true));
-    // Defer process exit until Event::Stopped ends the Slint loop.
-    NSApplicationTerminateReply::TerminateCancel
+    if REQUEST.replace(Request::Held) == Request::Approved {
+        REQUEST.set(Request::None);
+        return NSApplicationTerminateReply::TerminateNow;
+    }
+    // `quit` replies once Event::Stopped and the final writes allow exit.
+    NSApplicationTerminateReply::TerminateLater
+}
+
+/// Lets a held `AppKit` termination proceed; call only once quitting is safe.
+pub(super) fn quit() {
+    match REQUEST.get() {
+        Request::Asking => REQUEST.set(Request::Approved),
+        Request::Held => {
+            REQUEST.set(Request::None);
+            // AppKit asks only on the main thread; tests call the hook elsewhere.
+            if let Some(main_thread) = MainThreadMarker::new() {
+                NSApplication::sharedApplication(main_thread)
+                    .replyToApplicationShouldTerminate(true);
+            }
+        },
+        Request::None | Request::Approved => {},
+    }
 }

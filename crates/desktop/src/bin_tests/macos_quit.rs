@@ -9,8 +9,12 @@ use std::{
     env,
     error::Error,
     io::{self, Write},
+    path::Path,
     process::Command,
 };
+
+#[cfg(target_os = "macos")]
+use agent::{history, status::Snapshot, store::StateDir, worker};
 
 #[cfg(target_os = "macos")]
 #[expect(
@@ -61,8 +65,8 @@ mod ui {
     reason = "Native test assertions propagate process and fixture errors"
 )]
 fn main() -> Result<(), Box<dyn Error>> {
-    const COMPLETED: &[u8] = b"native quit completed after stopped\n";
     const TEST_NAME: &str = "native_quit_waits_for_worker";
+    const CHILD: &str = "WORKSHOP_NATIVE_QUIT_CHILD";
     if env::args().any(|argument| argument == "--list") {
         if !env::args().any(|argument| argument == "--ignored") {
             writeln!(io::stdout().lock(), "{TEST_NAME}: test")?;
@@ -75,24 +79,39 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         return Ok(());
     }
-    if env::var_os("WORKSHOP_NATIVE_QUIT_CHILD").is_some() {
-        application::native_quit_test::run()?;
-        io::stdout().lock().write_all(COMPLETED)?;
-        return Ok(());
+    if let Some(state) = env::var_os(CHILD) {
+        // Success never returns: AppKit exits once the held termination is answered.
+        return application::native_quit_test::run(Path::new(&state));
     }
-    // AppKit's erroneous immediate exit(0) must not look like a successful test.
+    let state = tempfile::tempdir()?;
     #[expect(
         clippy::disallowed_methods,
-        reason = "The child detects AppKit termination before its final assertions"
+        reason = "AppKit ends the child process; only a parent can judge that exit"
     )]
     let child = Command::new(env::current_exe()?)
-        .env("WORKSHOP_NATIVE_QUIT_CHILD", "1")
+        .env(CHILD, state.path())
         .output()?;
     assert!(
-        child.status.success() && child.stdout.ends_with(COMPLETED),
-        "native quit did not reach the post-Stopped assertions: status={}, stderr={}",
+        child.status.success() && child.stdout.ends_with(application::native_quit_test::HELD),
+        "AppKit did not hold the termination until it exited: status={}, stderr={}",
         child.status,
         String::from_utf8_lossy(&child.stderr)
+    );
+    // An exit before Event::Stopped would leave the receipt unsettled or processing published.
+    let published = Snapshot::load_at(state.path())?.ok_or("no published status")?;
+    assert!(
+        !published.processing && !published.connected,
+        "AppKit exited before the stopped status was published"
+    );
+    let dir = StateDir::open(state.path().to_owned())?;
+    assert_eq!(
+        history::load(&dir)?.len(),
+        1,
+        "the held receipt printed and settled before exit"
+    );
+    assert!(
+        !worker::journal_block(&dir).blocked,
+        "AppKit exited before the fiscal outcome was settled"
     );
     Ok(())
 }
