@@ -51,7 +51,7 @@ release builds reject simulator/testing features; packaging never enables them.
 See [local platform procedures](testing/platforms.md).
 The acceptance job follows
 [hardware acceptance](testing/hardware-acceptance.md): a dedicated
-`RUSTFLAGS='--cfg workshop_acceptance'` build, narrow cfg-gated driver suite
+`RUSTFLAGS='--cfg workshop_acceptance'` build, whole-workspace suite and Clippy,
 and a release compile-error check. The normal `--all-features` suite never
 sets this cfg and must prove production gates. No CI job qualifies hardware.
 

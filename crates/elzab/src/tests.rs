@@ -355,20 +355,22 @@ fn journal_failure_prevents_next_send() {
 }
 #[test]
 fn fresh_identity_vat_status_and_header_are_required() {
-    for change in 0..4 {
+    // The acceptance build deliberately permits the non-fiscal-mode case.
+    for change in (0..4).filter(|&change| !cfg!(workshop_acceptance) || change != 2) {
         let sim = Simulator::start();
         let driver = printer(&sim);
         let expected = driver.probe().unwrap();
         match change {
             0 => sim.set_serial("OTHER"),
             1 => sim.set_vat(["22,00", "8,00", "5,00", "0,00", "=", "?", "?"]),
-            2 => sim.set_status(0, 1 << 3, 32),
-            _ => sim.set_header("Inna firma"),
+            2 => sim.set_status(0, (1_u128 << 102) | (1_u128 << 98) | 4 | 8, 32),
+            _ => sim.set_header(""),
         }
         assert!(
             driver
                 .print_receipt(&receipt(0, false), &expected, &mut Log::default())
-                .is_err()
+                .is_err(),
+            "case {change}"
         );
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
@@ -406,7 +408,10 @@ fn every_document_and_mechanism_blocker_prevents_dispatch() {
         (2, 2),
         (2, 1),
         (2, 0),
-    ] {
+    ]
+    .into_iter()
+    .filter(|&case| !cfg!(workshop_acceptance) || case != (1, 3))
+    {
         let sim = Simulator::start();
         let mut status = [0_u128, ready, 32];
         *status.get_mut(package).unwrap() |= 1_u128 << bit;

@@ -44,8 +44,9 @@ is **not a Cargo feature**. Its only switch is `cfg(workshop_acceptance)` via
 ```sh
 cargo nextest run --workspace --all-features
 RUSTFLAGS='--cfg workshop_acceptance' cargo build -p workshop
-RUSTFLAGS='--cfg workshop_acceptance' cargo nextest run \
-  -p posnet -p novitus -p elzab --all-features -E 'test(acceptance::)'
+RUSTFLAGS='--cfg workshop_acceptance' cargo clippy \
+  --workspace --all-targets --all-features -- -D warnings
+RUSTFLAGS='--cfg workshop_acceptance' cargo nextest run --workspace --all-features
 # REQUIRED negative check: must fail with the explicit compile_error below.
 RUSTFLAGS='--cfg workshop_acceptance' cargo build --release
 ```
@@ -54,9 +55,9 @@ Expected release diagnostic:
 `workshop_acceptance is restricted to local debug builds.` The guard in
 `fiscal` applies even to standalone drivers; the desktop also declares it.
 A dependency/toolchain error is not evidence that the release guard worked.
-`checks.yml` runs the narrow acceptance suite and release guard in a separate
-job, never against hardware. Narrow selection excludes production-only
-expectations while the ordinary workspace run still exercises them.
+`checks.yml` runs the whole workspace acceptance suite, Clippy and release guard
+in a separate job, never against hardware. Only exact production-only cases
+relaxed by the cfg are excluded; the ordinary workspace run still exercises them.
 
 Production tests named `non_fiscal_device_is_not_ready_without_acceptance`
 run for all three brands. Novitus and Elzab also run
