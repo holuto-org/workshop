@@ -728,18 +728,6 @@ receipt_faults!(
     "trpayment"
 );
 receipt_faults!(lost_trend, corrupt_trend, disconnected_trend, "trend");
-receipt_faults!(
-    lost_trftrln,
-    corrupt_trftrln,
-    disconnected_trftrln,
-    "trftrln"
-);
-receipt_faults!(
-    lost_trftrend,
-    corrupt_trftrend,
-    disconnected_trftrend,
-    "trftrend"
-);
 
 macro_rules! report_faults {
     ($name:ident,$command:literal,$report:expr) => {
@@ -791,8 +779,6 @@ fn a_refused_later_receipt_step_is_uncertain_and_stops_the_stream() {
         "tradvance",
         "trpayment",
         "trend",
-        "trftrln",
-        "trftrend",
     ]
     .into_iter()
     .enumerate()
@@ -825,6 +811,66 @@ fn a_refused_later_receipt_step_is_uncertain_and_stops_the_stream() {
         ];
         assert_eq!(fiscal_commands(&sim), expected[..=index + 1]);
         assert_eq!(journal.stages, expected[..=index + 1]);
+    }
+}
+
+#[test]
+fn a_footer_failure_after_trend_returns_the_printed_receipt_without_a_second_send() {
+    // `trend` completes the fiscal record (`strns.fe`, p. 377); the footer cannot undo it.
+    let expected = [
+        "trinit",
+        "trnipset",
+        "trline",
+        "tradvance",
+        "trpayment",
+        "trend",
+        "trftrln",
+        "trftrend",
+    ];
+    for (index, command) in [(6, "trftrln"), (7, "trftrend")] {
+        for fault in [
+            None,
+            Some(Fault::Error),
+            Some(Fault::LoseReply),
+            Some(Fault::CorruptReply),
+            Some(Fault::Disconnect),
+        ] {
+            let sim = simulator();
+            let mut journal = Recorder::default();
+            match &fault {
+                Some(fault) => sim.fault(command, fault.clone()),
+                None => journal.fail_at = Some(index),
+            }
+            let device = printer(&sim);
+            let status = device.probe().unwrap();
+            let printed = device
+                .print_receipt(&all_steps_receipt(), &status, &mut journal)
+                .unwrap_or_else(|error| panic!("{command} {fault:?}: {error:?}"));
+            assert_eq!(printed.issued_at, "2026-07-01T10:34:00Z".parse().unwrap());
+            assert_eq!(
+                printed.receipt_number.as_deref(),
+                (fault != Some(Fault::Disconnect)).then_some("1"),
+                "{command} {fault:?}: the counter is read whenever the link survives"
+            );
+            let sent = if fault.is_some() { index + 1 } else { index };
+            assert_eq!(
+                fiscal_commands(&sim),
+                expected[..sent],
+                "{command} {fault:?}: stop at the failure without resending"
+            );
+            assert_eq!(journal.stages, expected[..sent]);
+            assert_eq!(sim.receipts().len(), 1);
+            let footer_closed = command == "trftrend"
+                && matches!(
+                    fault,
+                    Some(Fault::LoseReply | Fault::CorruptReply | Fault::Disconnect)
+                );
+            assert_eq!(
+                device.probe().unwrap().ready(),
+                footer_closed,
+                "{command} {fault:?}: preflight reports an unfinished footer"
+            );
+        }
     }
 }
 

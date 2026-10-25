@@ -124,7 +124,9 @@ impl Driver for Printer {
         let header = text::header_text(header.get("tx").unwrap_or_default()).to_lowercase();
         let footer = (!header.contains(&receipt.brand().to_lowercase())).then_some(receipt.brand());
         let issued_at = clock(&mut session)?;
-        dispatch(&mut session, &receipt::steps(receipt, footer), journal)?;
+        let steps = receipt::steps(receipt, footer);
+        dispatch(&mut session, &steps.fiscal, journal)?;
+        print_footer(&mut session, &steps.footer, journal);
         // Printing succeeded; an unreadable counter must not trigger a retry.
         let receipt_number = session
             .command("scnt", &[], DEFAULT_TIMEOUT)
@@ -260,6 +262,24 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
         }
     }
     Ok(())
+}
+
+/// After `trend`, the receipt is issued; a footer failure leaves `strns.fe` set, which the
+/// next preflight reports, and never makes the receipt uncertain.
+fn print_footer(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) {
+    for step in steps {
+        let sent = journal
+            .dispatching(step.command)
+            .map_err(Error::Journal)
+            .and_then(|()| execute(session, step, journal));
+        if sent.is_err() {
+            tracing::warn!(
+                command = step.command,
+                "Receipt footer incomplete after the fiscal record"
+            );
+            return;
+        }
+    }
 }
 
 fn refusal_is_certain(error: &Error, sent: &str) -> bool {

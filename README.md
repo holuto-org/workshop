@@ -245,8 +245,11 @@ truncated.
   errors and report `ERR` frame rejections; Novitus initial `$h` refusal and
   daily-report keyboard cancellation (37); Elzab transport rejection of the
   initial `LOR` only. Later receipt errors remain **unknown**, including Elzab
-  zero-close error 1008. No refusal permits resending. An accepted Elzab
-  `RRP` daily report is always **unknown**, even if counters advance.
+  zero-close error 1008, except a Posnet footer error after a successful
+  `trend`: that receipt is printed and reported as such, and the printer stays
+  not ready until its open footer is cleared. No refusal permits resending.
+  An accepted Elzab `RRP` daily report is always **unknown**, even if counters
+  advance.
 - Interrupted reports also block. After inspecting the printout, use **Wyjaśnij
   raport** with the same printer connected and ready; an overdue daily report
   or read-only mode does not prevent resolution. Resolution prints nothing.

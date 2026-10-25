@@ -126,10 +126,10 @@ impl Driver for Printer {
         let checked = preflight(&mut session, report == Report::Daily)?;
         checked.device.require_ready()?;
         checked.device.require_unique_number(unique_number)?;
-        let (command, fields) = match report {
+        let step = match report {
             Report::Daily => {
                 let _before = read_number(&mut session, "RNR", 'A')?;
-                ("RRP", "I1\x1dJ1".to_owned())
+                Step::new("RRP", "I1\x1dJ1".to_owned(), ACCEPT_TIMEOUT)
             },
             Report::Monthly { year, month } => {
                 let from = Date::new(year, month, 1).map_err(|e| Error::Invalid(e.to_string()))?;
@@ -139,12 +139,13 @@ impl Driver for Printer {
                     ));
                 }
                 let date = date_fields(from)?;
-                (
+                Step::new(
                     "RPP",
                     format!(
                         "E1\x1dFB{}\x1dS0",
                         date.get(..4).ok_or_else(frame::corrupt)?
                     ),
+                    REPORT_TIMEOUT,
                 )
             },
             Report::Periodic { from, to, summary } => {
@@ -153,7 +154,7 @@ impl Driver for Printer {
                         "Nieprawidłowy zakres dat raportu.".to_owned(),
                     ));
                 }
-                (
+                Step::new(
                     "RPP",
                     format!(
                         "E{}\x1dFE{}\x1eF{}\x1dS0",
@@ -161,20 +162,12 @@ impl Driver for Printer {
                         date_fields(from)?,
                         date_fields(to)?
                     ),
+                    REPORT_TIMEOUT,
                 )
             },
         };
-        let timeout = if command == "RRP" {
-            ACCEPT_TIMEOUT
-        } else {
-            REPORT_TIMEOUT
-        };
-        dispatch(
-            &mut session,
-            &[Step::new(command, fields, timeout)],
-            journal,
-        )?;
-        if command == "RRP" {
+        dispatch(&mut session, &[step], journal)?;
+        if report == Report::Daily {
             // The protocol promises acceptance, not completion.
             return Err(uncertain(Error::NotReady(
                 "Raport dobowy został przyjęty, ale zakończenie wydruku wymaga \

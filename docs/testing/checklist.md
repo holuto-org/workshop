@@ -52,7 +52,9 @@ regression that fails without it.
     ten-minute wait
 - **Receipt faults**
   - Required guarantee: Execute then lose/corrupt reply or disconnect at
-    first/middle/final/footer stage leaves uncertainty and no retry
+    first/middle/final stage leaves uncertainty and no retry; any footer
+    failure after `trend` returns the printed receipt, sends nothing more and
+    leaves preflight not ready until the footer ends
   - Test shape: Fault matrix; assert effects and exact command sequence
 - **Daily/monthly/periodic reports**
   - Required guarantee: Exact dates/summary parameters; readiness (read-only

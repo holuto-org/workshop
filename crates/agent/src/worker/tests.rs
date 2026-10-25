@@ -1607,8 +1607,12 @@ fn every_fiscal_command_is_durable_before_the_worker_sends_it_and_stop_finishes_
 }
 
 #[test]
-fn losing_each_fiscal_reply_after_effect_keeps_the_worker_blocked_across_restart_without_replay() {
-    for command in FISCAL_COMMANDS {
+fn losing_each_fiscal_reply_through_trend_keeps_the_worker_blocked_across_restart_without_replay() {
+    // The footer after `trend` cannot make the fiscal record uncertain; see the next test.
+    for command in FISCAL_COMMANDS
+        .into_iter()
+        .take_while(|command| *command != "trftrln")
+    {
         let sim = Simulator::start();
         sim.set_header("Inna firma");
         sim.fault(command, PrinterFault::LoseReply);
@@ -1672,6 +1676,41 @@ fn losing_each_fiscal_reply_after_effect_keeps_the_worker_blocked_across_restart
             "a blocked worker never claims another job after {command}"
         );
         assert_eq!(sim.reports(), []);
+    }
+}
+
+#[test]
+fn losing_a_footer_reply_after_trend_settles_the_printed_receipt_once() {
+    for command in ["trftrln", "trftrend"] {
+        let sim = Simulator::start();
+        sim.set_header("Inna firma");
+        sim.fault(command, PrinterFault::LoseReply);
+        let holuto = Holuto::new();
+        let id = holuto.enqueue(full_receipt_job());
+        let (_temporary, dir) = state_dir();
+        let dir = Arc::new(dir);
+        let (worker, events) = spawn(&holuto, &sim, &dir);
+        let received = receive_until(&events, |event| {
+            matches!(event, Event::HistoryChanged(entries)
+                if entries.iter().any(|entry| entry.job_id == id))
+        });
+        let _stopped = stop(worker, &events);
+        assert_eq!(
+            history_rows(&received),
+            Some(vec![(id, Some("1".to_owned()))]),
+            "{command}"
+        );
+        assert_eq!(holuto.job(id)["state"], "done", "{command}");
+        assert_eq!(holuto.job(id)["receiptNumber"], "1", "{command}");
+        assert_eq!(sim.receipts().len(), 1, "{command}");
+        assert_eq!(
+            fiscal_frames(&sim)
+                .iter()
+                .filter(|frame| sent_command(frame, command))
+                .count(),
+            1,
+            "{command} is never resent"
+        );
     }
 }
 

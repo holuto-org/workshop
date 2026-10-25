@@ -83,7 +83,10 @@ report, refused before printing). Novitus `$h` refusals are certain; for reports
 only codes 36 and 37 naming `#r` (zero daily report already recorded, keyboard
 cancel) and 4 naming `#o` (invalid range or no fiscal records in it) are. Any
 other execution-error reply, lost reply or wrong-command reply for a report
-remains uncertain, as does a later receipt-command refusal.
+remains uncertain, as does a later receipt-command refusal up to and including
+`trend`. A successful Posnet `trend` completes the fiscal record (`strns.fe`,
+POT-I-DEV-37 p. 377), so a failing `trftrln`/`trftrend` footer still returns the
+printed receipt; the unfinished footer keeps preflight not ready.
 
 Table-test each state/command pair, then use `proptest-state-machine` to
 generate claim/dispatch/complete/report/restart/reconcile/acknowledge sequences.

@@ -43,7 +43,15 @@ const fn wire_type(form: PaymentForm) -> u8 {
     }
 }
 
-pub fn steps(receipt: &Receipt, footer: Option<&str>) -> Vec<Step> {
+/// `fiscal` ends with `trend`, which completes the fiscal record (`strns.fe`, p. 377);
+/// `footer` prints after it.
+#[derive(Debug)]
+pub struct Steps {
+    pub fiscal: Vec<Step>,
+    pub footer: Vec<Step>,
+}
+
+pub fn steps(receipt: &Receipt, footer: Option<&str>) -> Steps {
     let mut steps = vec![Step::new(
         "trinit",
         vec![("bm", "0".to_owned())],
@@ -105,13 +113,18 @@ pub fn steps(receipt: &Receipt, footer: Option<&str>) -> Vec<Step> {
         end.push(("fe", "0".to_owned()));
     }
     steps.push(Step::new("trend", end, END_TIMEOUT));
-    if let Some(footer) = footer {
-        steps.push(Step::new(
-            "trftrln",
-            vec![("id", "25".to_owned()), ("na", footer.to_owned())],
-            LINE_TIMEOUT,
-        ));
-        steps.push(Step::new("trftrend", Vec::new(), END_TIMEOUT));
+    let footer = footer.map_or_else(Vec::new, |footer| {
+        vec![
+            Step::new(
+                "trftrln",
+                vec![("id", "25".to_owned()), ("na", footer.to_owned())],
+                LINE_TIMEOUT,
+            ),
+            Step::new("trftrend", Vec::new(), END_TIMEOUT),
+        ]
+    });
+    Steps {
+        fiscal: steps,
+        footer,
     }
-    steps
 }
