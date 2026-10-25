@@ -1,4 +1,9 @@
-use std::error::Error as StdError;
+use std::{
+    error::Error as StdError,
+    io::{Read, Write},
+    net::TcpStream,
+    time::{Duration, Instant},
+};
 
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -47,7 +52,7 @@ fn document(order: Uuid, allocation: Option<Uuid>, occurred_at: &str) -> Value {
 )]
 fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creating_work()
 -> TestResult {
-    for (advances, zero, precision, changes, code) in [
+    for (advances, zero, precision, changes, expected_detail) in [
         (
             false,
             true,
@@ -56,7 +61,7 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
                 "advances": [{"vatLetter": "A", "vatRate": "23", "amount": "100.00"}],
                 "payments": [{"form": "card", "amount": "150.00"}]
             }),
-            "fiscal_printer_advances_unsupported",
+            "Wybierz drukarkę obsługującą odliczanie zafiskalizowanych zaliczek przed zleceniem paragonu końcowego.",
         ),
         (
             true,
@@ -68,7 +73,7 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
                     {"vatLetter": "B", "vatRate": "8", "amount": "50.00"}
                 ], "payments": []
             }),
-            "fiscal_printer_zero_total_unsupported",
+            "Wybierz drukarkę obsługującą zamknięcie w pełni opłaconego paragonu końcowego z kwotą zerową.",
         ),
         (
             true,
@@ -79,7 +84,7 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
                     "total": "250.03", "vatRate": "23", "vatLetter": "A"}],
                 "total": "250.03", "payments": [{"form": "card", "amount": "250.03"}]
             }),
-            "fiscal_printer_quantity_precision",
+            "Zmniejsz liczbę cyfr po przecinku w ilościach pozycji do limitu tej drukarki przed zleceniem paragonu.",
         ),
     ] {
         let server = Holuto::new();
@@ -95,12 +100,12 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
         let result = api.queue(&queue_form(&document, None)?);
         assert!(
             matches!(&result,
-                Err(ApiError::Status { status: 409, detail: Some(detail) }) if detail == code),
+                Err(ApiError::Status { status: 409, detail: Some(detail) }) if detail == expected_detail),
             "{result:?}"
         );
         assert!(matches!(api.job(Uuid::from_u128(100)),
                 Err(ApiError::Status { status: 404, detail: Some(detail) })
-                    if detail == "fiscal_not_found"));
+                    if detail == "Nie znaleziono rekordu fiskalnego."));
         assert!(api.take()?.is_none());
     }
     Ok(())
@@ -233,7 +238,7 @@ fn queue_conflicts_follow_kind_allocation_state_and_paired_printer() -> TestResu
                     matches!(
                         &result,
                         Err(ApiError::Status { status: 409, detail: Some(detail) })
-                            if detail == "fiscal_job_conflict"
+                            if detail == "To zlecenie lub drukarka ma wystawiony paragon albo nierozstrzygniętą operację fiskalną. Przed kontynuowaniem sprawdź papierowy paragon."
                     ),
                     "{name}/{state}: expected exact fiscal_job_conflict, got {result:?}"
                 );
@@ -241,7 +246,7 @@ fn queue_conflicts_follow_kind_allocation_state_and_paired_printer() -> TestResu
                     matches!(
                         &api.job(Uuid::from_u128(101)),
                         Err(ApiError::Status { status: 404, detail: Some(detail) })
-                            if detail == "fiscal_not_found"
+                            if detail == "Nie znaleziono rekordu fiskalnego."
                     ),
                     "{name}/{state}: refused queue must not create a job"
                 );
@@ -319,7 +324,7 @@ fn documents_exclude_only_the_jobs_that_make_each_document_ineligible() -> TestR
         ),
         ("other order sale", OTHER_ORDER, None, None, [false; 6]),
         (
-            "other order advance",
+            "other order sale before advance",
             OTHER_ORDER,
             None,
             Some(ALLOCATION_ID),
@@ -497,5 +502,321 @@ fn pairing_limits_guesses_without_consuming_a_valid_code() -> TestResult {
     ));
     let mut original = Api::new(server.url(), server.token(), "DEM0000000001")?;
     original.session(&telemetry())?;
+    // The request window can end before the code expires when guessing starts first.
+    let now = Instant::now();
+    for at in &mut super::locked(&server.state).pairing_attempts {
+        *at = now
+            .checked_sub(Duration::from_mins(15))
+            .ok_or("clock underflow")?;
+    }
+    assert_eq!(Api::pair(server.url(), "ABCD1234")?.printer_id, PRINTER_ID);
+    Ok(())
+}
+
+fn raw(
+    server: &Holuto,
+    method: &str,
+    path: &str,
+    number: Option<&[u8]>,
+    token: Option<&str>,
+    body: &Value,
+) -> Result<(u16, String, Value), Box<dyn StdError>> {
+    let mut stream = TcpStream::connect(server.url().trim_start_matches("http://"))?;
+    let body = serde_json::to_vec(body)?;
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+        body.len()
+    )?;
+    if let Some(number) = number {
+        stream.write_all(b"X-Device-Unique-Number: ")?;
+        stream.write_all(number)?;
+        stream.write_all(b"\r\n")?;
+    }
+    if let Some(token) = token {
+        write!(stream, "Authorization: Bearer {token}\r\n")?;
+    }
+    stream.write_all(b"\r\n")?;
+    stream.write_all(&body)?;
+    let mut response = String::new();
+    let _read = stream.read_to_string(&mut response)?;
+    let (headers, body) = response.split_once("\r\n\r\n").ok_or("missing HTTP body")?;
+    let status = headers
+        .split_whitespace()
+        .nth(1)
+        .ok_or("missing status")?
+        .parse()?;
+    Ok((status, headers.to_owned(), serde_json::from_str(body)?))
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_problems_have_localized_detail_and_problem_content_type() -> TestResult {
+    let server = Holuto::new();
+    let _api = api(&server)?;
+    let (status, headers, body) = raw(
+        &server,
+        "GET",
+        &format!("/agent/jobs/{}", Uuid::from_u128(999)),
+        Some(b"DEM0000000001"),
+        Some(server.token()),
+        &Value::Null,
+    )?;
+    assert_eq!(status, 404);
+    assert_eq!(body["code"], "fiscal_not_found");
+    assert_eq!(body["detail"], "Nie znaleziono rekordu fiskalnego.");
+    assert!(
+        headers
+            .to_ascii_lowercase()
+            .contains("content-type: application/problem+json")
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_unique_number_header_checks_precede_binding_and_token_checks() -> TestResult {
+    let server = Holuto::new();
+    for (number, token, status, code) in [
+        (None, None, 400, "fiscal_invalid_input"),
+        (Some(b"bad".as_slice()), None, 401, "unauthorized"),
+        (
+            Some(b"bad".as_slice()),
+            Some(server.token()),
+            400,
+            "validation_failed",
+        ),
+        (
+            Some(b"DEM0000000001".as_slice()),
+            Some(server.token()),
+            403,
+            "fiscal_unique_number_mismatch",
+        ),
+    ] {
+        let (actual, _, body) = raw(
+            &server,
+            "POST",
+            "/agent/heartbeat",
+            number,
+            token,
+            &Value::Null,
+        )?;
+        assert_eq!(actual, status, "{body}");
+        assert_eq!(body["code"], code);
+    }
+    let _api = api(&server)?;
+    let (status, _, body) = raw(
+        &server,
+        "POST",
+        "/agent/heartbeat",
+        Some(b"OTH0000000001"),
+        Some(server.token()),
+        &Value::Null,
+    )?;
+    assert_eq!(status, 403);
+    assert_eq!(body["code"], "fiscal_unique_number_mismatch");
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_session_rejects_duplicate_and_illegal_vat_letters_without_binding() -> TestResult {
+    for (rates, code) in [
+        (
+            json!([{"letter":"A","vatRate":"23"},{"letter":"A","vatRate":"23"}]),
+            "fiscal_printer_duplicate_vat_letter",
+        ),
+        (
+            json!([{"letter":"A","vatRate":"8"}]),
+            "fiscal_printer_vat_letter_illegal",
+        ),
+        (
+            json!([{"letter":"B","vatRate":"5"}]),
+            "fiscal_printer_vat_letter_illegal",
+        ),
+        (
+            json!([{"letter":"C","vatRate":"0"}]),
+            "fiscal_printer_vat_letter_illegal",
+        ),
+        (
+            json!([{"letter":"D","vatRate":"zw"}]),
+            "fiscal_printer_vat_letter_illegal",
+        ),
+        (
+            json!([{"letter":"E","vatRate":"23"}]),
+            "fiscal_printer_vat_letter_illegal",
+        ),
+    ] {
+        let server = Holuto::new();
+        let mut body = serde_json::to_value(telemetry())?;
+        body["vatRates"] = rates;
+        let (status, _, problem) = raw(
+            &server,
+            "POST",
+            "/agent/session",
+            None,
+            Some(server.token()),
+            &body,
+        )?;
+        assert_eq!(status, 400, "{problem}");
+        assert_eq!(problem["code"], "validation_failed");
+        assert_eq!(problem["errors"][0]["code"], code);
+        assert!(super::locked(&server.state).unique_number.is_none());
+    }
+    let server = Holuto::new();
+    let mut body = serde_json::to_value(telemetry())?;
+    body["vatRates"] = json!([
+        {"letter":"A","vatRate":"23"},{"letter":"B","vatRate":"8"},
+        {"letter":"C","vatRate":"5"},{"letter":"D","vatRate":"0"},
+        {"letter":"E","vatRate":"zw"},{"letter":"F","vatRate":"8"},{"letter":"G","vatRate":"23"}
+    ]);
+    assert_eq!(
+        raw(
+            &server,
+            "POST",
+            "/agent/session",
+            None,
+            Some(server.token()),
+            &body
+        )?
+        .0,
+        200
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_queue_rejects_allocation_kind_mismatch_without_creating_work() -> TestResult {
+    for (kind, allocation) in [("advance", Value::Null), ("sale", json!(ALLOCATION_ID))] {
+        let server = Holuto::new();
+        let api = api(&server)?;
+        let (status, _, body) = raw(
+            &server,
+            "POST",
+            "/agent/jobs",
+            Some(b"DEM0000000001"),
+            Some(server.token()),
+            &json!({"orderId":ORDER_ID,"kind":kind,"allocationId":allocation,"buyerNip":null}),
+        )?;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["code"], "validation_failed");
+        assert_eq!(body["errors"][0]["code"], "fiscal_receipt_allocation_kind");
+        assert!(api.take()?.is_none());
+        assert!(super::locked(&server.state).jobs.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_documents_validate_limit_and_default_to_fifty() -> TestResult {
+    let server = Holuto::new();
+    let _api = api(&server)?;
+    server.documents(
+        (1..=101)
+            .map(|id| document(Uuid::from_u128(id), None, "2026-10-16T10:00:00Z"))
+            .collect(),
+    );
+    for limit in ["0", "101", "-1", "1.5", "no", ""] {
+        let (status, ..) = raw(
+            &server,
+            "GET",
+            &format!("/agent/documents?limit={limit}"),
+            Some(b"DEM0000000001"),
+            Some(server.token()),
+            &Value::Null,
+        )?;
+        assert_eq!(status, 400, "limit={limit}");
+    }
+    for (query, count) in [("", 50), ("?limit=1", 1), ("?limit=100", 100)] {
+        let (status, _, body) = raw(
+            &server,
+            "GET",
+            &format!("/agent/documents{query}"),
+            Some(b"DEM0000000001"),
+            Some(server.token()),
+            &Value::Null,
+        )?;
+        assert_eq!(status, 200);
+        assert_eq!(
+            body["items"].as_array().ok_or("items missing")?.len(),
+            count
+        );
+        assert_eq!(
+            body["nextCursor"],
+            Uuid::from_u128(u128::try_from(count)?).to_string()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_result_normalizes_code_and_compares_replays_at_microsecond_precision() -> TestResult {
+    let server = Holuto::new();
+    server.insert(job_json());
+    let _api = api(&server)?;
+    let path = format!("/agent/jobs/{JOB_ID}/result");
+    let mut form = json!({
+        "attempt":super::ATTEMPT, "state":"done", "receiptNumber":"  ＡＢ  １２３\u{2003} ４ ",
+        "issuedAt":"2025-01-02T12:00:00.123456789Z", "result":null
+    });
+    let (status, _, body) = raw(
+        &server,
+        "POST",
+        &path,
+        Some(b"DEM0000000001"),
+        Some(server.token()),
+        &form,
+    )?;
+    assert_eq!(status, 200);
+    assert_eq!(body["receiptNumber"], "AB 123 4");
+    assert_eq!(server.job(JOB_ID)["receiptNumber"], "AB 123 4");
+    form["receiptNumber"] = json!("AB 123 4");
+    form["issuedAt"] = json!("2025-01-02T12:00:00.123456001Z");
+    assert_eq!(
+        raw(
+            &server,
+            "POST",
+            &path,
+            Some(b"DEM0000000001"),
+            Some(server.token()),
+            &form
+        )?
+        .0,
+        200
+    );
+    form["issuedAt"] = json!("2025-01-02T12:00:00.123457Z");
+    assert_eq!(
+        raw(
+            &server,
+            "POST",
+            &path,
+            Some(b"DEM0000000001"),
+            Some(server.token()),
+            &form
+        )?
+        .0,
+        409
+    );
     Ok(())
 }

@@ -236,13 +236,11 @@ truncated.
   (it expired while the app was down), the app keeps blocking and tells staff
   that nothing was printed, so they can resolve it as failed in the web app.
 - Certain post-send refusals are brand-specific: Posnet initial `trinit`
-  errors, report `ERR` frame rejections and documented pre-print report
-  refusals (zero daily report, monthly/periodic date validation); Novitus
-  initial `$h` refusal and daily-report keyboard cancellation (37); Elzab
-  transport rejection of the initial `LOR` only. Later receipt errors remain
-  **unknown**, including Elzab zero-close error 1008. No refusal permits
-  resending. An accepted Elzab `RRP` daily report is always **unknown**, even
-  if counters advance.
+  errors and report `ERR` frame rejections; Novitus initial `$h` refusal and
+  daily-report keyboard cancellation (37); Elzab transport rejection of the
+  initial `LOR` only. Later receipt errors remain **unknown**, including Elzab
+  zero-close error 1008. No refusal permits resending. An accepted Elzab
+  `RRP` daily report is always **unknown**, even if counters advance.
 - Interrupted reports also block. After inspecting the printout, use **Wyjaśnij
   raport** with the same printer connected and ready; an overdue daily report
   or read-only mode does not prevent resolution. Resolution prints nothing.

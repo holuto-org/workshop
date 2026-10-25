@@ -296,6 +296,7 @@ dependencies = [
  "elzab",
  "fiscal",
  "icu_normalizer",
+ "icu_properties",
  "jiff",
  "jsonschema",
  "known-folders",

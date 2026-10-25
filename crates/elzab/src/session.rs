@@ -59,7 +59,7 @@ impl Session {
         let raw = frame::encode(&id.to_string(), &text::encode_body(body)?)?;
         self.next_id += 1;
         self.poisoned = true;
-        let timeout = (timeout / self.scale).max(Duration::from_millis(1));
+        let timeout = self.timeout(timeout);
         let deadline = Instant::now() + timeout;
         self.port.write_all(&raw, timeout).map_err(Error::Io)?;
         let mut result = Vec::new();
@@ -136,6 +136,15 @@ impl Session {
         }
         self.poisoned = false;
         Ok(body)
+    }
+
+    /// Simulator scaling keeps a 100 ms floor so host scheduling cannot fake a printer timeout.
+    fn timeout(&self, duration: Duration) -> Duration {
+        if self.scale == 1 {
+            duration
+        } else {
+            (duration / self.scale).max(Duration::from_millis(100))
+        }
     }
 
     fn read_frame(&mut self, command: &'static str, timeout: Duration) -> Result<Vec<u8>, Error> {

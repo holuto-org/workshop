@@ -54,12 +54,12 @@ fn vendor_binding_round_trips_all_vendors_and_refuses_device_swaps() -> TestResu
         };
         assert!(matches!(api.session(&telemetry),
                 Err(ApiError::Status { status: 403, detail: Some(detail) })
-                    if detail == "fiscal_vendor_mismatch"));
+                    if detail == "Połącz drukarkę marki zapisanej dla tego parowania."));
         telemetry.vendor = vendor;
         telemetry.unique_number = "OTH0000000001".to_owned();
         assert!(matches!(api.session(&telemetry),
                 Err(ApiError::Status { status: 403, detail: Some(detail) })
-                    if detail == "fiscal_unique_number_mismatch"));
+                    if detail == "Ten token jest sparowany z inną fizyczną drukarką."));
     }
     Ok(())
 }
@@ -372,7 +372,12 @@ fn malformed_nullable_session_fields_and_foreign_unique_number_are_rejected() ->
     ] {
         let server = Holuto::new();
         let mut status = status_json();
-        status["printer"] = with(status["printer"].clone(), &changes);
+        if let Some(capabilities) = changes.get("capabilities") {
+            status["printer"]["capabilities"] =
+                with(status["printer"]["capabilities"].clone(), capabilities);
+        } else {
+            status["printer"] = with(status["printer"].clone(), &changes);
+        }
         server.fault(
             "POST",
             "/agent/session",

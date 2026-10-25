@@ -385,8 +385,9 @@ fn unsupported_model_reports_not_ready_without_rejected_telemetry_or_stop() {
         holuto.fault("POST", "/agent/session", problem(400));
         let (_temporary, dir) = state_dir();
         let dir = Arc::new(dir);
+        let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
         let (worker, events) = spawn(&sim, &holuto, &dir, Some(vendor));
-        let received = receive_until(&events, |event| {
+        let mut received = receive_until(&events, |event| {
             matches!(
                 event, Event::Status { text, .. } if text == &expected_notice
             )
@@ -396,8 +397,13 @@ fn unsupported_model_reports_not_ready_without_rejected_telemetry_or_stop() {
                 if !status.ready() && status.description() == reason
         )));
         assert_eq!(holuto.requests(), []);
+        received.extend(events.try_iter());
+        assert!(
+            !received.iter().any(|event| matches!(event, Event::Stopped)),
+            "an unsupported profile must wait for the operator, not stop"
+        );
         let stopped = stop(worker, &events);
-        assert!(matches!(stopped.last(), Some(Event::Stopped)));
+        assert!(matches!(stopped.as_slice(), [Event::Stopped]));
         assert_eq!(sim.receipts(), 0);
         assert_eq!(sim.reports(), 0);
     }

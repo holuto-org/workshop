@@ -238,8 +238,9 @@ fn unchanged_result_is_resent_after_rejection_before_commit_and_restart() -> Tes
     let mut first = agent(&sim, &dir, &server)?;
     assert!(
         matches!(first.step(), Err(Error::Api(_))),
-        "lost response leaves durable outbox"
+        "rejected result leaves durable outbox"
     );
+    assert_eq!(server.job(JOB_ID)["state"], "taken");
     let journal = stored(&dir)?;
     let first_form = journal.result_form().ok_or("no outbox result")?;
     drop(first);
@@ -251,6 +252,11 @@ fn unchanged_result_is_resent_after_rejection_before_commit_and_restart() -> Tes
         .filter(|request| request.path.ends_with("/result"))
         .collect();
     assert_eq!(
+        result_requests.len(),
+        2,
+        "recovery resends the rejected result"
+    );
+    assert_eq!(
         result_requests.first().ok_or("first result missing")?.body,
         serde_json::to_value(&first_form)?
     );
@@ -258,6 +264,7 @@ fn unchanged_result_is_resent_after_rejection_before_commit_and_restart() -> Tes
         result_requests.last().ok_or("replay missing")?.body,
         serde_json::to_value(&first_form)?
     );
+    assert_eq!(server.job(JOB_ID)["state"], "done");
     assert_eq!(
         sim.receipts().len(),
         1,
@@ -770,28 +777,30 @@ fn named_report_refusal_is_certain_and_does_not_block_following_work() -> TestRe
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn unready_printer_updates_telemetry_but_does_not_claim_a_job() -> TestResult {
+fn unready_printer_refreshes_status_without_reopening_session_or_claiming_a_job() -> TestResult {
     let sim = Simulator::start();
     let server = Holuto::new();
     let _id = server.enqueue(job_json());
     let (_temporary, dir) = state_dir();
     let mut agent = agent(&sim, &dir, &server)?;
+    let requests_before = server.requests().len();
     sim.set_paper(false);
     let _delay = agent.step()?;
     assert_eq!(server.job(JOB_ID)["state"], "queued");
     let requests = server.requests();
+    assert!(
+        agent.status().is_some_and(|status| !status.ready()),
+        "step refreshes the printer's paper-out status"
+    );
+    let requests = &requests[requests_before..];
     let heartbeat = requests
         .iter()
-        .find(|request| request.path == "/agent/session")
+        .find(|request| request.path == "/agent/heartbeat")
         .ok_or("missing heartbeat")?;
-    assert_eq!(heartbeat.body["uniqueNumber"], UNIQUE_NUMBER);
-    assert_eq!(
-        heartbeat.body["vatRates"],
-        json!([
-            {"letter": "A", "vatRate": "23"}, {"letter": "B", "vatRate": "8"},
-            {"letter": "C", "vatRate": "5"}, {"letter": "D", "vatRate": "0"},
-            {"letter": "E", "vatRate": "zw"}
-        ])
+    assert!(heartbeat.body.is_null());
+    assert!(
+        requests.iter().all(|request| request.path != "/agent/session"),
+        "paper-out leaves telemetry unchanged, so no new session is needed"
     );
     assert!(
         requests

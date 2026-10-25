@@ -178,6 +178,7 @@ proptest-state-machine = "0.9.0"
 tempfile = "3.27.0"
 # NFC as the backend applies to notes, for `agent::testing` only (already in the tree via url/idna).
 icu_normalizer = { version = "2.4.0", default-features = false, features = ["compiled_data"] }
+icu_properties = { version = "2.4.0", default-features = false, features = ["compiled_data"] }
 # Loopback Holuto fake for `agent::testing`, answered through the production ureq client.
 tiny_http = "0.12.0"
 

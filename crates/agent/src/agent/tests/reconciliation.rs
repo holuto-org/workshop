@@ -85,6 +85,18 @@ impl ReferenceStateMachine for Reconciliation {
         sample::select(transitions).boxed()
     }
 
+    fn preconditions(state: &Model, transition: &Transition) -> bool {
+        match transition {
+            Transition::Settle | Transition::NetworkFailure => true,
+            Transition::StaffDone | Transition::StaffFailed => state.remote == Remote::Unknown,
+            Transition::Acknowledge => {
+                matches!(state.evidence, Evidence::Printed | Evidence::Unnumbered)
+                    && matches!(state.remote, Remote::Failed | Remote::Expired)
+                    && !state.settled
+            },
+        }
+    }
+
     fn apply(mut state: Model, transition: &Transition) -> Model {
         match transition {
             Transition::StaffDone => state.remote = Remote::Done,
@@ -216,6 +228,43 @@ impl StateMachineTest for System {
         );
     }
 }
+
+#[test]
+fn reconciliation_preconditions_reject_transitions_invalidated_by_shrinking() {
+    for (evidence, remote, settled, staff_allowed, acknowledge_allowed) in [
+        (Evidence::Printed, Remote::Unknown, false, true, false),
+        (Evidence::Printed, Remote::Taken, false, false, false),
+        (Evidence::Printed, Remote::Done, false, false, false),
+        (Evidence::Printed, Remote::Failed, false, false, true),
+        (Evidence::Printed, Remote::Expired, false, false, true),
+        (Evidence::Unnumbered, Remote::Failed, false, false, true),
+        (Evidence::Unnumbered, Remote::Expired, false, false, true),
+        (Evidence::Printed, Remote::Failed, true, false, false),
+        (Evidence::Unnumbered, Remote::Expired, true, false, false),
+        (Evidence::NoDispatch, Remote::Failed, false, false, false),
+        (Evidence::Dispatching, Remote::Expired, false, false, false),
+    ] {
+        let state = Model {
+            evidence,
+            remote,
+            settled,
+        };
+        for (transition, allowed) in [
+            (Transition::Settle, true),
+            (Transition::NetworkFailure, true),
+            (Transition::StaffDone, staff_allowed),
+            (Transition::StaffFailed, staff_allowed),
+            (Transition::Acknowledge, acknowledge_allowed),
+        ] {
+            assert_eq!(
+                Reconciliation::preconditions(&state, &transition),
+                allowed,
+                "{state:?}, {transition:?}"
+            );
+        }
+    }
+}
+
 prop_state_machine! {
     #![proptest_config(Config {cases:32,..Config::default()})]
     #[test]

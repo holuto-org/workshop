@@ -38,9 +38,6 @@ const EXEMPT_BASIS_POINTS: u32 = 10_000;
 const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
 /// `ERR_RD_ZERO`: the printer refuses a second consecutive zero daily report before printing.
 const ZERO_DAILY_REPORT: u32 = 382;
-/// Monthly and periodic report date validation before printing (p. 441): `ERR_REP_PER_DATE_*`
-/// format, start after today, end before fiscalisation, and `ERR_REP_DATE_RANGE`.
-const REPORT_DATE_REFUSALS: [u32; 5] = [2042, 2043, 2045, 2046, 2050];
 /// Non-letter, non-digit characters the printer compares; a name with none of these, no
 /// letter and no digit equals an empty name (p. 430).
 const SIGNIFICANT_SYMBOLS: &str = ",./\\%";
@@ -230,16 +227,18 @@ fn refusal_is_certain(error: &Error, sent: &str) -> bool {
     // Only trend creates the receipt; preflight blocks any transaction left open by trinit.
     // Never reissue it. Reports create the record, so only an ERR rejection or a documented
     // pre-print refusal is certain (pp. 13–15, 441).
-    let Error::Device { code, rejected, .. } = error else {
-        return false;
-    };
     refuses(error, sent)
-        && match sent {
-            "trinit" => true,
-            "dailyrep" => *rejected || *code == ZERO_DAILY_REPORT,
-            "monthlyrep" | "periodicrepbydates" => *rejected || REPORT_DATE_REFUSALS.contains(code),
-            _ => false,
-        }
+        && (sent == "trinit"
+            || (matches!(sent, "dailyrep" | "monthlyrep" | "periodicrepbydates")
+                && matches!(error, Error::Device { rejected: true, .. }))
+            || (sent == "dailyrep"
+                && matches!(
+                    error,
+                    Error::Device {
+                        code: ZERO_DAILY_REPORT,
+                        ..
+                    }
+                )))
 }
 
 fn refuses(error: &Error, sent: &str) -> bool {

@@ -57,8 +57,8 @@ regression that fails without it.
 - **Daily/monthly/periodic reports**
   - Required guarantee: Exact dates/summary parameters; readiness (read-only
     still allows monthly/periodic) and same serial; report `ERR` frame
-    rejection or documented pre-print refusal naming the command is certain;
-    other execution-error/silent/wrong-command failures uncertain
+    rejection naming the command is certain; execution-error/silent/
+    wrong-command failures uncertain
   - Test shape: Fixed-clock snapshot + scenario per classification
 
 ## Shared fiscal values and native drivers

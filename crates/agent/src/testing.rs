@@ -1,6 +1,7 @@
 //! Stateful loopback `/agent` fake exercised through the production HTTP client.
 //!
 //! Customer fixtures are synthetic; request logs never retain authorization values.
+//! `tiny_http` rejects non-ASCII headers before routing; non-UTF-8 header errors are not modeled.
 
 #[cfg(test)]
 pub(crate) mod printers;
@@ -439,13 +440,58 @@ fn respond(request: Request, status: u16, body: &Value) {
     reason = "the static Content-Type header is valid ASCII"
 )]
 fn respond_bytes(request: Request, status: u16, body: Vec<u8>) {
+    let content_type = if status >= 400 {
+        "application/problem+json"
+    } else {
+        "application/json"
+    };
     let response = Response::from_data(body)
         .with_status_code(StatusCode(status))
-        .with_header(Header::from_bytes("Content-Type", "application/json").unwrap());
+        .with_header(Header::from_bytes("Content-Type", content_type).unwrap());
     let _sent = request.respond(response);
 }
 fn refused(status: u16, code: &str) -> (u16, Value) {
-    (status, problem(status, code, code))
+    (status, problem(status, code, problem_detail(code)))
+}
+
+fn problem_detail(code: &str) -> &'static str {
+    match code {
+        "unauthorized" => "Zaloguj się, aby kontynuować.",
+        "rate_limited" => "Zbyt wiele żądań. Spróbuj ponownie później.",
+        "validation_failed" => "Popraw nieprawidłowe pola żądania.",
+        "fiscal_not_found" => "Nie znaleziono rekordu fiskalnego.",
+        "fiscal_invalid_input" => "Sprawdź dane drukarki, dowód wydania paragonu i pola wyniku.",
+        "fiscal_pairing_invalid" => "Podaj prawidłowy kod parowania lub poproś kierownika o nowy.",
+        "fiscal_job_conflict" => {
+            "To zlecenie lub drukarka ma wystawiony paragon albo nierozstrzygniętą operację fiskalną. Przed kontynuowaniem sprawdź papierowy paragon."
+        },
+        "fiscal_unique_number_mismatch" => "Ten token jest sparowany z inną fizyczną drukarką.",
+        "fiscal_vendor_mismatch" => "Połącz drukarkę marki zapisanej dla tego parowania.",
+        "fiscal_printer_limits_unknown" => {
+            "Połącz drukarkę i odśwież jej możliwości przed zleceniem wydruku paragonu."
+        },
+        "fiscal_printer_advances_unsupported" => {
+            "Wybierz drukarkę obsługującą odliczanie zafiskalizowanych zaliczek przed zleceniem paragonu końcowego."
+        },
+        "fiscal_printer_zero_total_unsupported" => {
+            "Wybierz drukarkę obsługującą zamknięcie w pełni opłaconego paragonu końcowego z kwotą zerową."
+        },
+        "fiscal_printer_quantity_precision" => {
+            "Zmniejsz liczbę cyfr po przecinku w ilościach pozycji do limitu tej drukarki przed zleceniem paragonu."
+        },
+        "fiscal_printer_duplicate_vat_letter" => "Podaj każdą literę VAT drukarki tylko raz.",
+        "fiscal_printer_vat_letter_illegal" => {
+            "Podaj prawidłową stawkę VAT dla tej litery: A=23%, B=8%, C=5%, D=0%, E=zwolnienie."
+        },
+        "fiscal_unique_number_invalid" => {
+            "Podaj numer unikatowy pamięci fiskalnej: 3 wielkie litery i 10 cyfr."
+        },
+        "fiscal_receipt_allocation_kind" => {
+            "Wybierz przypisanie płatności tylko dla paragonu zaliczkowego."
+        },
+        "invalid_page_size" => "Rozmiar strony musi być liczbą całkowitą od 1 do 100.",
+        _ => "Podaj prawidłową wartość.",
+    }
 }
 
 fn invalid(pointer: &str, code: &str) -> (u16, Value) {
@@ -453,8 +499,8 @@ fn invalid(pointer: &str, code: &str) -> (u16, Value) {
         400,
         json!({
             "type": "about:blank", "title": "Holuto", "status": 400,
-            "code": "validation_failed", "detail": "Nieprawidłowe dane.",
-            "errors": [{"pointer": pointer, "code": code, "detail": code}]
+            "code": "validation_failed", "detail": problem_detail("validation_failed"),
+            "errors": [{"pointer": pointer, "code": code, "detail": problem_detail(code)}]
         }),
     )
 }
@@ -557,6 +603,13 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
     if let Some(page) = state.pages.get(&cursor) {
         return (200, page.clone());
     }
+    let limit = match url.query_pairs().find(|(name, _)| name == "limit") {
+        None => 50,
+        Some((_, value)) => match value.parse::<usize>() {
+            Ok(limit @ 1..=100) => limit,
+            _ => return invalid("#query/limit", "invalid_page_size"),
+        },
+    };
     let after = match cursor {
         None => None,
         Some(cursor) => {
@@ -575,12 +628,6 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
             Some(key)
         },
     };
-    let limit = url
-        .query_pairs()
-        .find(|(name, _)| name == "limit")
-        .and_then(|(_, value)| value.parse::<usize>().ok())
-        .unwrap_or(100)
-        .clamp(1, 100);
     // Advances sort before sales for the same order.
     let mut eligible: Vec<_> = state
         .documents
@@ -615,15 +662,38 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
     if request.path == "/agent/pair" && request.method == "POST" {
         return pair(state, request);
     }
+    let url = url::Url::parse(&format!("http://localhost{}", request.path)).unwrap();
+    let path = url.path();
+    if path != "/agent/session" && request.unique_number.is_none() {
+        return refused(400, "fiscal_invalid_input");
+    }
     if state.unauthorized || !request.authenticated {
         return refused(401, "unauthorized");
     }
-    let url = url::Url::parse(&format!("http://localhost{}", request.path)).unwrap();
-    let path = url.path();
     if path == "/agent/session" && request.method == "POST" {
         let Some(unique_number) = request.body["uniqueNumber"].as_str() else {
             return refused(400, "validation_failed");
         };
+        let rates = request.body["vatRates"].as_array().unwrap();
+        for (index, rate) in rates.iter().enumerate() {
+            if rates[..index]
+                .iter()
+                .any(|other| other["letter"] == rate["letter"])
+            {
+                return invalid("/vatRates", "fiscal_printer_duplicate_vat_letter");
+            }
+            let required = match rate["letter"].as_str().unwrap() {
+                "A" => Some("23"),
+                "B" => Some("8"),
+                "C" => Some("5"),
+                "D" => Some("0"),
+                "E" => Some("zw"),
+                _ => None,
+            };
+            if required.is_some_and(|required| rate["vatRate"] != required) {
+                return invalid("/vatRates", "fiscal_printer_vat_letter_illegal");
+            }
+        }
         if state
             .unique_number
             .as_deref()
@@ -651,6 +721,16 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
             status["printer"][name] = request.body[name].clone();
         }
         return (200, status);
+    }
+    if !request.unique_number.as_deref().is_some_and(|number| {
+        number.len() == 13
+            && number.as_bytes()[..3].iter().all(u8::is_ascii_uppercase)
+            && number.as_bytes()[3..].iter().all(u8::is_ascii_digit)
+    }) {
+        return invalid(
+            "#header/X-Device-Unique-Number",
+            "fiscal_unique_number_invalid",
+        );
     }
     if state.unique_number.as_deref() != request.unique_number.as_deref()
         || state.unique_number.is_none()
@@ -685,6 +765,9 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         return (204, Value::Null);
     }
     if path == "/agent/jobs" && request.method == "POST" {
+        if (request.body["kind"] == "advance") == request.body["allocationId"].is_null() {
+            return invalid("/allocationId", "fiscal_receipt_allocation_kind");
+        }
         if ["vendor", "capabilities"]
             .iter()
             .any(|field| state.telemetry[field].is_null())
@@ -753,12 +836,22 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
             if form["receiptNumber"].is_null() == done || form["issuedAt"].is_null() == done {
                 return refused(400, "validation_failed");
             }
-            if let Some(at) = form["issuedAt"].as_str()
-                && !at
-                    .parse::<Timestamp>()
-                    .is_ok_and(|at| at <= Timestamp::now())
-            {
-                return invalid("/issuedAt", "event_time_in_future");
+            if let Some(at) = form["issuedAt"].as_str() {
+                let at = at.parse::<Timestamp>().unwrap();
+                let at = Timestamp::from_microsecond(at.as_microsecond()).unwrap();
+                if at > Timestamp::now() {
+                    return invalid("/issuedAt", "event_time_in_future");
+                }
+                form["issuedAt"] = json!(at);
+            }
+            if let Some(number) = form["receiptNumber"].as_str() {
+                form["receiptNumber"] = json!(
+                    ComposingNormalizerBorrowed::new_nfkc()
+                        .normalize(number)
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
             }
             if let Some(note) = form["result"].as_str() {
                 let multiline = note

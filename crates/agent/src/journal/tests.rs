@@ -11,7 +11,10 @@ use uuid::Uuid;
 use super::{
     Device, JobResult, Journal, Operation, ReceiptOperation, ReportOperation, Settlement, Summary,
 };
-use crate::{api::model::JobState, store::StateDir};
+use crate::{
+    api::model::{JobState, Outcome},
+    store::StateDir,
+};
 
 type TestResult = Result<(), Box<dyn StdError>>;
 
@@ -242,6 +245,20 @@ fn persisted_result_notes_keep_polish_text_but_never_backend_forbidden_controls(
         ("a\u{0}b\r\nc\td".to_owned(), "ab\nc\td".to_owned()),
         (" \u{7} ".to_owned(), "Brak opisu błędu.".to_owned()),
         ("ż".repeat(2001), "ż".repeat(2000)),
+        (
+            " a\u{ad}\u{34f}\u{61c}\u{200b}\u{200e}\u{200f}\u{202a}\u{202e}\
+             \u{2060}\u{feff}\u{fdd0}\u{ffff}\u{10ffff}b "
+                .to_owned(),
+            "ab".to_owned(),
+        ),
+        (
+            "Zażo\u{301}łć\u{2028}gęślą\u{2029}jaźń".to_owned(),
+            "Zażółć\ngęślą\njaźń".to_owned(),
+        ),
+        (
+            "a\u{200c}\u{200d}\u{fe0f}\u{e0100}\u{e0020}\u{e007f}👍🏻b".to_owned(),
+            "a\u{200c}\u{200d}\u{fe0f}\u{e0100}\u{e0020}\u{e007f}👍🏻b".to_owned(),
+        ),
     ] {
         for (result, expected) in [
             (
@@ -277,13 +294,140 @@ fn persisted_result_notes_keep_polish_text_but_never_backend_forbidden_controls(
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
+    reason = "Assertions prove canonical API evidence and unchanged raw printer evidence."
+)]
+fn journaled_done_sends_a_canonical_receipt_number() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let journal = Journal::new(&dir);
+    for (raw, canonical) in [
+        (" 12\u{a0}34 ", "12 34"),
+        ("１２３／２０２６", "123/2026"),
+        (" A\u{2003}\u{2003}B ", "A B"),
+        ("12\u{200b}34", "12\u{200b}34"),
+    ] {
+        let device = Device::Completed {
+            receipt_number: Some(raw.to_owned()),
+        };
+        journal.save(&Operation::Receipt(ReceiptOperation {
+            result: Some(JobResult::Done {
+                receipt_number: raw.to_owned(),
+            }),
+            ..receipt(device.clone())?
+        }))?;
+        let Some(Operation::Receipt(restored)) = journal.load()? else {
+            return Err("missing receipt journal".into());
+        };
+        let form = restored.result_form().ok_or("missing result")?;
+        assert_eq!(form.state, Outcome::Done);
+        assert_eq!(form.receipt_number.as_deref(), Some(canonical));
+        assert_eq!(form.issued_at, Some(restored.issued_at));
+        assert_eq!(form.result, None);
+        assert_eq!(
+            restored.device, device,
+            "raw fiscal evidence must remain intact"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn new_completion_results_normalize_receipt_numbers() {
+    for (raw, canonical) in [
+        (" １２\u{a0}34 ".to_owned(), "12 34".to_owned()),
+        ("1".repeat(64), "1".repeat(64)),
+    ] {
+        assert_eq!(
+            JobResult::done(Some(raw), "Brak numeru."),
+            JobResult::Done {
+                receipt_number: canonical
+            }
+        );
+    }
+}
+
+#[test]
+fn new_completion_results_require_staff_for_unusable_receipt_numbers() {
+    assert_eq!(
+        JobResult::done(None, "Brak numeru."),
+        JobResult::Unknown {
+            reason: "Brak numeru.".to_owned()
+        }
+    );
+    for raw in [
+        String::new(),
+        " ".to_owned(),
+        "1".repeat(65),
+        "\u{fb03}".repeat(22),
+        "12\u{200b}34".to_owned(),
+        "12\u{0}34".to_owned(),
+        "12\n34".to_owned(),
+        "12\u{2028}34".to_owned(),
+    ] {
+        assert_eq!(
+            JobResult::done(Some(raw), "Brak numeru."),
+            JobResult::Unknown {
+                reason: "Nieprawidłowy numer wydrukowanego paragonu. Uzupełnij numer w Holuto."
+                    .to_owned()
+            }
+        );
+    }
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
     reason = "Assertions prove invalid journals block and stay untouched."
 )]
 fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
     let temporary = tempfile::tempdir()?;
     let dir = StateDir::open(temporary.path().join("state"))?;
     let receipt = include_str!("fixtures/receipt-dispatching.json");
-    let report = include_str!("fixtures/report-dispatching.json");
+    let mut cases = Vec::new();
+    for (fixture, pointer, key, replacement) in [
+        (receipt, "/receipt", "summary", None),
+        (receipt, "/receipt", "result", None),
+        (receipt, "/receipt", "settled", None),
+        (
+            include_str!("fixtures/receipt-completed-unnumbered.json"),
+            "/receipt/device/completed",
+            "receipt_number",
+            None,
+        ),
+        (
+            include_str!("fixtures/report-dispatching.json"),
+            "/report",
+            "acknowledged_at",
+            None,
+        ),
+        (
+            include_str!("fixtures/report-dispatching.json"),
+            "/report",
+            "extra",
+            Some(serde_json::Value::Bool(true)),
+        ),
+        (
+            include_str!("fixtures/report-dispatching.json"),
+            "/report/report",
+            "extra",
+            Some(serde_json::Value::Bool(true)),
+        ),
+    ] {
+        let mut json: serde_json::Value = serde_json::from_str(fixture)?;
+        let object = json
+            .pointer_mut(pointer)
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("fixture object missing")?;
+        if let Some(value) = replacement {
+            assert_eq!(object.insert(key.to_owned(), value), None);
+        } else {
+            assert!(
+                object.remove(key).is_some(),
+                "mutation must remove {pointer}/{key}"
+            );
+        }
+        cases.push(serde_json::to_string(&json)?);
+    }
     for text in [
         receipt.replace("\"vendor\": \"posnet\"", "\"vendor\": null"),
         receipt.replace("\"vendor\": \"posnet\"", "\"vendor\": \"unknown\""),
@@ -297,10 +441,11 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
             "    \"settled\": null, \"settled\": null\n",
         ),
         receipt.replace("\"stage\": \"trline\"", "\"stage\": false"),
-        report.replace("    \"acknowledged_at\": null\n", ""),
-        report.replace("\"report\": {", "\"report\": {\"extra\": true,"),
         "{".to_owned(),
-    ] {
+    ]
+    .into_iter()
+    .chain(cases)
+    {
         fs::write(dir.file("operation.json"), &text)?;
         assert!(
             matches!(Journal::new(&dir).load(), Err(crate::Error::Blocked(_))),

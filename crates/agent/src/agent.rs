@@ -735,10 +735,7 @@ impl DeviceJournal for ReportDispatch<'_> {
 
 /// An unreadable receipt number stays UNKNOWN until staff supply it.
 fn done(receipt_number: Option<String>) -> JobResult {
-    receipt_number.map_or_else(
-        || JobResult::unknown(UNNUMBERED),
-        |receipt_number| JobResult::Done { receipt_number },
-    )
+    JobResult::done(receipt_number, UNNUMBERED)
 }
 
 fn quantity(text: &str) -> Result<Quantity, String> {

@@ -888,47 +888,6 @@ fn a_refused_zero_daily_report_is_certain_and_other_report_codes_stay_uncertain(
 }
 
 #[test]
-fn date_refused_monthly_and_periodic_reports_are_certain_and_never_resent() {
-    for (command, report) in [
-        (
-            "monthlyrep",
-            Report::Monthly {
-                year: 2026,
-                month: 6,
-            },
-        ),
-        (
-            "periodicrepbydates",
-            Report::Periodic {
-                from: date(2026, 6, 1),
-                to: date(2026, 6, 30),
-                summary: false,
-            },
-        ),
-    ] {
-        for code in [2042, 2043, 2045, 2046, 2050] {
-            let sim = simulator();
-            sim.fault(command, Fault::Refused(code));
-            let mut journal = Recorder::default();
-            let error = printer(&sim)
-                .print_report(report, UNIQUE_NUMBER, &mut journal)
-                .unwrap_err();
-            assert!(
-                matches!(
-                    &error,
-                    Error::Device { code: refused, command: named, rejected: false, .. }
-                        if *refused == code && named == command
-                ),
-                "{command} {code}: {error:?}"
-            );
-            assert_eq!(journal.stages, [command]);
-            assert_eq!(fiscal_commands(&sim), [command], "never resent");
-            assert_eq!(sim.reports(), vec![]);
-        }
-    }
-}
-
-#[test]
 fn a_read_only_printer_prints_monthly_and_periodic_reports_but_no_sales_or_daily_report() {
     let sim = simulator();
     sim.set_status("td", "1");

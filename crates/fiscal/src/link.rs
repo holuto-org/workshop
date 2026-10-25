@@ -41,7 +41,7 @@ pub struct Candidate {
     pub hint: Option<Vendor>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Connection {
     pub port: String,
     pub baud_rate: u32,

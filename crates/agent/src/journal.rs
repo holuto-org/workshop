@@ -1,5 +1,8 @@
 //! Persisted before each printer command and retained until settlement.
 //! An unreadable journal blocks printing.
+//!
+//! Nullable keys are required: every journal version has written them explicitly.
+//! API text is canonicalized without replacing the raw completed-device evidence.
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,6 +16,13 @@ use fiscal::{
     report::Report,
 };
 use icu_normalizer::ComposingNormalizerBorrowed;
+use icu_properties::{
+    CodePointSetData,
+    props::{
+        DefaultIgnorableCodePoint, EmojiComponent, JoinControl, NoncharacterCodePoint,
+        VariationSelector,
+    },
+};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -42,7 +52,10 @@ pub(crate) enum Device {
     /// Command may have reached the printer; outcome unknown.
     Dispatching { stage: String },
     /// All commands succeeded; the counter may be unreadable.
-    Completed { receipt_number: Option<String> },
+    Completed {
+        #[serde(deserialize_with = "Option::deserialize")]
+        receipt_number: Option<String>,
+    },
 }
 
 impl fmt::Debug for Device {
@@ -69,9 +82,12 @@ pub(crate) struct ReceiptOperation {
     #[serde(alias = "device_serial")]
     pub(crate) device_unique_number: String,
     pub(crate) device: Device,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub(crate) summary: Option<Summary>,
     /// Persisted before sending; resent unchanged until accepted.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub(crate) result: Option<JobResult>,
+    #[serde(deserialize_with = "Option::deserialize")]
     pub(crate) settled: Option<Settlement>,
 }
 
@@ -125,6 +141,20 @@ impl fmt::Debug for JobResult {
 }
 
 impl JobResult {
+    pub(crate) fn done(receipt_number: Option<String>, unnumbered: &str) -> Self {
+        let Some(raw) = receipt_number else {
+            return Self::unknown(unnumbered);
+        };
+        receipt_code(&raw).map_or_else(
+            || {
+                Self::unknown(
+                    "Nieprawidłowy numer wydrukowanego paragonu. Uzupełnij numer w Holuto.",
+                )
+            },
+            |receipt_number| Self::Done { receipt_number },
+        )
+    }
+
     pub(crate) fn failed(reason: &str) -> Self {
         Self::Failed {
             reason: note(reason),
@@ -164,16 +194,20 @@ pub(crate) struct ReportOperation {
     pub(crate) started_at: Timestamp,
     pub(crate) device: Device,
     /// Operator-confirmed printout on the same ready device.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub(crate) acknowledged_at: Option<Timestamp>,
 }
 
 impl ReceiptOperation {
     pub(crate) fn result_form(&self) -> Option<ResultForm> {
         let result = self.result.as_ref()?;
+        // Never downgrade a legacy stored Done: rejected evidence goes to staff resolution.
         let (receipt_number, issued_at, reason) = match result {
-            JobResult::Done { receipt_number } => {
-                (Some(receipt_number.clone()), Some(self.issued_at), None)
-            },
+            JobResult::Done { receipt_number } => (
+                Some(receipt_code(receipt_number).unwrap_or_else(|| receipt_number.clone())),
+                Some(self.issued_at),
+                None,
+            ),
             JobResult::Failed { reason } | JobResult::Unknown { reason } => {
                 (None, None, Some(reason.clone()))
             },
@@ -280,6 +314,39 @@ impl<'dir> Journal<'dir> {
     }
 }
 
+/// API `Code` rules; raw printer evidence remains in `Device::Completed`.
+fn receipt_code(raw: &str) -> Option<String> {
+    const MAX_LENGTH: usize = 64;
+    if raw.chars().nth(MAX_LENGTH).is_some() {
+        return None;
+    }
+    let normalized = ComposingNormalizerBorrowed::new_nfkc().normalize(raw);
+    if normalized.contains(['\u{2028}', '\u{2029}']) {
+        return None;
+    }
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() || trimmed.chars().any(|c| c.is_control() || invisible(c)) {
+        return None;
+    }
+    let mut code = String::with_capacity(trimmed.len());
+    for word in trimmed.split_whitespace() {
+        if !code.is_empty() {
+            code.push(' ');
+        }
+        code.push_str(word);
+    }
+    (code.chars().nth(MAX_LENGTH).is_none()).then_some(code)
+}
+
+/// RFC 8264 ignorable properties, preserving joining scripts and emoji.
+fn invisible(c: char) -> bool {
+    (CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(c)
+        || CodePointSetData::new::<NoncharacterCodePoint>().contains(c))
+        && !CodePointSetData::new::<JoinControl>().contains(c)
+        && !CodePointSetData::new::<VariationSelector>().contains(c)
+        && !CodePointSetData::new::<EmojiComponent>().contains(c)
+}
+
 /// API `Note` rules: NFC, trimmed, bounded multiline text.
 fn note(reason: &str) -> String {
     let cleaned: String = reason
@@ -288,7 +355,9 @@ fn note(reason: &str) -> String {
             '\u{2028}' | '\u{2029}' => '\n',
             other => other,
         })
-        .filter(|character| !character.is_control() || matches!(character, '\t' | '\n'))
+        .filter(|character| {
+            (!character.is_control() || matches!(character, '\t' | '\n')) && !invisible(*character)
+        })
         .take(MAX_REASON_LENGTH)
         .collect();
     let mut cleaned = match ComposingNormalizerBorrowed::new_nfc().normalize(&cleaned) {

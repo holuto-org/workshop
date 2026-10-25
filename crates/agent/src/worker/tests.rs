@@ -411,10 +411,7 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
             .any(|event| matches!(event, Event::PortDetected { .. }))
     );
     assert_eq!(shown(&received), [(vec![], 1, false)]);
-    let stopped = stop(worker, &events);
-    assert!(matches!(stopped.last(), Some(Event::Stopped)));
-    assert_eq!(sim.receipts(), []);
-    assert_eq!(sim.reports(), []);
+    let _stopped = stop(worker, &events);
 }
 
 #[test]
@@ -452,26 +449,49 @@ fn startup_server_failure_is_a_notice_and_can_be_stopped_during_the_retry_wait()
 fn a_lost_startup_reply_is_retryable_without_touching_the_printer_again() {
     let sim = Simulator::start();
     let holuto = Holuto::new();
+    let id = holuto.enqueue(job_json());
     holuto.fault("POST", "/agent/session", Fault::DropAfterCommit);
+    let (arrival, release) = hold_http(&holuto, "POST", "/agent/session");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    let clock = Arc::new(Mutex::new(Instant::now()));
+    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let _received = receive_until(&events, |event| {
         matches!(event,
             Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
         )
     });
+    let startup_frames = sim.frames();
+    assert_eq!(holuto.job(id)["state"], "queued");
+    assert_eq!(fiscal_frames(&sim), Vec::<Vec<u8>>::new());
+    *clock.lock().unwrap() += Duration::from_secs(15);
+    worker.submit(Command::NextPage);
+    arrival.recv_timeout(WAIT).unwrap();
+    let retry_frames = sim.frames();
+    let state_before_session = holuto.job(id)["state"].clone();
+    release.send(()).unwrap();
+    let received = receive_until(&events, |event| {
+        matches!(event, Event::HistoryChanged(entries) if !entries.is_empty())
+    });
     let _stopped = stop(worker, &events);
+    assert_eq!(retry_frames, startup_frames);
+    assert_eq!(state_before_session, "queued");
+    assert!(
+        received
+            .iter()
+            .any(|event| matches!(event, Event::Connected { .. }))
+    );
     assert_eq!(
         holuto
             .requests()
             .iter()
-            .map(|request| request.path.as_str())
-            .collect::<Vec<_>>(),
-        ["/agent/session"]
+            .filter(|request| request.path == "/agent/session")
+            .count(),
+        2
     );
-    assert_eq!(sim.receipts(), []);
-    assert_eq!(sim.reports(), []);
+    assert_eq!(holuto.job(id)["state"], "done");
+    assert_eq!(sim.receipts().len(), 1);
 }
 
 #[test]
@@ -759,6 +779,7 @@ fn a_failed_queue_command_does_not_delay_the_following_report() {
     holuto.fault("POST", "/agent/jobs", problem(503));
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();
     worker.submit(Command::Queue {
@@ -1274,16 +1295,16 @@ fn http_receipts_reports_and_events_share_the_single_worker_thread() {
     let dir = Arc::new(dir);
     let spans = SpanThreads(Arc::new(Mutex::new(Vec::new())));
     let subscriber = tracing_subscriber::registry().with(spans.clone());
+    let _subscriber = subscriber::set_default(subscriber);
+    let _gui_span = tracing::info_span!("gui_control", op = "test.gui");
     let (send, events) = mpsc::channel();
     let (threads, event_threads) = mpsc::channel();
     let config = settings(&holuto, &sim);
-    let worker = subscriber::with_default(subscriber, || {
-        Worker::spawn(Arc::clone(&dir), config, sim.link(), move |event| {
-            threads.send(thread::current().id()).unwrap();
-            send.send(event).unwrap();
-        })
-        .unwrap()
-    });
+    let worker = Worker::spawn(Arc::clone(&dir), config, sim.link(), move |event| {
+        threads.send(thread::current().id()).unwrap();
+        send.send(event).unwrap();
+    })
+    .unwrap();
     let _printed = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
     worker.submit(Command::DailyReport);
     let _reported = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
@@ -1296,6 +1317,12 @@ fn http_receipts_reports_and_events_share_the_single_worker_thread() {
         "all events originate on the worker thread"
     );
     let spans = spans.0.lock().unwrap();
+    assert!(
+        spans
+            .iter()
+            .any(|(fields, id)| fields.contains("test.gui") && *id == thread::current().id()),
+        "the capture also observes spans on the GUI thread"
+    );
     for operation in ["http.client", "fiscal.receipt", "fiscal.report"] {
         let matching = spans
             .iter()

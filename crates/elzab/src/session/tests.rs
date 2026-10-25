@@ -1,5 +1,7 @@
 use super::*;
 use crate::simulator::{Fault, Simulator};
+use fiscal::link::Candidate;
+use std::sync::{Arc, Mutex, PoisonError};
 fn open(sim: &Simulator) -> Session {
     Session::open(
         sim.link().as_ref(),
@@ -161,4 +163,77 @@ fn a_declared_multipart_total_is_preserved_until_its_final_frame() {
         "\x1dBABCDEF"
     );
     assert_eq!(sim.frames().len(), 1);
+}
+
+/// The real simulator behind a chosen time scale, recording each write's deadline.
+#[derive(Debug)]
+struct Recording {
+    inner: Arc<dyn Link>,
+    scale: u32,
+    deadlines: Arc<Mutex<Vec<Duration>>>,
+}
+impl Link for Recording {
+    fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, Error> {
+        Ok(Box::new(RecordingPort {
+            inner: self.inner.open(port, baud_rate)?,
+            deadlines: Arc::clone(&self.deadlines),
+        }))
+    }
+
+    fn candidates(&self) -> Vec<Candidate> {
+        self.inner.candidates()
+    }
+
+    fn time_scale(&self) -> u32 {
+        self.scale
+    }
+}
+struct RecordingPort {
+    inner: Box<dyn Port>,
+    deadlines: Arc<Mutex<Vec<Duration>>>,
+}
+impl Port for RecordingPort {
+    fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
+        self.deadlines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(timeout);
+        self.inner.write_all(bytes, timeout)
+    }
+
+    fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
+        self.inner.read(buffer, timeout)
+    }
+}
+
+#[test]
+fn scaled_deadlines_keep_a_scheduling_margin_and_real_links_keep_the_exact_one() {
+    // A 3 ms query deadline expires whenever a loaded test host deschedules the thread.
+    for (scale, deadline) in [
+        (1000, Duration::from_millis(100)),
+        (1, Duration::from_secs(3)),
+    ] {
+        let sim = Simulator::start();
+        let deadlines = Arc::new(Mutex::new(Vec::new()));
+        let link = Recording {
+            inner: sim.link(),
+            scale,
+            deadlines: Arc::clone(&deadlines),
+        };
+        let mut session = Session::open(
+            &link,
+            &Connection {
+                port: sim.address().to_owned(),
+                baud_rate: 9600,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            session
+                .command("FNR", "FNR", Duration::from_secs(3))
+                .unwrap(),
+            "\x1dBABC1234567890"
+        );
+        assert_eq!(*deadlines.lock().unwrap(), [deadline], "scale {scale}");
+    }
 }
