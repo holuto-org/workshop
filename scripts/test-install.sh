@@ -9,7 +9,7 @@ mkdir -p "$work/bin" "$work/home"
 export FIXTURE_LOG="$work/calls" FIXTURE_OS=Darwin FIXTURE_ARCH=x86_64
 export FIXTURE_MAC=11.0 FIXTURE_ARM=0 FIXTURE_GLIBC='glibc 2.39'
 export FIXTURE_DOWNLOAD=forbidden FIXTURE_MANIFEST=bad FIXTURE_GH=0
-export FIXTURE_RUNNING=none
+export FIXTURE_RUNNING=none FIXTURE_MOUNT=forbidden
 FIXTURE_REAL_UNAME=$(command -v uname)
 export FIXTURE_REAL_HASH
 FIXTURE_REAL_HASH=$(command -v sha256sum || command -v shasum)
@@ -59,7 +59,14 @@ case $name in
       *) exit 94 ;;
     esac ;;
   gh) printf 'gh %s\n' "$*" >> "$FIXTURE_LOG"; exit "$FIXTURE_GH" ;;
-  apt|sudo|hdiutil|ditto|open|xattr)
+  xattr|hdiutil)
+    if [[ $FIXTURE_MOUNT == forbidden ]]; then
+      printf 'FORBIDDEN %s %s\n' "$name" "$*" >> "$FIXTURE_LOG"; exit 95
+    fi
+    printf '%s %s\n' "$name" "$*" >> "$FIXTURE_LOG"
+    # Mounting fails (e.g. blocked by device policy), so detaching has nothing to detach.
+    [[ $name == xattr ]] || exit 1 ;;
+  apt|sudo|ditto|open)
     printf 'FORBIDDEN %s %s\n' "$name" "$*" >> "$FIXTURE_LOG"; exit 95 ;;
   *) exit 96 ;;
 esac
@@ -198,6 +205,20 @@ if ((EUID != 0)); then
       grep -F -- '--repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml' "$FIXTURE_LOG" >/dev/null || fail 'missing workflow-bound attestation verification'
     fi
   done
+  # A verified image is quarantined before mounting; a failed mount is reported
+  # as such, never as a detach failure, and leaves no downloaded artifact behind.
+  FIXTURE_GH=0 FIXTURE_MOUNT=fail
+  run --release v1.2.3
+  [[ $status != 0 ]] || fail 'accepted a failed mount'
+  contains 'Could not mount the verified disk image'
+  ! grep -F 'Could not detach' "$work/output" >/dev/null || fail 'reported a detach for an image that was never mounted'
+  ! grep -F 'hdiutil detach' "$FIXTURE_LOG" >/dev/null || fail 'detached an image that was never mounted'
+  grep -E '^xattr -w com\.apple\.quarantine 0081;[0-9a-f]+;curl; /tmp/workshop-install\.[^ ]+/workshop-mac-x64\.dmg$' "$FIXTURE_LOG" >/dev/null ||
+    fail 'downloaded image was not quarantined'
+  [[ $(grep -E '^(xattr|hdiutil) ' "$FIXTURE_LOG" | cut -d' ' -f1) == $'xattr\nhdiutil' ]] || fail 'image was mounted before it was quarantined'
+  attached=$(grep '^hdiutil attach ' "$FIXTURE_LOG")
+  [[ ! -e ${attached##* } ]] || fail 'left the downloaded image behind after a failed mount'
+  FIXTURE_MOUNT=forbidden
 else
   printf 'Root runner: full-mode verification fixtures need an unprivileged CI user.\n'
 fi

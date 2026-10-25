@@ -19,7 +19,7 @@ use table::{Sort, Table};
 use crate::ui::{Action, AppWindow};
 
 /// Must match `AppWindow`'s tab order.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub(crate) enum Tab {
     Documents,
     Reports,
@@ -48,7 +48,6 @@ impl Tab {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct Confirmation {
     command: Command,
     title: String,

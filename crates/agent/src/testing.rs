@@ -91,7 +91,6 @@ pub struct RequestLog {
     pub app_version: Option<String>,
     pub language: Option<String>,
     pub sentry_trace: Option<String>,
-    pub baggage: Option<String>,
     pub trace_headers: Vec<(String, String)>,
 }
 
@@ -361,7 +360,6 @@ fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
         app_version: header(&request, "App-Version"),
         language: header(&request, "Accept-Language"),
         sentry_trace: header(&request, "sentry-trace"),
-        baggage: header(&request, "baggage"),
         trace_headers: request
             .headers()
             .iter()

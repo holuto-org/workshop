@@ -235,12 +235,14 @@ bash ./install.sh --release vMAJOR.MINOR.PATCH --dry-run
 bash ./install.sh --release vMAJOR.MINOR.PATCH
 ```
 
-The script mounts the verified `.dmg` read-only with `hdiutil`, copies the
-complete bundle with `ditto` to **`~/Applications/Holuto Workshop.app`**,
-detaches the image and links `Contents/MacOS/workshop` to
-**`~/.local/bin/workshop`**. No sudo or shell profile edits. If `~/.local/bin`
-is not on PATH, use the absolute CLI path for this session; ask before changing
-any shell configuration. Do not overwrite an unrelated `workshop` command.
+The script quarantines the verified `.dmg` like a browser download (`curl`
+does not), mounts it read-only with `hdiutil`, copies the complete bundle with
+`ditto` to **`~/Applications/Holuto Workshop.app`**, detaches the image and
+links `Contents/MacOS/workshop` to **`~/.local/bin/workshop`**. The app and its
+CLI therefore pass Gatekeeper's first-launch check below. No sudo or shell
+profile edits. If `~/.local/bin` is not on PATH, use the absolute CLI path for
+this session; ask before changing any shell configuration. Do not overwrite an
+unrelated `workshop` command.
 
 Manual path: verify the `.dmg`, open it in Finder, copy **Holuto Workshop.app**
 to your **home Applications folder**, then eject it. The CLI can be invoked
@@ -475,4 +477,3 @@ changes; redacted configuration/check result; pairing success/failure (never
 code/token); autostart choice; launch outcome; remaining human steps. If
 chat-only, say **manual steps provided, not installed**. Never claim printer
 testing or configuration proves a fiscal operation succeeded.
-

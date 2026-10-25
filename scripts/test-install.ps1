@@ -63,8 +63,9 @@ Assert-True ($output.Contains('/download/v1.2.3/workshop-win-x64.exe')) 'Latest 
 Assert-True ([Environment]::GetEnvironmentVariable('Path', 'User') -ceq $userPathBefore) 'Dry-run changed user PATH'
 Assert-True ([Environment]::GetEnvironmentVariable('Path', 'Process') -ceq $processPathBefore) 'Dry-run changed process PATH'
 
-foreach ($release in @('', 'latest', '1.2.3', 'V1.2.3', 'v1.2', 'v01.2.3', 'v1.02.3', 'v1.2.03', 'v1.2.3/other', 'v1.2.3?x=1', 'v1.2.3-rc1', "v1.2.3`n")) {
-    Assert-Throws { & $installer -Release $release -DryRun } 'Release|pattern|validate'
+# Not $release: dot-sourcing left the validated $Release parameter in this scope, and names ignore case.
+foreach ($candidate in @('', 'latest', '1.2.3', 'V1.2.3', 'v1.2', 'v01.2.3', 'v1.02.3', 'v1.2.03', 'v1.2.3/other', 'v1.2.3?x=1', 'v1.2.3-rc1', "v1.2.3`n")) {
+    Assert-Throws { & $installer -Release $candidate -DryRun } 'Release|pattern|validate'
 }
 Assert-Throws { & $installer -UnknownOption -DryRun } 'parameter|argument'
 Assert-Throws { & $installer 'v1.2.3' -DryRun } 'positional|parameter|argument'
@@ -136,6 +137,49 @@ $existing = 'C:\Tools;"c:\USERS\alice\AppData\Local\Programs\HOLUTO WORKSHOP\";C
 Assert-True ((Get-HolutoPathWithDirectory -Path $existing -Directory $directory) -ceq $existing) 'Equivalent PATH directory was duplicated'
 $once = Get-HolutoPathWithDirectory -Path 'C:\Tools' -Directory $directory
 Assert-True ((Get-HolutoPathWithDirectory -Path $once -Directory $directory) -ceq 'C:\Tools;C:\Users\Alice\AppData\Local\Programs\Holuto Workshop') 'Repeated PATH update was not idempotent'
+
+# Downgrades and installed versions that cannot be compared are refused, as in install.sh.
+Assert-HolutoNotDowngrade -InstalledVersion '1.2.3' -Release 'v1.2.3'
+Assert-HolutoNotDowngrade -InstalledVersion '1.2.9' -Release 'v1.10.0'
+Assert-Throws { Assert-HolutoNotDowngrade -InstalledVersion '1.10.0' -Release 'v1.9.9' } 'newer.*downgrades'
+foreach ($installed in @($null, '', '1.2', '1.2.3.0', 'v1.2.3', '1.2.3-beta')) {
+    Assert-Throws { Assert-HolutoNotDowngrade -InstalledVersion $installed -Release 'v1.2.3' } 'Cannot read the installed version'
+}
+
+if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+    # Windows PowerShell 5.1 must write the zone stream too; .NET Framework rejects "file:stream" paths.
+    $zoneUrl = 'https://github.com/holuto-org/workshop/releases/download/v1.2.3/workshop-win-x64.exe'
+    $zoneFile = Join-Path ([IO.Path]::GetTempPath()) ('holuto-zone-test-' + [Guid]::NewGuid().ToString('N') + '.exe')
+    [IO.File]::WriteAllText($zoneFile, 'fixture')
+    try {
+        Set-HolutoInternetZone -Path $zoneFile -Url $zoneUrl
+        $zone = Microsoft.PowerShell.Management\Get-Content -LiteralPath $zoneFile -Stream Zone.Identifier -Raw
+        Assert-True ($zone -ceq "[ZoneTransfer]`r`nZoneId=3`r`nHostUrl=$zoneUrl`r`n") 'Internet zone was not written'
+    } finally { Remove-Item -LiteralPath $zoneFile -Force }
+
+    # The user PATH keeps unexpanded %VAR% entries and its registry kind.
+    $expand = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    $keyPath = 'Software\HolutoWorkshopInstallerTest-' + [Guid]::NewGuid().ToString('N')
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($keyPath)
+    try {
+        Assert-True (Add-HolutoUserPath -Key $key -Directory $directory) 'Absent user PATH was not created'
+        Assert-True ($key.GetValueKind('Path') -eq $expand) 'New user PATH is not expandable'
+        $key.SetValue('Path', '%SystemRoot%\Tools;C:\Other', $expand)
+        Assert-True (Add-HolutoUserPath -Key $key -Directory $directory) 'User PATH was not extended'
+        $raw = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        Assert-True ($raw -ceq "%SystemRoot%\Tools;C:\Other;$directory") 'User PATH lost its unexpanded entries'
+        Assert-True ($key.GetValueKind('Path') -eq $expand) 'User PATH lost REG_EXPAND_SZ'
+        Assert-True (-not (Add-HolutoUserPath -Key $key -Directory $directory)) 'Repeated user PATH update was not idempotent'
+        $key.SetValue('Path', '%LOCALAPPDATA%\Programs\Holuto Workshop', $expand)
+        Assert-True (-not (Add-HolutoUserPath -Key $key -Directory (Join-Path $env:LOCALAPPDATA 'Programs\Holuto Workshop'))) 'Unexpanded equivalent entry was duplicated'
+        $key.SetValue('Path', 'C:\Tools', [Microsoft.Win32.RegistryValueKind]::String)
+        [void](Add-HolutoUserPath -Key $key -Directory $directory)
+        Assert-True ($key.GetValueKind('Path') -eq [Microsoft.Win32.RegistryValueKind]::String) 'User PATH registry kind was changed'
+    } finally {
+        $key.Dispose()
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($keyPath)
+    }
+}
 
 # Both the renamed binary and the previous app must be shut down, never killed.
 $script:processes = @()

@@ -37,7 +37,7 @@ use crate::{
     store::StateDir,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Queue {
         document: Document,
@@ -75,7 +75,6 @@ pub enum PairingFailure {
     Storage,
 }
 
-#[derive(Clone)]
 pub enum Event {
     Status {
         text: String,
@@ -434,8 +433,9 @@ fn start_session(
 ) -> Result<bool, Error> {
     loop {
         let session = agent.session();
-        let mut cadence = Cadence::new(Cadence::now());
-        cadence.schedule(Cadence::now(), RETRY);
+        let cadence = Cadence {
+            due: Cadence::now() + RETRY,
+        };
         let refresh = match session {
             Ok(true) => return Ok(true),
             Ok(false) => {
@@ -541,10 +541,6 @@ impl Cadence {
         }
     }
 
-    const fn new(now: Instant) -> Self {
-        Self { due: now }
-    }
-
     fn schedule(&mut self, now: Instant, delay: Duration) {
         self.due = now + delay;
     }
@@ -563,7 +559,9 @@ struct Session<'a> {
 
 impl Session<'_> {
     fn run(mut self, inbox: &Receiver<Message>) -> Result<(), Error> {
-        let mut cadence = Cadence::new(Cadence::now());
+        let mut cadence = Cadence {
+            due: Cadence::now(),
+        };
         loop {
             if self.drain(inbox) {
                 return Ok(());

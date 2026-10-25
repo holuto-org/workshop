@@ -54,11 +54,6 @@ fn the_token_is_only_exposed_by_explicit_access_or_storage() -> TestResult {
         "HTTP authentication can explicitly access the secret"
     );
     assert_eq!(
-        format!("{token}"),
-        "[REDACTED]",
-        "Display never reveals credentials"
-    );
-    assert_eq!(
         format!("{token:?}"),
         "[REDACTED]",
         "Debug never reveals credentials"

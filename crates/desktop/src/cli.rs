@@ -372,15 +372,11 @@ fn config_set(path: &Path, changes: Changes) -> Result<Response, Failure> {
         settings.telemetry_enabled = enabled;
     }
     settings.save(&dir)?;
-    Ok(success("Zapisano ustawienia."))
-}
-
-fn success(message: &str) -> Response {
-    Response {
+    Ok(Response {
         value: json!({"ok":true}),
-        human: message.into(),
+        human: "Zapisano ustawienia.".into(),
         exit: 0,
-    }
+    })
 }
 
 fn pair(path: &Path, code: String) -> Result<Response, Failure> {

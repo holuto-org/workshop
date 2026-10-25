@@ -43,6 +43,10 @@ jobs:
         run: |
           ./scripts/test-install.ps1
           ./scripts/install.ps1 -Release v0.0.0 -DryRun
+      - name: Check Windows PowerShell 5.1 installer functions
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-install.ps1
 
   static:
     name: Static analysis

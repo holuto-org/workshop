@@ -19,7 +19,7 @@ pub(crate) trait Row: PartialEq {
     fn compare(&self, other: &Self, column: usize) -> Ordering;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub(crate) struct Sort {
     column: usize,
     descending: bool,

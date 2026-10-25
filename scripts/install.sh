@@ -154,7 +154,8 @@ if [[ -z $release ]]; then
   require curl
   printf 'Resolving the latest release once with an HTTPS HEAD request (no artifact download).\n'
   latest=$(curl --disable --fail --silent --show-error --location --head --proto '=https' --proto-redir '=https' \
-    --tlsv1.2 --output /dev/null --write-out '%{url_effective}' "https://github.com/$repo/releases/latest") ||
+    --tlsv1.2 --connect-timeout 30 --max-time 60 --output /dev/null --write-out '%{url_effective}' \
+    "https://github.com/$repo/releases/latest") ||
     fail 'Could not resolve the latest GitHub release.'
   prefix="https://github.com/$repo/releases/tag/"
   [[ $latest == "$prefix"* ]] || fail "Unexpected latest release redirect: $latest"
@@ -167,10 +168,10 @@ printf 'Release: %s\nArtifact: %s/%s\nInstall target: %s\n' "$release" "$base" "
 if [[ $os == Linux ]]; then
   printf 'Runs as your normal user; sudo is used only for: sudo apt install /ABSOLUTE_TEMP_DIR/%s (no -y).\n' "$asset"
 else
-  printf 'Commands: hdiutil attach -readonly -nobrowse -mountpoint TEMP_MOUNT ARTIFACT; ditto APP STAGING_APP; replace the stopped app.\n'
+  printf 'Commands: xattr -w com.apple.quarantine ARTIFACT; hdiutil attach -readonly -nobrowse -mountpoint TEMP_MOUNT ARTIFACT; ditto APP STAGING_APP; replace the stopped app.\n'
   printf 'Launcher: ln -s "%s/Contents/MacOS/workshop" "%s" (only if absent; existing own link is preserved).\n' "$target" "$launcher"
   printf 'Add %s/.local/bin to PATH yourself if needed; this installer never edits shell profiles.\n' "$HOME"
-  printf 'No sudo. Quarantine is preserved. If Gatekeeper blocks opening, review the app in System Settings > Privacy & Security and approve it manually.\n'
+  printf 'No sudo. The image is quarantined like a browser download, so Gatekeeper checks the app on first launch; if it blocks opening, review the app in System Settings > Privacy & Security and approve it manually.\n'
 fi
 if command -v gh >/dev/null 2>&1; then
   printf 'Verification: SHA-256 plus gh attestation verify ARTIFACT --repo %s --signer-workflow %s/.github/workflows/release.yml\n' "$repo" "$repo"
@@ -188,7 +189,7 @@ check_not_running
 if [[ $os == Linux ]]; then
   for command in sudo apt dpkg dpkg-deb dpkg-query sha256sum; do require "$command"; done
 else
-  for command in hdiutil ditto shasum readlink; do require "$command"; done
+  for command in hdiutil ditto shasum readlink xattr; do require "$command"; done
   [[ ! -L $target ]] || fail 'The target app is a symbolic link; refusing to replace it.'
   [[ ! -e $target || -d $target ]] || fail 'The target app is not a directory.'
   check_launcher
@@ -200,7 +201,9 @@ work=$(mktemp -d /tmp/workshop-install.XXXXXXXX)
 artifact="$work/$asset"
 manifest="$work/SHA256SUMS.txt"
 for file in "$asset" SHA256SUMS.txt; do
+  # Abort a stalled connection (under 1 KiB/s for a minute) instead of hanging; no total cap for slow links.
   curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
     --output "$work/$file" "$base/$file" || fail "Download failed: $file"
 done
 count=0
@@ -243,8 +246,12 @@ if [[ $os == Linux ]]; then
 else
   mountpoint="$work/mount"
   mkdir "$mountpoint"
+  # curl sets no quarantine; mounting a quarantined image propagates it to the app that ditto copies.
+  xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");curl;" "$artifact"
+  # Set before attaching so an interrupted attach is still detached; a failed attach mounted nothing.
   mounted=1
-  hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "$artifact" >/dev/null
+  hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "$artifact" >/dev/null ||
+    { mounted=0; fail 'Could not mount the verified disk image; nothing was installed.'; }
   source_app="$mountpoint/Holuto Workshop.app"
   [[ -d $source_app && ! -L $source_app ]] || fail 'The disk image does not contain Holuto Workshop.app.'
   require /usr/libexec/PlistBuddy
