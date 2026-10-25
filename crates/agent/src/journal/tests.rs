@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fs};
+use std::{error::Error as StdError, fs, str};
 
 use fiscal::{
     device::Vendor,
@@ -218,6 +218,18 @@ fn every_durable_operation_state_reads_and_writes_its_reviewed_golden_file() -> 
             golden,
             "writing a recovered operation must preserve its reviewed stored format: {name}"
         );
+        let legacy = str::from_utf8(golden)?.replace("    \"vendor\": \"posnet\",\n", "");
+        fs::write(dir.file("operation.json"), legacy)?;
+        assert_eq!(
+            journal.load()?,
+            Some(expected.clone()),
+            "strict migration retains every supported legacy operation: {name}"
+        );
+        assert_eq!(
+            fs::read(dir.file("operation.json"))?,
+            golden,
+            "migration writes the reviewed current format: {name}"
+        );
         drop(dir);
         let reopened = StateDir::open(path)?;
         assert_eq!(
@@ -359,6 +371,8 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
         receipt.replace("\"receipt\": {", "\"receipt\": {\"vendor\": \"unknown\","),
         receipt.replace("\"receipt\": {", "\"receipt\": {\"vendor\": 1,"),
         receipt.replace("\"receipt\": {", "\"receipt\": {\"extra\": true,"),
+        receipt.replace("\"summary\": {", "\"summary\": {\"extra\": true,"),
+        receipt.replace("\"dispatching\": {", "\"dispatching\": {\"extra\": true,"),
         receipt.replace("    \"result\": null,\n", ""),
         receipt.replace(
             "    \"settled\": null\n",
@@ -376,5 +390,54 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
         ));
         assert_eq!(fs::read(dir.file("operation.json"))?, text.as_bytes());
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Unknown nested fields must not be discarded by legacy migration."
+)]
+fn legacy_journal_with_unknown_nested_report_field_blocks_without_rewrite() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    for report in [
+        serde_json::json!({"kind": "daily", "extra": true}),
+        serde_json::json!({"kind": "monthly", "year": 2026, "month": 9, "extra": true}),
+        serde_json::json!({
+            "kind": "periodic", "from": "2026-09-01", "to": "2026-09-30",
+            "summary": false, "extra": true
+        }),
+    ] {
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(include_bytes!("fixtures/report-dispatching.json"))?;
+        legacy["report"]["report"] = report;
+        let bytes = serde_json::to_vec(&legacy)?;
+        fs::write(dir.file("operation.json"), &bytes)?;
+        assert!(matches!(
+            Journal::new(&dir).load(),
+            Err(crate::Error::Blocked(_))
+        ));
+        assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Unknown payment evidence must not be discarded by legacy migration."
+)]
+fn legacy_journal_with_unknown_nested_payment_field_blocks_without_rewrite() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let legacy = include_str!("fixtures/receipt-dispatching.json")
+        .replace("\"form\": \"card\"", "\"form\": \"card\", \"extra\": true");
+    fs::write(dir.file("operation.json"), legacy.as_bytes())?;
+    assert!(matches!(
+        Journal::new(&dir).load(),
+        Err(crate::Error::Blocked(_))
+    ));
+    assert_eq!(fs::read(dir.file("operation.json"))?, legacy.as_bytes());
     Ok(())
 }
