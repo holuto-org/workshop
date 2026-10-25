@@ -85,8 +85,11 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
     );
     assert_eq!(
         Settings::load(&app.borrow().dir)?,
-        Some(settings),
-        "sign-in persists its validated settings before connecting"
+        Some(Settings {
+            vendor: Some(Vendor::Posnet),
+            ..settings
+        }),
+        "sign-in settings and detected vendor are durably preserved"
     );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())

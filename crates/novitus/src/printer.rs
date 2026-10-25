@@ -183,7 +183,7 @@ impl Driver for Printer {
 
 /// Discovery sends no fiscal traffic. Reject PC2 before PC1-only ^c reads.
 pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
-    let mut session = Session::open(link, connection)?;
+    let mut session = Session::open_discovery(link, connection)?;
     let (model, firmware) = identity(&mut session)?;
     if !model.starts_with("NOVITUS ") {
         return Ok(None);

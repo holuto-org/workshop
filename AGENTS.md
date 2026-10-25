@@ -1,7 +1,7 @@
 # Holuto Workshop
 
 Rust/Slint tray application and `workshop` CLI for workshop PCs connected to a
-Posnet Temo Online fiscal printer. Prints only Holuto sales/advances and fiscal
+supported Posnet, Novitus or Elzab online fiscal printer. Prints only Holuto sales/advances and fiscal
 reports; no manual receipt editor and no separate agent service. Closing to the
 tray keeps processing; starting is explicit unless the user opts into autostart.
 
@@ -66,7 +66,7 @@ One Cargo workspace; dependency versions and lints live only in the root
   remain uncertain until human resolution.
 - **`crates/agent` / `agent`**: Holuto `/agent` client, durable
   journal/recovery, settings/history and single `Worker`; feature `testing`
-  exposes the loopback Holuto fake through the production client.
+  exposes all three printer simulators and the loopback Holuto fake through the production client.
 - **`crates/desktop` / `workshop`**: Polish Slint UI/tray, CLI, pairing,
   per-user autostart and Sentry lifecycle/privacy; feature `simulator` uses
   separate local state.

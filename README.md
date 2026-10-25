@@ -291,6 +291,14 @@ decimals, 80-character item names (`trline`), 500 lines (`trinit`),
 0x20–0xFF, excluding DEL, no-break space, soft hyphen and table-drawing glyphs
 (`¤ ¨ ˛ ´ ¸`, POT-I-DEV-37 p. 14).
 
+Discovery first checks the configured port's remembered vendor, otherwise its
+USB hint. Unhinted ports receive only read-only identity probes, in order:
+Posnet `getrealid`, ElzabSTX `XTR`, Novitus `30#v`. Novitus also requires PC1;
+non-native dialects remain unready. Failed cached identities can be
+rediscovered only when no operation blocks. The detected port and vendor are
+saved together. An unresolved journal pins the vendor and forbids scanning
+other ports, even when preferences are stale.
+
 `novitus::printer` implements native ESC-P receipts and daily/monthly/periodic
 reports with strict model/firmware profiles for HD II Online, Deon Online,
 Bono Online and Point. It verifies PC1, native dialect, CP1250 input/output,
@@ -378,11 +386,12 @@ fontconfig headers (`libfontconfig1-dev` / `fontconfig-devel`). Lint policy is
 in `Cargo.toml` (pedantic, nursery and restriction lints) and `clippy.toml`;
 dependency and license policy is in `deny.toml`.
 
-Exercise printer behavior through the socket simulator and tests, **never real
-fiscal commands**. Run locally with `cargo run -p workshop --features simulator`
-to replace serial I/O with an in-process Temo peer. Its state lives in
-`workshop-simulator` beside the real state directory. Release builds reject this
-feature.
+Exercise printer behavior through offline simulators and tests, **never real
+fiscal commands**. `cargo run -p workshop --features simulator` starts Posnet,
+Novitus and Elzab peers and selects Posnet by default. Set
+`WORKSHOP_SIMULATOR=novitus` or `WORKSHOP_SIMULATOR=elzab` to select another
+brand; invalid values are refused. State lives in `workshop-simulator` beside
+the real state directory. Release builds reject this feature.
 
 Linux watcher tests require `dbus-run-session` and spawn their own private bus;
 Windows COM tests need a signed virtual pair. See [platform procedures](docs/testing/platforms.md).

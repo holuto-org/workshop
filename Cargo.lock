@@ -293,11 +293,13 @@ name = "agent"
 version = "0.2.0"
 dependencies = [
  "atomicwrites",
+ "elzab",
  "fiscal",
  "icu_normalizer",
  "jiff",
  "jsonschema",
  "known-folders",
+ "novitus",
  "posnet",
  "proptest",
  "proptest-state-machine",
@@ -7272,9 +7274,11 @@ version = "0.2.0"
 dependencies = [
  "agent",
  "atomicwrites",
+ "elzab",
  "fiscal",
  "i-slint-backend-testing",
  "jiff",
+ "novitus",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "posnet",

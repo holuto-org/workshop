@@ -8,6 +8,8 @@ mod autostart;
 mod cli;
 mod console;
 mod model;
+#[cfg(feature = "simulator")]
+mod simulators;
 mod telemetry;
 mod tray;
 #[expect(
@@ -33,11 +35,8 @@ use std::{
 };
 
 use agent::{settings::Settings, store::StateDir};
-use fiscal::link::Link;
 #[cfg(not(feature = "simulator"))]
-use fiscal::link::SerialLink;
-#[cfg(feature = "simulator")]
-use posnet::simulator::Simulator;
+use fiscal::link::{Link, SerialLink};
 use slint::ComponentHandle;
 
 fn main() -> ExitCode {
@@ -69,15 +68,15 @@ fn start() -> Result<(), Box<dyn Error>> {
     let dir = Arc::new(StateDir::open_default(cfg!(feature = "simulator"))?);
     let settings = Settings::load(&dir)?.unwrap_or_default();
     #[cfg(feature = "simulator")]
-    let simulator = Simulator::start();
+    let simulators = simulators::Simulators::start();
     #[cfg(feature = "simulator")]
-    let (settings, link): (_, Arc<dyn Link>) = (
-        Settings {
-            port: simulator.address().to_owned(),
-            ..settings
-        },
-        simulator.link(),
-    );
+    let (settings, link) = simulators.connection(
+        settings,
+        &env::var("WORKSHOP_SIMULATOR").or_else(|error| match error {
+            env::VarError::NotPresent => Ok("posnet".to_owned()),
+            env::VarError::NotUnicode(value) => Err(env::VarError::NotUnicode(value)),
+        })?,
+    )?;
     #[cfg(not(feature = "simulator"))]
     let link: Arc<dyn Link> = Arc::new(SerialLink);
     slint::BackendSelector::new()

@@ -17,23 +17,22 @@ use std::{
 };
 
 use fiscal::{
-    device::Device,
-    driver::Driver,
+    device::{Device, Vendor},
     error::Error as PrinterError,
     link::{Connection, Link},
     report::Report,
 };
 use jiff::civil::Date;
-use posnet::printer::Printer;
 use tracing::dispatcher;
 
 use crate::{
     Error,
     agent::{Agent, Blocked, RETRY},
     api::{Api, ApiError, model::Page, queue_form},
+    device,
     documents::{BuyerNip, Document},
     history::{self, HistoryEntry},
-    journal::Journal,
+    journal::{Journal, Operation},
     settings::Settings,
     store::StateDir,
 };
@@ -83,7 +82,10 @@ pub enum Event {
         tone: Tone,
     },
     /// The GUI owns settings persistence and reports save failures.
-    PortDetected(String),
+    PortDetected {
+        port: String,
+        vendor: Vendor,
+    },
     Connected {
         printer_id: String,
         serial: String,
@@ -124,7 +126,7 @@ impl fmt::Debug for Event {
                 .debug_struct("Status")
                 .field("tone", tone)
                 .finish_non_exhaustive(),
-            Self::PortDetected(_) => f.write_str("PortDetected(..)"),
+            Self::PortDetected { .. } => f.write_str("PortDetected(..)"),
             Self::Paired { printer_id } => f
                 .debug_struct("Paired")
                 .field("printer_id", printer_id)
@@ -347,20 +349,28 @@ fn run(
         },
     }
     // Unresolved operations forbid switching devices or scanning other ports.
-    let may_switch = Journal::new(dir)
-        .load()?
-        .is_none_or(|operation| !operation.blocks());
-    let mut printer = Printer::new(
+    let blocking = Journal::new(dir).load()?.filter(Operation::blocks);
+    let remembered = blocking.as_ref().map_or(settings.vendor, |operation| {
+        Some(match operation {
+            Operation::Receipt(receipt) => receipt.vendor,
+            Operation::Report(report) => report.vendor,
+        })
+    });
+    let (printer, status) = device::detect(
         link,
         Connection {
             port: settings.port.clone(),
             baud_rate: settings.baud_rate,
         },
-    );
-    let status = printer.detect(may_switch)?;
+        remembered,
+        blocking.is_none(),
+    )?;
     let port = printer.connection().port.clone();
-    if port != settings.port {
-        sink(Event::PortDetected(port.clone()));
+    if port != settings.port || Some(status.vendor) != settings.vendor {
+        sink(Event::PortDetected {
+            port: port.clone(),
+            vendor: status.vendor,
+        });
     }
     let api = Api::new(&settings.api_url, settings.token.as_str(), &status.serial)?;
     let waiting = |problem: Option<&str>| {
@@ -380,7 +390,7 @@ fn run(
             },
         ));
     };
-    let mut agent = Agent::new(Box::new(printer), api, dir, &waiting);
+    let mut agent = Agent::new(printer, api, dir, &waiting);
     let notices = agent.describe(status.clone())?;
     let mut queue = VecDeque::new();
     if !start_session(&mut agent, inbox, sink, &mut queue)? {

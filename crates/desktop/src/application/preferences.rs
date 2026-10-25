@@ -9,13 +9,14 @@ use std::{
 };
 
 use agent::{Error, settings::Settings, status::Snapshot, store::StateDir};
+use fiscal::device::Vendor;
 
 use crate::autostart;
 
 pub(super) enum Request {
     Save { settings: Settings, start: bool },
     Telemetry(bool),
-    Port(String),
+    Port { port: String, vendor: Vendor },
     Autostart { settings: Settings, enabled: bool },
     Reload,
     Status(Snapshot),
@@ -75,9 +76,10 @@ fn persist(dir: &StateDir, request: Request) -> Result<Outcome, Error> {
             Settings::save_telemetry_enabled(dir, enabled)?;
             Ok(Outcome::Telemetry)
         },
-        Request::Port(port) => {
+        Request::Port { port, vendor } => {
             if let Some(mut settings) = Settings::load(dir)? {
                 settings.port = port;
+                settings.vendor = Some(vendor);
                 settings.save(dir)?;
             }
             Ok(Outcome::Port)

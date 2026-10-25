@@ -45,7 +45,10 @@ fn queued_save_port_and_opt_out_preserve_every_connection_field() -> Result<(), 
         settings: supplied.clone(),
         start: false,
     })?;
-    writer.submit(Request::Port("detected-printer-port".into()))?;
+    writer.submit(Request::Port {
+        port: "detected-printer-port".into(),
+        vendor: Vendor::Novitus,
+    })?;
     writer.submit(Request::Telemetry(false))?;
 
     let (completion, stored) = completions.recv_timeout(WAIT)?;
@@ -58,6 +61,7 @@ fn queued_save_port_and_opt_out_preserve_every_connection_field() -> Result<(), 
 
     let detected = Settings {
         port: "detected-printer-port".into(),
+        vendor: Some(Vendor::Novitus),
         ..supplied
     };
     let (completion, stored) = completions.recv_timeout(WAIT)?;
@@ -65,7 +69,7 @@ fn queued_save_port_and_opt_out_preserve_every_connection_field() -> Result<(), 
     assert_eq!(
         stored?,
         Some(detected.clone()),
-        "detection changes only the port"
+        "detection persists the port and vendor together"
     );
 
     let opted_out = Settings {
@@ -158,7 +162,10 @@ fn held_completion_does_not_block_submitting_the_next_preferences() -> Result<()
     let (submission_result, release_result, joined) = thread::scope(|scope| {
         let sender = scope.spawn(|| {
             let result = writer
-                .submit(Request::Port("detected-while-completion-held".into()))
+                .submit(Request::Port {
+                    port: "detected-while-completion-held".into(),
+                    vendor: Vendor::Elzab,
+                })
                 .and_then(|()| writer.submit(Request::Telemetry(false)));
             let _sent = submitted.send(result);
         });
@@ -190,6 +197,7 @@ fn held_completion_does_not_block_submitting_the_next_preferences() -> Result<()
         Settings::load(&dir)?,
         Some(Settings {
             port: "detected-while-completion-held".into(),
+            vendor: Some(Vendor::Elzab),
             telemetry_enabled: false,
             ..supplied
         }),

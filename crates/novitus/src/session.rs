@@ -177,24 +177,30 @@ impl fmt::Debug for Session {
 }
 impl Session {
     pub fn open(link: &dyn Link, connection: &Connection) -> Result<Self, Error> {
-        if connection.port.trim().is_empty() {
-            return Err(Error::NoPort);
-        }
-        let mut session = Self {
-            port: link.open(&connection.port, connection.baud_rate)?,
-            pending: Vec::new(),
-            queued: VecDeque::new(),
-            initialization_ack: true,
-            blocked: false,
-            #[cfg(any(test, feature = "simulator"))]
-            time_scale: link.time_scale().max(1),
-        };
+        let mut session = Self::open_discovery(link, connection)?;
+        session.initialization_ack = true;
         let timeout = session.timeout(TIMEOUT);
         session
             .port
             .write_all(&frame::encode(b"3#e"), timeout)
             .map_err(io_error)?;
         Ok(session)
+    }
+
+    /// Discovery must not configure an unidentified device's error mode.
+    pub(crate) fn open_discovery(link: &dyn Link, connection: &Connection) -> Result<Self, Error> {
+        if connection.port.trim().is_empty() {
+            return Err(Error::NoPort);
+        }
+        Ok(Self {
+            port: link.open(&connection.port, connection.baud_rate)?,
+            pending: Vec::new(),
+            queued: VecDeque::new(),
+            initialization_ack: false,
+            blocked: false,
+            #[cfg(any(test, feature = "simulator"))]
+            time_scale: link.time_scale().max(1),
+        })
     }
 
     #[cfg(any(test, feature = "simulator"))]

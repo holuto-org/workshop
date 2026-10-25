@@ -425,7 +425,7 @@ fn pair(path: &Path, code: String) -> Result<Response, Failure> {
                 return result;
             },
             Event::Status { .. }
-            | Event::PortDetected(_)
+            | Event::PortDetected { .. }
             | Event::Connected { .. }
             | Event::Documents { .. }
             | Event::Device { .. }

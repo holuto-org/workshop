@@ -11,6 +11,7 @@
 compile_error!("The testing feature must never be enabled in release builds.");
 
 pub mod api;
+pub mod device;
 pub mod documents;
 pub mod history;
 pub mod settings;

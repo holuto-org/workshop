@@ -536,9 +536,10 @@ impl Application {
                 );
                 let _submitted = self.write_settings(preferences::Request::Reload);
             },
-            Event::PortDetected(port) => {
+            Event::PortDetected { port, vendor } => {
                 self.model.settings.port.clone_from(&port);
-                let _submitted = self.write_settings(preferences::Request::Port(port));
+                self.model.settings.vendor = Some(vendor);
+                let _submitted = self.write_settings(preferences::Request::Port { port, vendor });
             },
             Event::Connected {
                 printer_id,

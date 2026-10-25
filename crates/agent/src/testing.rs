@@ -7,6 +7,9 @@
 //! (fresh attempt on take), and `platform/src/clock.rs:43-55` (future issue times).
 //! Fixtures intentionally contain synthetic customer data only.
 
+#[cfg(test)]
+pub(crate) mod printers;
+
 use crate::api::contract;
 #[cfg(test)]
 use crate::api::model::Telemetry;

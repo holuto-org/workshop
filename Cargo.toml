@@ -122,7 +122,9 @@ wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
 agent = { path = "crates/agent" }
+elzab = { path = "crates/elzab" }
 fiscal = { path = "crates/fiscal" }
+novitus = { path = "crates/novitus" }
 posnet = { path = "crates/posnet" }
 
 # Durable replace: directory fsync on Unix, MoveFileExW(MOVEFILE_WRITE_THROUGH) on Windows.

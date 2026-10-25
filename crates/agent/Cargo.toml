@@ -8,14 +8,16 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-testing = ["posnet/simulator", "dep:tiny_http", "dep:jsonschema"]
+testing = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "dep:tiny_http", "dep:jsonschema"]
 
 [dependencies]
 atomicwrites.workspace = true
+elzab.workspace = true
 fiscal.workspace = true
 icu_normalizer.workspace = true
 jiff.workspace = true
 jsonschema = { workspace = true, optional = true }
+novitus.workspace = true
 posnet.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -32,6 +34,8 @@ known-folders.workspace = true
 
 [dev-dependencies]
 jsonschema.workspace = true
+elzab = { workspace = true, features = ["simulator"] }
+novitus = { workspace = true, features = ["simulator"] }
 posnet = { workspace = true, features = ["simulator"] }
 tempfile.workspace = true
 tiny_http.workspace = true

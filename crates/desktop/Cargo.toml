@@ -8,12 +8,14 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-simulator = ["posnet/simulator"]
+simulator = ["posnet/simulator", "novitus/simulator", "elzab/simulator"]
 
 [dependencies]
 agent.workspace = true
 atomicwrites.workspace = true
 fiscal.workspace = true
+elzab = { workspace = true, optional = true }
+novitus = { workspace = true, optional = true }
 posnet.workspace = true
 jiff.workspace = true
 slint = { workspace = true, features = ["unstable-winit-030"] }

@@ -352,6 +352,12 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
             Err(_) => return,
         }
         while let Some(first) = pending.first().copied() {
+            if first == 0x02 {
+                if !ignore_foreign(&mut pending, state) {
+                    break;
+                }
+                continue;
+            }
             let (raw, response, fault, fragment) = {
                 let mut state = lock(state);
                 if first == 0x1B {
@@ -396,19 +402,14 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
                 Some(Fault::LoseReply) => continue,
                 Some(Fault::Disconnect) => return,
                 Some(Fault::Reply(raw)) => raw,
-                Some(Fault::CorruptReply) => {
-                    let mut raw = response;
-                    if let Some(byte) = raw.get_mut(2) {
-                        *byte ^= 1;
-                    }
-                    raw
-                },
+                Some(Fault::CorruptReply) => corrupt_response(response),
                 Some(Fault::Refuse(_)) | None => response,
             };
-            for chunk in response.chunks(fragment) {
-                if stream.write_all(chunk).is_err() {
-                    return;
-                }
+            if response
+                .chunks(fragment)
+                .any(|chunk| stream.write_all(chunk).is_err())
+            {
+                return;
             }
             if !lock(state).waiting
                 && let Some(response) = held_response.take()
@@ -422,6 +423,23 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
         }
     }
 }
+
+/// Foreign STX envelopes are inert, but remain evidence of discovery traffic.
+fn ignore_foreign(pending: &mut Vec<u8>, state: &Mutex<State>) -> bool {
+    let Some(end) = pending.iter().position(|byte| *byte == 0x03) else {
+        return false;
+    };
+    lock(state).frames.push(pending.drain(..=end).collect());
+    true
+}
+
+fn corrupt_response(mut response: Vec<u8>) -> Vec<u8> {
+    if let Some(byte) = response.get_mut(2) {
+        *byte ^= 1;
+    }
+    response
+}
+
 fn request_body(raw: &[u8]) -> Option<String> {
     let raw_body = cp1250::decode(frame::unframe(raw).ok()?)?;
     if no_request_checksum(&raw_body) {

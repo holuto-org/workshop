@@ -41,6 +41,8 @@ use crate::{
 
 const WAIT: Duration = Duration::from_secs(5);
 
+mod vendors;
+
 thread_local! {
     static CLOCK: RefCell<Option<Arc<Mutex<Instant>>>> = const { RefCell::new(None) };
 }
@@ -92,7 +94,10 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
             payments: Vec::new(),
             items: vec!["private-line".to_owned()],
         }]),
-        Event::PortDetected("private-port".to_owned()),
+        Event::PortDetected {
+            port: "private-port".to_owned(),
+            vendor: Vendor::Posnet,
+        },
         Event::Connected {
             printer_id: "printer-id".to_owned(),
             serial: "device-serial".to_owned(),
@@ -280,6 +285,7 @@ fn settings(holuto: &Holuto, sim: &Simulator) -> Settings {
         api_url: holuto.url().to_owned(),
         token: holuto.token().into(),
         port: sim.address().to_owned(),
+        vendor: Some(Vendor::Posnet),
         ..Settings::default()
     }
 }
@@ -364,7 +370,7 @@ fn shown(events: &[Event]) -> Vec<(Vec<i64>, usize, bool)> {
                 *has_next,
             )),
             Event::Status { .. }
-            | Event::PortDetected(_)
+            | Event::PortDetected { .. }
             | Event::Connected { .. }
             | Event::Paired { .. }
             | Event::PairingFailed { .. }
@@ -399,7 +405,7 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
     assert!(
         !received
             .iter()
-            .any(|event| matches!(event, Event::PortDetected(_)))
+            .any(|event| matches!(event, Event::PortDetected { .. }))
     );
     assert_eq!(shown(&received), [(vec![], 1, false)]);
     let stopped = stop(worker, &events);
@@ -520,8 +526,12 @@ fn detecting_a_port_emits_an_event_without_creating_or_rewriting_settings() {
             received
                 .iter()
                 .filter_map(|event| match event {
-                    Event::PortDetected(port) => Some(port.as_str()),
+                    Event::PortDetected {
+                        port,
+                        vendor: Vendor::Posnet,
+                    } => Some(port.as_str()),
                     Event::Status { .. }
+                    | Event::PortDetected { .. }
                     | Event::Connected { .. }
                     | Event::Paired { .. }
                     | Event::PairingFailed { .. }

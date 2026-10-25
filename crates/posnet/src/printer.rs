@@ -395,7 +395,7 @@ fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<String> {
     matches!(device.get("ds"), Some("2" | "3")).then(|| "Drukarka oczekuje na operatora".to_owned())
 }
 
-fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
+pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
     let mut session = Session::open(link, connection)?;
     let identity = session.command("getrealid", &[], SCAN_TIMEOUT)?;
     if identity.get("nm") != Some(TEMO) {
