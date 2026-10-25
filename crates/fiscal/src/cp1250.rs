@@ -142,7 +142,8 @@ pub(crate) fn encode_char(character: char) -> Option<u8> {
     u8::try_from(index).ok().map(|index| index | 0x80)
 }
 
-pub(crate) fn decode_byte(byte: u8) -> Option<char> {
+/// One Windows-1250 byte; the five unassigned byte values return `None`.
+pub fn decode_byte(byte: u8) -> Option<char> {
     if byte.is_ascii() {
         Some(char::from(byte))
     } else {

@@ -53,6 +53,7 @@ struct State {
     enq: u8,
     extended: String,
     fiscal_mode: u8,
+    capabilities_attr1: u32,
     transaction: bool,
     ending: bool,
     receipts: u32,
@@ -81,6 +82,7 @@ impl Default for State {
             enq: 0x6D,
             extended: "@s0;0;0;00000000;".to_owned(),
             fiscal_mode: 1,
+            capabilities_attr1: 0x0200,
             transaction: false,
             ending: false,
             receipts: 0,
@@ -204,6 +206,10 @@ impl Simulator {
 
     pub fn set_fiscal_mode(&self, mode: u8) {
         lock(&self.state).fiscal_mode = mode;
+    }
+
+    pub fn set_full_cp1250(&self, enabled: bool) {
+        lock(&self.state).capabilities_attr1 = if enabled { 0x0200 } else { 0 };
     }
 
     pub fn receipts(&self) -> u32 {
@@ -452,6 +458,17 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
             format!(
                 "11$I{}\r2020-01-01 12:00:00\r1234567890\rREG1\rMEM1\r0\r0\r0\r",
                 state.fiscal_mode
+            ),
+            true,
+            true,
+        ),
+        "52$i" => (
+            format!(
+                concat!(
+                    "52$I{:08X}\r00000000\r00000000\r00000000\r",
+                    "00000000\r00000000\r00000000\r00000000\r"
+                ),
+                state.capabilities_attr1
             ),
             true,
             true,

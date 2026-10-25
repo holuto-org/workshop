@@ -222,7 +222,7 @@ fn preflight_identity(
     firmware: String,
     pc1: bool,
 ) -> Result<Checked, Error> {
-    let profile = profile::lookup(&model, &firmware);
+    let mut profile = profile::lookup(&model, &firmware);
     let capabilities = profile
         .as_ref()
         .map_or_else(unqualified_capabilities, |profile| {
@@ -292,6 +292,9 @@ fn preflight_identity(
         device.problems.push("Brak aktywnych stawek VAT".to_owned());
     }
     let (clock, date) = clock(session)?;
+    if let Some(profile) = profile.as_mut() {
+        read_repertoire(session, profile, &mut device);
+    }
     Ok(Checked {
         device,
         profile,
@@ -299,6 +302,48 @@ fn preflight_identity(
         clock,
         date,
     })
+}
+
+fn read_repertoire(session: &mut Session, profile: &mut Profile, device: &mut Device) {
+    match session.command("52$i", TIMEOUT) {
+        Ok(reply) => {
+            if full_cp1250(&reply.body) {
+                profile.enable_full_cp1250();
+                device
+                    .capabilities
+                    .allowed_characters
+                    .clone_from(&profile.capabilities.allowed_characters);
+            }
+        },
+        Err(error) => {
+            // A matching refusal leaves the session usable with ASCII. Lost or
+            // corrupt replies leave it blocked; no fiscal write may follow.
+            if !matches!(error, Error::Device { .. }) {
+                device
+                    .problems
+                    .push("Nie można bezpiecznie odczytać możliwości znaków drukarki".to_owned());
+            }
+        },
+    }
+}
+
+fn full_cp1250(body: &str) -> bool {
+    let Some(fields) = body
+        .strip_prefix("52$I")
+        .and_then(|body| body.strip_suffix('\r'))
+    else {
+        return false;
+    };
+    let fields = fields.split('\r');
+    fields.clone().count() == 8
+        && fields
+            .clone()
+            .all(|field| field.len() == 8 && field.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        && fields
+            .clone()
+            .next()
+            .and_then(|field| u32::from_str_radix(field, 16).ok())
+            .is_some_and(|attr1| attr1 & 0x0200 != 0)
 }
 const fn unqualified_capabilities() -> Capabilities {
     Capabilities {

@@ -742,3 +742,140 @@ fn zero_total_is_disabled_in_qualified_profiles_but_encodable_when_enabled() {
     super::dispatch(&mut session, &steps, &mut Log::default()).unwrap();
     assert_eq!(sim.receipts(), 1);
 }
+
+#[test]
+fn polish_names_print_when_device_reports_full_cp1250() {
+    let sim = Simulator::start();
+    supported(&sim);
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(
+        expected
+            .capabilities
+            .allows("Przegląd Łódź żółć € ¤ ¨ ˛ ´ ¸")
+    );
+    assert!(!expected.capabilities.allows("\r\n\u{7f}\u{1b}"));
+    let identified = identify(sim.link().as_ref(), &connection(&sim))
+        .unwrap()
+        .unwrap();
+    assert_eq!(identified.capabilities, expected.capabilities);
+    let line = Line::new(
+        "Przegląd",
+        Quantity::parse("1").unwrap(),
+        Grosze::new(2000).unwrap(),
+        VatSlot::new(0).unwrap(),
+        &expected.capabilities,
+    )
+    .unwrap();
+    let job = Receipt::new(
+        vec![line],
+        vec![],
+        vec![Payment {
+            form: PaymentForm::Card,
+            amount: Grosze::new(2000).unwrap(),
+        }],
+        None,
+        "Warsztat",
+        &expected.capabilities,
+    )
+    .unwrap();
+    let printed = driver
+        .print_receipt(&job, &expected, &mut Log::default())
+        .unwrap();
+    assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+    insta::assert_debug_snapshot!("polish_receipt_frames", fiscal_bodies(&sim));
+    assert!(
+        sim.frames()
+            .iter()
+            .any(|raw| raw.windows(8).any(|part| part == b"Przegl\xB9d")),
+        "name is unchanged CP1250"
+    );
+    assert_eq!(
+        bodies(&sim)
+            .iter()
+            .filter(|body| body.as_str() == "52$i")
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn ascii_only_without_cp1250_capability_bit() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.set_full_cp1250(false);
+    let device = printer(&sim).probe().unwrap();
+    assert_eq!(
+        device.capabilities.allowed_characters,
+        (' '..='~').collect::<String>()
+    );
+    assert!(device.capabilities.allows("Przeglad"));
+    assert!(!device.capabilities.allows("Przegląd"));
+    let found = identify(sim.link().as_ref(), &connection(&sim))
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.capabilities, device.capabilities);
+    assert_eq!(sim.receipts(), 0);
+}
+
+#[test]
+fn unreadable_cp1250_capability_keeps_ascii_and_never_uses_a_blocked_session() {
+    let mut malformed = frame::encode(
+        b"52$I00000200\r00000000\rnot-hex!\r00000000\r00000000\r00000000\r00000000\r00000000\r",
+    );
+    malformed.extend_from_slice(&frame::query(b"0#Z$i"));
+    for fault in [
+        Fault::Refuse(82),
+        Fault::Reply(malformed),
+        Fault::LoseReply,
+        Fault::CorruptReply,
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let transport_lost = matches!(fault, Fault::LoseReply | Fault::CorruptReply);
+        sim.fault("52$i", fault);
+        let device = printer(&sim).probe().unwrap();
+        assert_eq!(
+            device.capabilities.allowed_characters,
+            (' '..='~').collect::<String>()
+        );
+        assert_eq!(device.ready(), !transport_lost);
+        assert_eq!(sim.receipts(), 0);
+    }
+}
+
+#[test]
+fn printing_session_checks_cp1250_capability_again_before_begin() {
+    let sim = Simulator::start();
+    supported(&sim);
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(expected.capabilities.allows("Przegląd"));
+    let line = Line::new(
+        "Przegląd",
+        Quantity::parse("1").unwrap(),
+        Grosze::new(2000).unwrap(),
+        VatSlot::new(0).unwrap(),
+        &expected.capabilities,
+    )
+    .unwrap();
+    let job = Receipt::new(
+        vec![line],
+        vec![],
+        vec![Payment {
+            form: PaymentForm::Card,
+            amount: Grosze::new(2000).unwrap(),
+        }],
+        None,
+        "Warsztat",
+        &expected.capabilities,
+    )
+    .unwrap();
+    sim.set_full_cp1250(false);
+    assert!(matches!(
+        driver.print_receipt(&job, &expected, &mut Log::default()),
+        Err(Error::Invalid(_))
+    ));
+    assert_eq!(sim.receipts(), 0);
+    assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+}

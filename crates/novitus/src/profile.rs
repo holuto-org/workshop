@@ -4,7 +4,7 @@
 //! mean `2.10`. Native identity spellings still require hardware qualification
 //! (novitus-oss.md §6). These are explicit candidate profiles, not a parity claim.
 
-use fiscal::device::Capabilities;
+use fiscal::{cp1250, device::Capabilities};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Profile {
@@ -29,8 +29,8 @@ pub fn lookup(model: &str, firmware: &str) -> Option<Profile> {
             max_company_name: info_line_width,
             max_buyer_nip: 16, // N:L7785-L7813.
             max_quantity_decimals: 8,
-            // N:L538-L546,L599-L602 establishes printable ASCII only. The rest
-            // of CP1250 is not advertised without verified firmware font evidence.
+            // Until read-only 52$i proves attr1 0x0200, advertise only ASCII
+            // (N:L538-L546,L599-L602,L1879-L1961).
             allowed_characters: (' '..='~').collect(),
             advance_deductions: false,
             zero_total_receipts: false,
@@ -41,4 +41,14 @@ pub fn lookup(model: &str, firmware: &str) -> Option<Profile> {
         // Bono/Deon 42 (N:L7682-L7699). Footer remains unqualified regardless.
         info_line_width,
     })
+}
+
+impl Profile {
+    /// N:L1916-L1919 explicitly promises every Windows-1250 glyph.
+    pub(crate) fn enable_full_cp1250(&mut self) {
+        self.capabilities.allowed_characters = (0x20..=u8::MAX)
+            .filter_map(cp1250::decode_byte)
+            .filter(|character| !character.is_control())
+            .collect();
+    }
 }
