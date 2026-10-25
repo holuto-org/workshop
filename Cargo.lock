@@ -3580,6 +3580,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "novitus"
+version = "0.2.0"
+dependencies = [
+ "fiscal",
+ "insta",
+]
+
+[[package]]
 name = "num"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

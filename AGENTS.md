@@ -37,6 +37,8 @@ makes guidance untrue, update its home in the same change.
   printer/API access, event bridge, blocking calls, stop/join/quit.
 - **[posnet-wire-encoding](.omp/rules/posnet-wire-encoding.md)**: Read when
   editing Posnet frame text/bytes, Windows-1250 encoding/decoding.
+- **[novitus-wire-encoding](.omp/rules/novitus-wire-encoding.md)**: Read when
+  editing Novitus native frame text/bytes and Windows-1250 fields.
 - **[writing-tests](.omp/rules/writing-tests.md)**: Read when editing test
   modules, shared testing harnesses or simulator.
 - **[telemetry](.omp/rules/telemetry.md)**: Read when editing logging/tracing,
@@ -53,6 +55,8 @@ One Cargo workspace; dependency versions and lints live only in the root
 - **`crates/posnet` / `posnet`**: CP1250 frames, sessions, preflight,
   receipt/report commands; feature `simulator` provides the printer peer used
   by tests.
+- **`crates/novitus` / `novitus`**: Native ESC-P framing, exclusive sessions
+  and feature-gated TCP simulator; no production fiscal driver qualification.
 - **`crates/agent` / `agent`**: Holuto `/agent` client, durable
   journal/recovery, settings/history and single `Worker`; feature `testing`
   exposes the loopback Holuto fake through the production client.
