@@ -20,13 +20,14 @@ pub fn detect(
 ) -> Result<(Box<dyn Driver>, Device), Error> {
     let mut error = Error::Invalid("Nie znaleziono obsługiwanej drukarki fiskalnej.".to_owned());
     let mut denied = None;
-    let mut inaccessible = false;
+    // Unopenable, or its brand already answered: probing it again cannot help.
+    let mut settled = false;
     if let Some(vendor) = remembered {
         match identify(link.as_ref(), &connection, vendor) {
             Ok(Some(device)) => return Ok((driver(link, connection, vendor), device)),
             Ok(None) => {},
             Err(failure) => {
-                inaccessible = matches!(failure, Error::Open { .. });
+                settled = matches!(failure, Error::Open { .. } | Error::Unsupported(_));
                 if failure.is_denied() {
                     denied = Some(connection.port.clone());
                 }
@@ -38,7 +39,7 @@ pub fn detect(
         return Err(error);
     }
     let candidates = link.candidates();
-    if !inaccessible {
+    if !settled {
         let hint = candidates
             .iter()
             .find(|candidate| candidate.port == connection.port)

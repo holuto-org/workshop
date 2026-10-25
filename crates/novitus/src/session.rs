@@ -201,6 +201,11 @@ impl Session {
         }
         self.blocked = true;
         let timeout = self.timeout(timeout);
+        tracing::debug!(
+            command,
+            timeout_ms = timeout.as_millis(),
+            "Sending printer command once"
+        );
         let deadline = Instant::now() + timeout;
         self.port.write_all(&raw, timeout).map_err(io_error)?;
         let result = self.receive(body, command, deadline);

@@ -267,7 +267,7 @@ fn an_unreadable_status_is_never_treated_as_a_ready_printer() {
 
 #[test]
 fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
-    for mode in ["inactive", "changed", "none", "missing"] {
+    for mode in ["inactive", "changed", "regraded", "none", "missing"] {
         let sim = simulator();
         let device = printer(&sim);
         let expected = device.probe().unwrap();
@@ -288,6 +288,10 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
             "changed" => sim.set_vat([
                 "22,00", "8,00", "0,00", "101,00", "101,00", "101,00", "100,00",
             ]),
+            // Slot G may hold any rate, so the device stays ready; only the VAT guard refuses.
+            "regraded" => sim.set_vat([
+                "23,00", "8,00", "5,00", "0,00", "100,00", "101,00", "8,00",
+            ]),
             "none" => sim.set_vat(["101,00"; 7]),
             "missing" => sim.fault("vatget", Fault::Reply(vec![])),
             _ => {},
@@ -301,6 +305,10 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
                 "Wybrana stawka VAT jest nieaktywna na drukarce."
             ),
             "changed" => assert_eq!(error.to_string(), "Nieprawidłowe przypisanie liter VAT A–E"),
+            "regraded" => assert_eq!(
+                error.to_string(),
+                "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
+            ),
             "none" => assert_eq!(error.to_string(), "Brak aktywnych stawek VAT"),
             "missing" => assert!(matches!(error, Error::Protocol(_)), "{error:?}"),
             _ => panic!("unknown fixture mode"),

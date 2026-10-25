@@ -66,6 +66,7 @@ impl Driver for Printer {
         Ok(device)
     }
 
+    #[tracing::instrument(skip_all, fields(sentry.op = "device.receipt"))]
     fn print_receipt(
         &self,
         receipt: &Receipt,
@@ -115,12 +116,14 @@ impl Driver for Printer {
             (!number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()))
                 .then(|| number.to_owned())
         });
+        tracing::info!("Receipt printed");
         Ok(Printed {
             receipt_number,
             issued_at: checked.clock,
         })
     }
 
+    #[tracing::instrument(skip_all, fields(sentry.op = "device.report", report = report.label()))]
     fn print_report(
         &self,
         report: Report,
@@ -179,7 +182,9 @@ impl Driver for Printer {
                 timeout,
             }],
             journal,
-        )
+        )?;
+        tracing::info!("Report printed");
+        Ok(())
     }
 }
 
@@ -510,6 +515,13 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
             return Err(if index == 0 { error } else { uncertain(error) });
         }
         if let Err(error) = execute(session, step, journal) {
+            if let Error::Device { code, .. } = &error {
+                tracing::warn!(
+                    command = step.command,
+                    device_error_code = code,
+                    "Printer refused command"
+                );
+            }
             let certain = index == 0 && refusal_is_certain(&error, step.command);
             return Err(if certain { error } else { uncertain(error) });
         }
@@ -527,6 +539,7 @@ fn refusal_is_certain(error: &Error, sent: &str) -> bool {
     ))
 }
 fn uncertain(error: Error) -> Error {
+    tracing::error!("Printer operation has an uncertain outcome");
     Error::Uncertain(Box::new(error))
 }
 
@@ -560,6 +573,14 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
             },
             // Announce only changes: a persisting problem was already shown.
             Ok(problem) if problem != shown => {
+                if problem.is_some() {
+                    tracing::warn!(command = step.command, "Printer needs operator intervention");
+                } else {
+                    tracing::info!(
+                        command = step.command,
+                        "Printer resumed after operator intervention"
+                    );
+                }
                 journal.waiting(problem);
                 shown = problem;
             },
@@ -580,6 +601,12 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
         }
     }
     if shown.is_some() {
+        if result.is_ok() {
+            tracing::info!(
+                command = step.command,
+                "Printer resumed after operator intervention"
+            );
+        }
         journal.waiting(None);
     }
     result

@@ -269,6 +269,36 @@ fn unsupported_elzab_model_is_reported_instead_of_a_later_silent_port() {
     assert_eq!(elzab.fiscal_frames(), Vec::<Vec<u8>>::new());
 }
 
+#[test]
+fn remembered_elzab_with_unsupported_model_gets_no_foreign_probe() {
+    let elzab = Simulator::start(Vendor::Elzab);
+    if let Simulator::Elzab(sim) = &elzab {
+        sim.set_identity("ELZAB Zeta Online", "MD06.02");
+    }
+    let link = RoutingLink::new(vec![(
+        Candidate {
+            port: elzab.address().to_owned(),
+            hint: None,
+        },
+        elzab.link(),
+    )]);
+    let error = detect(
+        Arc::<RoutingLink>::clone(&link),
+        connection(elzab.address()),
+        Some(Vendor::Elzab),
+        true,
+    )
+    .err()
+    .unwrap();
+    assert!(matches!(error, Error::Unsupported(_)), "{error:?}");
+    assert_eq!(*link.opened.lock().unwrap(), [elzab.address()]);
+    let frames = elzab.frames();
+    let [only] = frames.as_slice() else {
+        panic!("only the identity query may reach the port: {frames:?}");
+    };
+    assert_eq!(elzab_frame::decode(only).unwrap().1, b"XTR");
+}
+
 #[derive(Debug)]
 struct Denied;
 impl Link for Denied {

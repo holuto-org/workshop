@@ -20,6 +20,7 @@ use crate::{
 };
 #[cfg(workshop_acceptance)]
 mod acceptance;
+mod telemetry;
 
 #[derive(Default)]
 struct Log {
@@ -567,6 +568,37 @@ fn operator_wait_resumes_without_resending() {
     );
     assert_eq!(fiscal_bodies(&sim), ["1;26;10;24#r"]);
     assert_eq!(sim.reports(), 1);
+
+    // Paper runs out on the first item: the receipt must finish without resending it.
+    let sim = Simulator::start();
+    supported(&sim);
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    sim.fault("$l", Fault::Wait);
+    let mut journal = Operator {
+        sim: &sim,
+        events: vec![],
+    };
+    let printed = driver
+        .print_receipt(&receipt(vec![]), &expected, &mut journal)
+        .unwrap();
+    assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+    assert_eq!(
+        journal.events,
+        [
+            Some("Brak papieru lub niskie napięcie akumulatora".to_owned()),
+            None
+        ]
+    );
+    let sent = fiscal_bodies(&sim);
+    assert_eq!(
+        sent.iter()
+            .filter(|body| identifier(body) == Some("$l"))
+            .count(),
+        3
+    );
+    assert_eq!(sent.last().map(String::as_str), Some("28;0$z"));
+    assert_eq!(sim.receipts(), 1);
 }
 
 #[test]
@@ -729,7 +761,7 @@ fn post_success_counter_failure_does_not_reprint() {
 
 #[test]
 fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
-    for problem in 0..3 {
+    for problem in 0..4 {
         let sim = Simulator::start();
         supported(&sim);
         let driver = printer(&sim);
@@ -737,15 +769,23 @@ fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
         match problem {
             0 => expected.unique_number = "OTHER12345678".to_owned(),
             1 => sim.set_vat(["22", "8", "5", "0", "98.99", "99.99", "99.99"]),
+            // Slot G may hold any rate, so the device stays ready; only the guard refuses.
+            2 => sim.set_vat(["23", "8", "5", "0", "98.99", "99.99", "8.00"]),
             _ => {
                 sim.set_vat(["23", "8", "5", "0", "99.99", "99.99", "99.99"]);
                 expected = driver.probe().unwrap();
             },
         }
-        assert!(matches!(
-            driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default()),
-            Err(Error::Invalid(_) | Error::NotReady(_))
-        ));
+        let result = driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default());
+        if problem == 2 {
+            assert!(matches!(
+                result,
+                Err(Error::Invalid(message))
+                    if message == "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie."
+            ));
+        } else {
+            assert!(matches!(result, Err(Error::Invalid(_) | Error::NotReady(_))));
+        }
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }
 }

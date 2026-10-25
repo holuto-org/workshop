@@ -9,6 +9,7 @@ use crate::{
 };
 use fiscal::{
     cp1250,
+    device::Vendor,
     driver::Driver,
     error::Error,
     journal::Journal,
@@ -239,6 +240,14 @@ fn identify_accepts_online_models_only() {
         ));
         assert_eq!(bodies(&sim), ["XTR"], "nothing beyond identification");
     }
+    let sim = Simulator::start();
+    sim.set_identity("POSNET TEMO ONLINE", "MD06.02");
+    assert!(
+        identify(sim.link().as_ref(), &connection(&sim))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(bodies(&sim), ["XTR"]);
 }
 #[test]
 fn non_cp1250_code_page_is_not_ready() {
@@ -407,6 +416,71 @@ fn fresh_identity_vat_status_and_header_are_required() {
                 .is_err(),
             "case {change}"
         );
+        assert_eq!(fiscal(&sim), Vec::<String>::new());
+    }
+}
+#[test]
+fn legal_vat_change_since_probe_never_opens() {
+    let sim = Simulator::start();
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    // Slot G may hold any rate, so the device stays ready; only the VAT guard refuses.
+    sim.set_vat(["23,00", "8,00", "5,00", "0,00", "=", "?", "8,00"]);
+    assert!(driver.probe().unwrap().ready());
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&receipt(0, false), &expected, &mut log),
+        Err(Error::Invalid(message))
+            if message == "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie."
+    ));
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal(&sim), Vec::<String>::new());
+}
+#[test]
+fn wrong_vendor_or_inactive_vat_slot_never_opens() {
+    let caps = profile::lookup("ELZAB CUBE online").unwrap().capabilities;
+    let inactive = Receipt::new(
+        vec![
+            Line::new(
+                "Olej",
+                Quantity::parse("1").unwrap(),
+                Grosze::new(1000).unwrap(),
+                // The simulator programs F as "?".
+                VatSlot::new(5).unwrap(),
+                &caps,
+            )
+            .unwrap(),
+        ],
+        vec![],
+        vec![Payment {
+            form: PaymentForm::Cash,
+            amount: Grosze::new(1000).unwrap(),
+        }],
+        None,
+        "Warsztat",
+        &caps,
+    )
+    .unwrap();
+    for (vendor, receipt, message) in [
+        (
+            Vendor::Posnet,
+            receipt(0, false),
+            "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie.",
+        ),
+        (
+            Vendor::Elzab,
+            inactive,
+            "Wybrana stawka VAT jest nieaktywna.",
+        ),
+    ] {
+        let sim = Simulator::start();
+        let driver = printer(&sim);
+        let mut expected = driver.probe().unwrap();
+        expected.vendor = vendor;
+        assert!(matches!(
+            driver.print_receipt(&receipt, &expected, &mut Log::default()),
+            Err(Error::Invalid(actual)) if actual == message
+        ));
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
 }

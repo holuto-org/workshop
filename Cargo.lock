@@ -3598,6 +3598,8 @@ dependencies = [
  "fiscal",
  "insta",
  "jiff",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
