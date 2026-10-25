@@ -5,7 +5,7 @@
 //! API text is canonicalized without replacing the raw completed-device evidence.
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::{borrow::Cow, fmt, io, marker::PhantomData, path::PathBuf};
 
@@ -240,8 +240,9 @@ impl Operation {
 pub(crate) struct Journal<'dir> {
     path: PathBuf,
     _lock: PhantomData<&'dir StateDir>,
+    /// Writes until an injected failure, plus one; zero disarms.
     #[cfg(test)]
-    fail_write: AtomicBool,
+    fail_write: AtomicUsize,
 }
 
 impl<'dir> Journal<'dir> {
@@ -250,7 +251,7 @@ impl<'dir> Journal<'dir> {
             path: dir.file(FILE),
             _lock: PhantomData,
             #[cfg(test)]
-            fail_write: AtomicBool::new(false),
+            fail_write: AtomicUsize::new(0),
         }
     }
 
@@ -312,14 +313,21 @@ impl<'dir> Journal<'dir> {
         })
     }
 
+    /// Lets `successes` writes through, then fails the next one once.
     #[cfg(test)]
-    pub(crate) fn fail_next_write(&self) {
-        self.fail_write.store(true, Ordering::SeqCst);
+    pub(crate) fn fail_write_after(&self, successes: usize) {
+        self.fail_write.store(successes + 1, Ordering::SeqCst);
     }
 
     pub(crate) fn write(&self, operation: &Operation) -> io::Result<()> {
         #[cfg(test)]
-        if self.fail_write.swap(false, Ordering::SeqCst) {
+        if self
+            .fail_write
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            == Ok(1)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "injected journal write failure",

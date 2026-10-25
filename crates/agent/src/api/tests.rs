@@ -102,6 +102,61 @@ fn results_are_idempotent_after_the_server_committed_but_lost_the_reply() -> Tes
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
+fn a_result_reply_that_does_not_echo_the_report_is_not_accepted() -> TestResult {
+    let server = Holuto::new();
+    let _id = server.enqueue(job_json());
+    let mut api = api(&server)?;
+    api.session(&telemetry())?;
+    let job = api.take()?.ok_or("missing claimed job")?;
+    let form = ResultForm {
+        attempt: job.attempt.ok_or("no attempt")?,
+        issued_at: Some("2025-01-02T12:00:00Z".parse()?),
+        receipt_number: Some("123".to_owned()),
+        result: None,
+        state: Outcome::Done,
+    };
+    let echo = with(
+        server.job(JOB_ID),
+        &json!({"state": "done", "receiptNumber": "123"}),
+    );
+    let path = format!("/agent/jobs/{JOB_ID}/result");
+    server.fault(
+        "POST",
+        &path,
+        Fault::Body {
+            status: 200,
+            body: serde_json::to_vec(&echo)?,
+        },
+    );
+    api.report(job.id, &form)?;
+    for changes in [
+        json!({"id": Uuid::from_u128(98)}),
+        json!({"attempt": Uuid::from_u128(98)}),
+        json!({"state": "failed", "receiptNumber": null}),
+        json!({"receiptNumber": "124"}),
+    ] {
+        server.fault(
+            "POST",
+            &path,
+            Fault::Body {
+                status: 200,
+                body: serde_json::to_vec(&with(echo.clone(), &changes))?,
+            },
+        );
+        assert!(
+            matches!(api.report(job.id, &form), Err(ApiError::Response(message))
+                if message == "wynik zadania nie został zapisany zgodnie z raportem"),
+            "{changes}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
 fn backend_normalization_of_result_text_does_not_wedge_settlement() -> TestResult {
     let server = Holuto::new();
     let _id = server.enqueue(job_json());

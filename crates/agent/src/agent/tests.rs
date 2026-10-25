@@ -13,10 +13,14 @@ use crate::{
     api::{Api, ApiError, model::JobState},
     documents::{BuyerNip, Document},
     history::{self, HistoryEntry},
-    journal::{Device, JobResult, Journal, Operation, ReceiptOperation, ReportOperation, Summary},
+    journal::{
+        Device, JobResult, Journal, Operation, ReceiptOperation, ReportOperation, Settlement,
+        Summary,
+    },
     store::StateDir,
     testing::{ALLOCATION_ID, ATTEMPT, Fault, Holuto, JOB_ID, job_json, state_dir, with},
 };
+use uuid::Uuid;
 
 type TestResult = Result<(), Box<dyn StdError>>;
 fn waiting(_message: Option<&str>) {}
@@ -49,6 +53,41 @@ fn stored(dir: &StateDir) -> Result<ReceiptOperation, Box<dyn StdError>> {
         Some(Operation::Receipt(operation)) => Ok(operation),
         other => Err(format!("expected receipt journal, got {other:?}").into()),
     }
+}
+/// Posnet frames naming any of `commands`.
+fn sent(sim: &Simulator, commands: &[&str]) -> Vec<Vec<u8>> {
+    sim.frames()
+        .into_iter()
+        .filter(|frame| {
+            commands.iter().any(|command| {
+                frame
+                    .windows(command.len())
+                    .any(|part| part == command.as_bytes())
+            })
+        })
+        .collect()
+}
+const RECEIPT_COMMANDS: [&str; 8] = [
+    "trinit",
+    "trnipset",
+    "trline",
+    "tradvance",
+    "trpayment",
+    "trend",
+    "trftrln",
+    "trftrend",
+];
+fn interrupted_report() -> Result<ReportOperation, Box<dyn StdError>> {
+    Ok(ReportOperation {
+        report: Report::Daily,
+        vendor: Vendor::Posnet,
+        device_unique_number: UNIQUE_NUMBER.to_owned(),
+        started_at: "2025-01-02T12:00:00Z".parse()?,
+        device: Device::Dispatching {
+            stage: "dailyrep".to_owned(),
+        },
+        acknowledged_at: None,
+    })
 }
 
 #[test]
@@ -730,6 +769,46 @@ fn interrupted_report_is_acknowledged_without_reissuing_it() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
+fn interrupted_report_blocks_claims_and_new_reports_until_resolved() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let _id = server.enqueue(job_json());
+    let (_temporary, dir) = state_dir();
+    let operation = Operation::Report(interrupted_report()?);
+    Journal::new(&dir).save(&operation)?;
+    let mut agent = agent(&sim, &dir, &server)?;
+    assert_eq!(agent.step()?, super::RETRY);
+    assert!(
+        agent
+            .take_news()
+            .notices
+            .iter()
+            .any(|notice| notice.starts_with("Przerwany raport.")),
+        "the operator is told why nothing prints"
+    );
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|request| request.path != "/agent/jobs/take"),
+        "no job is claimed over an interrupted report"
+    );
+    assert_eq!(server.job(JOB_ID)["state"], "queued");
+    assert!(matches!(
+        agent.run_report(Report::Daily),
+        Err(Error::Blocked(message)) if message == "Najpierw wyjaśnij przerwany raport."
+    ));
+    assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
+    assert_eq!(sent(&sim, &["dailyrep"]), Vec::<Vec<u8>>::new());
+    assert_eq!(Journal::new(&dir).load()?, Some(operation));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
 fn history_error_does_not_block_server_accepted_result() -> TestResult {
     let sim = Simulator::start();
     let server = Holuto::new();
@@ -875,7 +954,7 @@ fn a_claim_with_unwritable_journal_never_sends_a_fiscal_command() -> TestResult 
         None,
         "the journal read succeeds before dispatch"
     );
-    agent.journal.fail_next_write();
+    agent.journal.fail_write_after(0);
     assert!(
         matches!(
             agent.step(),
@@ -923,6 +1002,133 @@ fn a_claim_with_unwritable_journal_never_sends_a_fiscal_command() -> TestResult 
             .all(|request| !request.path.ends_with("/result")),
         "an unjournaled result cannot be reported"
     );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_failed_dispatch_write_stops_the_receipt_before_its_first_fiscal_command() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let _id = server.enqueue(job_json());
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, &server)?;
+    // The claim is the first write; the first command's intent is the second.
+    agent.journal.fail_write_after(1);
+    let _delay = agent.step()?;
+    assert_eq!(
+        sent(&sim, &RECEIPT_COMMANDS),
+        Vec::<Vec<u8>>::new(),
+        "an unjournaled command never reaches the printer"
+    );
+    assert_eq!(
+        server.job(JOB_ID)["state"],
+        "failed",
+        "nothing was printed, so Holuto may requeue"
+    );
+    let operation = stored(&dir)?;
+    assert_eq!(operation.device, Device::NotStarted);
+    assert_eq!(
+        operation.settled.map(|settlement| settlement.state),
+        Some(JobState::Failed)
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_failed_dispatch_write_stops_the_report_before_it_prints() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, &server)?;
+    // A report's first write is its first command's intent.
+    agent.journal.fail_write_after(0);
+    assert!(matches!(
+        agent.run_report(Report::Daily),
+        Err(Error::Printer(PrinterError::Journal(source)))
+            if source.kind() == ErrorKind::PermissionDenied
+    ));
+    assert_eq!(
+        sent(&sim, &["dailyrep"]),
+        Vec::<Vec<u8>>::new(),
+        "an unjournaled report never reaches the printer"
+    );
+    assert_eq!(Journal::new(&dir).load()?, None);
+    assert_eq!(
+        agent.blocked()?,
+        None,
+        "a refused report leaves nothing to resolve"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_reoffered_job_is_never_printed_again() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let _id = server.enqueue(job_json());
+    let (_temporary, dir) = state_dir();
+    let mut printed = claimed(
+        Device::Completed {
+            receipt_number: Some("41".to_owned()),
+        },
+        Some(JobResult::Done {
+            receipt_number: "41".to_owned(),
+        }),
+    )?;
+    printed.settled = Some(Settlement {
+        at: "2025-01-02T12:01:00Z".parse()?,
+        state: JobState::Done,
+    });
+    Journal::new(&dir).save(&Operation::Receipt(printed.clone()))?;
+    let mut agent = agent(&sim, &dir, &server)?;
+    assert!(matches!(
+        agent.step(),
+        Err(Error::Blocked(message)) if message.contains("było już wykonywane")
+    ));
+    assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
+    assert_eq!(stored(&dir)?, printed, "the printed evidence is kept");
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_claim_never_prints_over_another_unresolved_receipt() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let _id = server.enqueue(job_json());
+    let (_temporary, dir) = state_dir();
+    let mut other = claimed(
+        Device::Dispatching {
+            stage: "trend".to_owned(),
+        },
+        None,
+    )?;
+    other.job_id = Uuid::from_u128(99);
+    Journal::new(&dir).save(&Operation::Receipt(other.clone()))?;
+    let mut agent = agent(&sim, &dir, &server)?;
+    // `step` settles first; a claim racing an unresolved journal reaches `execute` directly.
+    let job = agent.api.take()?.ok_or("missing claimed job")?;
+    assert!(matches!(
+        agent.execute(&job),
+        Err(Error::Blocked(message)) if message == "Poprzednia operacja jest nierozstrzygnięta."
+    ));
+    assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
+    assert_eq!(stored(&dir)?, other);
     Ok(())
 }
 
@@ -1101,6 +1307,67 @@ fn orphan_acknowledgement_rechecks_the_server_printer_binding() -> TestResult {
     );
     assert_eq!(stored(&dir)?, operation);
     assert_eq!(sim.receipts(), []);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn orphan_acknowledgement_refuses_what_staff_or_settlement_must_decide() -> TestResult {
+    let printed = Device::Completed {
+        receipt_number: Some("41".to_owned()),
+    };
+    let dispatching = Device::Dispatching {
+        stage: "trend".to_owned(),
+    };
+    let not_terminal = "Nie można uzgodnić niepotwierdzonego paragonu z Holuto: stan Holuto nie \
+                        pozwala na lokalne wyjaśnienie. Drukowanie zablokowane.";
+    let not_printed = "Brak wydrukowanego paragonu do wyjaśnienia.";
+    for (remote, device, settled, expected) in [
+        (json!({"state": "unknown"}), &printed, false, not_terminal),
+        (json!({"state": "taken"}), &printed, false, not_terminal),
+        (
+            json!({"state": "failed", "attempt": Uuid::from_u128(98)}),
+            &printed,
+            false,
+            not_terminal,
+        ),
+        (json!({"state": "failed"}), &printed, true, not_printed),
+        (json!({"state": "failed"}), &dispatching, false, not_printed),
+    ] {
+        let sim = Simulator::start();
+        let server = Holuto::new();
+        server.insert(with(job_json(), &remote));
+        let (_temporary, dir) = state_dir();
+        let mut operation = claimed(device.clone(), None)?;
+        if settled {
+            operation.settled = Some(Settlement {
+                at: "2025-01-02T12:01:00Z".parse()?,
+                state: JobState::Failed,
+            });
+        }
+        Journal::new(&dir).save(&Operation::Receipt(operation.clone()))?;
+        let mut agent = agent(&sim, &dir, &server)?;
+        let requests_before = server.requests().len();
+        let refused = agent.acknowledge_orphaned_receipt();
+        assert!(
+            matches!(&refused, Err(Error::Blocked(message) | Error::Invalid(message))
+                if message == expected),
+            "{remote}, {device:?}, settled {settled}: {refused:?}"
+        );
+        assert_eq!(stored(&dir)?, operation, "{remote}: journal unchanged");
+        assert!(
+            server
+                .requests()
+                .iter()
+                .skip(requests_before)
+                .all(|request| request.method == "GET"),
+            "{remote}: a refusal reports nothing to Holuto"
+        );
+        assert_eq!(sim.receipts(), [], "{remote}: a refusal never prints");
+    }
     Ok(())
 }
 
