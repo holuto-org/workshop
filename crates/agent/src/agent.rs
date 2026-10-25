@@ -42,7 +42,7 @@ const UNNUMBERED: &str = "Wydruk zakończony, ale nie odczytano numeru paragonu.
                           rozstrzygnij zadanie w Holuto.";
 
 /// Retained until the worker drains it, even if settlement is followed by an error or report.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct News {
     /// Non-blocking operator warnings.
     pub(crate) notices: Vec<String>,

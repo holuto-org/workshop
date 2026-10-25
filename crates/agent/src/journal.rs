@@ -203,7 +203,6 @@ impl Operation {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct Journal<'dir> {
     path: PathBuf,
     _lock: PhantomData<&'dir StateDir>,

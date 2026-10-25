@@ -728,7 +728,6 @@ impl Session<'_> {
 ///
 /// `pages` stores opening cursors through the shown page (`None` for the first).
 /// Failed requests preserve both the shown page and every pending navigation click.
-#[derive(Debug)]
 struct Pager {
     pages: Vec<Option<String>>,
     next: Option<String>,

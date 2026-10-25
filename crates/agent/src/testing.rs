@@ -94,7 +94,7 @@ pub struct RequestLog {
     pub trace_headers: Vec<(String, String)>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct State {
     serial: Option<String>,
     unauthorized: bool,

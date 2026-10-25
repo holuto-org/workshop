@@ -37,6 +37,14 @@ if ($dlls -match '^(vcruntime|msvcp|msvcr|ucrtbase|api-ms-win-crt)') {
     throw "Dynamic VC++ runtime import: $($dlls -join ', ')"
 }
 Write-Host "Verified static CRT; imported DLLs: $($dlls -join ', ')"
+$resourceRva = [BitConverter]::ToUInt32($bytes, $optional + 128)
+if ($resourceRva -eq 0) { throw 'EXE has no resources' }
+$resources = Get-Offset $resourceRva
+$namedTypes = [BitConverter]::ToUInt16($bytes, $resources + 12)
+$idTypes = [BitConverter]::ToUInt16($bytes, $resources + 14)
+$types = @(for ($i = $namedTypes; $i -lt $namedTypes + $idTypes; $i++) { [BitConverter]::ToUInt32($bytes, $resources + 16 + 8 * $i) })
+# RT_GROUP_ICON is what Explorer, the taskbar and shortcuts display.
+if ($types -notcontains 14) { throw 'EXE has no icon resource' }
 $info = $files[0].VersionInfo
 $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
@@ -72,6 +80,13 @@ try {
     if ($process.MainWindowTitle -ne 'Holuto Workshop') { throw "Main window missing: $($process.MainWindowTitle)" }
     Write-Host "Verified main window: $($process.MainWindowTitle)"
 } finally {
-    if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+    # Production builds also run a Sentry crash reporter child from the same EXE;
+    # Windows cannot delete an image until every process using it has exited.
+    $tree = @($process) + @(Get-Process -Name workshop -ErrorAction Ignore | Where-Object { $_.Parent.Id -eq $process.Id })
+    if (-not $process.HasExited) { $process.Kill($true) }
+    foreach ($member in $tree) { $member.WaitForExit() }
     Remove-Item -LiteralPath $installed -Recurse -Force
+    # Absent before launch (checked above), so this is only the state this smoke created.
+    $state = Join-Path $local 'workshop'
+    if (Test-Path -LiteralPath $state) { Remove-Item -LiteralPath $state -Recurse -Force }
 }

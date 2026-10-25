@@ -155,7 +155,8 @@ FIXTURE_DOWNLOAD=allowed
 run --dry-run
 [[ $status == 0 ]] || fail 'latest resolution dry-run failed'
 contains '/releases/download/v1.2.3/workshop-mac-x64.dmg'
-[[ $(wc -l < "$FIXTURE_LOG") == 1 ]] || fail 'latest resolution made extra calls'
+# Numeric: macOS wc pads its count with spaces.
+(($(wc -l < "$FIXTURE_LOG") == 1)) || fail 'latest resolution made extra calls'
 grep -F -- '--head' "$FIXTURE_LOG" >/dev/null || fail 'latest used a body download'
 
 # Invalid/duplicate/mismatched checksums and failed provenance never reach a mount.

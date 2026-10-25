@@ -1,9 +1,7 @@
 //! Terminal-only configuration; never opens a printer or starts fiscal processing.
 
 use std::{
-    error::Error as StdError,
     ffi::OsString,
-    fmt,
     io::{self, Write as _},
     path::Path,
     process::ExitCode,
@@ -71,13 +69,6 @@ struct Failure {
     code: &'static str,
     message: String,
 }
-
-impl fmt::Display for Failure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-impl StdError for Failure {}
 
 impl From<Error> for Failure {
     fn from(value: Error) -> Self {

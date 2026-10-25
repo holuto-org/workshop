@@ -96,7 +96,7 @@ fn zloty<S: Serializer>(amount: &u64, serializer: S) -> Result<S::Ok, S::Error> 
     serializer.serialize_str(&format!("{}.{:02}", amount / 100, amount % 100))
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize)]
+#[derive(PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct BuyerNip(String);
 

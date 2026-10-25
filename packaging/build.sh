@@ -45,7 +45,8 @@ binary="$target_dir/release/workshop"
 case $os in
   win)
     cp -- "$binary.exe" "release/$stem.exe"
-    cp -- "$target_dir/release/workshop.pdb" "$symbols/"
+    # The x64 EXE carries the unwind information Sentry needs to walk minidumps.
+    cp -- "$target_dir/release/workshop.pdb" "$binary.exe" "$symbols/"
     ;;
   mac)
     app="$build_dir/dmg/Holuto Workshop.app"
@@ -68,6 +69,8 @@ with open(sys.argv[1], "wb") as destination:
 PY
     # Stripping changes the Mach-O; ARM64 requires a fresh ad-hoc signature.
     codesign --force --sign - "$app"
+    # The dSYM holds no unwind information; the shipped Mach-O does.
+    cp -- "$app/Contents/MacOS/workshop" "$symbols/"
     # Keep normal activation/Dock behavior: this tray app also has a regular window.
     ln -s /Applications "$build_dir/dmg/Applications"
     hdiutil create -volname "Holuto Workshop" -srcfolder "$build_dir/dmg" -ov -format UDZO "release/$stem.dmg"
@@ -80,6 +83,8 @@ PY
     install -m 755 "$binary" "$package/usr/bin/workshop"
     strip --strip-all "$package/usr/bin/workshop"
     objcopy --add-gnu-debuglink="$symbols/workshop.debug" "$package/usr/bin/workshop"
+    # --only-keep-debug turns .eh_frame into NOBITS: upload the shipped ELF for unwinding.
+    cp -- "$package/usr/bin/workshop" "$symbols/"
     install -m 644 packaging/linux/workshop.desktop "$package/usr/share/applications/workshop.desktop"
     install -m 644 crates/desktop/assets/icon.svg "$package/usr/share/icons/hicolor/scalable/apps/workshop.svg"
     install -m 644 crates/desktop/assets/icon.png "$package/usr/share/icons/hicolor/256x256/apps/workshop.png"

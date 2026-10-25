@@ -155,6 +155,13 @@ function Assert-HolutoNotDowngrade {
     }
 }
 
+function Install-HolutoStagedExecutable {
+    param([string]$Staged, [string]$Target)
+    # PowerShell passes $null to a .NET string parameter as "", which File.Replace rejects as a backup path.
+    if (Test-Path -LiteralPath $Target) { [IO.File]::Replace($Staged, $Target, [NullString]::Value) }
+    else { [IO.File]::Move($Staged, $Target) }
+}
+
 function Invoke-HolutoInstall {
     [CmdletBinding(PositionalBinding = $false)]
     param(
@@ -238,8 +245,7 @@ function Invoke-HolutoInstall {
                 throw 'Staged executable SHA-256 mismatch; existing installation was not replaced.'
             }
             Assert-HolutoNotRunning
-            if (Test-Path -LiteralPath $target) { [IO.File]::Replace($staged, $target, $null) }
-            else { [IO.File]::Move($staged, $target) }
+            Install-HolutoStagedExecutable -Staged $staged -Target $target
             $staged = $null
             Write-Output 'Installed the verified executable.'
         }

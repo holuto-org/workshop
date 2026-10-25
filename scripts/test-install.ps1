@@ -138,6 +138,21 @@ Assert-True ((Get-HolutoPathWithDirectory -Path $existing -Directory $directory)
 $once = Get-HolutoPathWithDirectory -Path 'C:\Tools' -Directory $directory
 Assert-True ((Get-HolutoPathWithDirectory -Path $once -Directory $directory) -ceq 'C:\Tools;C:\Users\Alice\AppData\Local\Programs\Holuto Workshop') 'Repeated PATH update was not idempotent'
 
+# An update replaces the installed executable; a first install moves the staged one into place.
+$exeRoot = Join-Path ([IO.Path]::GetTempPath()) ('holuto-replace-test-' + [Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($exeRoot)
+try {
+    $stagedExe = Join-Path $exeRoot '.workshop-staged.exe'
+    $targetExe = Join-Path $exeRoot 'workshop.exe'
+    [IO.File]::WriteAllText($stagedExe, 'first')
+    Install-HolutoStagedExecutable -Staged $stagedExe -Target $targetExe
+    Assert-True ([IO.File]::ReadAllText($targetExe) -ceq 'first' -and -not (Test-Path -LiteralPath $stagedExe)) 'First install did not move the staged executable'
+    [IO.File]::WriteAllText($stagedExe, 'update')
+    Install-HolutoStagedExecutable -Staged $stagedExe -Target $targetExe
+    Assert-True ([IO.File]::ReadAllText($targetExe) -ceq 'update' -and -not (Test-Path -LiteralPath $stagedExe)) 'Update did not replace the installed executable'
+    Assert-True (@(Get-ChildItem -LiteralPath $exeRoot -Force).Count -eq 1) 'Replacing the executable left a backup behind'
+} finally { Remove-Item -LiteralPath $exeRoot -Recurse -Force }
+
 # Downgrades and installed versions that cannot be compared are refused, as in install.sh.
 Assert-HolutoNotDowngrade -InstalledVersion '1.2.3' -Release 'v1.2.3'
 Assert-HolutoNotDowngrade -InstalledVersion '1.2.9' -Release 'v1.10.0'

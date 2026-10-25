@@ -1,11 +1,19 @@
-use std::{error::Error, ffi::OsString, fs, path::Path, sync::Arc};
+use std::{error::Error, ffi::OsString, fmt, fs, path::Path, sync::Arc};
 
 use agent::{Error as AgentError, settings::Settings, status::Snapshot, store::StateDir};
 use serde_json::json;
 
-use super::{Command, execute, parse};
+use super::{Command, Failure, execute, parse};
 
 type TestResult = Result<(), Box<dyn Error>>;
+
+// Lets `?` box CLI failures; production renders them as a `Response` instead.
+impl fmt::Display for Failure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl Error for Failure {}
 
 #[test]
 fn ports_json_includes_brand_hints_while_human_output_keeps_names_only() {
