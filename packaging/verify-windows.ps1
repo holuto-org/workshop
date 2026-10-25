@@ -42,7 +42,7 @@ $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-J
 if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
 $version = ($metadata.packages | Where-Object name -eq 'workshop').version
 if ($info.ProductName -ne 'Holuto Workshop') { throw 'Wrong ProductName resource' }
-if ($info.FileDescription -ne 'Holuto Workshop · Posnet Temo Online') { throw 'Wrong FileDescription resource' }
+if ($info.FileDescription -ne 'Holuto Workshop · drukarki fiskalne') { throw 'Wrong FileDescription resource' }
 if ($info.ProductVersion -ne $version) { throw "Wrong ProductVersion resource: $($info.ProductVersion)" }
 if ($info.FileVersion -notin @($version, "$version.0")) { throw "Wrong FileVersion resource: $($info.FileVersion)" }
 if ([Text.Encoding]::UTF8.GetString($bytes).Contains('workshop-simulator')) { throw 'Simulator leaked into EXE' }

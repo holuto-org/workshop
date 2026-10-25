@@ -5,7 +5,8 @@
     invocation.
   - **Runner and work**: Installer checks/dry runs on Linux, Windows and macOS;
     static checks on Ubuntu; default/all-feature Clippy on those three OSes;
-    native nextest on the five targets below; Package for PR artifacts.
+    native nextest on the five targets below; separate simulator-only debug
+    acceptance and release-rejection checks; Package for PR artifacts.
 - **Package (`package.yml`)**
   - **Trigger**: Reused by Checks and Release.
   - **Runner and work**: Build and verify Windows x64 `.exe`, Linux x64/ARM64
@@ -48,6 +49,11 @@ The `ci` nextest profile includes platform tests; the default profile excludes
 production code and all-feature debug/test code must compile/lint. Production
 release builds reject simulator/testing features; packaging never enables them.
 See [local platform procedures](testing/platforms.md).
+The acceptance job follows
+[hardware acceptance](testing/hardware-acceptance.md): a dedicated
+`RUSTFLAGS='--cfg workshop_acceptance'` build, narrow cfg-gated driver suite
+and a release compile-error check. The normal `--all-features` suite never
+sets this cfg and must prove production gates. No CI job qualifies hardware.
 
 Windows package smoke requires a clean disposable user profile and refuses if
 app state already exists. Windows Known Folders ignore a `LOCALAPPDATA`

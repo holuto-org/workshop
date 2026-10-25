@@ -1,9 +1,10 @@
 # Holuto Workshop
 
 Rust/Slint tray application and `workshop` CLI for workshop PCs connected to a
-supported Posnet, Novitus or Elzab online fiscal printer. Prints only Holuto sales/advances and fiscal
-reports; no manual receipt editor and no separate agent service. Closing to the
-tray keeps processing; starting is explicit unless the user opts into autostart.
+supported Posnet, Novitus or Elzab online fiscal printer. Prints only Holuto
+sales/advances and fiscal reports; no manual receipt editor and no separate
+agent service. Closing to the tray keeps processing; starting is explicit
+unless the user opts into autostart.
 
 ## Where guidance lives
 
@@ -58,15 +59,16 @@ One Cargo workspace; dependency versions and lints live only in the root
   receipt/report commands; feature `simulator` provides the printer peer used
   by tests.
 - **`crates/novitus` / `novitus`**: Native ESC-P driver, strict model/firmware
-  profiles, same-session preflight and feature-gated TCP simulator. Advances,
-  zero-total receipts and company footers remain unqualified and disabled.
+  profiles, same-session preflight and feature-gated offline simulator.
+  Unqualified capabilities are disabled in production.
 - **`crates/elzab` / `elzab`**: Native ElzabSTX ONLINE candidate profiles,
   same-session read-only preflight and feature-gated offline simulator.
   Zero-total receipts and company footers stay disabled; accepted daily reports
   remain uncertain until human resolution.
 - **`crates/agent` / `agent`**: Holuto `/agent` client, durable
   journal/recovery, settings/history and single `Worker`; feature `testing`
-  exposes all three printer simulators and the loopback Holuto fake through the production client.
+  exposes all three printer simulators and the loopback Holuto fake through
+  the production client.
 - **`crates/desktop` / `workshop`**: Polish Slint UI/tray, CLI, pairing,
   per-user autostart and Sentry lifecycle/privacy; feature `simulator` uses
   separate local state.
@@ -75,6 +77,9 @@ Fiscal invariants and worker ownership are hard requirements in
 [`.omp/RULES.md`](.omp/RULES.md). Agent `testing` and desktop `simulator` are
 test/development features rejected without debug assertions; posnet's simulator
 feature alone has no release guard. Never validate behavior with a real printer.
+The debug-only `cfg(workshop_acceptance)` is not a Cargo feature; its commands
+and human-only qualification procedure live in
+[hardware acceptance](docs/testing/hardware-acceptance.md).
 
 ## Code conventions
 
@@ -123,7 +128,10 @@ cargo nextest run --workspace --all-features
 During scoped development, select the changed crate and its dependents:
 
 ```sh
+cargo nextest run --workspace --all-features -E 'rdeps(fiscal)'
 cargo nextest run --workspace --all-features -E 'rdeps(posnet)'
+cargo nextest run --workspace --all-features -E 'rdeps(novitus)'
+cargo nextest run --workspace --all-features -E 'rdeps(elzab)'
 cargo nextest run --workspace --all-features -E 'rdeps(agent)'
 cargo nextest run --workspace --all-features -E 'package(workshop)'
 ```

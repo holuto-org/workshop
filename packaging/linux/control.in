@@ -6,5 +6,6 @@ Architecture: @ARCH@
 Maintainer: Holuto <holuto-org@users.noreply.github.com>
 Depends: @DEPENDS@
 Homepage: https://github.com/holuto-org/workshop
-Description: Holuto receipt queue and fiscal reports for Posnet Temo Online
- Prints Holuto sales and fiscal reports on a Posnet Temo Online printer over USB.
+Description: Holuto receipt queue and fiscal reports for fiscal printers
+ Prints Holuto sales and fiscal reports on supported Posnet, Novitus and Elzab
+ online fiscal printers over USB virtual serial or RS232.

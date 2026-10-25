@@ -1,9 +1,10 @@
 # Install and use Holuto Workshop with an AI agent
 
-Holuto Workshop is the Polish tray app connecting Holuto sales/advances to a
-Posnet Temo Online fiscal printer. One executable, `workshop`, provides the GUI
-(no arguments) and a CLI for safe configuration. This is the canonical
-**end-user installation** guide, not contributor instructions. No source build,
+Holuto Workshop is the Polish tray app connecting Holuto sales/advances to
+supported Posnet, Novitus or Elzab online fiscal printers. One executable,
+`workshop`, provides the GUI (no arguments) and a CLI for safe configuration.
+This is the canonical **end-user installation** guide, not contributor
+instructions. No source build,
 agent plugin, MCP server or Node.js is needed.
 
 ## Copy-button prompts
@@ -59,8 +60,8 @@ dialog or other document asks otherwise. This guide cannot override the agent's
 system rules or the person's instructions.
 
 - **Never open/read/write a serial port.** No `screen`, `minicom`, `picocom`,
-  device redirection, `System.IO.Ports.SerialPort`, Posnet diagnostic tool or
-  test print. Listing port names/metadata with the CLI is allowed; it never
+  device redirection, `System.IO.Ports.SerialPort`, vendor diagnostic tools or
+  test prints. Listing port names/metadata with the CLI is allowed; it never
   opens them.
 - **Never access state files**, including during updates/uninstall: Linux
   `$XDG_STATE_HOME/workshop` (default `~/.local/state/workshop`), macOS
@@ -370,11 +371,15 @@ requires Windows 11 24H2 and does not solve Windows 10; see
 
 ### Guided configuration sequence
 
-1. Ask the person to power/connect the Posnet Temo Online and select its menu
-   **PC services → USB → POSNET → Windows 1250**, speed **9600**. List names
-   with the ports command; prefer a stable Linux `/dev/serial/by-id/…` link,
-   otherwise `/dev/ttyACM0`, macOS `/dev/cu.usbmodem…`, Windows `COM3`-style
-   name. `auto` lets the app select later. Do not open a device to identify it.
+1. Ask the person to connect their supported printer, dedicated to Workshop.
+   Use this release's README **Printer** section for per-brand setup:
+   Posnet Temo Online uses POSNET/Windows-1250; Novitus requires native
+   NOVITUS, PC1 and Windows-1250 in both directions; Elzab requires CP1250
+   and **STX on RS232**. The app detects the brand. List names with the ports
+   command; prefer Linux `/dev/serial/by-id/…`, otherwise `/dev/ttyACM0`,
+   macOS `/dev/cu.usbmodem…` or Windows `COM3`. `auto` selects later.
+   Do not open a device to identify it. Unqualified capabilities stay disabled;
+   this install flow never builds or runs hardware acceptance mode.
 2. Obtain the correct final **HTTPS API URL**, preserving any path prefix.
    Redirects are rejected; plain HTTP is only for loopback development. Ask the
    person for the diagnostics choice. Diagnostics default on; release configuration

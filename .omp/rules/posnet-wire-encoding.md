@@ -11,6 +11,6 @@ scope: "tool:edit(crates/posnet/src/**), tool:write(crates/posnet/src/**), tool:
 Frame payloads are Windows-1250: encode and decode them only through
 `fiscal::cp1250::{encode, decode}` via `posnet::text`, as `frame::encode`,
 `frame::decode` and the simulator's replies do. UTF-8 bytes or a Latin-1 mapping
-change the intended Polish wire text and its checksum; the five unassigned code-page bytes must stay
-a decode error (a corrupt frame), not text. Settings and journal JSON stay UTF-8;
-this rule is only about bytes on the serial line.
+change the intended Polish wire text and its checksum; the five unassigned
+code-page bytes must stay a decode error (a corrupt frame), not text. Settings
+and journal JSON stay UTF-8; this rule is only about bytes on the serial line.

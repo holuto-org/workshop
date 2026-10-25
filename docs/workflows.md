@@ -15,8 +15,9 @@ cargo mutants --all-features --in-diff /tmp/workshop-changes.diff \
   -p <changed-package>
 ```
 
-Use `fiscal`, `posnet`, `agent` or `workshop` as the changed package; repeat mutation runs
-for each changed product package. `.cargo/mutants.toml` selects nextest and
+Use `fiscal`, `posnet`, `novitus`, `elzab`, `agent` or `workshop` as the changed
+package; repeat mutation runs for each changed product package.
+`.cargo/mutants.toml` selects nextest and
 workspace tests so dependent-crate scenarios can kill driver/agent mutants; its
 `mutants` profile excludes unavailable COM-pair tests. It excludes
 simulator/testing fixtures, not fiscal production behavior. If `/tmp` is
@@ -36,6 +37,7 @@ Additional finish evidence by changed area:
 - **Binding receipt/report output**:
   `cargo insta test --test-runner nextest --review -p posnet --all-features`,
   read each diff against the protocol, then rerun ordinary nextest.
+  Select the relevant driver (`posnet`, `novitus` or `elzab`).
 - **Worker, race, time or shared state**: The scoped nextest stress command
   below; ten repetitions with no flakes.
 - **Recovery/numeric properties**: Increase `PROPTEST_CASES` for the affected
@@ -57,6 +59,11 @@ Additional finish evidence by changed area:
 
 - **Markdown links**: `lychee --offline AGENTS.md README.md docs .omp llms.txt`;
   online/fragment checks when available.
+- **Driver profiles/acceptance**: Run ordinary all-feature tests first to prove
+  production gates, then the separate cfg-gated suite and release rejection
+  from [hardware acceptance](testing/hardware-acceptance.md). CI runs that
+  simulator-only acceptance suite in its own job. Never use acceptance flags
+  for packaging or substitute automated checks for supervised hardware evidence.
 
 Worker stress command:
 

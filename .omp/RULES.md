@@ -6,8 +6,9 @@
 - Preserve the fiscal safety invariants from README "Fiscal safety" in every
   driver, agent or desktop change: verify the printer state before every
   operation; journal fiscal intent before the first fiscal command reaches the
-  printer; never retry a command on the device and never reprint; an uncertain outcome blocks
-  further operations across restarts until a person resolves it, and resolving
+  printer; never retry a command on the device and never reprint; an uncertain
+  outcome blocks further operations across restarts until a person resolves it,
+  and resolving
   never reissues anything. Why: breaking any of them can double-print or lose a
   fiscal record.
 - Printer I/O and Holuto requests run only on the single `agent::worker::Worker`

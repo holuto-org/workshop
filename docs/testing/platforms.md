@@ -37,6 +37,7 @@ The default nextest profile excludes `com_pair` tests. Linux tray tests belong
 to `session_bus` and the serial test group in `.config/nextest.toml`. The
 watcher scenario re-executes itself under `dbus-run-session`; the caller need
 not supply a session-bus address. CI also wraps the complete Linux run:
+
 ```sh
 dbus-run-session -- cargo nextest run --profile ci --workspace --all-features
 # Only the fake tray watcher scenarios:
@@ -81,7 +82,6 @@ Autostart registers the current executable and saves `startOnLaunch`:
 Disabling removes this registration and clears the preference. See the
 [CLI guide](../install-with-ai.md#4-configure-through-the-cli-not-files) for use.
 
-
 ## Process environment and filesystem
 
 For XDG/HOME/timezone/proxy overrides, Windows Known Folder behavior and process
@@ -111,3 +111,12 @@ Headless launch is not proof of physical printer access, real tray integration
 on every desktop shell, Wayland layout, SmartScreen/Gatekeeper reputation or
 signing. [Windows signing procedures](../windows-code-signing.md) are separate.
 All printer behavior in checks remains simulator/pty/com0com only.
+
+## Multi-vendor qualification
+
+The ordinary all-feature suite proves production gates for Posnet, Novitus and
+Elzab. Serial enumeration fixtures distinguish OS metadata from verified
+identity; USB hints never qualify a model. Native simulator tests do not prove
+USB descriptors, interface-to-PC1 mapping or physical print fidelity.
+The [hardware checklist](hardware-acceptance.md) owns the separate debug
+acceptance command and human-only evidence collection on each OS/model.

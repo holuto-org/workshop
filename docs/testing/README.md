@@ -14,6 +14,8 @@ select its required evidence.
 - **[Platforms](platforms.md)**: Serial pairs, process tests, tray and packages
   on each OS/architecture
 - **[UI](ui.md)**: Real Slint application through the testing backend
+- **[Hardware acceptance](hardware-acceptance.md)**: Human-only model/firmware
+  qualification, separate debug cfg and production release gates
 
 ## Why tests exist
 
@@ -22,10 +24,10 @@ assertion counts and tests per function are not proof.
 
 - Assert behavior at the consumer boundary: printer frames and executed effects,
   HTTP requests/results, durable files, visible UI and worker events.
-- Fake only outside systems. Use `posnet::simulator::Simulator` for the printer
-  and the loopback `agent::testing` Holuto fake through the production HTTP
-  client. Never mock our own agent or replace application callbacks in a test
-  claiming to prove the application.
+- Fake only outside systems. Use the matching `posnet`, `novitus` or `elzab`
+  simulator and the loopback `agent::testing` Holuto fake through the
+  production HTTP client. Never mock our own agent or replace application
+  callbacks in a test claiming to prove the application.
 - Assert exact values and exact error variants/operator messages; also assert
   what did **not** change after refusal.
 - Keep setup, one action and literal expected outcomes visible. Helpers build

@@ -30,16 +30,16 @@ constructing those tests, not test-count or coverage targets.
   `src/bin_tests/` is the native AppKit/main-thread exception.
 - One module's fixture helpers stay with it; cross-module helpers belong in the
   owning crate's `src/testing.rs`. Cross-crate boundaries reuse
-  `posnet::simulator` and feature-gated `agent::testing`; never copy an HTTP
+  the brand's simulator and feature-gated `agent::testing`; never copy an HTTP
   fake into desktop tests.
 - Add each regression at the boundary where its consumer sees the bug; a fixed
   bug's test fails without the fix.
 
 ## Harness and fixtures
 
-- Printer scenarios use `posnet::simulator::Simulator`, never real
-  hardware/serial devices. Unix serial tests use allocated ptys; Windows only
-  the configured com0com virtual pair.
+- Printer scenarios use the matching `posnet`, `novitus` or `elzab` simulator,
+  never real hardware/serial devices. Unix serial tests use allocated ptys;
+  Windows only the configured com0com virtual pair.
 - Agent scenarios use `agent::testing::Holuto` loopback HTTP fake through
   production `Api`/`ureq`, simulator and fresh state directory. The fake models
   binding/attempts/results and scripts faults; do not restore the removed

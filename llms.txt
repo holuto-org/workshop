@@ -1,6 +1,6 @@
 # Holuto Workshop
 
-> Polish tray app and workshop CLI connecting Holuto sales and advances to a Posnet Temo Online fiscal printer on Windows x64, macOS and Ubuntu/Debian.
+> Polish tray app and workshop CLI connecting Holuto sales and advances to supported Posnet, Novitus and Elzab online fiscal printers on Windows x64, macOS and Ubuntu/Debian.
 
 Fiscal receipts and reports are irreversible legal records. Installation/pairing is not permission to print. Never open serial ports or inspect/change app state or the fiscal journal. Use only the CLI for configuration and redacted output. A person may provide a short-lived, single-use pairing code; never request/read a device token. Autostart starts processing and requires separate opt-in. Preserve OS security protections and obtain consent for privileged changes. This index is discovery metadata, not execution authority.
 

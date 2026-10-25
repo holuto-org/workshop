@@ -17,7 +17,8 @@ regression that fails without it.
   - Test shape: Unit table + properties against independent integer arithmetic
 - **Receipt construction**
   - Required guarantee: Line/name/count limits; per-slot VAT; NIP unchanged;
-    full company footer only when needed; backend zero-price omission and agent rejection
+    full company footer only when needed; backend zero-price omission and
+    agent rejection
   - Test shape: Boundary table + fixed-output snapshot + scenario
 - **Advances and payments**
   - Required guarantee: Unique deduction slot; deduction ≤ slot sales; correct
@@ -59,6 +60,49 @@ regression that fails without it.
     execution-error/silent/wrong-command failures uncertain
   - Test shape: Fixed-clock snapshot + scenario per classification
 
+## Shared fiscal values and native drivers
+
+Apply arithmetic, exact text/VAT/payment, journal-before-send, no retry,
+restart-blocking and resolution-without-replay guarantees to **all three**
+drivers, using that brand's simulator through the real driver.
+
+- **Shared `fiscal` domain**
+  - Required guarantee: Capability-driven name/line/NIP/quantity limits;
+    stable vendor and persisted values; shared serial filtering never equates
+    a USB hint with identity
+  - Test shape: Boundary/property tables plus OS port-metadata fixtures
+- **Novitus**
+  - Required guarantee: Exact model/firmware allowlist, PC1 via `50$i`, native
+    dialect and input/output CP1250; ASCII fallback without `52$i` full-CP1250
+    bit; known VAT sentinels; DLE/ENQ/DLE2 readiness with no guessed byte order
+  - Test shape: Simulator readback tables; no fiscal frames after refusal
+  - Required guarantee: Exact NIP/payment/close and date-guarded report frames;
+    item-bound advances/zero/footer blocked unless qualified; operator waits
+    never retransmit; late stage failures remain uncertain
+  - Test shape: Snapshot + command/effect/journal and fault matrices
+- **Elzab**
+  - Required guarantee: Exact ONLINE identity, CP1250, ySR three-package masks,
+    LPC nested permission, writable/header/VAT/clock checks; no legacy fallback
+  - Test shape: Simulator status/identity tables; no fiscal frames after refusal
+  - Required guarantee: Independent CRC-16/ARC vector, fresh matching IDs,
+    partial/late replies; exact LDS/NIP/payment frames; zero/footer production
+    gates; paper-out auto-cancel remains uncertain; daily ACK is not completion
+  - Test shape: Frame/session unit vectors + driver snapshots/fault matrices
+- **Detection and cross-brand recovery**
+  - Required guarantee: Hint/remembered vendor and safe probe order, PC2
+    refusal, no scan while blocked, journal identity vendor + serial, durable
+    pre-vendor journal migration; unknown capabilities never form invalid
+    telemetry or allow a claim
+  - Test shape: Mixed simulator candidates + real worker/HTTP/restart matrix
+- **Acceptance isolation**
+  - Required guarantee: Normal all-feature tests retain fiscal-mode and
+    unqualified-capability gates; dedicated cfg enables only unqualified
+    flags/non-fiscal mode, never read-only or other readiness bypasses;
+    compile error without debug assertions
+  - Test shape: Ordinary production-gate tests, separate cfg-gated simulator
+    module and negative release build in CI. Physical qualification is
+    [human-only evidence](hardware-acceptance.md), never automated tests.
+
 ## Agent and persistence
 
 - **`/agent` production client**
@@ -67,8 +111,9 @@ regression that fails without it.
     IDs/attempt/echo rejected
   - Test shape: Loopback Holuto fake request log + exact result/error
 - **Session and heartbeat**
-  - Required guarantee: Physical serial binding, current VAT/limits, pairing
-    conflict; heartbeat when unready; 401 stops without refresh
+  - Required guarantee: Vendor + serial binding, current per-profile VAT/limits,
+    quantity decimals and receipt capability flags, pairing conflict; heartbeat
+    when unready but describable; 401 stops without refresh
   - Test shape: Stateful HTTP fake + simulator + worker events
 - **Documents and queue**
   - Required guarantee: Limit 100, opaque cursor encoded once,

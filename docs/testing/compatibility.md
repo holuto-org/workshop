@@ -7,14 +7,15 @@ history. Keep sanitized, literal golden fixtures, not fixtures serialized by the
 reader/writer under test. Decide migrations explicitly before changing persisted
 contracts; never infer that an unreadable journal can be discarded.
 
-- **`operation.json`**: Current receipt/report variants, claim/attempt/serial,
-  `NotStarted`, `Dispatching`, completed with/without number, results and
-  settlements retain their exact meaning across restart. Unresolved evidence
-  blocks/reconciles.
-- **`settings.json`**: Current required
-  API URL/token/port/baud/diagnostics/autostart fields retain meaning; opt-out
-  survives save/load/restart. Malformed or incomplete persisted formats fail
-  rather than silently reset.
+- **`operation.json`**: Receipt/report variants include vendor and serial;
+  pre-vendor evidence is migrated durably once to Posnet under the instance
+  lock, never discarded. `NotStarted`, `Dispatching`, completed with/without
+  number, results and settlements retain their meaning across restart.
+  Resolution requires the same vendor and serial and never reissues commands.
+- **`settings.json`**: API URL/token/port/baud/diagnostics/autostart and nullable
+  vendor retain meaning; old settings without vendor use detection.
+  Unknown fields still fail closed, so downgrades are not generally supported.
+  Diagnostics opt-out survives save/load/restart.
 - **`history.jsonl`**: Current entries preserve ordering, duplicate-job handling
   and staff-entered numbers; torn lines do not swallow the next valid entry.
 
@@ -26,9 +27,9 @@ each OS; Linux rename does not prove Windows write-through.
 ## `/agent` and the backend
 
 The production authority is `../backend`'s `/agent` handlers and OpenAPI, not
-the fake. For changes, compare session/heartbeat serial binding, printer
-limits/VAT, document pagination, queue inputs, take attempts, terminal states
-and result idempotency/refusals with those handlers. Update the stateful
+the fake. Compare session/heartbeat vendor + serial binding, current per-driver
+limits/VAT/capabilities, document pagination, queue inputs, take attempts,
+terminal states and result idempotency/refusals with those handlers. Update
 `agent::testing` loopback fake in the same change, then prove requests through
 production `ureq` and the observable stored server state.
 
@@ -58,6 +59,13 @@ contract changes together; use sanitized recorded contract examples and the
 backend's own tests, never probe production with a real token or queue fiscal
 work as a compatibility check.
 
+Deploy the multi-vendor backend before Workshop: session/heartbeat require
+`vendor`, `maxQuantityDecimals`, `capabilities.advanceDeductions` and
+`capabilities.zeroTotalReceipts`. Older agents without these fields are not
+supported. Test backend refusal of unsupported advances, zero-total sales and
+excess quantity precision, plus independent local refusal before any fiscal
+command. Company-footer availability remains a local header check.
+
 ## Dependencies and features
 
 Keep Cargo.lock and workspace versions deliberate. `slint`, `slint-build` and
@@ -72,5 +80,8 @@ Exercise default production features as well as all debug/test features. Desktop
 release builds reject `simulator`; agent builds without debug assertions reject
 `testing`. Posnet's standalone simulator has no release guard. A green
 all-features test run does not prove the real serial branch builds. Rebuild and
-verify all five packages for dependency/toolchain upgrades; run advisory/license and
-unused-dependency checks. See [CI](../ci.md).
+verify all five packages for dependency/toolchain upgrades; run advisory/license
+and unused-dependency checks. See [CI](../ci.md).
+`--all-features` must retain production fiscal-mode and unqualified-capability
+gates. Acceptance uses a separate debug-only cfg, not a feature; run its
+[isolated suite and release-rejection check](hardware-acceptance.md).

@@ -1,15 +1,17 @@
-# Holuto Workshop
+# Holuto Workshop — fiscal printers
 
-Tray app for the workshop PC connected to a Posnet Temo Online fiscal printer.
-Prints **only Holuto sales and advances** queued in the web app or selected in
-Holuto Workshop. No manual receipt editor or separate agent; processing
-continues with the window closed.
+Tray app for the workshop PC connected to a supported Posnet, Novitus or Elzab
+online fiscal printer. Prints **only Holuto sales and advances** queued in the
+web app or selected in Holuto Workshop. No manual receipt editor or separate
+agent; processing continues with the window closed.
 
 - **`crates/fiscal`**: Shared fiscal values, receipt validation against driver
   capabilities, the `Driver` trait and `Device` model, report/journal contracts,
   Windows-1250 codec and serial links.
 - **`crates/posnet`**: Serial driver: framing, CRC, CP1250, printer state,
   receipts, reports and socket simulator.
+- **`crates/novitus`**: Native NOVITUS ESC-P driver and offline simulator.
+- **`crates/elzab`**: Native ElzabSTX driver and offline simulator.
 - **`crates/agent`**: Holuto `/agent` API, durable journal, receipt execution
   and recovery, single printer worker.
 - **`crates/desktop`**: Polish Slint app and `workshop` CLI with tray, pairing,
@@ -90,8 +92,9 @@ reads do not repair modes.
 Settings and `status.json` are persisted by one background FIFO writer. Starting
 waits for successful settings persistence; quitting waits cooperatively for
 pending writes and the worker. `status.json` contains only processing/connection
-flags, last known device vendor/serial, fiscal-block flags and its update timestamp, never
-credentials or customer data. It is display state, not fiscal evidence.
+flags, last known device vendor/serial, fiscal-block flags and its update
+timestamp, never credentials or customer data. It is display state, not fiscal
+evidence.
 
 ## CLI
 
@@ -118,10 +121,46 @@ and [OS artefacts](docs/testing/platforms.md#autostart-artefacts).
 
 ## Printer
 
-Printer settings: **PC services → USB → POSNET → Windows 1250**, 9600 baud.
+Dedicate the printer to Workshop; do not share it with other software or
+interfaces. Only USB virtual serial and RS232 connections are supported, not
+LAN/RNDIS, Novitus XML or NoviAPI. The brand is detected, not selected by the
+operator. Configure the printer manually; discovery never changes its settings.
+
+### Posnet
+
+Temo Online: **PC services → USB → POSNET → Windows 1250**, 9600 baud.
+Advances, zero-total receipts and company footers are supported.
+
+### Novitus
+
+Candidate profiles cover HD II Online, Deon Online, Bono Online and Point,
+with exact model/firmware allowlists. Select native **NOVITUS** (dialect
+option 5 = `1`), Windows-1250 for **both input and output** (options 91/92 =
+`1`) and 8N1 at the configured speed (Workshop defaults to 9600).
+Use the fiscal **PC1** endpoint: read-only `50$i` must identify PC1.
+USB A/B names do not prove the endpoint; PC2 can answer queries but cannot
+fiscalize receipts. Full CP1250 text requires the device's `52$i` capability
+bit; otherwise only ASCII is advertised. Advance deductions, zero-total
+receipts and company footers remain disabled pending hardware qualification.
+Program the complete company name in the header for production use.
+
+### Elzab
+
+Candidate profiles cover Zeta Online, Mera Online and Cube Online, not legacy
+Zeta/D10 or network-only T10. USB uses native **ElzabSTX** regardless of the
+menu protocol; **RS232 must explicitly select STX**, 8N1 and the configured
+speed (9600 by default). Select **CP1250** manually. Per-VAT advance
+settlement is supported; zero-total receipts and company footers remain
+disabled. Program the complete company name in the header.
+Daily reports are accepted asynchronously and always require human
+reconciliation; acceptance is not proof of completion.
+
+Profiles are not hardware certificates. The
+[supervised acceptance checklist](docs/testing/hardware-acceptance.md) records
+evidence per model/firmware before qualification; agents never run it.
 Typical ports: Linux `/dev/ttyACM0` (prefer `/dev/serial/by-id/...`), Windows
-`COM3`, macOS `/dev/cu.usbmodem…`. Only serial connections are supported. The
-user needs read/write access (`dialout` group on Linux); never run with sudo.
+`COM3`, macOS `/dev/cu.usbmodem…`. The user needs read/write access
+(`dialout` group on Linux); never run with sudo.
 
 The GUI, `workshop ports` and discovery share a passive candidate list: hinted
 USB devices (`1424:*` Posnet, `1A28:2512` Novitus, `0483:5740` Elzab), then
@@ -134,8 +173,8 @@ virtual/Bluetooth ports reported as `Unknown`. An unlisted port can still be
 entered manually. Listing never opens a port.
 
 If the saved port fails, discovery identifies other serial candidates read-only
-and verifies the first Temo Online found before using and saving it. It never
-scans with an unresolved operation: the device must not change.
+and verifies the first supported device before using and saving its port/vendor.
+It never scans with an unresolved operation: the device must not change.
 
 ## Desktop app
 
@@ -184,18 +223,21 @@ truncated.
 
 ## Fiscal safety
 
-- Before each operation, verify printer identity, fiscal mode, header,
-  mechanism, command queue, transaction state, read-only mode, transaction
-  resources held by another interface and VAT table in the session that prints.
+- Before each operation, verify identity, fiscal mode, header, mechanism,
+  observable busy/open-document/read-only state, VAT and clock in the session
+  that prints. Posnet also checks queue emptiness and other-interface resource
+  ownership. Novitus/Elzab expose no equivalent ownership readout: dedication
+  to Workshop is mandatory; no open document is adopted or cancelled.
 - Journal claimed jobs in `operation.json` before their preflight; journal every
   fiscal command **before sending it**. Startup/discovery uses read-only commands
   without creating fiscal intent. Never retry a device command or reprint a receipt.
-- Printer replies follow execution. After a silent command timeout, asynchronous
-  `!sprn`/`!sdev` queries check for operator intervention (paper, cover, lever,
-  temperature, power or a key). Wait up to 10 minutes from the first wait,
-  however often the printer flaps between waiting and ready, and show the
-  required action; resend nothing. No reported wait reason or no response leaves
-  the outcome **unknown**.
+- **Posnet:** after a silent timeout, asynchronous `!sprn`/`!sdev` queries
+  observe operator waits (paper, cover, lever, temperature, power or a key).
+  Wait at most ten minutes from the first wait, without resending.
+  **Novitus:** real-time DLE/ENQ/DLE2 observe waits without resending;
+  undocumented DLE2 byte order is never guessed. **Elzab:** no concurrent
+  status polling is assumed; paper-out auto-cancellation still leaves an
+  uncertain outcome. Unexplained silence or unreadable status is **unknown**.
 - Uncertain outcomes, including process death during dispatch, are **unknown**
   and block receipts and reports across restarts. Inspect the printout and
   printer, then resolve the job in the **web app**. Resolution unblocks, never
@@ -207,19 +249,19 @@ truncated.
   reports `failed` without blocking. If Holuto already marked that job `unknown`
   (it expired while the app was down), the app keeps blocking and tells staff
   that nothing was printed, so they can resolve it as failed in the web app.
-- A `trinit` error (new certificates, read-only mode, full memory) cannot have
-  issued a receipt, which needs `trend`; fail the job with the device's reason,
-  without blocking. A transaction it might leave open fails the next preflight.
-  A report command the printer rejects as a frame (`ERR` reply naming that
-  command) printed nothing and fails without blocking. Any other refusal of a
-  later receipt command or of a report remains **unknown**.
+- Certain post-send refusals are brand-specific: Posnet initial `trinit`
+  errors and report `ERR` frame rejections; Novitus initial `$h` refusal and
+  daily-report keyboard cancellation (37); Elzab transport rejection of the
+  initial `LOR` only. Later receipt errors remain **unknown**, including Elzab
+  zero-close error 1008. No refusal permits resending. An accepted Elzab
+  `RRP` daily report is always **unknown**, even if counters advance.
 - Interrupted reports also block. After inspecting the printout, use **Wyjaśnij
   raport** with the same printer connected and ready. Resolution prints nothing.
 - Persist the job, attempt and execution-start timestamp before dispatch;
   persist the result before sending it. A `done` result uses the printer clock
-  (`rtcget`, Polish time, minute precision) read just before `trinit`, not the
-  PC clock, which Holuto rejects if ahead. An unreadable clock fails before
-  fiscal commands. Resending a saved API result preserves its attempt and issue
+  (`rtcget` on Posnet, `#c` on Novitus, `XCR` on Elzab), interpreted in Polish
+  time, not the PC clock. Unreadable/ambiguous clocks fail before fiscal
+  commands. Resending a saved API result preserves its attempt and issue
   time; it is not reprinting. Recovery reconciles durable evidence with server
   state without replaying printer commands.
 - Terminal server resolutions are authoritative, except against completed-print
@@ -290,6 +332,19 @@ decimals, 80-character item names (`trline`), 500 lines (`trinit`),
 40-character company footer lines (`trftrln`) and printable CP1250 from
 0x20–0xFF, excluding DEL, no-break space, soft hyphen and table-drawing glyphs
 (`¤ ¨ ˛ ´ ¸`, POT-I-DEV-37 p. 14).
+
+| Production capability | Posnet | Novitus | Elzab |
+| --- | --- | --- | --- |
+| Advance deductions | yes | no | yes |
+| Zero-total receipts | yes | no | no |
+| Company footer | yes | no | no |
+
+Novitus uses 255 lines, 40/60-character names and model-specific 40/42/44
+company-name widths; Elzab uses a conservative 255-line ceiling, 64-character
+names, 42-character company names and five quantity decimals. Neither brand
+inherits Posnet's limits. A missing footer capability is a local check:
+the company name must already occur in the decoded header or the job fails
+before dispatch. Debug acceptance flags never belong in production telemetry.
 
 Discovery first checks the configured port's remembered vendor, otherwise its
 USB hint. Unhinted ports receive only read-only identity probes, in order:

@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         winresource::WindowsResource::new()
             .set_icon("assets/icon.ico")
             .set("ProductName", "Holuto Workshop")
-            .set("FileDescription", "Holuto Workshop · Posnet Temo Online")
+            .set("FileDescription", "Holuto Workshop · drukarki fiskalne")
             .compile()?;
     }
     Ok(())
