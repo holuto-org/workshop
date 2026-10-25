@@ -3,7 +3,7 @@
 
 use crate::{
     frame,
-    session::{DLE, DLE2, ENQ, identifier, is_fiscal, no_request_checksum},
+    session::{DLE, DLE2, ENQ, identifier, no_request_checksum},
 };
 use fiscal::{
     cp1250, decimal,
@@ -581,7 +581,6 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
             (response, true, true)
         },
         "#c" => (format!("1#C{}", state.clock), false, false),
-        "#n" => ("1#E0".to_owned(), false, false),
         "^u" => (format!("1#U{}", state.header), true, true),
         "23#s" => (
             format!(
@@ -611,6 +610,14 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
     raw
 }
 
+/// Fiscal schemas reply with an ACK only.
+fn is_fiscal(command: &str) -> bool {
+    matches!(
+        command,
+        "$h" | "$l" | "$z" | "$b" | "$y" | "@z" | "#r" | "#o"
+    )
+}
+
 /// Error modes 2–4 send `#Z` completions; power-on mode 0 and mode 1 reply nothing.
 fn completion(state: &State, code: u32, command: &str) -> Vec<u8> {
     if matches!(state.error_mode, 2..=4) {
@@ -631,11 +638,10 @@ fn fiscal_command(body: &str, command: &str, state: &mut State) -> u32 {
             state.paid = 0;
         },
         "$l" if state.transaction && !state.ending => {
-            let Some(fields) = body.split_once("$l").map(|(_, tail)| tail) else {
-                return 4;
-            };
-            let fields: Vec<_> = fields.split('\r').collect();
-            let Some(amounts) = fields.get(2) else {
+            let Some(amounts) = body
+                .split_once("$l")
+                .and_then(|(_, tail)| tail.split('\r').nth(2))
+            else {
                 return 4;
             };
             let Some(total) = amounts
@@ -648,12 +654,10 @@ fn fiscal_command(body: &str, command: &str, state: &mut State) -> u32 {
             state.gross += total;
         },
         "@z" if state.transaction && !state.ending => {
-            let Some(amounts) = body.rsplit('\r').next() else {
-                return 4;
-            };
-            let Some(value) = amounts
-                .split('/')
+            let Some(value) = body
+                .rsplit('\r')
                 .next()
+                .and_then(|amounts| amounts.split('/').next())
                 .and_then(|amount| decimal::parse(amount, 2))
             else {
                 return 4;
@@ -674,12 +678,10 @@ fn fiscal_command(body: &str, command: &str, state: &mut State) -> u32 {
             state.paid += value;
         },
         "$y" if state.transaction && !state.ending => {
-            let Some(tail) = body.rsplit('\r').next() else {
-                return 4;
-            };
-            let Some(total) = tail
-                .split('/')
+            let Some(total) = body
+                .rsplit('\r')
                 .next()
+                .and_then(|tail| tail.split('/').next())
                 .and_then(|amount| decimal::parse(amount, 2))
             else {
                 return 27;

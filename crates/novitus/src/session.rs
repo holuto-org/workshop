@@ -218,9 +218,6 @@ impl Session {
     /// Receive the original command's ACK without resending.
     /// Fiscal schemas are ACK-only, so no partial data is discarded.
     pub(crate) fn finish_fiscal(&mut self, command: &str, deadline: Instant) -> Result<(), Error> {
-        if !self.blocked || !is_fiscal(command) {
-            return Err(frame::corrupt());
-        }
         let result = self.receive(command, command, deadline).map(|_reply| ());
         if result.is_ok() || matches!(result, Err(Error::Device { .. })) {
             self.blocked = false;
@@ -325,9 +322,6 @@ impl Session {
     }
 
     pub(crate) fn realtime_until(&mut self, byte: u8, cap: Instant) -> Result<u8, Error> {
-        if !matches!(byte, DLE | ENQ) {
-            return Err(Error::Invalid("Zapytanie wymaga DLE lub ENQ.".to_owned()));
-        }
         let deadline = self.send_realtime(byte, cap)?;
         loop {
             match self.next_event(deadline)? {
@@ -426,14 +420,6 @@ const fn status_matches(request: u8, status: u8) -> bool {
     }
 }
 
-/// Fiscal schemas reply with an ACK only.
-pub(crate) fn is_fiscal(command: &str) -> bool {
-    matches!(
-        command,
-        "$h" | "$l" | "$z" | "$b" | "$y" | "@z" | "#r" | "#o"
-    )
-}
-
 fn decimal(value: Option<&str>) -> Result<u32, Error> {
     value
         .filter(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
@@ -511,18 +497,17 @@ pub(crate) fn identifier(body: &str) -> Option<&str> {
 }
 
 fn query_identifier(command: &str) -> Option<&'static str> {
-    ["#v", "$i", "^c", "^u", "#c", "#s", "#n", "?l"]
+    ["$i", "^c", "^u", "?l"]
         .into_iter()
         .find(|query| *query == command)
 }
 pub(crate) fn no_request_checksum(body: &str) -> bool {
-    matches!(identifier(body), Some("#v" | "#c" | "#n" | "$i")) || body == "23#s"
+    matches!(identifier(body), Some("#v" | "#c" | "$i")) || body == "23#s"
 }
 fn response_prefix(body: &str) -> Option<(String, bool, bool)> {
     match identifier(body)? {
         "#v" => Some(("1#R".to_owned(), false, false)),
         "#c" => Some(("1#C".to_owned(), false, false)),
-        "#n" => Some(("1#E".to_owned(), false, false)),
         "#s" if body == "23#s" => Some(("2#X".to_owned(), true, false)),
         "$i" => Some((format!("{}$I", body.split('$').next()?), true, true)),
         "^u" => Some(("1#U".to_owned(), true, true)),
