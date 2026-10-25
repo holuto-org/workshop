@@ -1,6 +1,6 @@
 //! `/agent` wire bodies generated from the vendored contract.
 //!
-//! Decimal strings remain unvalidated until the individual job reaches the fiscal boundary.
+//! Decimal strings are validated per job at the fiscal boundary.
 
 use super::{APP_VERSION, DOCUMENTS_LIMIT};
 use crate::documents::{Document, ReceiptKind};

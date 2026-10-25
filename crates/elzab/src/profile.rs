@@ -22,19 +22,17 @@ pub fn lookup(model: &str) -> Option<Profile> {
         capabilities: Capabilities {
             // Current ONLINE model manuals.
             max_item_name: 64,
-            // Host safety ceiling, not a claim about unverified device buffer size.
-            // A device buffer refusal is never replayed.
+            // Host ceiling, not a verified device limit; a refusal is never replayed.
             max_lines: 255,
-            // Conservative narrow main-line width; LAL is disabled.
+            // Conservative narrow line width; LAL is disabled.
             max_company_name: 42,
-            max_buyer_nip: 42, // line_max_len, conservative narrow width.
+            max_buyer_nip: 42,
             max_quantity_decimals: 5,
             allowed_characters: text::printable_cp1250(),
             advance_deductions: true, // ONLINE LDS extension.
             zero_total_receipts: cfg!(workshop_acceptance), // Error1008, unqualified.
             company_footer: cfg!(workshop_acceptance), // Native LAL order unqualified.
         },
-        // ONLINE line-by-line variant. Never match legacy ZETA.
         open: "LOR\x1dC0",
     })
 }

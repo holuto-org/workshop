@@ -69,7 +69,6 @@ pub(crate) struct ReceiptOperation {
     #[serde(alias = "device_serial")]
     pub(crate) device_unique_number: String,
     pub(crate) device: Device,
-    /// Printed contents for local history.
     pub(crate) summary: Option<Summary>,
     /// Persisted before sending; resent unchanged until accepted.
     pub(crate) result: Option<JobResult>,
@@ -164,7 +163,7 @@ pub(crate) struct ReportOperation {
     pub(crate) device_unique_number: String,
     pub(crate) started_at: Timestamp,
     pub(crate) device: Device,
-    /// Operator confirmed the interrupted report's printout on the same ready device.
+    /// Operator-confirmed printout on the same ready device.
     pub(crate) acknowledged_at: Option<Timestamp>,
 }
 

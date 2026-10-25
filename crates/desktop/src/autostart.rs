@@ -1,4 +1,4 @@
-//! Per-user login registration. Called only by the CLI or background settings writer.
+//! Per-user login registration for the CLI and background settings writer.
 
 use std::{env, io, path::Path};
 #[cfg(not(windows))]
@@ -106,12 +106,10 @@ fn set_at(artifact: &Path, executable: &Path, enabled: bool) -> Result<(), Error
         .map_err(|error| store_error(artifact, io::Error::from(error)))
 }
 
-/// Writes the XDG autostart entry for exactly this executable.
+/// Exec has two escape layers: desktop-entry strings, then quoted arguments.
 ///
-/// Exec is unescaped twice: first as a desktop-entry string (`\\` → `\`), then by the Exec
-/// quoting rules (`\"`, `` \` ``, `\$`, `\\` inside quotes), so each Exec escape is written
-/// with its backslash doubled.
-/// <https://specifications.freedesktop.org/desktop-entry-spec/latest/exec-variables.html>
+/// Double each argument-escape backslash for the string layer:
+/// <https://specifications.freedesktop.org/desktop-entry-spec/latest/exec-variables.html>.
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn registration(executable: &str) -> String {
     let mut escaped = String::with_capacity(executable.len());

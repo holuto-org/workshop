@@ -58,8 +58,7 @@ fn desktop_exec_launches_paths_with_field_codes_and_shell_metacharacters() -> Te
     Ok(())
 }
 
-/// Independent model of the spec for one quoted argument: string unescaping (`\\`), then
-/// Exec quoting and `%%`. Anything the generator must never emit is an error.
+/// Independent decoder for one quoted Exec argument; rejects unsupported escapes and field codes.
 #[cfg(target_os = "linux")]
 fn exec_path(value: &str) -> Result<String, Box<dyn Error>> {
     let mut string = String::new();

@@ -1,9 +1,7 @@
-//! Route AppKit's Cmd+Q and Dock Quit through the same cooperative stop as the tray.
+//! Route Cmd+Q and Dock Quit through cooperative shutdown.
 //!
-//! Installation succeeds only for our method on the current winit delegate. Check
-//! immediately before starting a worker; a missing or foreign policy fails closed.
-//! The harness-free `macos_quit` test uses real AppKit on Rust's main thread because
-//! Slint's testing backend cannot prove native selector registration or dispatch.
+//! Recheck our hook on the current winit delegate before each worker starts;
+//! missing or foreign termination policies fail closed.
 use std::{mem, ptr};
 
 use objc2::{
@@ -30,7 +28,7 @@ pub(super) fn install() -> bool {
     }
     let selector = sel!(applicationShouldTerminate:);
     let implementation = implementation();
-    // Preserve every existing method, including a future winit termination policy.
+    // Never replace an existing termination policy.
     if let Some(method) = class.instance_method(selector) {
         return ptr::fn_addr_eq(method.implementation(), implementation);
     }
@@ -77,6 +75,6 @@ pub(super) extern "C-unwind" fn should_terminate(
     _: &AnyObject,
 ) -> NSApplicationTerminateReply {
     with_app(|application| application.stop(true));
-    // Cancel AppKit's immediate process termination. Event::Stopped quits Slint, then main exits.
+    // Defer process exit until Event::Stopped ends the Slint loop.
     NSApplicationTerminateReply::TerminateCancel
 }

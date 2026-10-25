@@ -7,7 +7,7 @@ use super::{Command, Failure, execute, parse};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-// Lets `?` box CLI failures; production renders them as a `Response` instead.
+// Only tests need Failure to support `?`; production renders a Response.
 impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)

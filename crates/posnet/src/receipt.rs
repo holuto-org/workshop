@@ -1,4 +1,4 @@
-//! Posnet fiscal command order and payment wire encoding.
+//! Receipt command order and payment codes (POT-I-DEV-37 v5978, pp. 275–314).
 
 use std::time::Duration;
 
@@ -33,7 +33,6 @@ impl Step {
     }
 }
 
-/// `trpayment` `ty` (spec p. 314).
 const fn wire_type(form: PaymentForm) -> u8 {
     match form {
         PaymentForm::Cash => 0,
@@ -44,8 +43,6 @@ const fn wire_type(form: PaymentForm) -> u8 {
     }
 }
 
-/// Fiscal command order per spec pp. 275-314; zero payments send no command.
-/// A footer requires footer commands after `trend`.
 pub fn steps(receipt: &Receipt, footer: Option<&str>) -> Vec<Step> {
     let mut steps = vec![Step::new(
         "trinit",

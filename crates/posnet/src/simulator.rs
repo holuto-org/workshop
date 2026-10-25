@@ -1,5 +1,4 @@
-//! Offline TCP Temo peer using the serial driver's [`Session`](crate::session::Session),
-//! with one session at a time.
+//! Offline TCP Temo peer using the driver's [`Session`](crate::session::Session), one at a time.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -44,20 +43,19 @@ const DEFAULT_VAT: [&str; 7] = [
 
 pub type Params = BTreeMap<String, String>;
 
-/// Scripted command refusals, effects and reply failures.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
     /// Documented `ERR\t?2000\tcm<command>\tfd\t` refusal; no command effect.
     Error,
     /// Custom reply parameters; no command effect.
     Reply(Vec<(String, String)>),
-    /// Execute successfully, then discard the reply.
+    /// Executes, then drops the reply.
     LoseReply,
-    /// Execute successfully, then return a reply with a bad CRC.
+    /// Executes, then replies with a bad CRC.
     CorruptReply,
-    /// Execute successfully, then close the connection.
+    /// Executes, then closes the connection.
     Disconnect,
-    /// Execute successfully, then emit `<command>\t?2000\t` (not an `ERR` rejection).
+    /// Executes, then emits `<command>\t?2000\t`, not an `ERR` rejection.
     ExecutionError,
     /// Documented error form, optionally naming a different command.
     Device {
@@ -127,7 +125,6 @@ struct State {
     out_of_paper_at: Option<String>,
 }
 
-/// Blocks a command until the test releases it.
 #[derive(Debug)]
 pub struct Hold {
     reached: Receiver<()>,
@@ -192,7 +189,7 @@ impl Simulator {
         &self.address
     }
 
-    /// Real Posnet driver against this peer, with an optional test-only qualification profile.
+    /// Uses the production driver with optional test-only capability overrides.
     pub fn driver(&self) -> Box<dyn Driver> {
         Box::new(SimDriver {
             printer: Printer::new(
@@ -206,7 +203,7 @@ impl Simulator {
         })
     }
 
-    /// Overrides the advertised profile without changing production driver qualification.
+    /// Overrides simulated capabilities, not production qualification.
     pub fn set_capabilities(&self, capabilities: Capabilities) {
         self.state().capabilities = Some(capabilities);
     }
@@ -250,7 +247,7 @@ impl Simulator {
         self.state().transaction_open
     }
 
-    /// Simulates opening or closing a transaction at the keypad.
+    /// Changes keypad transaction state without sending a command.
     pub fn set_transaction_open(&self, open: bool) {
         self.state().transaction_open = open;
     }
@@ -264,7 +261,7 @@ impl Simulator {
         self.state().vat = rates.map(str::to_owned);
     }
 
-    /// Freezes the printer clock, independently of host time and timezone.
+    /// Freezes printer time independently of the host clock.
     pub fn set_clock(&self, timestamp: Timestamp) {
         self.state().timestamp = Some(timestamp);
     }

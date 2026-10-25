@@ -1,11 +1,7 @@
-//! Native `AppKit` regression: a harness-free target keeps Rust's actual main thread.
+//! Real `AppKit` dispatch requires a winit window on Rust's main thread.
+//! Reuse production modules and nest the scenario under `Application` to avoid a test-only API.
 //!
-//! This is the deliberate exception to the Slint testing backend: only a real winit
-//! window can prove `AppKit` dispatches its termination selector to our installed hook.
-//! Production source is reused; the scenario is a child of `Application`
-//! so no second controller or test-only production API is needed.
-//!
-//! The small listing/exact protocol follows nextest's custom-harness contract:
+//! The harness implements nextest's listing/exact protocol:
 //! <https://nexte.st/docs/design/custom-test-harnesses/>.
 
 #[cfg(target_os = "macos")]

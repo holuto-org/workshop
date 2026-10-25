@@ -1,6 +1,5 @@
-//! ESC P / ESC backslash frames and FF-initialized XOR.
-//! `encode`/`decode` require checksums; `query`/`unframe` are only for schemas
-//! explicitly omitting them.
+//! ESC-P frames with XOR checksums initialized to 0xFF.
+//! Only schemas that omit checksums may use `query`/`unframe`.
 
 use fiscal::error::Error;
 
@@ -51,7 +50,6 @@ pub fn decode(raw: &[u8]) -> Result<&[u8], Error> {
     Ok(body)
 }
 
-/// Unchecksummed envelope, only for the command-specific exceptions in N.
 pub fn query(body: &[u8]) -> Vec<u8> {
     let mut raw = Vec::with_capacity(body.len() + 4);
     raw.extend_from_slice(&START);

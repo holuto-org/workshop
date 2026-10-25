@@ -59,7 +59,6 @@ fn main() -> ExitCode {
             if let Err(dialog_error) = show_error(&error.to_string())
                 && let Err(write_error) = writeln!(io::stderr().lock(), "{error}\n{dialog_error}")
             {
-                // No output channel remains.
                 drop(write_error);
             }
             ExitCode::FAILURE

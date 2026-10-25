@@ -170,7 +170,7 @@ fn held_completion_does_not_block_submitting_the_next_preferences() -> Result<()
             let _sent = submitted.send(result);
         });
         let result = submission.recv_timeout(WAIT);
-        // Release before propagating a timeout so a blocked sender can finish and be joined.
+        // Release before propagating failure so the sender can finish and join.
         let release_result = release.send(());
         (result, release_result, sender.join())
     });

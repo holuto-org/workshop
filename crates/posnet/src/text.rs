@@ -1,4 +1,4 @@
-//! Posnet wire text uses the shared Windows-1250 codec; tabs separate protocol fields.
+//! Posnet header formatting and shared Windows-1250 encoding.
 
 use fiscal::cp1250;
 

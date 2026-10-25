@@ -52,12 +52,11 @@ impl Writer {
                     sink(persist(&dir, request).map_err(|error| error.to_string()));
                 }
             })?;
-        // Pending writes are acknowledged before quitting; the idle receiver need not be joined.
+        // Quit waits for write acknowledgements, not this idle receiver.
         drop(owner);
         Ok(Self { sender })
     }
 
-    /// A writer whose thread is gone, so every submission fails.
     #[cfg(test)]
     pub(super) fn closed() -> Self {
         Self {

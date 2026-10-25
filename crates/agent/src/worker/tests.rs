@@ -47,6 +47,7 @@ thread_local! {
     static CLOCK: RefCell<Option<Arc<Mutex<Instant>>>> = const { RefCell::new(None) };
 }
 
+/// A fixed clock prevents background polls from interleaving navigation assertions.
 pub(super) struct ClockScope(Option<Arc<Mutex<Instant>>>);
 
 impl ClockScope {
@@ -565,7 +566,6 @@ fn queued_next_clicks_fetch_each_page_instead_of_collapsing() {
     let (arrival, release) = hold_http(&holuto, "GET", "/agent/documents");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
-    // Exact page sequences: no background poll may interleave.
     let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();
@@ -685,7 +685,6 @@ fn queued_previous_clicks_reach_the_first_page_instead_of_collapsing() {
     pages(&holuto);
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
-    // Exact page sequences: no background poll may interleave.
     let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let _first = receive_until(&events, |event| {
@@ -1707,7 +1706,6 @@ fn a_second_next_after_a_failed_fetch_keeps_both_clicks_and_stops_at_the_known_e
         );
         let (_temporary, dir) = state_dir();
         let dir = Arc::new(dir);
-        // Exact page sequences: no background poll may interleave.
         let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
         let (worker, events) = spawn(&holuto, &sim, &dir);
         let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
@@ -1742,7 +1740,6 @@ fn a_second_previous_after_a_failed_fetch_reaches_the_first_page() {
     let (arrival, release) = hold_http(&holuto, "GET", "/agent/documents");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
-    // Exact page sequences: no background poll may interleave.
     let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();
@@ -1787,7 +1784,6 @@ fn next_cancels_a_failed_previous_even_when_the_shown_page_has_no_next_cursor() 
     let (arrival, release) = hold_http(&holuto, "GET", "/agent/documents");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
-    // Exact page sequences: no background poll may interleave.
     let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();

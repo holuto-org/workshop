@@ -333,8 +333,7 @@ fn quit_completes_when_the_final_status_cannot_be_submitted() -> Result<(), Box<
 )]
 fn an_older_status_acknowledgement_never_replaces_a_newer_unsubmitted_status()
 -> Result<(), Box<dyn Error>> {
-    // Launch has submitted its status; the event loop delivers that acknowledgement
-    // only after the newer status below could not be submitted.
+    // Launch's acknowledgement stays queued until after the newer submission fails.
     let (_temp, app, _window) = fixture_with_event_loop()?;
     app.borrow_mut().settings_writer = Some(preferences::Writer::closed());
     app.borrow_mut().event(Event::Device {
@@ -351,13 +350,13 @@ fn an_older_status_acknowledgement_never_replaces_a_newer_unsubmitted_status()
     Ok(())
 }
 
-/// Runs the event loop; `false` if quitting had to be forced after the deadline.
+/// Returns false if the deadline forced the event loop to quit.
 fn quit_before_deadline() -> Result<bool, Box<dyn Error>> {
     let (finished, quit) = mpsc::channel::<()>();
     let deadline = thread::Builder::new()
         .name("quit deadline".into())
         .spawn(move || {
-            // Failure diagnostic only: end a hung loop instead of hanging the suite.
+            // Bound a failed test instead of hanging the suite.
             let hung = quit.recv_timeout(Duration::from_secs(5)).is_err();
             if hung {
                 let _scheduled = slint::invoke_from_event_loop(|| {
@@ -719,7 +718,6 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
     })?);
     app.borrow_mut().launch()?;
     app.borrow_mut().stop(true)?;
-    // Returns only because finish_quit accepted the failed (settled) stopped snapshot.
     slint::run_event_loop_until_quit()?;
     assert!(
         failures.load(Ordering::SeqCst) >= 1,

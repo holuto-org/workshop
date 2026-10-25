@@ -1,5 +1,5 @@
-//! Native fiscal operations: same-session preflight, durable intent before every
-//! send, no retries. DLE2 byte order is intentionally never inferred.
+//! Fiscal dispatch: preflight on the same connection; journal intent before
+//! each fiscal command.
 
 use std::{
     sync::Arc,
@@ -104,7 +104,7 @@ impl Driver for Printer {
         .then_some(receipt.brand());
         let steps = receipt::steps(receipt, footer, &profile)?;
         dispatch(&mut session, &steps, journal)?;
-        // Readback is evidence only: it never turns successful printing into a retry.
+        // Failed readback must not turn a completed print into a retry.
         let receipt_number = session.command("0;0?l", TIMEOUT).ok().and_then(|reply| {
             let mut fields = reply.body.strip_prefix("0?l")?.split('/');
             if fields.next()? != "2" {
@@ -320,8 +320,7 @@ fn read_repertoire(session: &mut Session, profile: &mut Profile, device: &mut De
             }
         },
         Err(error) => {
-            // A matching refusal leaves the session usable with ASCII. Lost or
-            // corrupt replies leave it blocked; no fiscal write may follow.
+            // A matched refusal permits ASCII; lost/corrupt replies block fiscal writes.
             if !matches!(error, Error::Device { .. }) {
                 device
                     .problems
@@ -482,7 +481,7 @@ fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
         0,
     )
     .map_err(|_error| frame::corrupt())?;
-    // No offset exists on the wire: fail on DST gaps/folds instead of guessing.
+    // The wire has no UTC offset: reject DST gaps/folds instead of guessing.
     let timestamp = TimeZone::get("Europe/Warsaw")
         .and_then(|zone| zone.to_ambiguous_timestamp(datetime).unambiguous())
         .map_err(|error| Error::Protocol(format!("Nieprawidłowy zegar drukarki: {error}.")))?;
@@ -510,7 +509,7 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
             return Err(if index == 0 { error } else { uncertain(error) });
         }
         if let Err(error) = execute(session, step, journal) {
-            // Only begin prints nothing; only daily 37 documents pre-print cancel.
+            // Begin prints nothing; daily-report error 37 confirms cancellation before printing.
             let certain = index == 0 && refusal_is_certain(&error, step.command);
             return Err(if certain { error } else { uncertain(error) });
         }
@@ -525,8 +524,8 @@ fn uncertain(error: Error) -> Error {
     Error::Uncertain(Box::new(error))
 }
 
-/// DLE2 is read for integrity only; positive wait reasons use documented DLE bits.
-/// Never send ENQ (synchronous) or a new frame while the command is pending.
+/// DLE2 checks integrity; documented DLE bits identify operator waits.
+/// ENQ is synchronous: send neither ENQ nor a new frame while a command is pending.
 fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Result<(), Error> {
     let mut result = session.command(&step.body, step.timeout).map(|_reply| ());
     let mut since = None;
@@ -561,8 +560,7 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
                 journal.waiting(None);
                 shown = false;
             },
-            // An ACK may have arrived during status reads; only a matching ACK
-            // can complete, including when no positive wait reason was found.
+            // Only a matching ACK completes; status reads may have queued it.
             Ok(None) => {},
         }
         let timeout = if shown {

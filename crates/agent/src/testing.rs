@@ -1,9 +1,6 @@
-//! Stateful loopback Holuto service, used through the production HTTP client.
+//! Stateful loopback `/agent` fake exercised through the production HTTP client.
 //!
-//! Mirrors the `/agent` contract: routes, authentication, unique-number headers and
-//! binding, inflight exclusion, attempt/result idempotency, unknown upgrades,
-//! staff-only resolution, a fresh attempt on take and future issue times.
-//! Fixtures intentionally contain synthetic customer data only.
+//! Customer fixtures are synthetic; request logs never retain authorization values.
 
 #[cfg(test)]
 pub(crate) mod printers;
@@ -43,7 +40,6 @@ pub const ORDER_ID: Uuid = Uuid::from_u128(10);
 pub const ALLOCATION_ID: Uuid = Uuid::from_u128(12);
 const TOKEN: &str = "synthetic-device-token";
 
-/// Posnet telemetry for the pairing `unique_number`, as the agent sends it once connected.
 #[cfg(test)]
 pub(crate) fn telemetry(unique_number: &str) -> Telemetry {
     let mut telemetry = Telemetry::new(unique_number, Vendor::Posnet);
@@ -73,7 +69,7 @@ pub enum Fault {
     DropAfterCommit,
     Redirect(String),
     Oversized,
-    /// Deterministic request delay: signals arrival, waits for explicit release.
+    /// Signals arrival, then waits for explicit release.
     Hold {
         reached: Sender<()>,
         release: Receiver<()>,
@@ -85,7 +81,6 @@ pub struct RequestLog {
     pub method: String,
     pub path: String,
     pub body: Value,
-    /// Authorization is checked but never retained in diagnostics.
     pub authenticated: bool,
     pub unique_number: Option<String>,
     pub app_version: Option<String>,
@@ -201,7 +196,7 @@ impl Holuto {
         id
     }
 
-    /// Installs durable server evidence for crash/restart scenarios, without queueing it.
+    /// Seeds recovery evidence without queueing the job.
     #[expect(
         clippy::unwrap_used,
         clippy::indexing_slicing,
@@ -236,7 +231,7 @@ impl Holuto {
         locked(&self.state).documents = documents;
     }
 
-    /// Synthetic backend snapshot used by queue requests.
+    /// Backend snapshot to return when a client queues a document.
     pub fn queue_job(&self, job: Value) {
         locked(&self.state).queue_job = Some(job);
     }
@@ -251,7 +246,7 @@ impl Holuto {
         locked(&self.state).unauthorized = unauthorized;
     }
 
-    /// Issues a new 15-minute proof for the synthetic printer, replacing the previous proof.
+    /// Replaces the pairing proof; valid for 15 minutes.
     #[expect(
         clippy::expect_used,
         reason = "test fixtures must use a valid Crockford code"
@@ -306,8 +301,7 @@ impl Holuto {
         Ok(())
     }
 
-    /// Only queued jobs become EXPIRED.
-    /// A timed-out TAKEN attempt becomes UNKNOWN and can report DONE or UNKNOWN.
+    /// Queued jobs expire; taken jobs become UNKNOWN and may still report DONE or UNKNOWN.
     #[expect(clippy::unwrap_used, reason = "expiry targets an inserted fixture")]
     pub fn expire(&self, id: Uuid) {
         let mut state = locked(&self.state);
@@ -421,8 +415,7 @@ fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
     let (status, body) = route_request(&mut locked(shared), &log);
     contract::validate_response(&method, &path, status, &body).unwrap();
     if matches!(fault, Some(Fault::DropAfterCommit)) {
-        // Terminate the HTTP acknowledgement at framing level, so ureq observes a
-        // transport failure immediately rather than waiting for a truncated body.
+        // Invalid HTTP framing makes ureq fail immediately instead of waiting for a body.
         let mut writer = request.into_writer();
         let _sent = writer.write_all(b"lost acknowledgement\r\n\r\n");
         let _flushed = writer.flush();
@@ -510,8 +503,6 @@ fn pair(state: &mut State, request: &RequestLog) -> (u16, Value) {
     (200, json!({"token":token, "printerId":PRINTER_ID}))
 }
 
-// Conflicts: an UNKNOWN job on the same printer, an active job for the same
-// document, or an open job of the other kind for the same order.
 fn blocks_queue(existing: &Value, requested: &Value) -> bool {
     let state = existing["state"].as_str();
     let active = matches!(state, Some("queued" | "taken" | "done" | "unknown"));
@@ -526,8 +517,6 @@ fn blocks_queue(existing: &Value, requested: &Value) -> bool {
                 || (requested["kind"] == "advance" && existing["kind"] == "sale" && active)))
 }
 
-// Active (queued/taken/done/unknown) jobs for the same order hide a document:
-// sales by any sale or unfinished advance, advances by a sale or the same allocation.
 fn document_available(document: &Value, jobs: &HashMap<Uuid, Value>) -> bool {
     !jobs.values().any(|job| {
         job["orderId"] == document["orderId"]
@@ -574,7 +563,7 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
             let Ok(id) = Uuid::parse_str(&cursor) else {
                 return refused(400, "invalid_cursor");
             };
-            // Resolve the anchor before eligibility removes queued documents.
+            // Queuing hides documents, but their cursors must remain usable.
             let Some(key) = state
                 .documents
                 .iter()
@@ -592,7 +581,7 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
         .and_then(|(_, value)| value.parse::<usize>().ok())
         .unwrap_or(100)
         .clamp(1, 100);
-    // Ordered by the document key; advance sorts before sale.
+    // Advances sort before sales for the same order.
     let mut eligible: Vec<_> = state
         .documents
         .iter()
@@ -606,7 +595,6 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
         .take(limit)
         .map(|(_, document)| *document)
         .collect();
-    // A next cursor exists only when another eligible document follows.
     let next = eligible
         .get(limit)
         .and_then(|_| eligible.get(limit - 1))
@@ -716,7 +704,6 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         {
             return refused(409, "fiscal_job_conflict");
         }
-        // Advances require a printer that advertises advance deductions.
         if !job["advances"].as_array().unwrap().is_empty()
             && state.telemetry["capabilities"]["advanceDeductions"] == false
         {

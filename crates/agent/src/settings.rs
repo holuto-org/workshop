@@ -20,7 +20,7 @@ pub const DEFAULT_BAUD_RATE: u32 = 9600;
 const FILE: &str = "settings.json";
 const MAX_TOKEN_LENGTH: usize = 4096;
 
-/// Device credential. Formatting never exposes it; storage remains a JSON string.
+/// Credential with redacted formatting; serialized as a JSON string.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Token(String);
@@ -60,13 +60,10 @@ pub struct Settings {
     /// None selects read-only vendor detection.
     #[serde(deserialize_with = "Option::deserialize")]
     pub vendor: Option<Vendor>,
-    /// Optional diagnostic reporting; enabled until explicitly disabled.
     pub telemetry_enabled: bool,
-    /// Opt-in processing at launch.
     pub start_on_launch: bool,
 }
 
-/// Unconfigured, at the printer's factory baud rate.
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -82,9 +79,8 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Reads only settings: safe before telemetry initialization, including a crash
-    /// reporter subprocess while the application holds the instance lock.
-    /// Missing settings opt in; unreadable or malformed settings fail closed.
+    /// Safe before telemetry initialization, including crash-reporter subprocesses.
+    /// Missing settings opt in; unreadable settings fail closed.
     pub fn telemetry_enabled_at_default_path() -> bool {
         let Some(path) = StateDir::default_path() else {
             return false;
@@ -112,7 +108,7 @@ impl Settings {
             return Ok(None);
         };
         serde_json::from_slice(&bytes).map(Some).map_err(|error| {
-            // Serde's message can echo a credential from any malformed value or key.
+            // Serde errors may echo credentials in malformed values or keys.
             unreadable(io::Error::new(
                 ErrorKind::InvalidData,
                 format!(
@@ -130,8 +126,7 @@ impl Settings {
         self.write(dir)
     }
 
-    /// Persists diagnostics consent independently of printer pairing validation.
-    /// A new installation must be able to opt out before entering credentials.
+    /// Allows diagnostics opt-out before pairing or printer configuration.
     pub fn save_telemetry_enabled(dir: &StateDir, enabled: bool) -> Result<(), Error> {
         let mut settings = Self::load(dir)?.unwrap_or_default();
         settings.telemetry_enabled = enabled;
@@ -149,8 +144,7 @@ impl Settings {
         })
     }
 
-    /// A device token authenticates only to the API it was paired with: a different
-    /// address forgets it, so no request can carry it to another host.
+    /// Forgets the credential when the API changes to prevent cross-host disclosure.
     pub fn set_api_url(&mut self, url: &str) {
         let same = match (api_url(&self.api_url), api_url(url)) {
             (Ok(current), Ok(next)) => current == next,

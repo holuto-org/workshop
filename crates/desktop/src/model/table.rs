@@ -10,7 +10,7 @@ use slint::{
     language::{SortOrder, StandardListViewItem, TableColumn},
 };
 
-/// Must match the Slint column lists and `Row::cells`.
+/// Must match both Slint column lists; `Row::cells` uses the same order.
 const COLUMNS: usize = 5;
 
 pub(crate) trait Row: PartialEq {
@@ -74,7 +74,7 @@ impl<T: Row> Table<T> {
         Rc::clone(&self.rows).into()
     }
 
-    /// Retain sort order; return old items for selection lookup.
+    /// Preserve sorting; return previous items to recover selection by identity.
     pub(crate) fn set(&mut self, mut items: Vec<T>) -> Vec<T> {
         if let Some(sort) = self.sort {
             items.sort_by(|a, b| sort.compare(a, b));
@@ -98,7 +98,7 @@ impl<T: Row> Table<T> {
         selected
     }
 
-    /// Restore sort indicators, including after window recreation.
+    /// A recreated window must recover the model's sort indicators.
     pub(crate) fn sync_columns(&self, columns: &ModelRc<TableColumn>) {
         for index in 0..columns.row_count() {
             let order = match self.sort {

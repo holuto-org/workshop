@@ -60,15 +60,16 @@ $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicat
 if (Test-Path -LiteralPath (Join-Path $local 'workshop')) { throw 'Package smoke requires a clean Windows profile: workshop state exists' }
 $installed = Join-Path ([IO.Path]::GetTempPath()) ('workshop-verify-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($installed)
-$exe = Join-Path $installed 'workshop.exe'
-Copy-Item -LiteralPath $files[0].FullName -Destination $exe
-$help = Start-Process $exe -ArgumentList '--help' -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $installed 'help.txt')
-if ($help.ExitCode -ne 0 -or -not ([IO.File]::ReadAllText((Join-Path $installed 'help.txt'))).Contains('workshop')) { throw 'CLI help failed' }
-$check = Start-Process $exe -ArgumentList 'check', '--json' -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $installed 'check.json')
-$result = Get-Content -Raw (Join-Path $installed 'check.json') | ConvertFrom-Json
-if ($check.ExitCode -ne 3 -or $result.ok -ne $false -or $result.configured -ne $false -or $result.appRunning -ne $false -or $result.errors.Count -eq 0) { throw 'Fresh configuration CLI check failed' }
-$process = Start-Process $exe -PassThru
+$process = $null
 try {
+    $exe = Join-Path $installed 'workshop.exe'
+    Copy-Item -LiteralPath $files[0].FullName -Destination $exe
+    $help = Start-Process $exe -ArgumentList '--help' -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $installed 'help.txt')
+    if ($help.ExitCode -ne 0 -or -not ([IO.File]::ReadAllText((Join-Path $installed 'help.txt'))).Contains('workshop')) { throw 'CLI help failed' }
+    $check = Start-Process $exe -ArgumentList 'check', '--json' -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $installed 'check.json')
+    $result = Get-Content -Raw (Join-Path $installed 'check.json') | ConvertFrom-Json
+    if ($check.ExitCode -ne 3 -or $result.ok -ne $false -or $result.configured -ne $false -or $result.appRunning -ne $false -or $result.errors.Count -eq 0) { throw 'Fresh configuration CLI check failed' }
+    $process = Start-Process $exe -PassThru
     if (-not $process.WaitForInputIdle(20000)) { throw 'Application did not become input-idle' }
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
     do {

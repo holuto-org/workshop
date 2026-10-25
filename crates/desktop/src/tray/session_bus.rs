@@ -12,7 +12,6 @@ use zbus::Connection;
 
 use super::available;
 
-/// Fake watcher: only its host-registration property decides tray visibility.
 #[derive(Debug)]
 struct Watcher(bool);
 

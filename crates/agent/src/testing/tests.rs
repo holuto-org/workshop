@@ -355,7 +355,7 @@ fn documents_exclude_only_the_jobs_that_make_each_document_ineligible() -> TestR
     reason = "boundary assertions panic while setup and HTTP failures use Result"
 )]
 fn queue_removes_documents_without_skipping_the_cursor_successor() -> TestResult {
-    // Eligibility can disappear, but the underlying document still anchors the cursor.
+    // Hidden documents still anchor cursors.
     let server = Holuto::new();
     let mut first_items: Vec<_> = (4000..4099)
         .map(|id| document(Uuid::from_u128(id), None, "2025-10-16T10:00:00Z"))

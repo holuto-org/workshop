@@ -176,7 +176,7 @@ impl Model {
             processing: self.running,
             connected: self.connected,
             vendor: self.vendor,
-            // Keep the last connected identity, like the retained fiscal block, after Stop.
+            // Preserve the last connected identity after Stop.
             unique_number: (!self.unique_number.is_empty()).then(|| self.unique_number.clone()),
             printer_id: self.printer_id.clone(),
             blocked: self.blocked,
@@ -240,7 +240,7 @@ impl Model {
 
     pub(crate) fn capture(&mut self, window: &AppWindow, today: Date) {
         self.today = today;
-        // Slint 1.18 allows assistive actions on disabled widgets; ignore edits while running.
+        // Slint 1.18 permits assistive edits on disabled controls; guard settings here too.
         if !self.running && !self.saving && !self.pairing {
             self.settings.set_api_url(window.get_api_url().trim());
             window

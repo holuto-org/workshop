@@ -1,8 +1,8 @@
 //! Sole thread for printer I/O and Holuto requests.
 //!
-//! Commands yield to due polls between operations; receipts and reports never interleave.
-//! Cooperative shutdown finishes the current operation before stopping.
-//! Event diagnostics expose metadata, never operator text or receipt contents.
+//! Due polls run between commands; receipts and reports never interleave.
+//! Shutdown finishes the current operation. Event diagnostics omit operator text
+//! and receipt contents.
 
 use std::{
     collections::VecDeque,
@@ -80,7 +80,7 @@ pub enum Event {
         text: String,
         tone: Tone,
     },
-    /// The GUI owns settings persistence and reports save failures.
+    /// The GUI persists detected settings and reports save failures.
     PortDetected {
         port: String,
         vendor: Vendor,
@@ -90,7 +90,7 @@ pub enum Event {
         unique_number: String,
         port: String,
     },
-    /// Credentials have already been durably saved; this event contains no secret.
+    /// Credentials are durably saved and never included in the event.
     Paired {
         printer_id: String,
     },
@@ -110,9 +110,9 @@ pub enum Event {
         report_unresolved: bool,
         orphaned_receipt: bool,
     },
-    /// Bounded newest-first snapshot; rendering never reads worker-owned storage.
+    /// Bounded, newest-first snapshot; the GUI never reads worker-owned storage.
     HistoryChanged(Vec<HistoryEntry>),
-    /// Releases a GUI submission guard, including after a refused command.
+    /// Releases the GUI submission guard even when a command is refused.
     CommandCompleted,
     /// Safe to join the worker.
     Stopped,
@@ -187,7 +187,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    /// Pairs without constructing or opening a printer; success follows durable storage.
+    /// Never opens a printer; reports success only after saving credentials.
     pub fn pair<S>(
         dir: Arc<StateDir>,
         mut settings: Settings,
@@ -282,7 +282,7 @@ impl Worker {
     }
 
     pub fn submit(&self, command: Command) {
-        // Failed sends mean the worker finished and reported `Event::Stopped`.
+        // A closed inbox means the worker has stopped.
         let _sent = self.messages.send(Message::Command(command));
     }
 
@@ -537,7 +537,7 @@ fn trace_failure(error: &Error) {
     }
 }
 
-/// Message wakes never move the background deadline.
+/// Inbox activity must not postpone background polling.
 struct Cadence {
     due: Instant,
 }
@@ -626,7 +626,6 @@ impl Session<'_> {
         }
     }
 
-    /// Drains commands; returns whether stop was requested or the owner is gone.
     fn drain(&mut self, inbox: &Receiver<Message>) -> bool {
         loop {
             match inbox.try_recv() {
@@ -649,7 +648,7 @@ impl Session<'_> {
         if self.drain(inbox) {
             return Ok(None);
         }
-        // Printer and settlement errors must not prevent fetching Holuto documents.
+        // Printer and settlement failures must not hide Holuto documents.
         let refreshed = self
             .pager
             .refresh(self.agent.api())
@@ -715,7 +714,7 @@ impl Session<'_> {
         publish_device(&self.agent, self.sink);
     }
 
-    /// Publish even if the call that produced the news failed.
+    /// Failures can still produce notices or history.
     fn publish_news(&mut self) {
         let news = self.agent.take_news();
         for notice in news.notices {
@@ -737,10 +736,9 @@ impl Session<'_> {
     }
 }
 
-/// Refreshes the shown page; navigation follows returned cursors up to the pending target.
+/// Navigation follows returned cursors; failures preserve the shown page and pending clicks.
 ///
-/// `pages` stores opening cursors through the shown page (`None` for the first).
-/// Failed requests preserve both the shown page and every pending navigation click.
+/// `pages` holds opening cursors through the shown page (`None` for the first).
 struct Pager {
     pages: Vec<Option<String>>,
     next: Option<String>,
@@ -799,7 +797,7 @@ impl Pager {
             )
         };
         if page.items.is_empty() && requested > 1 {
-            // Everything from this page on was printed or queued: start over.
+            // Queuing or printing can empty a page; return to the remaining documents.
             page = api.documents(None)?;
             requested = 1;
         }

@@ -1,4 +1,4 @@
-//! Posnet Temo Online limits and the text the printer prints unchanged.
+//! Temo Online limits and verbatim text repertoire.
 //!
 //! Spec: POSNET POT-I-DEV-37 v5978 (Online MR2021).
 
@@ -15,10 +15,8 @@ pub(crate) const MAX_BUYER_NIP: usize = 30;
 const MAX_COMPANY_NAME: usize = 40;
 const MAX_QUANTITY_DECIMALS: u8 = 8;
 
-/// Assigned Windows-1250 bytes 0x20–0xFF, minus DEL and the table-drawing glyphs (p. 14).
-///
-/// The printer reserves those bytes for glyphs that print as different characters. The
-/// driver never rewrites text, so Holuto validates against exactly this set before queueing.
+/// Posnet reserves some Windows-1250 bytes for table-drawing glyphs (p. 14).
+/// Holuto excludes them before queueing because the driver never rewrites text.
 fn printable_characters() -> String {
     (0x20..=0xFF_u8)
         .filter_map(|byte| text::decode(&[byte])?.chars().next())

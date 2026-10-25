@@ -1,4 +1,4 @@
-//! Desktop telemetry. Free-form operator, server and panic text is scrubbed locally.
+//! Desktop Sentry lifecycle and structured-telemetry scrubbing.
 #[path = "telemetry/privacy.rs"]
 mod privacy;
 #[path = "telemetry/transport.rs"]
@@ -230,7 +230,7 @@ impl Transport for SafeTransport {
     }
 }
 
-// Static, reviewed messages only. New instrumentation is redacted until explicitly admitted.
+// Unlisted instrumentation is redacted until reviewed.
 fn message(text: Option<&str>) -> &str {
     match text {
         Some(

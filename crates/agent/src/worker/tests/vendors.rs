@@ -163,7 +163,7 @@ fn each_vendor_lost_reply_blocks_across_restart_without_replay() {
         assert_eq!(operation.settled, None);
         let before = sim.fiscal_frames();
         assert_ne!(before, Vec::<Vec<u8>>::new());
-        // An incorrect settings cache cannot change a journal-bound brand.
+        // Recovery must use the journal's brand, not stale settings.
         let (worker, events) = spawn(&sim, &holuto, &dir, Some(Vendor::Posnet));
         let _blocked = receive_until(&events, |event| {
             matches!(event, Event::Device { blocked: true, .. })
@@ -265,7 +265,7 @@ fn unsupported_model_reports_not_ready_without_rejected_telemetry_or_stop() {
         unqualified(&sim, true);
         let holuto = Holuto::new();
         let _id = holuto.enqueue(job_json());
-        // Keep an accidental invalid session from panicking the schema-enforcing fake.
+        // Let the test inspect an invalid session instead of panicking on its schema.
         holuto.fault("POST", "/agent/session", problem(400));
         let (_temporary, dir) = state_dir();
         let dir = Arc::new(dir);

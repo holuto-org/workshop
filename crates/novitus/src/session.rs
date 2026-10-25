@@ -1,9 +1,8 @@
-//! One exclusive native connection; commands are dispatched once.
+//! One exclusive native connection.
 //!
-//! Mode 3 is sent once without awaiting its undocumented initialization ACK.
-//! ACK identifiers are correlated, including four-digit errors. Raw status and
-//! fragmented frames share one parser. DLE2 octets stay in wire order: their
-//! byte-label mapping is unverified.
+//! Mode 3 is sent once without waiting for its undocumented initialization ACK.
+//! Correlates ACKs (including four-digit errors) and parses raw status alongside
+//! fragmented frames.
 
 use crate::frame;
 use fiscal::{
@@ -25,7 +24,7 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reply {
     pub body: String,
-    /// Validated configuration option/value pairs, empty for other response schemas.
+    /// Validated configuration pairs; empty for other reply schemas.
     pub options: Vec<(u32, String)>,
 }
 
@@ -73,9 +72,7 @@ impl EnqStatus {
     }
 }
 
-/// Decode only an octet already proven to be the manual's labeled byte4.
-/// This type deliberately does not select an octet from a DLE2 wire field.
-///
+/// Requires the manual's byte4; does not infer its position in DLE2.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -111,7 +108,7 @@ pub struct ExtendedStatus {
     pub last_error: u32,
     pub last_print: u32,
     pub last_receipt: u32,
-    /// Four hex pairs in arrival order, NOT host-endian or manual byte order.
+    /// DLE2 bytes in arrival order; mapping to the manual's byte labels is unverified.
     pub flags_wire: [u8; 4],
 }
 impl ExtendedStatus {
@@ -233,8 +230,8 @@ impl Session {
         duration
     }
 
-    /// Returns data plus, where required, the matching mode-3 completion.
-    /// After an uncertain response only raw status reads are allowed on this session.
+    /// Returns data and, where required, a matching mode-3 completion.
+    /// Uncertain replies block new commands, but permit raw status reads.
     pub fn command(&mut self, body: &str, timeout: Duration) -> Result<Reply, Error> {
         if self.blocked {
             return Err(Error::Protocol(
@@ -265,8 +262,8 @@ impl Session {
         result
     }
 
-    /// Receive the original fiscal command's completion without sending it again.
-    /// Fiscal commands have ACK-only schemas, so no partial data is discarded.
+    /// Receive the original command's ACK without resending.
+    /// Fiscal schemas are ACK-only, so no partial data is discarded.
     pub(crate) fn finish_fiscal(&mut self, command: &str, deadline: Instant) -> Result<(), Error> {
         if !self.blocked
             || !matches!(
@@ -508,8 +505,7 @@ fn device_result(code: u32, command: &str) -> Result<(), Error> {
 pub(crate) fn identifier(body: &str) -> Option<&str> {
     let start = body.find(['#', '$', '^', '@', '?'])?;
     let rest = body.get(start..)?;
-    // These commands allow text immediately after the identifier, without a
-    // separator (notably $l). Product-name letters are not command letters.
+    // Text may follow these identifiers without a separator; do not parse it as command letters.
     if let Some(command) = rest.get(..2)
         && matches!(command, "$l" | "$w" | "$h" | "$b" | "$y" | "$z" | "@z")
     {

@@ -24,11 +24,11 @@ use crate::{
 };
 
 const TEMO: &str = "POSNET TEMO ONLINE";
-/// Bounds scan delays on silent ports; Temo answers `getrealid` within this.
+/// Temo answers `getrealid` within this limit; silent ports must not stall detection.
 const SCAN_TIMEOUT: Duration = Duration::from_millis(500);
 const REPORT_TIMEOUT: Duration = Duration::from_secs(120);
 const PERIODIC_REPORT_TIMEOUT: Duration = Duration::from_secs(300);
-/// Maximum operator wait (paper, cover or key) while a command executes.
+/// Paper, cover and keypad waits share this limit.
 const OPERATOR_WAIT: Duration = Duration::from_secs(600);
 const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 pub(crate) const PRINTER_ZONE: &str = "Europe/Warsaw";
@@ -50,7 +50,7 @@ impl Printer {
 
     /// Probes the configured port, then other candidates if `may_switch` permits.
     /// Adopts the first Temo Online; unidentified devices receive only `getrealid`.
-    /// Switching must be forbidden while an operation is unresolved.
+    /// `may_switch` must be false while an operation is unresolved.
     pub fn detect(&mut self, may_switch: bool) -> Result<Device, Error> {
         let error = match self.probe() {
             Ok(device) => return Ok(device),
@@ -107,7 +107,6 @@ impl Driver for Printer {
         read_device(&mut self.session()?)
     }
 
-    /// Requires the paired device to be ready before resolving an interrupted operation.
     fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
         device.require_ready()?;
@@ -115,7 +114,6 @@ impl Driver for Printer {
         Ok(device)
     }
 
-    /// Rechecks identity, readiness and expected VAT table in the printing session.
     #[tracing::instrument(skip_all, fields(sentry.op = "device.receipt"))]
     fn print_receipt(
         &self,
@@ -245,9 +243,8 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
 }
 
 fn refusal_is_certain(error: &Error, sent: &str) -> bool {
-    // A trinit error cannot have issued a receipt: only trend makes the fiscal record.
-    // Any transaction left open is refused by the next preflight; never reissue this command.
-    // Reports ARE the fiscal record, so only an ERR frame rejection (spec pp. 13–15) is certain.
+    // Only trend creates the receipt; preflight blocks any transaction left open by trinit.
+    // Never reissue it. Reports create the record, so only an ERR rejection is certain (pp. 13–15).
     refuses(error, sent)
         && (sent == "trinit"
             || (matches!(sent, "dailyrep" | "monthlyrep" | "periodicrepbydates")
@@ -263,10 +260,11 @@ fn uncertain(error: Error) -> Error {
     Error::Uncertain(Box::new(error))
 }
 
-/// Sends once. Replies follow execution (spec p. 15); on timeout, query operator-wait status.
+/// Replies follow execution (spec p. 15); a command is never resent.
 ///
-/// Wait up to [`OPERATOR_WAIT`], notifying `journal`; after intervention, allow the full step time.
-/// Silence or no operator-wait state remains a timeout.
+/// On timeout, query operator-wait status and notify `journal` while waiting, capped by
+/// [`OPERATOR_WAIT`]; intervention resets the step timeout. Silence or no operator-wait state
+/// remains a timeout.
 fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Result<Reply, Error> {
     let command = step.command;
     let mut deadline = session.send(command, &step.params, step.timeout)?;

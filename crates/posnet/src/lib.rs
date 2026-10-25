@@ -1,10 +1,9 @@
 //! Posnet Temo Online driver over a serial port.
 //!
-//! Each operation opens an exclusive session and verifies identity, fiscal mode, header,
-//! mechanism, command queue, transaction state and VAT table before fiscal commands.
-//! Commands are never retried. A lost reply leaves an uncertain outcome for the caller to resolve.
-//! The caller's [`Journal`](fiscal::journal::Journal) persists intent before each command,
-//! surviving restarts.
+//! Each operation verifies identity, fiscal mode, header, mechanism, command queue,
+//! transaction state and VAT table in an exclusive session before fiscal commands.
+//! Commands are never retried; a lost reply leaves the outcome uncertain.
+//! The caller's [`Journal`](fiscal::journal::Journal) persists intent before each command.
 
 #![forbid(unsafe_code)]
 

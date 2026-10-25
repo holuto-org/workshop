@@ -48,7 +48,6 @@ fn remembered_vendor_probes_only_that_brand() {
 
 #[test]
 fn hinted_port_probes_only_the_hinted_brand() {
-    // A wrong hint must not turn into a cross-brand probe on that port.
     for vendor in VENDORS {
         let sim = Simulator::start(vendor);
         let hint = match vendor {

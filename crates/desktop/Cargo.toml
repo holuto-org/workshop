@@ -50,7 +50,7 @@ agent = { workspace = true, features = ["testing"] }
 workspace = true
 
 [package.metadata.cargo-shear]
-# `include!`d only by the macOS `macos_quit` harness below, so other hosts never link it.
+# Included only by the macOS harness; other hosts cannot detect its dependency use.
 ignored-paths = ["src/application/macos/tests.rs"]
 
 [[test]]

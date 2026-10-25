@@ -79,7 +79,6 @@ impl Document {
     }
 }
 
-/// Converts a złoty string with at most two decimal places to grosze.
 fn grosze<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     let zloty = String::deserialize(deserializer)?;
     decimal::parse(&zloty, 2).ok_or_else(|| {

@@ -1,11 +1,9 @@
-//! Read-only application display status, never journal recovery or fiscal authority.
+//! Display snapshots, not fiscal authority; the desktop's persistence writer publishes them.
 //!
-//! The desktop publishes its actual state through its persistence writer; readers
-//! must check the instance lock before and after loading, and ignore stale snapshots
-//! when the application is not running. Loading acquires no lock and creates nothing.
-//! Disconnection may retain the last known printer identity and unresolved flags;
-//! those values describe the last published state, not permission to operate a printer.
-//! Contains no credentials, API URLs, customer data or document payloads.
+//! Readers check the instance lock before and after loading and ignore snapshots while the
+//! app is stopped. Loading takes no lock and creates no state. Disconnected snapshots may
+//! retain printer identity and unresolved flags. Never stores credentials, API URLs,
+//! customer data or document payloads.
 
 use std::{
     io::{self, ErrorKind},
@@ -32,21 +30,18 @@ const FILE: &str = "status.json";
 pub struct Snapshot {
     pub processing: bool,
     pub connected: bool,
-    /// Last known physical device vendor; may remain set while disconnected.
     pub vendor: Option<Vendor>,
-    /// Last known physical device unique number; may remain set while disconnected.
     pub unique_number: Option<String>,
-    /// Last known Holuto printer identity; may remain set while disconnected.
+    /// Holuto identity, not the physical device's unique number.
     pub printer_id: Option<String>,
     pub blocked: bool,
     pub report_unresolved: bool,
     pub orphaned_receipt: bool,
-    /// Set by the publisher when the state changes, not by readers or persistence.
+    /// Set when state changes, not when saved or loaded.
     pub updated_at: Timestamp,
 }
 
 impl Snapshot {
-    /// Reads display status without taking the instance lock or opening the journal.
     pub fn load_at(directory: &Path) -> Result<Option<Self>, Error> {
         let path = directory.join(FILE);
         let unreadable = |source| Error::Store {
@@ -60,7 +55,7 @@ impl Snapshot {
         serde_json::from_slice(&bytes)
             .map(Some)
             .map_err(|_malformed| {
-                // Serde errors may echo arbitrary malformed values or unknown keys.
+                // Serde errors may expose malformed values or keys.
                 unreadable(io::Error::new(
                     ErrorKind::InvalidData,
                     "Nieprawidłowy JSON stanu aplikacji.",
@@ -68,7 +63,7 @@ impl Snapshot {
             })
     }
 
-    /// Atomically publishes a durable snapshot, private (0600) on Unix.
+    /// Durable atomic publication; private (0600) on Unix.
     pub fn save(&self, directory: &StateDir) -> Result<(), Error> {
         let path = directory.file(FILE);
         let bytes = serde_json::to_vec_pretty(self).map_err(|_encoding| {

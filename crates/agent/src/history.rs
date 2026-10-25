@@ -1,8 +1,7 @@
 //! Display cache, not the fiscal record. Cache errors never block receipt settlement.
 //!
-//! Each append atomically compacts JSONL to at most 500 distinct receipts.
-//! Reads retain bounded state, including after a torn write. Only a missing receipt
-//! number may be upgraded; replay never rewrites the original print evidence.
+//! Appends atomically compact JSONL to 500 distinct receipts; reads skip torn lines
+//! with bounded state. Replay may fill a missing receipt number, never replace print evidence.
 
 use std::{
     collections::VecDeque,
@@ -46,8 +45,7 @@ impl fmt::Debug for HistoryEntry {
     }
 }
 
-/// Up to 500 distinct receipts, newest first; skips crash-torn lines.
-/// The GUI reads only before a worker exists; the worker publishes snapshots.
+/// Newest first. GUI reads only before worker startup, then uses snapshots.
 pub fn load(dir: &StateDir) -> Result<Vec<HistoryEntry>, Error> {
     let path = dir.file(FILE);
     let entries = read_entries(&path).map_err(|source| Error::Store {
@@ -58,7 +56,7 @@ pub fn load(dir: &StateDir) -> Result<Vec<HistoryEntry>, Error> {
     Ok(entries.into_iter().rev().collect())
 }
 
-/// Returns the newest-first publication snapshot only after its compact file is durable.
+/// Returns a newest-first snapshot after the compact file is durable.
 pub(crate) fn append(dir: &StateDir, entry: &HistoryEntry) -> Result<Vec<HistoryEntry>, Error> {
     let path = dir.file(FILE);
     let failed = |source| Error::Store {

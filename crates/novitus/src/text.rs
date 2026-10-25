@@ -1,7 +1,5 @@
-//! Windows-1250 text fields, with no control bytes.
-//!
-//! Character counting establishes codec representability, not a verified device
-//! font repertoire; no transliteration or truncation.
+//! Control-free Windows-1250 fields; no transliteration or truncation.
+//! Character counts prove codec support, not the printer's font repertoire.
 
 use fiscal::cp1250;
 

@@ -1,4 +1,5 @@
-//! Native receipt bodies.
+//! Build the complete receipt before any fiscal send.
+//! Revalidate against this printer: a Receipt may target another device.
 
 use std::time::Duration;
 
@@ -27,8 +28,6 @@ impl Step {
     }
 }
 
-/// Revalidate even a Receipt constructed against a different device's capabilities.
-/// No fiscal bytes may be sent until the entire sequence is representable.
 fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Result<(), Error> {
     let caps = &profile.capabilities;
     if (!receipt.advances().is_empty() && !caps.advance_deductions)
@@ -57,7 +56,7 @@ fn validate(receipt: &Receipt, footer: Option<&str>, profile: &Profile) -> Resul
             ));
         }
         let quantity = line.quantity().to_string();
-        // At most ten numeric digits, not Quantity's larger range.
+        // Novitus's quantity range is narrower than Quantity's.
         if quantity.bytes().filter(u8::is_ascii_digit).count() > 10 || quantity.len() > 16 {
             return Err(Error::Invalid(
                 "Ilość przekracza zakres protokołu Novitus.".to_owned(),
@@ -106,8 +105,7 @@ pub(crate) fn steps(
                 decimal::format(line.total().get(), 2)
             ),
         ));
-        // Explicitly gated experimental allocation;
-        // qualified profiles never enable it (first-match semantics unverified).
+        // First-match advance allocation is unverified; acceptance only.
         if let Some((_, remaining)) = remaining.iter_mut().find(|(vat, _)| *vat == line.vat()) {
             let amount = (*remaining).min(line.total().get());
             if amount > 0 {

@@ -38,7 +38,6 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
     let queued = Arc::new(AtomicBool::new(false));
-    // Cross-thread event ownership and UI dispatch are identical to Application::start.
     let fake = Arc::clone(&holuto);
     let printer = Arc::clone(&simulator);
     let sink = move |event: Event| {
@@ -59,7 +58,7 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
                     button(&window, "Dodaj do wydruku")
                         .map_err(|error| error.to_string())?
                         .invoke_accessible_default_action();
-                    // Selection and queue callbacks are re-entrancy-safe queued mutations.
+                    // Wait for the queued selection and queue callbacks before confirming.
                     with_app(|app| {
                         let window = app.window.as_ref().ok_or("missing confirmation window")?;
                         let confirmation =

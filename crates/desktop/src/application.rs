@@ -56,8 +56,7 @@ struct Application {
     settings_writer: Option<preferences::Writer>,
     writes_pending: VecDeque<WriteKind>,
     status_requested: Option<Snapshot>,
-    /// Latest requested snapshot whose write finished, successfully or not: a failed
-    /// `status.json` write is reported, but must never keep a cooperative quit from exiting.
+    /// Latest settled status, including failed writes so they cannot prevent quitting.
     status_settled: Option<Snapshot>,
 }
 
@@ -98,7 +97,7 @@ where
         return;
     };
     loop {
-        // Synchronous callbacks triggered by sync/show enqueue work for this drain.
+        // Re-entrant sync/show callbacks queue work for the outer drain.
         let Ok(mut state) = app.try_borrow_mut() else {
             return;
         };
@@ -317,8 +316,7 @@ impl Application {
         if self.write_settings(preferences::Request::Status(snapshot.clone())) {
             self.status_requested = Some(snapshot);
         } else {
-            // Reported like a failed write: an unsubmitted status never keeps quit waiting,
-            // and an older acknowledgement can no longer match the forgotten request.
+            // Submission failure must allow quit without letting an older acknowledgement win.
             self.status_requested = None;
             self.status_settled = Some(snapshot);
         }
@@ -353,7 +351,6 @@ impl Application {
             Ok(preferences::Outcome::Reload(settings)) => {
                 self.model.settings = settings;
             },
-            // Older acknowledgements never replace the latest requested state.
             Ok(preferences::Outcome::Status(snapshot))
                 if self.status_requested.as_ref() == Some(&snapshot) =>
             {
@@ -472,7 +469,7 @@ impl Application {
     }
 
     fn worker_event(event: Event) {
-        // The worker has its own Sentry hub: tag it before it can print or panic.
+        // Tag the worker's Sentry hub before dispatching to the GUI's separate hub.
         if let Event::Connected {
             printer_id,
             unique_number,
@@ -589,7 +586,7 @@ impl Application {
             Event::HistoryChanged(history) => self.model.set_history(history),
             Event::CommandCompleted => self.model.command_completed(),
             Event::Stopped => {
-                // Stopped follows operation completion, so joining cannot interrupt printer I/O.
+                // Operation completion precedes Stopped; joining cannot interrupt printer I/O.
                 if let Some(worker) = self.worker.take() {
                     worker.join();
                 }
@@ -625,7 +622,6 @@ impl Application {
 }
 
 fn request_close() -> CloseRequestResponse {
-    // Keep the window visible until the asynchronous tray-host check succeeds.
     let check = slint::spawn_local(async {
         let available = tray::available().await;
         with_app(move |app| {

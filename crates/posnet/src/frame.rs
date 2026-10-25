@@ -10,7 +10,7 @@ use crate::text;
 pub(crate) const MAX_FRAME: usize = 16_384;
 pub(crate) const STX: u8 = 0x02;
 pub(crate) const ETX: u8 = 0x03;
-/// Every reply parameter is keyed by two letters, except `@` and the `?` error code.
+/// Two-letter keys, except `@` and the `?` error code.
 const KEY_LENGTH: usize = 2;
 const CORRUPT: &str = "Uszkodzona odpowiedź drukarki (CRC lub kodowanie).";
 
@@ -131,7 +131,6 @@ pub(crate) fn decode(frame: &[u8]) -> Result<(String, Reply), Error> {
     reply.into_result(&command).map(|reply| (command, reply))
 }
 
-/// Keeps query tokens attached to errors until the session has correlated them.
 pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
     let body = frame
         .strip_prefix(&[STX])
@@ -203,7 +202,6 @@ fn corrupt() -> Error {
     Error::Protocol(CORRUPT.to_owned())
 }
 
-/// Controls would corrupt framing; all other characters need a Windows-1250 byte.
 fn check_printable(value: &str) -> Result<(), Error> {
     if value.chars().any(char::is_control) {
         return Err(Error::Invalid(

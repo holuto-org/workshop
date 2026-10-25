@@ -156,7 +156,7 @@ fn a_foreign_reply_is_a_protocol_error_not_the_current_commands_success() {
 
 #[test]
 fn tokens_do_not_repeat_before_the_full_ten_thousand_value_cycle() {
-    // Start well beyond the old AtomicU16 rollover; the modulo must happen atomically.
+    // Cross u16::MAX without shortening the 10,000-token cycle.
     let mut seen = BTreeSet::new();
     let next = super::AtomicU16::new(0);
     for _ in 0..70_000 {

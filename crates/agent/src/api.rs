@@ -60,7 +60,7 @@ impl fmt::Debug for ApiError {
     }
 }
 
-/// Categorical diagnostics only: peer-controlled strings and credentials are never retained.
+/// Categories only: never retains peer-controlled strings or credentials.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TransportFailure {
     #[error("Przekroczono czas oczekiwania.")]
@@ -143,7 +143,7 @@ impl Api {
         if api_url.trim().is_empty() {
             return Err(Error::Invalid("Wpisz adres API w Ustawieniach.".to_owned()));
         }
-        // A typo must not spend one of the backend's per-address pairing attempts.
+        // Typos must not consume the backend's per-address pairing attempts.
         let code = pairing_code(code).ok_or_else(|| {
             Error::Invalid("Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234.".to_owned())
         })?;
@@ -165,7 +165,7 @@ impl Api {
         let response = request
             .send_json(model::PairForm { code })
             .map_err(ApiError::from)?;
-        // A malformed response can contain the new credential. Never retain its body/parser text.
+        // Malformed responses may contain credentials; discard body and parser text.
         let paired: Pairing = decode(response)
             .map_err(|error| match error {
                 ApiError::Response(_) => {
@@ -377,14 +377,14 @@ impl Api {
         Ok(page)
     }
 
-    /// The queued job is parsed only to hold Holuto to the contract.
+    /// Parses the unused job to enforce the response contract.
     pub fn queue(&self, form: &QueueForm) -> Result<(), ApiError> {
         let _job: Job = self.post("jobs", Some(form))?.ok_or_else(empty)?;
         Ok(())
     }
 }
 
-/// The backend's code shape: 8 Crockford base32 characters; ASCII case and hyphens are ignored.
+/// Holuto uses 8 Crockford base32 characters, ignoring ASCII case and hyphens.
 fn pairing_code(input: &str) -> Option<String> {
     let code: String = input
         .trim()
@@ -403,7 +403,7 @@ fn trace_headers<B>(mut request: RequestBuilder<B>) -> Result<RequestBuilder<B>,
     let headers = request
         .headers_mut()
         .ok_or_else(|| ApiError::Response("nieprawidłowe nagłówki żądania".to_owned()))?;
-    // sentry-core 0.49.3 emits only sentry-trace, not baggage; never fabricate headers.
+    // sentry-core emits sentry-trace, not baggage; do not fabricate headers.
     let error = sentry_core::Hub::with_active(|hub| {
         hub.configure_scope(|scope| {
             scope
@@ -499,7 +499,7 @@ fn empty() -> ApiError {
     ApiError::Response("pusta odpowiedź".to_owned())
 }
 
-/// Builds the queue request, refusing a document whose identity is inconsistent.
+/// Rejects inconsistent document identities before queueing.
 pub fn queue_form(document: &Document, buyer_nip: Option<BuyerNip>) -> Result<QueueForm, Error> {
     document
         .check()

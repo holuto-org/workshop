@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ] {
         let _settings = settings.with_patch(schema, TypeSpacePatch::default().with_rename(name));
     }
-    // Money/text are checked at the fiscal boundary, so one bad job can report failed.
+    // Validate money/text per job at the fiscal boundary so one bad job can fail alone.
     for name in [
         "AllowedCharacters",
         "Amount",
@@ -67,24 +67,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         let _settings = settings.with_replacement(name, "uuid::Uuid", iter::empty());
     }
     for (name, rust) in [
-        ("PrinterLimit", "u32"), // Keep nullable limits' existing zero/domain checks.
-        ("QuantityDecimals", "u8"), // Keep the driver's native precision.
-        ("FiscalVendor", "fiscal::device::Vendor"), // Shared driver identity.
-        ("FiscalReceiptKind", "crate::documents::ReceiptKind"), // Shared document/journal identity.
-        ("FiscalPaymentForm", "fiscal::receipt::PaymentForm"), // Shared payment identity.
-        ("AgentDocument", "crate::documents::Document"), // Keep integer-grosze domain conversion.
-        ("TokenTokenKindAgent", "crate::settings::Token"), // Redacted device credentials.
-        ("PairingInput", "String"), // Backend validates opaque human pairing proofs.
+        ("PrinterLimit", "u32"), // Preserve nullable limits' zero/domain checks.
+        ("QuantityDecimals", "u8"),
+        ("FiscalVendor", "fiscal::device::Vendor"),
+        ("FiscalReceiptKind", "crate::documents::ReceiptKind"),
+        ("FiscalPaymentForm", "fiscal::receipt::PaymentForm"),
+        ("AgentDocument", "crate::documents::Document"), // Preserve integer-grosze conversion.
+        ("TokenTokenKindAgent", "crate::settings::Token"), // Redact credentials.
+        ("PairingInput", "String"),                      // Backend validates opaque pairing proofs.
     ] {
         let _settings = settings.with_replacement(name, rust, iter::empty());
     }
-    // Let typify wrap nullable dates itself: a native Option override loses required-presence.
+    // A native Option override loses required presence; let typify wrap nullable dates.
     let _settings = settings.with_conversion(
         serde_json::from_value(json!({"type":"string","format":"date-time"}))?,
         "jiff::Timestamp",
         iter::empty(),
     );
-    // These outbound fields retain the original borrowed version and native printer limits.
+    // Preserve borrowed versions and native printer limits in outbound fields.
     let telemetry = schemas.get_mut("Telemetry").ok_or("missing Telemetry")?;
     replace_reference(
         telemetry
@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         TypeSpacePatch::default().with_attr("#[serde(bound(deserialize = \"'de: 'static\"))]"),
     );
     let _settings = settings.with_replacement("AgentTelemetryLimit", "usize", iter::empty());
-    // The page's inline item schema is identical to AgentDocument; reuse its domain conversion.
+    // Reuse AgentDocument's domain conversion for the identical inline page item.
     let document_schema = schemas
         .get("AgentDocument")
         .ok_or("missing AgentDocument")?
@@ -139,7 +139,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("document page item no longer matches AgentDocument".into());
     }
     *item = json!({"$ref":"#/components/schemas/AgentDocument"});
-    // Outbound optional-nullable fields have always been sent explicitly as null.
+    // Send optional-nullable outbound fields as explicit nulls.
     for (name, fields) in [
         ("ResultForm", &["issuedAt", "receiptNumber", "result"][..]),
         ("DeviceQueueForm", &["allocationId", "buyerNip"][..]),
@@ -177,7 +177,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut space = TypeSpace::new(&settings);
     space.add_ref_types(definitions)?;
     let mut generated: File = parse2(space.to_stream())?;
-    // Typify places custom serde attributes before derives (Rust #79202); fix the output.
+    // Move serde attributes after derives to avoid Rust #79202 in typify output.
     let mut debug_impls = Vec::new();
     for item in &mut generated.items {
         if let Item::Struct(item) = item {
@@ -263,7 +263,7 @@ fn normalize(value: &mut Value) -> Result<(), Box<dyn Error>> {
                     .ok_or("unsupported schema reference")?;
                 *reference = json!(format!("#/definitions/{name}"));
             }
-            // Keep serde's existing forward compatibility; the fake enforces the full schema.
+            // Allow new response fields; the fake still enforces the full schema.
             if object.get("additionalProperties") == Some(&Value::Bool(false)) {
                 let _previous = object.remove("additionalProperties");
             }

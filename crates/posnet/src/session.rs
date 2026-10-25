@@ -1,4 +1,4 @@
-//! One exclusive connection to the printer. No command is ever retried automatically.
+//! Exclusive printer connection and reply correlation.
 
 use std::{
     fmt, io,
@@ -86,7 +86,6 @@ impl Session {
         duration
     }
 
-    /// Sends once and waits up to `timeout`.
     pub fn command(
         &mut self,
         command: &'static str,
@@ -119,7 +118,6 @@ impl Session {
         }
     }
 
-    /// Returns the reply deadline after sending once.
     pub(crate) fn send(
         &mut self,
         command: &'static str,
@@ -140,8 +138,7 @@ impl Session {
         Ok(deadline)
     }
 
-    /// Accepts any reply envelope, retaining error codes and query tokens for correlation.
-    /// Silence until `deadline` times out `command`.
+    /// Retains error codes and query tokens for correlation; `command` labels timeout errors.
     pub(crate) fn next_frame(
         &mut self,
         command: &'static str,

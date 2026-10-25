@@ -82,7 +82,6 @@ impl Quantity {
             })
     }
 
-    /// Quantity in hundred-millionths.
     pub const fn units(self) -> u64 {
         self.0
     }

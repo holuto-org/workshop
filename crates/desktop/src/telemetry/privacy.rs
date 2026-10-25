@@ -1,4 +1,4 @@
-//! Strip machine-local paths and source contents without losing symbolication identifiers.
+//! Remove local paths and source text while preserving symbolication IDs.
 
 use sentry::protocol::{DebugImage, Event, Stacktrace};
 
@@ -72,7 +72,7 @@ fn optional_basename(path: &mut Option<String>) {
 }
 
 fn basename(path: &mut String) {
-    // SDK events may contain Windows paths even when processed on Unix, and vice versa.
+    // Event paths may come from a different OS than the scrubber.
     if let Some(separator) = path.rfind(['/', '\\']) {
         drop(path.drain(..=separator));
     }

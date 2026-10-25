@@ -1,5 +1,5 @@
-//! Windows GUI subsystem keeps Explorer launches windowless; CLI borrows its parent's console.
-//! Captured subprocess handles must never be replaced by console handles.
+//! Keep Explorer launches windowless; attach CLI launches to the parent console.
+//! Preserve inherited pipes and redirected handles.
 
 #[cfg(windows)]
 use windows_sys::Win32::{
@@ -34,8 +34,8 @@ fn attach_parent() {
     };
     let valid = |handle: HANDLE| !handle.is_null() && handle != INVALID_HANDLE_VALUE;
     if !valid(output) && !valid(error) {
-        // SAFETY: fixed parent-process sentinel; no pointers or owned handles cross the API.
-        // No parent console (Explorer/piped service) is a normal no-op; never allocate one.
+        // SAFETY: fixed parent-process sentinel; no pointers or owned handles.
+        // A missing parent console is normal; never allocate one.
         let _attached = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
     }
 }

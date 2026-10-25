@@ -1,8 +1,8 @@
 #[cfg(not(all(unix, not(target_vendor = "apple"))))]
 use std::future::{Ready, ready};
 
-/// Slint does not detect missing Linux tray hosts; recheck before hiding after shell restarts.
-/// A watcher alone displays nothing: it must report a registered host.
+/// Slint misses Linux tray-host loss after shell restarts; recheck before hiding.
+/// A watcher needs a registered host to display the icon.
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub(crate) async fn available() -> bool {
     use zbus::{Connection, fdo::PropertiesProxy, names::InterfaceName};

@@ -27,11 +27,10 @@ statically. The `.deb` installs `/usr/bin/workshop` and a launcher; its `libc6`
 dependency records the build host's glibc version. Software rendering needs no
 GPU or OpenGL driver, including on remote desktops and VMs.
 
-Follow the [AI/manual installation guide](docs/install-with-ai.md) for platform
-requirements, pinned downloads, checksums/attestations, OS security prompts,
-per-user installation paths, updates and uninstall. Each release includes that
-guide, `install.sh`, `install.ps1` and `SHA256SUMS.txt`. Never pipe a download to
-a shell.
+The [installation guide](docs/install-with-ai.md) covers requirements, pinned
+downloads, checksums/attestations, OS security prompts, install paths, updates
+and uninstall; each release ships it with `install.sh`, `install.ps1` and
+`SHA256SUMS.txt`. Never pipe a download to a shell.
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
 
@@ -40,13 +39,12 @@ Applications License 2.0; the badge is required attribution.
 
 ## Sign in and connect
 
-Pair in **Ustawienia** using a one-time code generated for the printer in Holuto.
-Codes expire after 15 minutes; successful redemption replaces the previous
-device token, which stays internal. See the
-[guided configuration sequence](docs/install-with-ai.md#guided-configuration-sequence)
-for setup. **Zapisz** saves without starting; **Uruchom** starts processing.
-Each launch requires explicit start unless the user opts into
-[autostart](#autostart).
+Pair in **Ustawienia** with a one-time code generated for the printer in Holuto
+(valid 15 minutes; see the
+[guided configuration sequence](docs/install-with-ai.md#guided-configuration-sequence)).
+Pairing replaces the previous device token, which stays internal. **Zapisz**
+saves; **Uruchom** starts processing. Every launch needs an explicit start
+unless [autostart](#autostart) is on.
 
 Use the final API URL, including any path prefix. HTTPS is required except on
 loopback (`localhost`, `127.0.0.0/8`, `::1`); redirects are rejected. TLS uses
@@ -54,7 +52,7 @@ the OS certificate store. Changing the API URL forgets the saved pairing. A 401
 stops processing; generate a fresh pairing code in Holuto and pair again. There
 is no token refresh.
 
-State directory (Unix: **0700**; created/replaced data files: **0600**):
+State directory:
 
 | OS      | Directory                                                      |
 | ------- | -------------------------------------------------------------- |
@@ -62,50 +60,47 @@ State directory (Unix: **0700**; created/replaced data files: **0600**):
 | macOS   | `~/Library/Application Support/workshop`                       |
 | Windows | `%LOCALAPPDATA%\workshop` (Local AppData Known Folder)         |
 
-Uninstalling the application retains fiscal state. Never delete the journal to
-unblock printing; unresolved evidence requires human reconciliation.
+- `settings.json`: API URL, internal token, port, speed, `vendor` (`"posnet"`,
+  `"novitus"`, `"elzab"` or `null` to detect), `telemetryEnabled`,
+  start-on-launch. Keep private and out of logs.
+- `operation.json`: fiscal journal; each receipt/report records its vendor and
+  fiscal memory unique number, both required for resolution. Malformed files
+  block.
+- `history.jsonl`: local receipt history, newest 500 receipts.
+- `status.json`: processing/connection and fiscal-block flags, last device
+  vendor/unique number, update time. Display state; never credentials or
+  customer data.
+- `instance.lock`: one instance per state directory.
 
-`settings.json` stores the API URL, internal token, port, speed, vendor preference
-(`vendor`: `"posnet"`, `"novitus"`, `"elzab"` or `null` for detection), diagnostics
-(`telemetryEnabled`) and start-processing-on-launch preferences. Keep it
-private, out of logs, and protected by profile ACLs on Windows. `operation.json`
-is the fiscal journal: every receipt/report records its vendor and fiscal memory unique number, both
-required for resolution; malformed files block.
-`history.jsonl` is local receipt history, compacted to
-the newest 500 receipts. `instance.lock` prevents a second instance from using
-the same state directory. Unix opens tighten the state directory to **0700**
-and lock to **0600**; writes replace data files with **0600** copies. History
-loading also tightens its file. Settings/status and journal reads do not repair
-modes.
+On Unix, opening tightens the directory to **0700** and the lock to **0600**;
+every write replaces a data file with a **0600** copy, and history loading
+tightens its file. Settings, status and journal reads do not repair modes.
+On Windows, profile ACLs protect the directory.
 
-Settings and `status.json` are persisted by one background FIFO writer. Starting
-waits for successful settings persistence; quitting waits cooperatively for
-pending writes and the worker. `status.json` contains only processing/connection
-flags, last known device vendor/unique number, fiscal-block flags and its update
-timestamp, never credentials or customer data. It is display state, not fiscal
-evidence.
+One background FIFO writer persists settings and status. Starting waits for
+settings to persist; quitting waits for pending writes and the worker.
+
+Uninstalling keeps fiscal state. Never delete the journal to unblock printing;
+unresolved evidence needs human reconciliation.
 
 ## CLI
 
-One binary serves both modes: `workshop` opens the GUI; a subcommand runs in the
-terminal without opening a printer port. Use `workshop --help` and the
-[CLI contract and stable exit codes](docs/install-with-ai.md#4-configure-through-the-cli-not-files).
-`--json` is available on every CLI command. `config show` reports pairing as
-`paired`, never a token. Configuration, pairing and autostart mutations refuse
-while the app holds the instance lock. `ports` lists names only; `check` and
-`status` never prove printer readiness. The
-[installation guide](docs/install-with-ai.md#4-configure-through-the-cli-not-files)
-owns commands, JSON fields, exit codes and configuration examples.
+One binary: `workshop` opens the GUI; a subcommand runs in the terminal without
+opening a printer port. Every command accepts `--json`. `config show` reports
+pairing as `paired`, never a token. Configuration, pairing and autostart
+changes refuse while the app holds the instance lock. `ports` lists names only;
+`check` and `status` never prove printer readiness. Commands, JSON fields, exit
+codes and examples live in the
+[installation guide](docs/install-with-ai.md#4-configure-through-the-cli-not-files).
 
-Never include pairing codes or credentials in reports/logs.
+Never put pairing codes or credentials in reports or logs.
 
 ## Autostart
 
-Opt-in only: **Uruchamiaj przy logowaniu** registers a per-user login item and
-saves the preference to start processing at launch. Login can then print queued
-fiscal jobs without another click; approve it separately. Printer preflight and
-unresolved-operation blocks still apply. See the
-[autostart command](docs/install-with-ai.md#4-configure-through-the-cli-not-files)
+Opt-in: **Uruchamiaj przy logowaniu** registers a per-user login item and starts
+processing at launch, so login can print queued fiscal jobs without a click;
+approve that separately. Preflight and unresolved-operation blocks still apply.
+See the [autostart command](docs/install-with-ai.md#4-configure-through-the-cli-not-files)
 and [OS artefacts](docs/testing/platforms.md#autostart-artefacts).
 
 ## Printer
@@ -168,7 +163,8 @@ It never scans with an unresolved operation: the device must not change.
 ## Desktop app
 
 - **Do wydruku** — eligible advances and sales for the printer's branch, showing
-  kind, amount and legal deadline, with overdue documents marked explicitly. Queue a document with an optional buyer NIP;
+  kind, amount and legal deadline; overdue documents are marked. Queue a
+  document with an optional buyer NIP;
   Holuto derives payments and advance deductions. Unpaid final-sale balances
   print as credit. Receipt lines and totals are not locally editable. Documents
   above the printer's amount limit remain listed but cannot execute. Each poll

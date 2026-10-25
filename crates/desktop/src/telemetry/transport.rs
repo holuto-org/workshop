@@ -1,5 +1,5 @@
-//! Best-effort telemetry only: bounded admission and detached SDK ownership keep HTTP
-//! queueing, flushing and join-on-drop outside the application's shutdown deadline.
+//! Bounded admission and detached SDK ownership keep telemetry HTTP and Drop joins
+//! from blocking application shutdown.
 use std::{
     io,
     sync::{
@@ -115,7 +115,7 @@ impl DetachedTransport {
             .ok()
             .map(|handle| {
                 let owner = handle.thread().clone();
-                // Only this expendable telemetry thread detaches, never the fiscal Worker.
+                // Telemetry may detach; the fiscal Worker must not.
                 drop(handle);
                 owner
             });
@@ -169,7 +169,7 @@ impl Transport for DetachedTransport {
             .try_send(Task::Shutdown(deadline, sender))
             .is_err()
         {
-            // Even a full queue must wake an idle owner and eventually dispose it.
+            // Wake the owner to observe closure even when the shutdown task cannot fit.
             self.wake();
             return false;
         }
@@ -196,7 +196,7 @@ fn own_transport<T: Transport>(transport: T, receiver: &Receiver<Task>, closed: 
             Ok(Task::Shutdown(deadline, acknowledge)) => {
                 let remaining = deadline.remaining();
                 let stopped = !remaining.is_zero() && transport.shutdown(remaining);
-                // SDK Drop may join its HTTP thread: it must finish before success is acknowledged.
+                // SDK Drop may join HTTP; acknowledge success only after it finishes.
                 drop(transport);
                 let _caller_gone = acknowledge.send(stopped);
                 return;
@@ -205,7 +205,7 @@ fn own_transport<T: Transport>(transport: T, receiver: &Receiver<Task>, closed: 
                 if closed.load(Ordering::SeqCst) {
                     return;
                 }
-                // unpark tokens prevent a send/park race without a polling timer.
+                // unpark retains a token, preventing a send/park race.
                 thread::park();
             },
             Err(TryRecvError::Disconnected) => return,

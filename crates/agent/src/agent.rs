@@ -1,11 +1,10 @@
-//! Recovery reconciles the journal with Holuto without replaying printer commands.
+//! Reconciles journal evidence with Holuto without replaying printer commands.
 //! Saved results are resent unchanged; terminal server states are authoritative.
 //!
-//! A journal proving no fiscal command was sent reports FAILED while Holuto still
-//! says TAKEN. If that attempt expired to UNKNOWN, staff must resolve it as failed:
-//! Holuto intentionally refuses automatic UNKNOWN → FAILED.
+//! No-dispatch evidence reports FAILED only while Holuto says TAKEN. Once UNKNOWN,
+//! staff must resolve it: Holuto refuses automatic UNKNOWN → FAILED.
 //! Completed evidence conflicting with FAILED/EXPIRED stays blocked until an
-//! operator explicitly acknowledges it locally on the same ready printer.
+//! operator acknowledges it locally on the same ready printer.
 
 use std::{io, mem, time::Duration};
 
@@ -41,10 +40,9 @@ const INTERRUPTED: &str = "Przerwano w trakcie drukowania. Sprawdź drukarkę.";
 const UNNUMBERED: &str = "Wydruk zakończony, ale nie odczytano numeru paragonu. Sprawdź wydruk i \
                           rozstrzygnij zadanie w Holuto.";
 
-/// Retained until the worker drains it, even if settlement is followed by an error or report.
+/// Retained until drained, even if settlement is followed by an error or report.
 #[derive(Default)]
 pub(crate) struct News {
-    /// Non-blocking operator warnings.
     pub(crate) notices: Vec<String>,
     pub(crate) history: Option<Vec<HistoryEntry>>,
 }
@@ -65,9 +63,9 @@ pub(crate) struct Agent<'dir> {
     dir: &'dir StateDir,
     journal: Journal<'dir>,
     telemetry: Telemetry,
-    /// Last probe of the paired device; source of the telemetry.
+    /// Last paired-device probe; supplies telemetry.
     status: Option<PrinterDevice>,
-    /// Operator intervention needed mid-operation; `None` when cleared.
+    /// Requests mid-operation intervention; `None` clears it.
     waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     news: News,
     orphaned_receipt: bool,
@@ -108,7 +106,7 @@ impl<'dir> Agent<'dir> {
         mem::take(&mut self.news)
     }
 
-    /// Updates telemetry; returns notices for active VAT rates Holuto does not support.
+    /// Updates telemetry and warns about active VAT rates unsupported by Holuto.
     pub(crate) fn describe(&mut self, device: PrinterDevice) -> Result<Vec<String>, Error> {
         if device.unique_number != self.api.unique_number() {
             return Err(Error::Blocked(format!(
@@ -134,7 +132,7 @@ impl<'dir> Agent<'dir> {
         Ok(skipped)
     }
 
-    /// `false` means identity/readiness is visible locally but cannot be advertised yet.
+    /// `false` means local identity/readiness cannot yet be advertised.
     pub(crate) fn session(&mut self) -> Result<bool, Error> {
         if !self.describable() {
             return Ok(false);
@@ -176,7 +174,7 @@ impl<'dir> Agent<'dir> {
             }))
     }
 
-    /// Keeps last qualified telemetry online after a failed probe; unavailable limits stay local.
+    /// Retains qualified telemetry after a failed probe; unavailable limits stay local.
     pub(crate) fn step(&mut self) -> Result<Duration, Error> {
         let probe = self.refresh();
         if !self.describable() {
@@ -252,7 +250,7 @@ impl<'dir> Agent<'dir> {
             if matches!(error, PrinterError::Device { .. })
                 && matches!(operation.device, Device::Dispatching { .. })
             {
-                // The driver returns a bare Device error only for a refusal naming this report.
+                // A bare Device error proves the driver refused this report.
                 operation.device = Device::NotStarted;
                 self.journal.save(&Operation::Report(operation))?;
             }

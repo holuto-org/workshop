@@ -16,13 +16,11 @@ const LOCK: &str = "instance.lock";
 #[derive(Debug)]
 pub struct StateDir {
     path: PathBuf,
-    /// Retained until drop; process exit also releases the lock.
     _lock: File,
 }
 
 impl StateDir {
-    /// Platform state directory named `workshop`.
-    /// Ignores empty or relative base paths to avoid silently moving the journal.
+    /// Rejects empty or relative base paths to avoid silently moving the journal.
     pub fn default_path() -> Option<PathBuf> {
         Self::default_path_for(false)
     }
@@ -169,10 +167,10 @@ pub(crate) fn make_private(_file: &File) -> io::Result<()> {
     Ok(())
 }
 
-/// Syncs a temporary file (0600 on Unix) in a private sibling directory, then renames it.
+/// Atomically replaces content through a private sibling temporary file (0600 on Unix).
 ///
-/// Durability uses directory fsync on Unix and `MoveFileExW(MOVEFILE_WRITE_THROUGH)` on Windows.
-/// Crashes leave old or new content, never a torn file; drop removes failed temporary writes.
+/// Unix directory fsync and Windows `MoveFileExW(MOVEFILE_WRITE_THROUGH)` ensure durability.
+/// Crashes leave old or new content; failed temporary writes are removed on drop.
 pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
     AtomicFile::new(path, OverwriteBehavior::AllowOverwrite)
         .write_with_options(|file| file.write_all(bytes), private_new_file())

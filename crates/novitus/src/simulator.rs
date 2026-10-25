@@ -1,7 +1,5 @@
-//! Offline native Novitus TCP peer using the real Session and shared Link/Port.
-//!
-//! Read-only fixtures follow the native protocol's documented replies and raw status.
-//! Identity, clock, VAT and header are synthetic, not hardware qualification.
+//! Offline Novitus TCP peer for the real driver and Link/Port.
+//! Protocol-shaped fixtures are synthetic, not hardware qualification.
 
 use crate::{
     frame,
@@ -30,11 +28,11 @@ pub enum Fault {
     LoseReply,
     CorruptReply,
     Disconnect,
-    /// Matched refusal, without executing the command.
+    /// Matched refusal without executing the command.
     Refuse(u32),
     /// Execute once, hold its ACK until `resume`, and expose DLE paper/battery.
     Wait,
-    /// Exact wire bytes, allowing fragmented/coalesced and malformed envelopes.
+    /// Raw replies for fragmentation, coalescing and malformed-frame tests.
     Reply(Vec<u8>),
 }
 
@@ -163,7 +161,7 @@ impl Simulator {
         endpoint.clone_into(&mut lock(&self.state).endpoint);
     }
 
-    /// Power-on defaults to mode 0; normal driver sessions explicitly select mode 3.
+    /// Power-on mode is 0; driver sessions select 3.
     pub fn set_error_mode(&self, mode: u8) {
         lock(&self.state).error_mode = mode;
     }
@@ -186,7 +184,7 @@ impl Simulator {
         firmware.clone_into(&mut state.firmware);
     }
 
-    /// Exact six semicolon-separated clock fields, not host local time.
+    /// Six semicolon-separated wire fields, independent of the host clock.
     pub fn set_clock(&self, clock: &str) {
         clock.clone_into(&mut lock(&self.state).clock);
     }
@@ -430,7 +428,7 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
     }
 }
 
-/// Foreign STX envelopes are inert, but remain evidence of discovery traffic.
+/// Record foreign STX discovery frames without executing them.
 fn ignore_foreign(pending: &mut Vec<u8>, state: &Mutex<State>) -> bool {
     let Some(end) = pending.iter().position(|byte| *byte == 0x03) else {
         return false;
@@ -635,7 +633,6 @@ fn fiscal_command(body: &str, command: &str, state: &mut State) -> u32 {
     0
 }
 
-/// Full and bounded configuration reads.
 fn configuration_reply(body: &str, options: &BTreeMap<u32, String>) -> Option<String> {
     let (first, last) = if body == "^c" {
         (0, u32::MAX)
