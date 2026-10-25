@@ -47,7 +47,7 @@ pub struct Connection {
     pub baud_rate: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Debug)]
 pub struct SerialLink;
 
 impl Link for SerialLink {

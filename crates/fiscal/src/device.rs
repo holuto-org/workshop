@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{decimal, error::Error};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Vendor {
     Posnet,
@@ -36,10 +36,6 @@ pub struct VatRate {
 impl VatRate {
     pub const fn active(self) -> bool {
         !matches!(self.kind, VatKind::Inactive)
-    }
-
-    pub const fn exempt(self) -> bool {
-        matches!(self.kind, VatKind::Exempt)
     }
 
     pub fn label(self) -> String {
@@ -99,7 +95,7 @@ impl From<&str> for Problem {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Device {
     pub vendor: Vendor,
     pub model: String,

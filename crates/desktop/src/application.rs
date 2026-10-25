@@ -263,50 +263,48 @@ impl Application {
 
     fn write_settings(&mut self, request: preferences::Request) -> bool {
         let is_status = matches!(&request, preferences::Request::Status(_));
-        let description = if is_status {
-            "stanu aplikacji"
-        } else {
-            "ustawień"
+        let writer = match &mut self.settings_writer {
+            Some(writer) => Ok(writer),
+            slot @ None => {
+                let sink = |completion| {
+                    let _event_loop_closed = slint::invoke_from_event_loop(move || {
+                        with_app(move |app| {
+                            app.capture();
+                            app.settings_saved(completion);
+                            Ok(())
+                        });
+                    });
+                };
+                preferences::Writer::spawn(Arc::clone(&self.dir), sink)
+                    .map(|writer| slot.insert(writer))
+            },
         };
-        if self.settings_writer.is_none() {
-            let sink = |completion| {
-                let _event_loop_closed = slint::invoke_from_event_loop(move || {
-                    with_app(move |app| {
-                        app.capture();
-                        app.settings_saved(completion);
-                        Ok(())
-                    });
+        let submitted = writer
+            .map_err(|error| error.to_string())
+            .and_then(|writer| writer.submit(request).map_err(|error| error.to_string()));
+        match submitted {
+            Ok(()) => {
+                self.writes_pending.push_back(if is_status {
+                    WriteKind::Status
+                } else {
+                    WriteKind::Settings
                 });
-            };
-            match preferences::Writer::spawn(Arc::clone(&self.dir), sink) {
-                Ok(writer) => self.settings_writer = Some(writer),
-                Err(error) => {
-                    self.model.say(
-                        format!("Nie można zapisać {description}: {error}"),
-                        Tone::Error,
-                    );
-                    return false;
-                },
-            }
-        }
-        if let Some(writer) = &self.settings_writer {
-            match writer.submit(request) {
-                Ok(()) => {
-                    self.writes_pending.push_back(if is_status {
-                        WriteKind::Status
-                    } else {
-                        WriteKind::Settings
-                    });
-                    self.model.saving |= !is_status;
-                    return true;
-                },
-                Err(error) => self.model.say(
+                self.model.saving |= !is_status;
+                true
+            },
+            Err(error) => {
+                let description = if is_status {
+                    "stanu aplikacji"
+                } else {
+                    "ustawień"
+                };
+                self.model.say(
                     format!("Nie można zapisać {description}: {error}"),
                     Tone::Error,
-                ),
-            }
+                );
+                false
+            },
         }
-        false
     }
 
     fn publish_status(&mut self) {

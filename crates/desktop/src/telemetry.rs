@@ -112,9 +112,7 @@ fn scrub_event(mut event: Event<'static>) -> Option<Event<'static>> {
         exception.value = None;
     }
     for breadcrumb in &mut event.breadcrumbs.values {
-        breadcrumb.message = Some(message(breadcrumb.message.as_deref()).into());
-        breadcrumb.category = None;
-        breadcrumb.data.clear();
+        scrub_breadcrumb_fields(breadcrumb);
     }
     Some(event)
 }
@@ -123,10 +121,14 @@ fn scrub_breadcrumb(mut breadcrumb: Breadcrumb) -> Option<Breadcrumb> {
     if !ENABLED.load(Ordering::SeqCst) {
         return None;
     }
+    scrub_breadcrumb_fields(&mut breadcrumb);
+    Some(breadcrumb)
+}
+
+fn scrub_breadcrumb_fields(breadcrumb: &mut Breadcrumb) {
     breadcrumb.message = Some(message(breadcrumb.message.as_deref()).into());
     breadcrumb.category = None;
     breadcrumb.data.clear();
-    Some(breadcrumb)
 }
 
 fn scrub_log(mut log: Log) -> Option<Log> {
@@ -245,12 +247,10 @@ fn message(text: Option<&str>) -> &str {
             | "Worker panicked"
             | "Worker operation requires attention"
             | "Worker operation failed"
-            | "Could not remember detected printer port"
             | "Holuto session unavailable; retrying in 15 seconds"
             | "Printed receipt conflicts with terminal Holuto state"
             | "Holuto rejected completed fiscal evidence"
-            | "Operator acknowledged orphaned receipt; no command reissued"
-            | "Native quit hook unavailable"),
+            | "Operator acknowledged orphaned receipt; no command reissued"),
         ) => message,
         _ => "Fiscal application diagnostic",
     }

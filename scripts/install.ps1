@@ -117,7 +117,6 @@ function Get-HolutoPathWithDirectory {
 function Invoke-HolutoInstall {
     [CmdletBinding(PositionalBinding = $false)]
     param(
-        [ValidatePattern('(?-i)\Av(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z')]
         [string]$Release,
         [switch]$DryRun
     )

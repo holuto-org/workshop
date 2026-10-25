@@ -185,17 +185,9 @@ pub(crate) fn run<I: IntoIterator<Item = OsString>>(args: I) -> Option<ExitCode>
     let result = parse(args).and_then(|parsed| {
         json = parsed.json;
         match parsed.command {
-            Command::Help => Ok(Response {
-                value: json!({"ok":true,"help":HELP}),
-                human: HELP.into(),
-                exit: 0,
-            }),
-            Command::Version => Ok(Response {
-                value: json!({"ok":true,"name":"workshop","version":env!("CARGO_PKG_VERSION")}),
-                human: format!("Holuto Workshop {}", env!("CARGO_PKG_VERSION")),
-                exit: 0,
-            }),
-            Command::Ports => execute(Command::Ports, Path::new("")),
+            command @ (Command::Help | Command::Version | Command::Ports) => {
+                execute(command, Path::new(""))
+            },
             command @ (Command::ConfigShow
             | Command::ConfigSet(_)
             | Command::Pair(_)
@@ -214,25 +206,36 @@ pub(crate) fn run<I: IntoIterator<Item = OsString>>(args: I) -> Option<ExitCode>
             },
         }
     });
-    let (value, human, exit) = match result {
-        Ok(response) => (response.value, response.human, response.exit),
-        Err(error) => (
-            json!({"ok":false,"error":{"code":error.code,"message":error.message}}),
-            error.message,
-            error.exit,
-        ),
+    let response = result.unwrap_or_else(|error| Response {
+        value: json!({"ok":false,"error":{"code":error.code,"message":error.message}}),
+        human: error.message,
+        exit: error.exit,
+    });
+    let output = if json {
+        response.value.to_string()
+    } else {
+        response.human
     };
-    let output = if json { value.to_string() } else { human };
-    let written = if !json && exit != 0 {
+    let written = if !json && response.exit != 0 {
         writeln!(io::stderr().lock(), "{output}")
     } else {
         writeln!(io::stdout().lock(), "{output}")
     };
-    Some(ExitCode::from(if written.is_ok() { exit } else { 1 }))
+    Some(ExitCode::from(if written.is_ok() { response.exit } else { 1 }))
 }
 
 fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
     match command {
+        Command::Help => Ok(Response {
+            value: json!({"ok":true,"help":HELP}),
+            human: HELP.into(),
+            exit: 0,
+        }),
+        Command::Version => Ok(Response {
+            value: json!({"ok":true,"name":"workshop","version":env!("CARGO_PKG_VERSION")}),
+            human: format!("Holuto Workshop {}", env!("CARGO_PKG_VERSION")),
+            exit: 0,
+        }),
         Command::ConfigShow => {
             let settings = Settings::load_at(path)?.unwrap_or_default();
             settings.validate_configuration()?;
@@ -297,7 +300,6 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
             })
         },
         Command::Pair(code) => pair(path, code),
-        Command::Help | Command::Version => Err(arguments()),
     }
 }
 

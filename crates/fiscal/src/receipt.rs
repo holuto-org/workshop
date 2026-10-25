@@ -348,4 +348,4 @@ fn receipt_too_large() -> Error {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

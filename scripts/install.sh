@@ -206,7 +206,6 @@ done
 count=0
 expected=
 while IFS= read -r line || [[ -n $line ]]; do
-  digest='' filename='' extra=''
   read -r digest filename extra <<< "$line"
   filename=${filename#\*}
   if [[ $filename == "$asset" ]]; then
@@ -279,7 +278,6 @@ else
   # The old tree is removed only after the complete staged tree has been renamed.
   if [[ -n $backup ]]; then
     rm -rf -- "$backup"
-    backup=
   fi
 fi
 printf 'Installed %s. The app was not launched; printer connections and app settings were not accessed.\n' "$release"

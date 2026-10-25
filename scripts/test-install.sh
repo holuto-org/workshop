@@ -10,7 +10,6 @@ export FIXTURE_LOG="$work/calls" FIXTURE_OS=Darwin FIXTURE_ARCH=x86_64
 export FIXTURE_MAC=11.0 FIXTURE_ARM=0 FIXTURE_GLIBC='glibc 2.39'
 export FIXTURE_DOWNLOAD=forbidden FIXTURE_MANIFEST=bad FIXTURE_GH=0
 export FIXTURE_RUNNING=none
-export FIXTURE_REAL_UNAME
 FIXTURE_REAL_UNAME=$(command -v uname)
 export FIXTURE_REAL_HASH
 FIXTURE_REAL_HASH=$(command -v sha256sum || command -v shasum)

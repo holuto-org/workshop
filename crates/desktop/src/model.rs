@@ -188,8 +188,7 @@ impl Model {
     }
 
     pub(crate) fn status_matches(&self, snapshot: &Snapshot) -> bool {
-        let processing = self.running;
-        snapshot.processing == processing
+        snapshot.processing == self.running
             && snapshot.connected == self.connected
             && snapshot.vendor == self.vendor
             && snapshot.serial.as_deref()
@@ -283,7 +282,7 @@ impl Model {
         window.set_previous_enabled(self.connected && self.page > 1);
         window.set_next_enabled(self.connected && self.has_next);
         window.set_report_unresolved(self.resolve_enabled());
-        window.set_orphaned_receipt(self.accepting() && self.orphaned_receipt);
+        window.set_orphaned_receipt(self.acknowledge_enabled());
         window.set_status(self.message.as_str().into());
         window.set_status_tone(tone_number(self.tone));
         window.set_connection_text(self.connection_text().into());
@@ -351,6 +350,10 @@ impl Model {
         self.accepting() && self.report_unresolved
     }
 
+    const fn acknowledge_enabled(&self) -> bool {
+        self.accepting() && self.orphaned_receipt
+    }
+
     fn connection_text(&self) -> String {
         if self.blocked {
             "Zablokowane: wymaga rozstrzygnięcia".into()
@@ -415,7 +418,7 @@ impl Model {
                 action: "Usuń blokadę".into(),
             }),
             Action::AcknowledgeOrphanedReceipt => {
-                (self.accepting() && self.orphaned_receipt).then(|| Confirmation {
+                self.acknowledge_enabled().then(|| Confirmation {
                     command: Command::AcknowledgeOrphanedReceipt,
                     title: "Wyjaśnij paragon".into(),
                     text: format!(
@@ -510,7 +513,7 @@ impl Model {
                     self.reports_enabled()
                 },
                 Command::ResolveReport => self.resolve_enabled(),
-                Command::AcknowledgeOrphanedReceipt => self.accepting() && self.orphaned_receipt,
+                Command::AcknowledgeOrphanedReceipt => self.acknowledge_enabled(),
                 Command::NextPage | Command::PreviousPage => false,
             };
             if allowed {
