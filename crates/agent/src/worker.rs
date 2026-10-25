@@ -433,8 +433,19 @@ fn start_session(
     queue: &mut VecDeque<Command>,
 ) -> Result<bool, Error> {
     loop {
-        match agent.session() {
-            Ok(()) => return Ok(true),
+        let session = agent.session();
+        let mut cadence = Cadence::new(Cadence::now());
+        cadence.schedule(Cadence::now(), RETRY);
+        let refresh = match session {
+            Ok(true) => return Ok(true),
+            Ok(false) => {
+                publish_device(agent, sink);
+                sink(Event::Status {
+                    text: agent.not_ready_notice(),
+                    tone: Tone::Error,
+                });
+                true
+            },
             Err(error) if retry_start(&error) => {
                 tracing::warn!("Holuto session unavailable; retrying in 15 seconds");
                 sink(Event::Status {
@@ -443,11 +454,10 @@ fn start_session(
                     ),
                     tone: Tone::Error,
                 });
+                false
             },
             Err(error) => return Err(error),
-        }
-        let mut cadence = Cadence::new(Cadence::now());
-        cadence.schedule(Cadence::now(), RETRY);
+        };
         loop {
             match inbox.recv_timeout(cadence.remaining(Cadence::now())) {
                 Ok(Message::Command(command)) => queue.push_back(command),
@@ -455,7 +465,36 @@ fn start_session(
                 Err(RecvTimeoutError::Timeout) => break,
             }
         }
+        if refresh {
+            match agent.refresh() {
+                Ok(notices) => {
+                    for text in notices {
+                        sink(Event::Status {
+                            text,
+                            tone: Tone::Error,
+                        });
+                    }
+                },
+                Err(error) => sink(Event::Status {
+                    text: format!("Błąd: {error}"),
+                    tone: Tone::Error,
+                }),
+            }
+        }
     }
+}
+
+fn publish_device(agent: &Agent<'_>, sink: &dyn Fn(Event)) {
+    let blocked = agent.blocked();
+    let report_unresolved = matches!(blocked, Ok(Some(Blocked::Report)));
+    let orphaned_receipt = matches!(blocked, Ok(Some(Blocked::OrphanedReceipt)));
+    sink(Event::Device {
+        status: agent.status().cloned(),
+        // An unreadable journal also blocks printing.
+        blocked: !matches!(blocked, Ok(None)),
+        report_unresolved,
+        orphaned_receipt,
+    });
 }
 
 const fn retry_start(error: &Error) -> bool {
@@ -662,16 +701,7 @@ impl Session<'_> {
     }
 
     fn publish_device(&self) {
-        let blocked = self.agent.blocked();
-        let report_unresolved = matches!(blocked, Ok(Some(Blocked::Report)));
-        let orphaned_receipt = matches!(blocked, Ok(Some(Blocked::OrphanedReceipt)));
-        (self.sink)(Event::Device {
-            status: self.agent.status().cloned(),
-            // An unreadable journal also blocks printing.
-            blocked: !matches!(blocked, Ok(None)),
-            report_unresolved,
-            orphaned_receipt,
-        });
+        publish_device(&self.agent, self.sink);
     }
 
     /// Publish even if the call that produced the news failed.

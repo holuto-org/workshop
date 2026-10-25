@@ -25,7 +25,7 @@ fn agent<'a>(sim: &Simulator, dir: &'a StateDir, server: &Holuto) -> Result<Agen
     let mut agent = Agent::new(sim.driver(), api, dir, &waiting);
     let status = agent.printer.probe()?;
     let _notices = agent.describe(status)?;
-    agent.session()?;
+    let _connected = agent.session()?;
     Ok(agent)
 }
 fn claimed(

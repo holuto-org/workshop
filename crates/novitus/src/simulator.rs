@@ -42,6 +42,7 @@ pub enum Fault {
 #[derive(Debug)]
 struct State {
     endpoint: String,
+    error_mode: u8,
     options: BTreeMap<u32, String>,
     header: String,
     model: String,
@@ -69,6 +70,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             endpoint: "PC1".to_owned(),
+            error_mode: 0,
             options: [5, 91, 92, 93, 94]
                 .map(|option| (option, "1".to_owned()))
                 .into(),
@@ -160,6 +162,11 @@ impl Simulator {
 
     pub fn set_endpoint(&self, endpoint: &str) {
         endpoint.clone_into(&mut lock(&self.state).endpoint);
+    }
+
+    /// Power-on defaults to mode 0; normal driver sessions explicitly select mode 3.
+    pub fn set_error_mode(&self, mode: u8) {
+        lock(&self.state).error_mode = mode;
     }
 
     pub fn set_dialect(&self, dialect: &str) {
@@ -465,7 +472,10 @@ fn realtime_answer(byte: u8, state: &State) -> Option<Vec<u8>> {
 }
 fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
     let (response, checksum, ack) = match body {
-        "3#e" => return frame::query(b"0#Z#e"),
+        "3#e" => {
+            state.error_mode = 3;
+            return frame::query(b"0#Z#e");
+        },
         "30#v" => (
             format!("1#R{}/{}", state.model, state.firmware),
             false,
@@ -536,7 +546,7 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
     } else {
         frame::query(&bytes)
     };
-    if ack {
+    if ack && state.error_mode == 3 {
         raw.extend_from_slice(&frame::query(format!("0#Z{command}").as_bytes()));
     }
     raw

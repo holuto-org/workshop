@@ -116,14 +116,42 @@ impl<'dir> Agent<'dir> {
                 self.api.serial()
             )));
         }
-        let skipped = self.telemetry.describe(&device);
+        let skipped = if device.describable_capabilities().is_some() {
+            self.telemetry.describe(&device)
+        } else {
+            Vec::new()
+        };
         self.status = Some(device);
         Ok(skipped)
     }
 
-    pub(crate) fn session(&mut self) -> Result<(), Error> {
+    /// `false` means identity/readiness is visible locally but cannot be advertised yet.
+    pub(crate) fn session(&mut self) -> Result<bool, Error> {
+        if !self.describable() {
+            return Ok(false);
+        }
         self.api.session(&self.telemetry)?;
-        Ok(())
+        Ok(true)
+    }
+
+    pub(crate) fn refresh(&mut self) -> Result<Vec<String>, Error> {
+        let status = self.printer.probe()?;
+        self.describe(status)
+    }
+
+    fn describable(&self) -> bool {
+        self.status
+            .as_ref()
+            .and_then(PrinterDevice::describable_capabilities)
+            .is_some()
+    }
+
+    pub(crate) fn not_ready_notice(&self) -> String {
+        let description = self.status.as_ref().map_or_else(
+            || "Nie odczytano parametrów drukarki".to_owned(),
+            PrinterDevice::description,
+        );
+        format!("Drukarka niegotowa: {description}")
     }
 
     pub(crate) fn blocked(&self) -> Result<Option<Blocked>, Error> {
@@ -138,13 +166,13 @@ impl<'dir> Agent<'dir> {
             }))
     }
 
-    /// Heartbeats even after a failed probe so Holuto still sees the device online.
+    /// Keeps last qualified telemetry online after a failed probe; unavailable limits stay local.
     pub(crate) fn step(&mut self) -> Result<Duration, Error> {
-        let probe = self
-            .printer
-            .probe()
-            .map_err(Error::from)
-            .and_then(|status| self.describe(status));
+        let probe = self.refresh();
+        if !self.describable() {
+            self.news.notices.push(self.not_ready_notice());
+            return Ok(RETRY);
+        }
         self.api.heartbeat(&self.telemetry)?;
         if let Some(blocked) = self.settle()? {
             self.news.notices.push(

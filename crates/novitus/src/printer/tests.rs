@@ -879,3 +879,43 @@ fn printing_session_checks_cp1250_capability_again_before_begin() {
     assert_eq!(sim.receipts(), 0);
     assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
 }
+
+#[test]
+fn discovery_identifies_printer_in_power_on_error_mode() {
+    let sim = Simulator::start();
+    supported(&sim);
+    let device = identify(sim.link().as_ref(), &connection(&sim))
+        .unwrap()
+        .unwrap();
+    assert!(device.ready(), "{}", device.description());
+    assert_eq!(bodies(&sim).first().map(String::as_str), Some("30#v"));
+    assert!(!bodies(&sim).iter().any(|body| body == "3#e"));
+}
+
+#[test]
+fn discovery_tolerates_printer_already_in_mode_three() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.set_error_mode(3);
+    sim.set_fragment_size(1);
+    let device = identify(sim.link().as_ref(), &connection(&sim))
+        .unwrap()
+        .unwrap();
+    assert!(device.ready(), "{}", device.description());
+    assert!(!bodies(&sim).iter().any(|body| body == "3#e"));
+}
+
+#[test]
+fn printing_session_selects_mode_three_on_a_power_on_printer() {
+    let sim = Simulator::start();
+    supported(&sim);
+    let device = identify(sim.link().as_ref(), &connection(&sim))
+        .unwrap()
+        .unwrap();
+    let printed = printer(&sim)
+        .print_receipt(&receipt(vec![]), &device, &mut Log::default())
+        .unwrap();
+    assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+    assert_eq!(sim.receipts(), 1);
+    assert!(bodies(&sim).iter().any(|body| body == "3#e"));
+}

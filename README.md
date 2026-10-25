@@ -299,6 +299,13 @@ rediscovered only when no operation blocks. The detected port and vendor are
 saved together. An unresolved journal pins the vendor and forbids scanning
 other ports, even when preferences are stale.
 
+An unidentified capability profile (for example unknown firmware or an
+unsupported code page) stays visible as not ready. The worker keeps running
+and rechecks it every 15 seconds, without sending invalid session/heartbeat
+telemetry or claiming jobs. Once the device has describable capabilities,
+connection and normal readiness checks resume. Novitus discovery accepts both
+power-on error mode 0 and preconfigured mode 3 without changing printer settings.
+
 `novitus::printer` implements native ESC-P receipts and daily/monthly/periodic
 reports with strict model/firmware profiles for HD II Online, Deon Online,
 Bono Online and Point. It verifies PC1, native dialect, CP1250 input/output,

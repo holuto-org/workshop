@@ -163,6 +163,8 @@ pub struct Session {
     pending: Vec<u8>,
     queued: VecDeque<Event>,
     initialization_ack: bool,
+    discovery: bool,
+    discovery_ack: Option<&'static str>,
     blocked: bool,
     #[cfg(any(test, feature = "simulator"))]
     time_scale: u32,
@@ -179,6 +181,7 @@ impl Session {
     pub fn open(link: &dyn Link, connection: &Connection) -> Result<Self, Error> {
         let mut session = Self::open_discovery(link, connection)?;
         session.initialization_ack = true;
+        session.discovery = false;
         let timeout = session.timeout(TIMEOUT);
         session
             .port
@@ -197,6 +200,8 @@ impl Session {
             pending: Vec::new(),
             queued: VecDeque::new(),
             initialization_ack: false,
+            discovery: true,
+            discovery_ack: None,
             blocked: false,
             #[cfg(any(test, feature = "simulator"))]
             time_scale: link.time_scale().max(1),
@@ -348,9 +353,12 @@ impl Session {
             }
             if expected
                 .as_ref()
-                .is_some_and(|(_, _, ack)| !ack || completed)
+                .is_some_and(|(_, _, ack)| self.discovery || !ack || completed)
                 && let Some(reply) = data.take()
             {
+                if self.discovery && !completed {
+                    self.discovery_ack = query_identifier(command);
+                }
                 return Ok(reply);
             }
         }
@@ -422,7 +430,16 @@ impl Session {
                     return Err(frame::corrupt());
                 }
                 if let Some(end) = self.pending.windows(2).position(|pair| pair == frame::END) {
-                    return Ok(Event::Frame(self.pending.drain(..end + 2).collect()));
+                    let raw: Vec<_> = self.pending.drain(..end + 2).collect();
+                    if let Some(expected) = self.discovery_ack
+                        && let Some((code, answered)) = acknowledgment(frame::unframe(&raw)?)?
+                        && answered == expected
+                    {
+                        self.discovery_ack = None;
+                        device_result(code, answered)?;
+                        continue;
+                    }
+                    return Ok(Event::Frame(raw));
                 }
             } else if !self.pending.is_empty() {
                 return Ok(Event::Status(self.pending.remove(0)));
@@ -508,6 +525,20 @@ pub(crate) fn identifier(body: &str) -> Option<&str> {
         .contains(&length)
         .then(|| rest.get(..length))
         .flatten()
+}
+
+fn query_identifier(command: &str) -> Option<&'static str> {
+    match command {
+        "#v" => Some("#v"),
+        "$i" => Some("$i"),
+        "^c" => Some("^c"),
+        "^u" => Some("^u"),
+        "#c" => Some("#c"),
+        "#s" => Some("#s"),
+        "#n" => Some("#n"),
+        "?l" => Some("?l"),
+        _ => None,
+    }
 }
 pub(crate) fn no_request_checksum(body: &str) -> bool {
     matches!(identifier(body), Some("#v" | "#c" | "#n" | "$i")) || body == "23#s"
