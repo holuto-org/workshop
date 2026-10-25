@@ -1,0 +1,22 @@
+[package]
+name = "elzab"
+description = "Native ElzabSTX fiscal driver and offline simulator"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+simulator = ["fiscal/simulator"]
+
+[dependencies]
+fiscal.workspace = true
+jiff.workspace = true
+
+[dev-dependencies]
+fiscal = { workspace = true, features = ["simulator"] }
+insta.workspace = true
+
+[lints]
+workspace = true

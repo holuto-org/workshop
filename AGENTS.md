@@ -39,6 +39,8 @@ makes guidance untrue, update its home in the same change.
   editing Posnet frame text/bytes, Windows-1250 encoding/decoding.
 - **[novitus-wire-encoding](.omp/rules/novitus-wire-encoding.md)**: Read when
   editing Novitus native frame text/bytes and Windows-1250 fields.
+- **[elzab-wire-encoding](.omp/rules/elzab-wire-encoding.md)**: Read when
+  editing ElzabSTX frames, configured code pages or fiscal completion.
 - **[writing-tests](.omp/rules/writing-tests.md)**: Read when editing test
   modules, shared testing harnesses or simulator.
 - **[telemetry](.omp/rules/telemetry.md)**: Read when editing logging/tracing,
@@ -58,6 +60,10 @@ One Cargo workspace; dependency versions and lints live only in the root
 - **`crates/novitus` / `novitus`**: Native ESC-P driver, strict model/firmware
   profiles, same-session preflight and feature-gated TCP simulator. Advances,
   zero-total receipts and company footers remain unqualified and disabled.
+- **`crates/elzab` / `elzab`**: Native ElzabSTX ONLINE candidate profiles,
+  same-session read-only preflight and feature-gated offline simulator.
+  Zero-total receipts and company footers stay disabled; accepted daily reports
+  remain uncertain until human resolution.
 - **`crates/agent` / `agent`**: Holuto `/agent` client, durable
   journal/recovery, settings/history and single `Worker`; feature `testing`
   exposes the loopback Holuto fake through the production client.

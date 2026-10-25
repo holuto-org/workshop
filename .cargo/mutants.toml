@@ -2,6 +2,6 @@ test_tool = "nextest"
 all_features = true
 test_workspace = true
 # These are external-system fixtures, not production fiscal paths.
-exclude_globs = ["crates/*/src/testing.rs", "crates/*/src/testing/**", "crates/posnet/src/simulator.rs", "crates/posnet/src/simulator/**", "crates/novitus/src/simulator.rs", "crates/novitus/src/simulator/**"]
+exclude_globs = ["crates/*/src/testing.rs", "crates/*/src/testing/**", "crates/posnet/src/simulator.rs", "crates/posnet/src/simulator/**", "crates/novitus/src/simulator.rs", "crates/novitus/src/simulator/**", "crates/elzab/src/simulator.rs", "crates/elzab/src/simulator/**"]
 minimum_test_timeout = 180
 additional_cargo_test_args = ["--profile", "mutants"]
