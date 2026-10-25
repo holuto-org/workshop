@@ -67,7 +67,7 @@ fn tray_availability_requires_a_registered_status_notifier_host() -> Result<(), 
             .env("WORKSHOP_PRIVATE_TEST_BUS", "1")
             .output()?;
         assert!(
-            child.status.success(),
+            child.status.success() && String::from_utf8_lossy(&child.stdout).contains(" 1 passed"),
             "isolated bus test failed: {}",
             String::from_utf8_lossy(&child.stderr)
         );

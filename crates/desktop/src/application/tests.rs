@@ -483,9 +483,16 @@ fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(
         "confirmation explains no reprint"
     );
     button(&window, "Anuluj")?.invoke_accessible_default_action();
+    // A submitted acknowledgement would mark a command in flight and hide the button.
     assert!(
-        app.borrow().model.blocked,
-        "cancelling keeps the fiscal block"
+        !window.get_confirming() && window.get_orphaned_receipt(),
+        "cancelling closes the dialog without acknowledging"
+    );
+    button(&window, "Wyjaśnij paragon")?.invoke_accessible_default_action();
+    button(&window, "Potwierdź wyjaśnienie")?.invoke_accessible_default_action();
+    assert!(
+        !window.get_orphaned_receipt(),
+        "confirming submits the acknowledgement"
     );
     Ok(())
 }

@@ -471,9 +471,10 @@ fn a_lost_startup_reply_is_retryable_without_touching_the_printer_again() {
     let retry_frames = sim.frames();
     let state_before_session = holuto.job(id)["state"].clone();
     release.send(()).unwrap();
-    let received = receive_until(&events, |event| {
-        matches!(event, Event::HistoryChanged(entries) if !entries.is_empty())
-    });
+    let received = receive_until(
+        &events,
+        |event| matches!(event, Event::HistoryChanged(entries) if !entries.is_empty()),
+    );
     let _stopped = stop(worker, &events);
     assert_eq!(retry_frames, startup_frames);
     assert_eq!(state_before_session, "queued");

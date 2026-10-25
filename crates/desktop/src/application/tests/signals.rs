@@ -30,7 +30,8 @@ fn session_end_signal_quits_cooperatively_instead_of_killing_the_app() -> Result
             .env(CHILD, "1")
             .output()?;
         assert!(
-            output.status.success(),
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains(" 1 passed"),
             "the child must exit normally after SIGTERM, got {:?}: {}",
             output.status,
             String::from_utf8_lossy(&output.stderr)

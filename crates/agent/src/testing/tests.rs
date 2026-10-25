@@ -61,7 +61,8 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
                 "advances": [{"vatLetter": "A", "vatRate": "23", "amount": "100.00"}],
                 "payments": [{"form": "card", "amount": "150.00"}]
             }),
-            "Wybierz drukarkę obsługującą odliczanie zafiskalizowanych zaliczek przed zleceniem paragonu końcowego.",
+            "Wybierz drukarkę obsługującą odliczanie zafiskalizowanych zaliczek \
+             przed zleceniem paragonu końcowego.",
         ),
         (
             true,
@@ -73,7 +74,8 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
                     {"vatLetter": "B", "vatRate": "8", "amount": "50.00"}
                 ], "payments": []
             }),
-            "Wybierz drukarkę obsługującą zamknięcie w pełni opłaconego paragonu końcowego z kwotą zerową.",
+            "Wybierz drukarkę obsługującą zamknięcie w pełni opłaconego paragonu końcowego \
+             z kwotą zerową.",
         ),
         (
             true,
@@ -84,7 +86,8 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
                     "total": "250.03", "vatRate": "23", "vatLetter": "A"}],
                 "total": "250.03", "payments": [{"form": "card", "amount": "250.03"}]
             }),
-            "Zmniejsz liczbę cyfr po przecinku w ilościach pozycji do limitu tej drukarki przed zleceniem paragonu.",
+            "Zmniejsz liczbę cyfr po przecinku w ilościach pozycji do limitu tej drukarki \
+             przed zleceniem paragonu.",
         ),
     ] {
         let server = Holuto::new();
@@ -238,7 +241,9 @@ fn queue_conflicts_follow_kind_allocation_state_and_paired_printer() -> TestResu
                     matches!(
                         &result,
                         Err(ApiError::Status { status: 409, detail: Some(detail) })
-                            if detail == "To zlecenie lub drukarka ma wystawiony paragon albo nierozstrzygniętą operację fiskalną. Przed kontynuowaniem sprawdź papierowy paragon."
+                            if detail == "To zlecenie lub drukarka ma wystawiony paragon albo \
+                                nierozstrzygniętą operację fiskalną. Przed kontynuowaniem \
+                                sprawdź papierowy paragon."
                     ),
                     "{name}/{state}: expected exact fiscal_job_conflict, got {result:?}"
                 );
@@ -525,7 +530,8 @@ fn raw(
     let body = serde_json::to_vec(body)?;
     write!(
         stream,
-        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n",
         body.len()
     )?;
     if let Some(number) = number {

@@ -463,7 +463,8 @@ fn problem_detail(code: &str) -> &'static str {
         "fiscal_invalid_input" => "Sprawdź dane drukarki, dowód wydania paragonu i pola wyniku.",
         "fiscal_pairing_invalid" => "Podaj prawidłowy kod parowania lub poproś kierownika o nowy.",
         "fiscal_job_conflict" => {
-            "To zlecenie lub drukarka ma wystawiony paragon albo nierozstrzygniętą operację fiskalną. Przed kontynuowaniem sprawdź papierowy paragon."
+            "To zlecenie lub drukarka ma wystawiony paragon albo nierozstrzygniętą operację \
+             fiskalną. Przed kontynuowaniem sprawdź papierowy paragon."
         },
         "fiscal_unique_number_mismatch" => "Ten token jest sparowany z inną fizyczną drukarką.",
         "fiscal_vendor_mismatch" => "Połącz drukarkę marki zapisanej dla tego parowania.",
@@ -471,13 +472,16 @@ fn problem_detail(code: &str) -> &'static str {
             "Połącz drukarkę i odśwież jej możliwości przed zleceniem wydruku paragonu."
         },
         "fiscal_printer_advances_unsupported" => {
-            "Wybierz drukarkę obsługującą odliczanie zafiskalizowanych zaliczek przed zleceniem paragonu końcowego."
+            "Wybierz drukarkę obsługującą odliczanie zafiskalizowanych zaliczek \
+             przed zleceniem paragonu końcowego."
         },
         "fiscal_printer_zero_total_unsupported" => {
-            "Wybierz drukarkę obsługującą zamknięcie w pełni opłaconego paragonu końcowego z kwotą zerową."
+            "Wybierz drukarkę obsługującą zamknięcie w pełni opłaconego paragonu końcowego \
+             z kwotą zerową."
         },
         "fiscal_printer_quantity_precision" => {
-            "Zmniejsz liczbę cyfr po przecinku w ilościach pozycji do limitu tej drukarki przed zleceniem paragonu."
+            "Zmniejsz liczbę cyfr po przecinku w ilościach pozycji do limitu tej drukarki \
+             przed zleceniem paragonu."
         },
         "fiscal_printer_duplicate_vat_letter" => "Podaj każdą literę VAT drukarki tylko raz.",
         "fiscal_printer_vat_letter_illegal" => {

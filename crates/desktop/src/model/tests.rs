@@ -209,7 +209,11 @@ fn sorted_refresh_retains_document_identity_not_row_index() {
         Some(1),
         "sort follows the selected document"
     );
-    model.set_documents(vec![other, document()], 2, false);
+    // A new row before the selection moves the old index onto a different document.
+    let mut inserted = document();
+    inserted.order_id = Uuid::from_u128(10);
+    inserted.order_number = 10;
+    model.set_documents(vec![other, document(), inserted], 2, false);
     model.request(Action::QueueReceipt);
     let mut commands = Vec::new();
     model.confirm(true, |command| commands.push(command));

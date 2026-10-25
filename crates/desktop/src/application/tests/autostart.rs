@@ -29,7 +29,8 @@ fn login_checkbox_registers_and_persists_without_pairing() -> Result<(), Box<dyn
             .env("XDG_CONFIG_HOME", home.path().join("config"))
             .output()?;
         assert!(
-            output.status.success(),
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains(" 1 passed"),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );

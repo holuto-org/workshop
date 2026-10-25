@@ -799,7 +799,9 @@ fn unready_printer_refreshes_status_without_reopening_session_or_claiming_a_job(
         .ok_or("missing heartbeat")?;
     assert!(heartbeat.body.is_null());
     assert!(
-        requests.iter().all(|request| request.path != "/agent/session"),
+        requests
+            .iter()
+            .all(|request| request.path != "/agent/session"),
         "paper-out leaves telemetry unchanged, so no new session is needed"
     );
     assert!(
