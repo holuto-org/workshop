@@ -1,6 +1,7 @@
 use std::{error::Error as StdError, fs};
 
 use fiscal::{
+    device::Vendor,
     money::Grosze,
     receipt::{Payment, PaymentForm},
     report::Report,
@@ -31,6 +32,7 @@ fn receipt(device: Device) -> Result<ReceiptOperation, Box<dyn StdError>> {
         job_id: Uuid::from_u128(1),
         attempt: Uuid::from_u128(2),
         issued_at: "2026-10-16T10:00:00Z".parse()?,
+        vendor: Vendor::Posnet,
         device_serial: "POSNET-123456".to_owned(),
         device,
         summary,
@@ -42,6 +44,7 @@ fn receipt(device: Device) -> Result<ReceiptOperation, Box<dyn StdError>> {
 fn report(report: Report, device: Device) -> Result<ReportOperation, Box<dyn StdError>> {
     Ok(ReportOperation {
         report,
+        vendor: Vendor::Posnet,
         device_serial: "POSNET-123456".to_owned(),
         started_at: "2026-10-16T10:00:00Z".parse()?,
         device,
@@ -77,7 +80,7 @@ fn every_durable_operation_state_reads_and_writes_its_reviewed_golden_file() -> 
         ),
         (
             "receipt-dispatching",
-            include_bytes!("fixtures/receipt-dispatching.json").as_slice(),
+            include_bytes!("fixtures/receipt-dispatching-current.json").as_slice(),
             Operation::Receipt(receipt(dispatching.clone())?),
             true,
         ),
@@ -153,7 +156,7 @@ fn every_durable_operation_state_reads_and_writes_its_reviewed_golden_file() -> 
         ),
         (
             "report-dispatching",
-            include_bytes!("fixtures/report-dispatching.json").as_slice(),
+            include_bytes!("fixtures/report-dispatching-current.json").as_slice(),
             Operation::Report(report(
                 Report::Periodic {
                     from: "2026-09-01".parse()?,
@@ -267,6 +270,111 @@ fn persisted_result_notes_keep_polish_text_but_never_backend_forbidden_controls(
                 "persisted API notes must satisfy the backend text contract"
             );
         }
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove durable recovery evidence."
+)]
+fn legacy_unresolved_journal_is_migrated_to_posnet_and_still_blocks() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let legacy = include_bytes!("fixtures/receipt-dispatching.json");
+    fs::write(dir.file("operation.json"), legacy)?;
+    let journal = Journal::new(&dir);
+    let operation = journal.load()?.ok_or("missing migrated operation")?;
+    assert!(operation.blocks());
+    let disk = fs::read(dir.file("operation.json"))?;
+    let value: serde_json::Value = serde_json::from_slice(&disk)?;
+    assert_eq!(value["receipt"]["vendor"], "posnet");
+    assert_eq!(
+        serde_json::to_value(&operation)?["receipt"]["vendor"],
+        "posnet"
+    );
+    journal.fail_next_write();
+    assert_eq!(
+        journal.load()?,
+        Some(operation),
+        "current format is never rewritten"
+    );
+    assert_eq!(fs::read(dir.file("operation.json"))?, disk);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove atomic migration and retained evidence."
+)]
+fn legacy_report_migration_is_atomic_and_a_failed_migration_stays_blocked() -> TestResult {
+    use std::{fs::File, io::Read as _};
+
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("state");
+    let dir = StateDir::open(path.clone())?;
+    let legacy = include_bytes!("fixtures/report-dispatching.json");
+    fs::write(dir.file("operation.json"), legacy)?;
+    let journal = Journal::new(&dir);
+    journal.fail_next_write();
+    assert!(matches!(journal.load(), Err(crate::Error::Store { .. })));
+    assert_eq!(fs::read(dir.file("operation.json"))?, legacy);
+    let mut original_reader = File::open(dir.file("operation.json"))?;
+    let operation = journal.load()?.ok_or("missing report")?;
+    assert!(operation.blocks());
+    let expected: Operation =
+        serde_json::from_slice(include_bytes!("fixtures/report-dispatching-current.json"))?;
+    assert_eq!(operation, expected);
+    let mut original = Vec::new();
+    #[expect(
+        clippy::verbose_file_reads,
+        reason = "Read the original open handle to prove atomic replacement, not the new path."
+    )]
+    let _bytes = original_reader.read_to_end(&mut original)?;
+    assert_eq!(original, legacy, "migration replaces rather than truncates");
+    assert_eq!(
+        fs::read(dir.file("operation.json"))?,
+        include_bytes!("fixtures/report-dispatching-current.json")
+    );
+    drop(dir);
+    let reopened = StateDir::open(path)?;
+    assert_eq!(Journal::new(&reopened).load()?, Some(expected));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove only the exact legacy shape is migrated."
+)]
+fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let receipt = include_str!("fixtures/receipt-dispatching.json");
+    let report = include_str!("fixtures/report-dispatching.json");
+    for text in [
+        receipt.replace("\"receipt\": {", "\"receipt\": {\"vendor\": null,"),
+        receipt.replace("\"receipt\": {", "\"receipt\": {\"vendor\": \"unknown\","),
+        receipt.replace("\"receipt\": {", "\"receipt\": {\"vendor\": 1,"),
+        receipt.replace("\"receipt\": {", "\"receipt\": {\"extra\": true,"),
+        receipt.replace("    \"result\": null,\n", ""),
+        receipt.replace(
+            "    \"settled\": null\n",
+            "    \"settled\": null, \"settled\": null\n",
+        ),
+        receipt.replace("\"stage\": \"trline\"", "\"stage\": false"),
+        report.replace("    \"acknowledged_at\": null\n", ""),
+        report.replace("\"report\": {", "\"report\": {\"extra\": true,"),
+        "{".to_owned(),
+    ] {
+        fs::write(dir.file("operation.json"), &text)?;
+        assert!(matches!(
+            Journal::new(&dir).load(),
+            Err(crate::Error::Blocked(_))
+        ));
+        assert_eq!(fs::read(dir.file("operation.json"))?, text.as_bytes());
     }
     Ok(())
 }

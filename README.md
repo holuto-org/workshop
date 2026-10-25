@@ -72,19 +72,25 @@ State directory (Unix: **0700**; created/replaced data files: **0600**):
 Uninstalling the application retains fiscal state. Never delete the journal to
 unblock printing; unresolved evidence requires human reconciliation.
 
-`settings.json` stores the API URL, internal token, port, speed, diagnostics
-(`telemetryEnabled`) and start-processing-on-launch preferences. Keep it
-private, out of logs, and protected by profile ACLs on Windows. `operation.json`
-is the fiscal journal; `history.jsonl` is local receipt history, compacted to
+`settings.json` stores the API URL, internal token, port, speed, vendor preference
+(`vendor`: `"posnet"`, `"novitus"`, `"elzab"` or `null` for detection), diagnostics
+(`telemetryEnabled`) and start-processing-on-launch preferences. Pre-vendor settings
+load as detection without rewriting the file. Keep it private, out of logs, and
+protected by profile ACLs on Windows. `operation.json` is the fiscal journal:
+every receipt/report records its vendor and serial, both required for resolution.
+Under the instance lock, pre-vendor journals are atomically rewritten once as
+`"posnet"` without clearing unresolved evidence; malformed files still block.
+`history.jsonl` is local receipt history, compacted to
 the newest 500 receipts. `instance.lock` prevents a second instance from using
 the same state directory. Unix opens tighten the state directory to **0700**
 and lock to **0600**; writes replace data files with **0600** copies. History
-loading also tightens its file. Settings/journal/status reads do not repair modes.
+loading also tightens its file. Settings/status reads and current-format journal
+reads do not repair modes.
 
 Settings and `status.json` are persisted by one background FIFO writer. Starting
 waits for successful settings persistence; quitting waits cooperatively for
 pending writes and the worker. `status.json` contains only processing/connection
-flags, device identity, fiscal-block flags and its update timestamp, never
+flags, last known device vendor/serial, fiscal-block flags and its update timestamp, never
 credentials or customer data. It is display state, not fiscal evidence.
 
 ## CLI

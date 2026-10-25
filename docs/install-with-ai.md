@@ -297,8 +297,11 @@ port. Nonzero means stop the sequence and explain the structured error; do not
 retry mutating commands automatically. Ask the person to quit cooperatively
 after a running-app refusal, then repeat only the requested configuration.
 
-- **`workshop config show --json`**: Display configuration with `paired` only,
-  never a token property. Read-only; never supplement by reading settings files.
+- **`workshop config show --json`**: Display `config` with `apiUrl`, `paired`,
+  `port`, `baudRate`, `vendor`, `telemetryEnabled` and `startOnLaunch`, never a
+  token property. `vendor` is `"posnet"`, `"novitus"`, `"elzab"` or `null` for
+  detection (also the value for pre-vendor settings). Read-only; never supplement
+  by reading settings files.
 - **`workshop ports --json`**: List serial port names only, without opening any.
   Read-only metadata; no probe/test.
 - **`workshop config set`**: Save non-secret settings with
@@ -317,8 +320,10 @@ after a running-app refusal, then repeat only the requested configuration.
   fiscal work at login. Refuses while app runs.
 - **`workshop status --json`**: Read the app's published snapshot while its
   instance lock is held: `appRunning:true` and `state` with `processing`,
-  `connected`, `serial`, `printerId`, `blocked`, `reportUnresolved`,
-  `orphanedReceipt` and `updatedAt`. With no lock: `appRunning:false`, no state;
+  `connected`, `vendor`, `serial`, `printerId`, `blocked`, `reportUnresolved`,
+  `orphanedReceipt` and `updatedAt`. `vendor` is `"posnet"`, `"novitus"`, `"elzab"`
+  or `null` until known; vendor/serial may remain while disconnected.
+  With no lock: `appRunning:false`, no state;
   a snapshot left after a crash is ignored while stopped. A held lock with no
   snapshot returns `status_unavailable` (exit 1). During startup, an older
   snapshot may still be visible until the first write; inspect `updatedAt`.

@@ -1,11 +1,14 @@
 //! Persisted before each printer command and retained until settlement.
 //! An unreadable journal blocks printing.
 
+mod legacy;
+
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{borrow::Cow, fmt, io, path::PathBuf};
+use std::{borrow::Cow, fmt, io, marker::PhantomData, path::PathBuf};
 
 use fiscal::{
+    device::Vendor,
     money::Grosze,
     receipt::{Payment, Receipt},
     report::Report,
@@ -63,6 +66,7 @@ pub(crate) struct ReceiptOperation {
     /// Claim time until completion, then printer time; resent unchanged.
     /// The server rejects future timestamps.
     pub(crate) issued_at: Timestamp,
+    pub(crate) vendor: Vendor,
     pub(crate) device_serial: String,
     pub(crate) device: Device,
     /// Printed contents for local history.
@@ -155,6 +159,7 @@ pub(crate) struct Settlement {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ReportOperation {
     pub(crate) report: Report,
+    pub(crate) vendor: Vendor,
     pub(crate) device_serial: String,
     pub(crate) started_at: Timestamp,
     pub(crate) device: Device,
@@ -199,16 +204,18 @@ impl Operation {
 }
 
 #[derive(Debug)]
-pub(crate) struct Journal {
+pub(crate) struct Journal<'dir> {
     path: PathBuf,
+    _lock: PhantomData<&'dir StateDir>,
     #[cfg(test)]
     fail_write: AtomicBool,
 }
 
-impl Journal {
-    pub(crate) fn new(dir: &StateDir) -> Self {
+impl<'dir> Journal<'dir> {
+    pub(crate) fn new(dir: &'dir StateDir) -> Self {
         Self {
             path: dir.file(FILE),
+            _lock: PhantomData,
             #[cfg(test)]
             fail_write: AtomicBool::new(false),
         }
@@ -220,16 +227,23 @@ impl Journal {
             path: self.path.clone(),
             source,
         })?;
-        bytes
-            .map(|bytes| serde_json::from_slice(&bytes))
-            .transpose()
-            .map_err(|error| {
-                Error::Blocked(format!(
-                    "Uszkodzony rejestr operacji ({}): {error}. Drukowanie zablokowane; nie usuwaj \
-                     pliku, rozstrzygnij operację w Holuto.",
-                    self.path.display()
-                ))
-            })
+        let Some(bytes) = bytes else {
+            return Ok(None);
+        };
+        match serde_json::from_slice(&bytes) {
+            Ok(operation) => Ok(Some(operation)),
+            Err(error) => {
+                let operation = legacy::decode(&bytes).map_err(|_not_legacy| {
+                    Error::Blocked(format!(
+                        "Uszkodzony rejestr operacji ({}): {error}. Drukowanie zablokowane; nie \
+                         usuwaj pliku, rozstrzygnij operację w Holuto.",
+                        self.path.display()
+                    ))
+                })?;
+                self.save(&operation)?;
+                Ok(Some(operation))
+            },
+        }
     }
 
     pub(crate) fn save(&self, operation: &Operation) -> Result<(), Error> {

@@ -7,6 +7,7 @@ use std::{
 };
 
 use agent::{settings::Settings, status::Snapshot, store::StateDir};
+use fiscal::device::Vendor;
 use tempfile::TempDir;
 
 use super::{Outcome, Request, Writer};
@@ -19,6 +20,7 @@ fn settings() -> Settings {
         token: "preference-test-token".into(),
         port: "operator-selected-port".into(),
         baud_rate: 57_600,
+        vendor: None,
         telemetry_enabled: true,
         start_on_launch: false,
     }
@@ -216,6 +218,7 @@ fn status_and_preferences_share_one_durable_fifo() -> Result<(), Box<dyn Error>>
     let connected = Snapshot {
         processing: true,
         connected: true,
+        vendor: Some(Vendor::Posnet),
         serial: Some("DEMO0000001".into()),
         printer_id: Some("printer-42".into()),
         blocked: false,
@@ -273,6 +276,7 @@ fn failed_status_write_is_not_acknowledged_as_saved_or_blocking_later_preference
     writer.submit(Request::Status(Snapshot {
         processing: false,
         connected: false,
+        vendor: None,
         serial: None,
         printer_id: None,
         blocked: false,

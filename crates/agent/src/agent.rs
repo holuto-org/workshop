@@ -63,7 +63,7 @@ pub(crate) struct Agent<'dir> {
     printer: Box<dyn Driver>,
     api: Api,
     dir: &'dir StateDir,
-    journal: Journal,
+    journal: Journal<'dir>,
     telemetry: Telemetry,
     /// Last probe of the paired device; source of the telemetry.
     status: Option<PrinterDevice>,
@@ -195,6 +195,7 @@ impl<'dir> Agent<'dir> {
         let serial = self.api.serial().to_owned();
         let mut operation = ReportOperation {
             report,
+            vendor: self.printer.vendor(),
             device_serial: serial.clone(),
             started_at: Timestamp::now(),
             device: Device::NotStarted,
@@ -236,6 +237,12 @@ impl<'dir> Agent<'dir> {
                 ));
             },
         };
+        if report.vendor != self.printer.vendor() || report.device_serial != self.api.serial() {
+            return Err(Error::Blocked(format!(
+                "Podłącz drukarkę {:?} {}, której dotyczy przerwany raport.",
+                report.vendor, report.device_serial
+            )));
+        }
         let _status = self.printer.verify(&report.device_serial)?;
         report.acknowledged_at = Some(Timestamp::now());
         self.journal.save(&Operation::Report(report))
@@ -248,11 +255,12 @@ impl<'dir> Agent<'dir> {
             Some(Operation::Report(_)) => return Ok(Some(Blocked::Report)),
             Some(Operation::Receipt(operation)) => operation,
         };
-        if operation.device_serial != self.api.serial() {
+        if operation.vendor != self.printer.vendor() || operation.device_serial != self.api.serial()
+        {
             return Err(Error::Blocked(format!(
-                "Niepotwierdzony paragon dotyczy drukarki {}. Podłącz ją, aby uzgodnić wynik z \
-                 Holuto.",
-                operation.device_serial
+                "Niepotwierdzony paragon dotyczy drukarki {:?} {}. Podłącz ją, aby uzgodnić wynik \
+                 z Holuto.",
+                operation.vendor, operation.device_serial
             )));
         }
         let remote = self.api.job(operation.job_id)?;
@@ -379,6 +387,7 @@ impl<'dir> Agent<'dir> {
             job_id: job.id,
             attempt,
             issued_at: Timestamp::now(),
+            vendor: self.printer.vendor(),
             device_serial: self.api.serial().to_owned(),
             device: Device::NotStarted,
             summary: None,
@@ -604,10 +613,12 @@ impl<'dir> Agent<'dir> {
                 "Brak wydrukowanego paragonu do wyjaśnienia.".to_owned(),
             ));
         }
-        if operation.device_serial != self.api.serial() {
-            return Err(Error::Blocked(
-                "Podłącz drukarkę, która wydrukowała ten paragon.".to_owned(),
-            ));
+        if operation.vendor != self.printer.vendor() || operation.device_serial != self.api.serial()
+        {
+            return Err(Error::Blocked(format!(
+                "Podłącz drukarkę {:?} {}, która wydrukowała ten paragon.",
+                operation.vendor, operation.device_serial
+            )));
         }
         let _status = self.printer.verify(&operation.device_serial)?;
         let remote = self.api.job(operation.job_id)?;
@@ -630,7 +641,7 @@ impl<'dir> Agent<'dir> {
 }
 
 struct ReceiptDispatch<'a> {
-    journal: &'a Journal,
+    journal: &'a Journal<'a>,
     operation: &'a mut ReceiptOperation,
     waiting: &'a dyn Fn(Option<&str>),
 }
@@ -653,7 +664,7 @@ impl DeviceJournal for ReceiptDispatch<'_> {
 
 /// Reports enter the journal only when the first command is about to be sent.
 struct ReportDispatch<'a> {
-    journal: &'a Journal,
+    journal: &'a Journal<'a>,
     operation: &'a mut ReportOperation,
     waiting: &'a dyn Fn(Option<&str>),
 }

@@ -243,6 +243,7 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
                     "paired":!settings.token.as_str().is_empty(),
                     "port":if settings.port.is_empty() { "auto" } else { &settings.port },
                     "baudRate":settings.baud_rate,
+                    "vendor":settings.vendor,
                     "telemetryEnabled":settings.telemetry_enabled,
                     "startOnLaunch":settings.start_on_launch
                 }

@@ -7,6 +7,7 @@ use std::{
     path::Path,
 };
 
+use fiscal::device::Vendor;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
@@ -63,6 +64,9 @@ pub struct Settings {
     /// Empty until a printer port is chosen or detected.
     pub port: String,
     pub baud_rate: u32,
+    /// None selects read-only vendor detection; legacy settings have no preference.
+    #[serde(default)]
+    pub vendor: Option<Vendor>,
     /// Optional diagnostic reporting; enabled until explicitly disabled.
     pub telemetry_enabled: bool,
     /// Opt-in processing at launch.
@@ -77,6 +81,7 @@ impl Default for Settings {
             token: Token::default(),
             port: String::new(),
             baud_rate: DEFAULT_BAUD_RATE,
+            vendor: None,
             telemetry_enabled: true,
             start_on_launch: false,
         }

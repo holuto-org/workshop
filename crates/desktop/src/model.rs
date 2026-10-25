@@ -8,7 +8,10 @@ use agent::{
     status::Snapshot,
     worker::{Command, Tone},
 };
-use fiscal::{device::Device, money::zloty};
+use fiscal::{
+    device::{Device, Vendor},
+    money::zloty,
+};
 use jiff::{Timestamp, ToSpan, civil::Date};
 use slint::{ModelRc, SharedString, VecModel};
 use table::{Sort, Table};
@@ -71,6 +74,7 @@ pub(crate) struct Model {
     pub(crate) saving: bool,
     pub(crate) connected: bool,
     pub(crate) serial: String,
+    pub(crate) vendor: Option<Vendor>,
     pub(crate) printer_id: Option<String>,
     pub(crate) device: Option<Device>,
     pub(crate) blocked: bool,
@@ -109,6 +113,7 @@ impl Model {
             saving: false,
             connected: false,
             serial: String::new(),
+            vendor: None,
             printer_id: None,
             device: None,
             blocked: false,
@@ -171,6 +176,7 @@ impl Model {
         Snapshot {
             processing: self.running,
             connected: self.connected,
+            vendor: self.vendor,
             // Keep the last connected identity, like the retained fiscal block, after Stop.
             serial: (!self.serial.is_empty()).then(|| self.serial.clone()),
             printer_id: self.printer_id.clone(),
@@ -185,6 +191,7 @@ impl Model {
         let processing = self.running;
         snapshot.processing == processing
             && snapshot.connected == self.connected
+            && snapshot.vendor == self.vendor
             && snapshot.serial.as_deref()
                 == (!self.serial.is_empty()).then_some(self.serial.as_str())
             && snapshot.printer_id == self.printer_id

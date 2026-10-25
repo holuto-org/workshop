@@ -12,6 +12,7 @@ use std::{
     path::Path,
 };
 
+use fiscal::device::Vendor;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +32,8 @@ const FILE: &str = "status.json";
 pub struct Snapshot {
     pub processing: bool,
     pub connected: bool,
+    /// Last known physical device vendor; may remain set while disconnected.
+    pub vendor: Option<Vendor>,
     /// Last known physical device serial; may remain set while disconnected.
     pub serial: Option<String>,
     /// Last known Holuto printer identity; may remain set while disconnected.

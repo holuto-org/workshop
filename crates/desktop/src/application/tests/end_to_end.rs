@@ -416,14 +416,16 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
                 status.blocked,
                 status.report_unresolved,
                 status.orphaned_receipt,
+                status.vendor,
             ))
             .collect::<Vec<_>>(),
         [
-            (false, false, false, false, false),
-            (true, false, false, false, false),
-            (true, true, false, false, false),
-            (true, true, true, true, false),
-            (false, false, true, true, false),
+            (false, false, false, false, false, None),
+            (true, false, false, false, false, None),
+            (true, true, false, false, false, None),
+            (true, true, false, false, false, Some(Vendor::Posnet)),
+            (true, true, true, true, false, Some(Vendor::Posnet)),
+            (false, false, true, true, false, Some(Vendor::Posnet)),
         ],
         "state changes publish once; duplicate device polls and acknowledgements do not"
     );

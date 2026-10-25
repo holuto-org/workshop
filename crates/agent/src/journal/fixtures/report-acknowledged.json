@@ -3,6 +3,7 @@
     "report": {
       "kind": "daily"
     },
+    "vendor": "posnet",
     "device_serial": "POSNET-123456",
     "started_at": "2026-10-16T10:00:00Z",
     "device": {

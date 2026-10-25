@@ -11,6 +11,7 @@ use std::{
 };
 
 use fiscal::{
+    device::Vendor,
     error::Error as PrinterError,
     link::{Link, Port},
     money::Grosze,
@@ -1588,6 +1589,7 @@ fn worker_recovery_uses_dispatch_evidence_without_ever_reissuing_a_fiscal_comman
                 job_id: JOB_ID,
                 attempt: ATTEMPT,
                 issued_at: "2025-01-02T12:00:00Z".parse().unwrap(),
+                vendor: Vendor::Posnet,
                 device_serial: SERIAL.to_owned(),
                 device: device.clone(),
                 summary: None,

@@ -561,6 +561,9 @@ impl Application {
                 report_unresolved,
                 orphaned_receipt,
             } => {
+                if let Some(device) = &status {
+                    self.model.vendor = Some(device.vendor);
+                }
                 self.model.device = status;
                 self.model.blocked = blocked;
                 self.model.report_unresolved = report_unresolved;

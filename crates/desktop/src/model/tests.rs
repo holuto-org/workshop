@@ -1,6 +1,5 @@
 use super::*;
 use agent::documents::ReceiptKind;
-use fiscal::device::Vendor;
 use posnet::capabilities::capabilities;
 use uuid::Uuid;
 
@@ -172,6 +171,7 @@ fn sorted_refresh_retains_document_identity_not_row_index() {
 fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data() {
     let mut model = ready();
     model.running = true;
+    model.vendor = Some(Vendor::Posnet);
     model.serial = "SERIAL42".into();
     model.printer_id = Some("printer-42".into());
     model.blocked = true;
@@ -188,6 +188,7 @@ fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data()
             processing: false,
             connected: false,
             serial: Some("SERIAL42".into()),
+            vendor: Some(Vendor::Posnet),
             printer_id: Some("printer-42".into()),
             blocked: true,
             report_unresolved: true,
@@ -200,10 +201,11 @@ fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data()
 
 #[test]
 fn each_public_status_change_invalidates_the_previous_publication() {
-    let changes: [fn(&mut Model); 7] = [
+    let changes: [fn(&mut Model); 8] = [
         |model| model.running = true,
         |model| model.connected = true,
         |model| model.serial = "SERIAL42".into(),
+        |model| model.vendor = Some(Vendor::Novitus),
         |model| model.printer_id = Some("printer-42".into()),
         |model| model.blocked = true,
         |model| model.report_unresolved = true,

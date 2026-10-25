@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, error::Error as StdError, fs, io::ErrorKind};
 
-use fiscal::{error::Error as PrinterError, money::Grosze, report::Report};
+use fiscal::{device::Vendor, error::Error as PrinterError, money::Grosze, report::Report};
 use posnet::{
     capabilities::capabilities,
     simulator::{Fault as DeviceFault, SERIAL, Simulator},
@@ -36,6 +36,7 @@ fn claimed(
         job_id: JOB_ID,
         attempt: ATTEMPT,
         issued_at: "2025-01-02T12:00:00Z".parse()?,
+        vendor: Vendor::Posnet,
         device_serial: SERIAL.to_owned(),
         device,
         summary: None,
@@ -624,6 +625,7 @@ fn interrupted_report_is_acknowledged_without_reissuing_it() -> TestResult {
     let (_temporary, dir) = state_dir();
     let operation = ReportOperation {
         report: Report::Daily,
+        vendor: Vendor::Posnet,
         device_serial: SERIAL.to_owned(),
         started_at: "2025-01-02T12:00:00Z".parse()?,
         device: Device::Dispatching {
@@ -1059,6 +1061,111 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
         "PrivateApiText",
     ] {
         assert!(!debug.contains(forbidden), "Debug disclosed {forbidden}");
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove wrong-vendor evidence cannot be settled."
+)]
+fn resolution_requires_the_same_vendor_and_serial() -> TestResult {
+    for (vendor, serial) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+        let sim = Simulator::start();
+        let server = Holuto::new();
+        server.insert(job_json());
+        let (_temporary, dir) = state_dir();
+        let mut operation = claimed(Device::NotStarted, None)?;
+        operation.vendor = vendor;
+        operation.device_serial = serial.to_owned();
+        Journal::new(&dir).save(&Operation::Receipt(operation))?;
+        let bytes = fs::read(dir.file("operation.json"))?;
+        let mut agent = agent(&sim, &dir, &server)?;
+        let requests = server.requests().len();
+        let frames = sim.frames();
+        let expected = format!(
+            "Niepotwierdzony paragon dotyczy drukarki {vendor:?} {serial}. Podłącz ją, \
+             aby uzgodnić wynik z Holuto."
+        );
+        assert!(matches!(agent.settle(), Err(Error::Blocked(message)) if message == expected));
+        assert_eq!(server.requests().len(), requests);
+        assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
+        assert_eq!(sim.frames(), frames);
+        assert_eq!(sim.receipts(), []);
+        assert_eq!(sim.reports(), []);
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove wrong-device reports stay unresolved."
+)]
+fn report_resolution_requires_the_same_vendor_and_serial() -> TestResult {
+    for (vendor, serial) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+        let sim = Simulator::start();
+        let server = Holuto::new();
+        let (_temporary, dir) = state_dir();
+        Journal::new(&dir).save(&Operation::Report(ReportOperation {
+            report: Report::Daily,
+            vendor,
+            device_serial: serial.to_owned(),
+            started_at: "2025-01-02T12:00:00Z".parse()?,
+            device: Device::Dispatching {
+                stage: "dailyrep".to_owned(),
+            },
+            acknowledged_at: None,
+        }))?;
+        let agent = agent(&sim, &dir, &server)?;
+        let bytes = fs::read(dir.file("operation.json"))?;
+        let frames = sim.frames();
+        let expected =
+            format!("Podłącz drukarkę {vendor:?} {serial}, której dotyczy przerwany raport.");
+        assert!(
+            matches!(agent.resolve_report(), Err(Error::Blocked(message)) if message == expected)
+        );
+        assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
+        assert_eq!(sim.frames(), frames);
+        assert_eq!(agent.blocked()?, Some(Blocked::Report));
+        assert_eq!(sim.reports(), []);
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove wrong-device orphan evidence stays unresolved."
+)]
+fn orphan_acknowledgement_requires_the_same_vendor_and_serial() -> TestResult {
+    for (vendor, serial) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+        let sim = Simulator::start();
+        let server = Holuto::new();
+        server.insert(with(job_json(), &json!({"state": "failed"})));
+        let (_temporary, dir) = state_dir();
+        let mut operation = claimed(
+            Device::Completed {
+                receipt_number: Some("41".to_owned()),
+            },
+            None,
+        )?;
+        operation.vendor = vendor;
+        operation.device_serial = serial.to_owned();
+        Journal::new(&dir).save(&Operation::Receipt(operation))?;
+        let mut agent = agent(&sim, &dir, &server)?;
+        let bytes = fs::read(dir.file("operation.json"))?;
+        let frames = sim.frames();
+        let requests = server.requests().len();
+        let expected =
+            format!("Podłącz drukarkę {vendor:?} {serial}, która wydrukowała ten paragon.");
+        let result = agent.acknowledge_orphaned_receipt();
+        assert!(matches!(result, Err(Error::Blocked(message)) if message == expected));
+        assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
+        assert_eq!(sim.frames(), frames);
+        assert_eq!(server.requests().len(), requests);
+        assert_eq!(sim.receipts(), []);
     }
     Ok(())
 }

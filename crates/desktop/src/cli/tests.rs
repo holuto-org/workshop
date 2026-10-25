@@ -17,6 +17,44 @@ fn save_api_url(path: &Path, api_url: &str) -> Result<(), AgentError> {
 }
 
 #[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove both CLI JSON vendor contracts."
+)]
+fn config_show_and_status_report_vendor() -> TestResult {
+    use fiscal::device::Vendor;
+
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    Settings {
+        vendor: Some(Vendor::Elzab),
+        ..Settings::default()
+    }
+    .save(&dir)?;
+    assert_eq!(
+        execute(Command::ConfigShow, dir.path())?.value["config"]["vendor"],
+        "elzab"
+    );
+    Snapshot {
+        processing: true,
+        connected: true,
+        vendor: Some(Vendor::Novitus),
+        serial: Some("SAME-SERIAL".into()),
+        printer_id: None,
+        blocked: true,
+        report_unresolved: true,
+        orphaned_receipt: false,
+        updated_at: jiff::Timestamp::UNIX_EPOCH,
+    }
+    .save(&dir)?;
+    assert_eq!(
+        execute(Command::Status, dir.path())?.value["state"]["vendor"],
+        "novitus"
+    );
+    Ok(())
+}
+
+#[test]
 fn manual_credentials_and_unknown_arguments_are_rejected_without_echoing_them() {
     for args in [
         vec!["--token", "secret-canary"],
@@ -87,7 +125,7 @@ fn configuration_output_redacts_saved_credentials() -> TestResult {
         response.value,
         json!({"ok":true,"config":{
             "apiUrl":"https://example.test","paired":true,"port":"auto",
-            "baudRate":9600,"telemetryEnabled":true,"startOnLaunch":false
+            "baudRate":9600,"vendor":null,"telemetryEnabled":true,"startOnLaunch":false
         }})
     );
     assert!(!response.value.to_string().contains("secret-canary"));
@@ -182,6 +220,7 @@ fn status_exposes_the_running_apps_published_state_without_configuration_secrets
     let snapshot = Snapshot {
         processing: true,
         connected: true,
+        vendor: None,
         serial: Some("DEMO0000001".into()),
         printer_id: Some("00000000-0000-0000-0000-000000000009".into()),
         blocked: true,
@@ -194,7 +233,7 @@ fn status_exposes_the_running_apps_published_state_without_configuration_secrets
     assert_eq!(
         response.value,
         json!({"ok":true,"appRunning":true,"state":{
-            "processing":true,"connected":true,"serial":"DEMO0000001",
+            "processing":true,"connected":true,"serial":"DEMO0000001","vendor":null,
             "printerId":"00000000-0000-0000-0000-000000000009",
             "blocked":true,"reportUnresolved":false,"orphanedReceipt":true,
             "updatedAt":"2026-10-24T12:34:56Z"

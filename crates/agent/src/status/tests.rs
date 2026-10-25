@@ -6,12 +6,14 @@ use std::{
 
 use super::Snapshot;
 use crate::{Error, store::StateDir};
+use fiscal::device::Vendor;
 
 type TestResult = Result<(), Box<dyn StdError>>;
 
 const GOLDEN: &str = r#"{
   "processing": true,
   "connected": true,
+  "vendor": "posnet",
   "serial": "TEMO-1234",
   "printerId": "printer-5678",
   "blocked": true,
@@ -24,6 +26,7 @@ fn snapshot() -> Result<Snapshot, jiff::Error> {
     Ok(Snapshot {
         processing: true,
         connected: true,
+        vendor: Some(Vendor::Posnet),
         serial: Some("TEMO-1234".to_owned()),
         printer_id: Some("printer-5678".to_owned()),
         blocked: true,
@@ -83,6 +86,7 @@ fn disconnected_snapshot_retains_identity_and_blocks_without_inventing_processin
         serde_json::json!({
             "processing": false,
             "connected": false,
+            "vendor": "posnet",
             "serial": "TEMO-1234",
             "printerId": "printer-5678",
             "blocked": true,
@@ -92,10 +96,12 @@ fn disconnected_snapshot_retains_identity_and_blocks_without_inventing_processin
         })
     );
     stopped.serial = None;
+    stopped.vendor = None;
     stopped.printer_id = None;
     stopped.save(&dir)?;
     let stored = serde_json::from_slice::<serde_json::Value>(&fs::read(dir.file("status.json"))?)?;
     assert_eq!(stored["serial"], serde_json::Value::Null);
+    assert_eq!(stored["vendor"], serde_json::Value::Null);
     assert_eq!(stored["printerId"], serde_json::Value::Null);
     assert_eq!(Snapshot::load_at(dir.path())?, Some(stopped));
     Ok(())
