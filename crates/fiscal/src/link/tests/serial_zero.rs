@@ -7,7 +7,7 @@ use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBit
 
 use crate::link::{Port, SerialStream};
 
-/// The Windows unique_number API returns successful zero-byte reads for expired timeouts.
+/// The Windows serial API returns successful zero-byte reads for expired timeouts.
 struct ZeroRead {
     timeout: Duration,
 }
@@ -132,7 +132,7 @@ impl SerialPort for ZeroRead {
 fn unsupported<T>() -> serialport::Result<T> {
     Err(serialport::Error::new(
         serialport::ErrorKind::Unknown,
-        "unsupported test unique_number setting",
+        "unsupported test serial setting",
     ))
 }
 

@@ -184,7 +184,7 @@ impl<'dir> Agent<'dir> {
             return Ok(RETRY);
         }
         if self.telemetry_changed {
-            self.session()?;
+            let _opened = self.session()?;
         }
         self.api.heartbeat()?;
         if let Some(blocked) = self.settle()? {

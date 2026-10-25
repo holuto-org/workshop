@@ -96,18 +96,18 @@ impl Telemetry {
             app_version: APP_VERSION,
             capabilities: PrinterCapabilities {
                 advance_deductions: false,
-                zero_total_receipts: false,
-                max_item_name_length: 0,
+                allowed_characters: String::new(),
                 max_company_name_length: 0,
+                max_item_name_length: 0,
                 max_lines_per_receipt: 0,
                 max_quantity_decimals: 0,
-                allowed_characters: String::new(),
+                zero_total_receipts: false,
             },
-            unique_number: unique_number.to_owned(),
-            vendor,
-            model: String::new(),
             firmware: String::new(),
+            model: String::new(),
+            unique_number: unique_number.to_owned(),
             vat_rates: Vec::new(),
+            vendor,
         }
     }
 
@@ -119,12 +119,12 @@ impl Telemetry {
         let c = &device.capabilities;
         self.capabilities = PrinterCapabilities {
             advance_deductions: c.advance_deductions,
-            zero_total_receipts: c.zero_total_receipts,
-            max_item_name_length: c.max_item_name,
+            allowed_characters: c.allowed_characters.clone(),
             max_company_name_length: c.max_company_name,
+            max_item_name_length: c.max_item_name,
             max_lines_per_receipt: c.max_lines,
             max_quantity_decimals: c.max_quantity_decimals,
-            allowed_characters: c.allowed_characters.clone(),
+            zero_total_receipts: c.zero_total_receipts,
         };
         self.vat_rates = rates;
         skipped

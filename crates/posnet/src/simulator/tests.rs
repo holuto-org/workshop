@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::{Fault, SERIAL, Simulator};
+use super::{Fault, Simulator, UNIQUE_NUMBER};
 use fiscal::{
     error::Error,
     link::{Connection, DEFAULT_TIMEOUT},
@@ -83,7 +83,7 @@ fn a_second_session_is_refused_until_the_first_is_dropped() {
             .command("getrealid", &[], DEFAULT_TIMEOUT)
             .unwrap()
             .get("nu"),
-        Some(SERIAL)
+        Some(UNIQUE_NUMBER)
     );
 }
 

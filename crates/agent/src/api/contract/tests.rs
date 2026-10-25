@@ -199,7 +199,7 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
     let mut value = status_json();
     value["printer"]["name"] = json!("PRIVATE-PRINTER-NAME");
     let status: PrinterStatus = serde_json::from_value(value).unwrap();
-    let mut telemetry = Telemetry::new("PRIVATE-DEVICE-SERIAL", Vendor::Posnet);
+    let mut telemetry = Telemetry::new("PRIVATE-DEVICE-UNIQUE_NUMBER", Vendor::Posnet);
     telemetry.model = "PRIVATE-MODEL".into();
     let slot: VatRateMapping =
         serde_json::from_value(json!({"letter": "A","vatRate":"23"})).unwrap();

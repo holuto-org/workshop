@@ -57,7 +57,7 @@ impl Driver for Printer {
     fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
         device.require_ready()?;
-        device.require_serial(unique_number)?;
+        device.require_unique_number(unique_number)?;
         Ok(device)
     }
 
@@ -70,7 +70,9 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let checked = preflight(&mut session, false)?;
         checked.device.require_ready()?;
-        checked.device.require_serial(&expected.unique_number)?;
+        checked
+            .device
+            .require_unique_number(&expected.unique_number)?;
         if expected.vendor != Vendor::Elzab || checked.device.vat != expected.vat {
             return Err(Error::Invalid(
                 "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie.".to_owned(),
@@ -125,7 +127,7 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let checked = preflight(&mut session, report == Report::Daily)?;
         checked.device.require_ready()?;
-        checked.device.require_serial(unique_number)?;
+        checked.device.require_unique_number(unique_number)?;
         let (command, body) = match report {
             Report::Daily => {
                 let _before = read_number(&mut session, "RNR", 'A')?;

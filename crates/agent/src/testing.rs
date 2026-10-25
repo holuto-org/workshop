@@ -1,6 +1,6 @@
 //! Stateful loopback Holuto service, used through the production HTTP client.
 //!
-//! Mirrors the `/agent` contract: routes, authentication, unique_number headers and
+//! Mirrors the `/agent` contract: routes, authentication, unique-number headers and
 //! binding, inflight exclusion, attempt/result idempotency, unknown upgrades,
 //! staff-only resolution, a fresh attempt on take and future issue times.
 //! Fixtures intentionally contain synthetic customer data only.

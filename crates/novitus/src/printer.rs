@@ -62,7 +62,7 @@ impl Driver for Printer {
     fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
         device.require_ready()?;
-        device.require_serial(unique_number)?;
+        device.require_unique_number(unique_number)?;
         Ok(device)
     }
 
@@ -75,7 +75,9 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let checked = preflight(&mut session)?;
         checked.device.require_ready()?;
-        checked.device.require_serial(&expected.unique_number)?;
+        checked
+            .device
+            .require_unique_number(&expected.unique_number)?;
         if expected.vendor != Vendor::Novitus || checked.device.vat != expected.vat {
             return Err(Error::Invalid(
                 "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie.".to_owned(),
@@ -128,7 +130,7 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let checked = preflight(&mut session)?;
         checked.device.require_ready()?;
-        checked.device.require_serial(unique_number)?;
+        checked.device.require_unique_number(unique_number)?;
         let today = checked.date;
         let (command, body, timeout) = match report {
             Report::Daily => (
@@ -261,8 +263,10 @@ fn preflight_identity(
             .push("Wymagany jest natywny protokół NOVITUS".into());
     }
     let pages = session.command("0;1^c91/92/", TIMEOUT)?;
-    if !matches!(pages.options.as_slice(), [(91, input), (92, output)] if input == "1" && output == "1")
-    {
+    if !matches!(
+        pages.options.as_slice(),
+        [(91, input), (92, output)] if input == "1" && output == "1"
+    ) {
         device
             .problems
             .push("Ustaw wejście i wyjście PC na Windows-1250".into());

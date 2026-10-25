@@ -111,7 +111,7 @@ impl Driver for Printer {
     fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
         device.require_ready()?;
-        device.require_serial(unique_number)?;
+        device.require_unique_number(unique_number)?;
         Ok(device)
     }
 
@@ -126,7 +126,7 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let device = read_device(&mut session)?;
         device.require_ready()?;
-        device.require_serial(&expected.unique_number)?;
+        device.require_unique_number(&expected.unique_number)?;
         if device.vat != expected.vat {
             return Err(Error::Invalid(
                 "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
@@ -179,7 +179,7 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let device = read_device(&mut session)?;
         device.require_ready()?;
-        device.require_serial(unique_number)?;
+        device.require_unique_number(unique_number)?;
         let step = match report {
             Report::Daily => {
                 let clock = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;

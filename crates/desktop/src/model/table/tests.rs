@@ -1,5 +1,7 @@
 use std::array;
 
+use agent::documents::ReceiptKind;
+
 use super::*;
 use proptest::prelude::*;
 
@@ -126,7 +128,7 @@ fn refreshing_a_page_keeps_the_selected_sort_direction() {
 #[test]
 fn document_deadlines_sort_independently_and_overdue_is_explicit() {
     let mut document = Document {
-        kind: agent::documents::ReceiptKind::Sale,
+        kind: ReceiptKind::Sale,
         order_id: uuid::Uuid::nil(),
         order_number: 1,
         allocation_id: None,

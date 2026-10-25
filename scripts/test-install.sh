@@ -9,7 +9,8 @@ mkdir -p "$work/bin" "$work/home"
 export FIXTURE_LOG="$work/calls" FIXTURE_OS=Darwin FIXTURE_ARCH=x86_64
 export FIXTURE_MAC=11.0 FIXTURE_ARM=0 FIXTURE_GLIBC='glibc 2.39'
 export FIXTURE_DOWNLOAD=forbidden FIXTURE_MANIFEST=bad FIXTURE_GH=0 FIXTURE_GH_AUTH=0
-export FIXTURE_RUNNING=none FIXTURE_MOUNT=forbidden FIXTURE_MOVE=real
+export FIXTURE_RUNNING=none FIXTURE_MOUNT=forbidden FIXTURE_MOVE=real FIXTURE_ASSET=workshop-mac-x64.dmg
+export FIXTURE_APT=forbidden FIXTURE_DEB='workshop amd64 1.2.3' FIXTURE_INSTALLED=
 FIXTURE_REAL_UNAME=$(command -v uname)
 export FIXTURE_REAL_MV
 FIXTURE_REAL_MV=$(command -v mv)
@@ -50,14 +51,14 @@ case $name in
     case $url in
       */SHA256SUMS.txt)
         case $FIXTURE_MANIFEST in
-          bad) printf 'not-a-digest  workshop-mac-x64.dmg\n' > "$out" ;;
+          bad) printf 'not-a-digest  %s\n' "$FIXTURE_ASSET" > "$out" ;;
           missing) printf '%064d  unrelated.dmg\n' 0 > "$out" ;;
-          duplicate) printf '%064d  workshop-mac-x64.dmg\n%064d  workshop-mac-x64.dmg\n' 0 0 > "$out" ;;
-          mismatch) printf '%064d  workshop-mac-x64.dmg\n' 0 > "$out" ;;
-          valid) printf '%s  workshop-mac-x64.dmg\n' "$FIXTURE_DIGEST" > "$out" ;;
+          duplicate) printf '%064d  %s\n%064d  %s\n' 0 "$FIXTURE_ASSET" 0 "$FIXTURE_ASSET" > "$out" ;;
+          mismatch) printf '%064d  %s\n' 0 "$FIXTURE_ASSET" > "$out" ;;
+          valid) printf '%s  %s\n' "$FIXTURE_DIGEST" "$FIXTURE_ASSET" > "$out" ;;
           *) exit 93 ;;
         esac ;;
-      */workshop-mac-x64.dmg) printf 'fixture artifact\n' > "$out" ;;
+      */"$FIXTURE_ASSET") printf 'fixture artifact\n' > "$out" ;;
       *) exit 94 ;;
     esac ;;
   gh)
@@ -84,13 +85,31 @@ case $name in
       exit 1
     fi
     "$FIXTURE_REAL_MV" "$@" ;;
-  apt|sudo|open)
+  dpkg-deb)
+    [[ $1 == --field && $# == 3 ]]
+    read -r package architecture version <<< "$FIXTURE_DEB"
+    case $3 in
+      Package) printf '%s\n' "$package" ;;
+      Architecture) printf '%s\n' "$architecture" ;;
+      Version) printf '%s\n' "$version" ;;
+      *) exit 98 ;;
+    esac ;;
+  dpkg-query)
+    [[ $* == '-W -f=${Version} workshop' ]]
+    [[ -n $FIXTURE_INSTALLED ]] || exit 1
+    printf '%s' "$FIXTURE_INSTALLED" ;;
+  sudo)
+    if [[ $FIXTURE_APT == allowed && $# == 3 && $1 == apt && $2 == install ]]; then
+      printf 'sudo %s\n' "$*" >> "$FIXTURE_LOG"; exit 0
+    fi
+    printf 'FORBIDDEN %s %s\n' "$name" "$*" >> "$FIXTURE_LOG"; exit 95 ;;
+  apt|open)
     printf 'FORBIDDEN %s %s\n' "$name" "$*" >> "$FIXTURE_LOG"; exit 95 ;;
   *) exit 96 ;;
 esac
 FIXTURE
 chmod +x "$work/bin/fixture"
-for command in uname sw_vers sysctl getconf pgrep shasum curl gh apt sudo hdiutil ditto open xattr mv; do
+for command in uname sw_vers sysctl getconf pgrep shasum curl gh apt sudo dpkg-deb dpkg-query hdiutil ditto open xattr mv; do
   ln -s fixture "$work/bin/$command"
 done
 export PATH="$work/bin:$PATH" HOME="$work/home"
@@ -153,10 +172,12 @@ run --release v1.2.3 --dry-run
 no_side_effects
 
 # Native /etc/os-release is deliberately not replaceable by an installer override.
+native_linux=0
 if [[ $("$FIXTURE_REAL_UNAME" -s) == Linux ]]; then
   FIXTURE_OS=Linux FIXTURE_ARCH=x86_64
   run --release v1.2.3 --dry-run
   if [[ $status == 0 ]]; then
+    native_linux=1
     contains 'workshop-linux-x64.deb'
     contains 'sudo apt install'
     FIXTURE_ARCH=aarch64
@@ -237,7 +258,7 @@ if ((EUID != 0)); then
     esac
     ! grep -F 'FORBIDDEN' "$FIXTURE_LOG" >/dev/null || fail 'verification failure reached installation'
     if [[ $FIXTURE_MANIFEST == valid ]]; then
-      grep -F -- '--repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml' "$FIXTURE_LOG" >/dev/null || fail 'missing workflow-bound attestation verification'
+      grep -F -- '--repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master' "$FIXTURE_LOG" >/dev/null || fail 'missing workflow- and branch-bound attestation verification'
     fi
   done
   # A verified image is quarantined before mounting; a failed mount is reported
@@ -278,10 +299,41 @@ if ((EUID != 0)); then
       grep -F 'hdiutil detach' "$FIXTURE_LOG" >/dev/null || fail 'left the image mounted'
     done
     FIXTURE_MOVE=real
+    # A newer installed app is kept; 1.10.0 is numerically, not lexically, newer than 1.2.3.
+    rm -rf -- "$HOME/Applications"
+    fixture_app "$installed" 1.10.0 newer
+    run --release v1.2.3
+    [[ $status != 0 ]] || fail 'downgraded the installed app'
+    contains 'newer than 1.2.3; downgrades are not supported'
+    [[ $(cat "$installed/Contents/marker") == newer ]] || fail 'refused downgrade changed the installed app'
+    [[ -z $(find "$HOME/Applications" -mindepth 1 -maxdepth 1 -name '.workshop-install.*') ]] ||
+      fail 'refused downgrade left staging behind'
+    grep -F 'hdiutil detach' "$FIXTURE_LOG" >/dev/null || fail 'refused downgrade left the image mounted'
   else
     printf 'PlistBuddy unavailable: macOS app replacement fixtures need a macOS runner.\n'
   fi
   FIXTURE_MOUNT=forbidden
+  # The verified .deb must be this package, architecture and release, and apt never
+  # downgrades; real dpkg compares versions, so 1.10.0 is newer than 1.2.3.
+  if ((native_linux)); then
+    FIXTURE_OS=Linux FIXTURE_ARCH=x86_64 FIXTURE_GLIBC='glibc 2.39' FIXTURE_ASSET=workshop-linux-x64.deb
+    FIXTURE_MANIFEST=valid FIXTURE_APT=allowed
+    for row in 'other amd64 1.2.3 - package name' 'workshop arm64 1.2.3 - package architecture' \
+      'workshop amd64 1.2.4 - version does not match' 'workshop amd64 1.2.3 1.10.0 newer than 1.2.3; downgrades'; do
+      read -r package architecture version FIXTURE_INSTALLED message <<< "$row"
+      FIXTURE_DEB="$package $architecture $version" FIXTURE_INSTALLED=${FIXTURE_INSTALLED#-}
+      run --release v1.2.3
+      [[ $status != 0 ]] || fail "installed despite: $message"
+      contains "$message"
+      ! grep -F 'sudo ' "$FIXTURE_LOG" >/dev/null || fail "ran apt despite: $message"
+    done
+    FIXTURE_DEB='workshop amd64 1.2.3' FIXTURE_INSTALLED=1.2.0
+    run --release v1.2.3
+    [[ $status == 0 ]] || fail 'verified Linux update failed'
+    grep -E '^sudo apt install /tmp/workshop-install\.[^ ]+/workshop-linux-x64\.deb$' "$FIXTURE_LOG" >/dev/null ||
+      fail 'apt did not install the verified package'
+    [[ $(grep -E '^(gh attestation|sudo) ' "$FIXTURE_LOG" | cut -d' ' -f1) == $'gh\nsudo' ]] || fail 'apt ran before attestation'
+  fi
 else
   printf 'Root runner: full-mode verification fixtures need an unprivileged CI user.\n'
 fi

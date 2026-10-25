@@ -153,7 +153,8 @@ launchers and never run both copies against a printer.
 
    ```sh
    gh attestation verify FILE --repo holuto-org/workshop \
-     --signer-workflow holuto-org/workshop/.github/workflows/release.yml
+     --signer-workflow holuto-org/workshop/.github/workflows/release.yml \
+     --source-ref refs/heads/master
    ```
 
    Run for each local `FILE`. Failure, old `gh`, missing attestation or

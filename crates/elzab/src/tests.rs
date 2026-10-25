@@ -361,7 +361,7 @@ fn fresh_identity_vat_status_and_header_are_required() {
         let driver = printer(&sim);
         let expected = driver.probe().unwrap();
         match change {
-            0 => sim.set_serial("OTHER"),
+            0 => sim.set_unique_number("OTHER"),
             1 => sim.set_vat(["22,00", "8,00", "5,00", "0,00", "=", "?", "?"]),
             2 => sim.set_status(0, (1_u128 << 102) | (1_u128 << 98) | 4 | 8, 32),
             _ => sim.set_header(""),

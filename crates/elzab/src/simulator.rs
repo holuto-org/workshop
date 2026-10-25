@@ -118,7 +118,7 @@ impl Simulator {
         firmware.clone_into(&mut state.firmware);
     }
 
-    pub fn set_serial(&self, unique_number: &str) {
+    pub fn set_unique_number(&self, unique_number: &str) {
         unique_number.clone_into(&mut lock(&self.state).unique_number);
     }
 

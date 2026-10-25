@@ -16,7 +16,7 @@ use fiscal::{
     link::{Candidate, Link, Port},
     money::Grosze,
 };
-use posnet::simulator::{Fault as PrinterFault, SERIAL, SimReport, Simulator};
+use posnet::simulator::{Fault as PrinterFault, SimReport, Simulator, UNIQUE_NUMBER};
 use serde_json::{Value, json};
 use tracing::{
     Subscriber,
@@ -400,7 +400,8 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
     let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
     assert!(received.iter().any(|event| matches!(event,
         Event::Connected { printer_id, unique_number, port }
-        if printer_id == &PRINTER_ID.to_string() && unique_number == SERIAL && port == sim.address()
+        if printer_id == &PRINTER_ID.to_string()
+            && unique_number == UNIQUE_NUMBER && port == sim.address()
     )));
     assert!(
         !received
@@ -1628,7 +1629,7 @@ fn worker_recovery_uses_dispatch_evidence_without_ever_reissuing_a_fiscal_comman
                 attempt: ATTEMPT,
                 issued_at: "2025-01-02T12:00:00Z".parse().unwrap(),
                 vendor: Vendor::Posnet,
-                device_unique_number: SERIAL.to_owned(),
+                device_unique_number: UNIQUE_NUMBER.to_owned(),
                 device: device.clone(),
                 summary: None,
                 result: None,

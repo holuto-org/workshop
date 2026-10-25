@@ -1,4 +1,4 @@
-//! Exclusive unique_number connections shared by fiscal printer drivers.
+//! Exclusive serial connections shared by fiscal printer drivers.
 
 use std::{fmt, io, time::Duration};
 
@@ -27,7 +27,7 @@ pub trait Link: Send + Sync + fmt::Debug {
     fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, Error>;
     /// Probe order, likeliest ports first.
     fn candidates(&self) -> Vec<Candidate>;
-    /// Simulator-only time scaling; unique_number links retain all production deadlines.
+    /// Simulator-only time scaling; serial links retain all production deadlines.
     #[cfg(any(test, feature = "simulator"))]
     fn time_scale(&self) -> u32 {
         1

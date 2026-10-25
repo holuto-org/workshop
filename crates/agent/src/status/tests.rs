@@ -121,8 +121,8 @@ fn malformed_snapshot_errors_never_echo_values_or_unknown_keys() -> TestResult {
         GOLDEN.replace("  \"processing\": true,\n", ""),
         GOLDEN.replace("\"processing\": true", "\"processing\": \"secret-token\""),
         GOLDEN.replace(
-            "\"unique_number\": \"TEMO-1234\"",
-            "\"unique_number\": {\"customer\": \"private-name\"}",
+            "\"uniqueNumber\": \"TEMO-1234\"",
+            "\"uniqueNumber\": {\"customer\": \"private-name\"}",
         ),
         GOLDEN.replace(
             "\"2026-10-24T12:34:56Z\"",

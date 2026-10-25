@@ -96,7 +96,7 @@ fn config_show_and_status_report_vendor() -> TestResult {
         processing: true,
         connected: true,
         vendor: Some(Vendor::Novitus),
-        unique_number: Some("SAME-SERIAL".into()),
+        unique_number: Some("SAME-UNIQUE_NUMBER".into()),
         printer_id: None,
         blocked: true,
         report_unresolved: true,

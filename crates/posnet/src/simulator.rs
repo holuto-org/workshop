@@ -1,4 +1,4 @@
-//! Offline TCP Temo peer using the unique_number driver's [`Session`](crate::session::Session),
+//! Offline TCP Temo peer using the serial driver's [`Session`](crate::session::Session),
 //! with one session at a time.
 
 use std::{
@@ -36,7 +36,7 @@ use crate::{
     text,
 };
 
-pub const SERIAL: &str = "DEM0000000001";
+pub const UNIQUE_NUMBER: &str = "DEM0000000001";
 const POLL: Duration = Duration::from_millis(1);
 const DEFAULT_VAT: [&str; 7] = [
     "23,00", "8,00", "5,00", "0,00", "100,00", "101,00", "101,00",
@@ -685,7 +685,7 @@ impl State {
             "getrealid" => reply(&[
                 ("nm", "POSNET TEMO ONLINE"),
                 ("vr", "32.01"),
-                ("nu", SERIAL),
+                ("nu", UNIQUE_NUMBER),
             ]),
             // `!`-prefixed queries run asynchronously (spec pp. 384-385).
             "sdev" | "!sdev" => reply(&[
@@ -702,7 +702,7 @@ impl State {
                 ("ts", if self.transaction_open { "16" } else { "0" }),
                 ("hr", "1"),
                 ("td", "0"),
-                ("nu", SERIAL),
+                ("nu", UNIQUE_NUMBER),
             ]),
             "strns" => reply(&[
                 ("to", if self.transaction_open { "1" } else { "0" }),

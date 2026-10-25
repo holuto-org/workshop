@@ -325,7 +325,7 @@ fn legacy_identity_keys_migrate_without_losing_journal_evidence() -> TestResult 
     ] {
         let legacy = original.replace("device_unique_number", "device_serial");
         fs::write(dir.file("operation.json"), &legacy)?;
-        let mut journal = Journal::new(&dir);
+        let journal = Journal::new(&dir);
         let operation = journal
             .load()?
             .expect("A valid legacy record must remain recoverable");

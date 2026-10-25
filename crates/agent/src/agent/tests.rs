@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, error::Error as StdError, fs, io::ErrorKind};
 use fiscal::{device::Vendor, error::Error as PrinterError, money::Grosze, report::Report};
 use posnet::{
     capabilities::capabilities,
-    simulator::{Fault as DeviceFault, SERIAL, Simulator},
+    simulator::{Fault as DeviceFault, Simulator, UNIQUE_NUMBER},
 };
 use serde_json::json;
 
@@ -21,7 +21,7 @@ use crate::{
 type TestResult = Result<(), Box<dyn StdError>>;
 fn waiting(_message: Option<&str>) {}
 fn agent<'a>(sim: &Simulator, dir: &'a StateDir, server: &Holuto) -> Result<Agent<'a>, Error> {
-    let api = Api::new(server.url(), server.token(), SERIAL)?;
+    let api = Api::new(server.url(), server.token(), UNIQUE_NUMBER)?;
     let mut agent = Agent::new(sim.driver(), api, dir, &waiting);
     let status = agent.printer.probe()?;
     let _notices = agent.describe(status)?;
@@ -37,7 +37,7 @@ fn claimed(
         attempt: ATTEMPT,
         issued_at: "2025-01-02T12:00:00Z".parse()?,
         vendor: Vendor::Posnet,
-        device_unique_number: SERIAL.to_owned(),
+        device_unique_number: UNIQUE_NUMBER.to_owned(),
         device,
         summary: None,
         result,
@@ -626,7 +626,7 @@ fn interrupted_report_is_acknowledged_without_reissuing_it() -> TestResult {
     let operation = ReportOperation {
         report: Report::Daily,
         vendor: Vendor::Posnet,
-        device_unique_number: SERIAL.to_owned(),
+        device_unique_number: UNIQUE_NUMBER.to_owned(),
         started_at: "2025-01-02T12:00:00Z".parse()?,
         device: Device::Dispatching {
             stage: "dailyrep".to_owned(),
@@ -756,7 +756,7 @@ fn unready_printer_updates_telemetry_but_does_not_claim_a_job() -> TestResult {
         .iter()
         .find(|request| request.path == "/agent/session")
         .ok_or("missing heartbeat")?;
-    assert_eq!(heartbeat.body["uniqueNumber"], SERIAL);
+    assert_eq!(heartbeat.body["uniqueNumber"], UNIQUE_NUMBER);
     assert_eq!(
         heartbeat.body["vatRates"],
         json!([
@@ -1076,7 +1076,7 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
     reason = "Assertions prove wrong-vendor evidence cannot be settled."
 )]
 fn resolution_requires_the_same_vendor_and_serial() -> TestResult {
-    for (vendor, unique_number) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+    for (vendor, unique_number) in [(Vendor::Novitus, UNIQUE_NUMBER), (Vendor::Posnet, "OTHER")] {
         let sim = Simulator::start();
         let server = Holuto::new();
         server.insert(job_json());
@@ -1109,7 +1109,7 @@ fn resolution_requires_the_same_vendor_and_serial() -> TestResult {
     reason = "Assertions prove wrong-device reports stay unresolved."
 )]
 fn report_resolution_requires_the_same_vendor_and_serial() -> TestResult {
-    for (vendor, unique_number) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+    for (vendor, unique_number) in [(Vendor::Novitus, UNIQUE_NUMBER), (Vendor::Posnet, "OTHER")] {
         let sim = Simulator::start();
         let server = Holuto::new();
         let (_temporary, dir) = state_dir();
@@ -1146,7 +1146,7 @@ fn report_resolution_requires_the_same_vendor_and_serial() -> TestResult {
     reason = "Assertions prove wrong-device orphan evidence stays unresolved."
 )]
 fn orphan_acknowledgement_requires_the_same_vendor_and_serial() -> TestResult {
-    for (vendor, unique_number) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+    for (vendor, unique_number) in [(Vendor::Novitus, UNIQUE_NUMBER), (Vendor::Posnet, "OTHER")] {
         let sim = Simulator::start();
         let server = Holuto::new();
         server.insert(with(job_json(), &json!({"state": "failed"})));
@@ -1204,6 +1204,45 @@ fn voided_completed_receipt_settles_without_orphan_acknowledgement() -> TestResu
             .iter()
             .all(|request| !request.path.ends_with("/result"))
     );
-    assert!(sim.receipts().is_empty());
+    assert_eq!(sim.receipts(), []);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove profile updates never print automatically."
+)]
+fn changed_vat_profile_uploads_once_and_illegal_letters_stay_local() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, &server)?;
+    let _delay = agent.step()?;
+    let sessions = || {
+        server
+            .requests()
+            .iter()
+            .filter(|request| request.path == "/agent/session")
+            .count()
+    };
+    assert_eq!(sessions(), 1);
+    let _delay = agent.step()?;
+    assert_eq!(sessions(), 1);
+    sim.set_vat(["23,00", "8,00", "5,00", "0,00", "100,00", "22,00", "101,00"]);
+    let _delay = agent.step()?;
+    assert_eq!(sessions(), 2);
+    sim.set_vat(["22,00", "8,00", "5,00", "0,00", "100,00", "22,00", "101,00"]);
+    let _delay = agent.step()?;
+    assert_eq!(sessions(), 2);
+    assert!(agent.status.as_ref().is_some_and(|device| !device.ready()));
+    assert!(
+        server
+            .requests()
+            .iter()
+            .filter(|request| request.path == "/agent/heartbeat")
+            .all(|request| request.body.is_null())
+    );
+    assert_eq!(sim.receipts(), []);
     Ok(())
 }

@@ -3,10 +3,11 @@
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
+
 use std::{borrow::Cow, fmt, io, marker::PhantomData, path::PathBuf};
 
 use fiscal::{
-    device::Vendor,
+    device::{Vendor, valid_unique_number},
     money::Grosze,
     receipt::{Payment, Receipt},
     report::Report,
@@ -236,7 +237,8 @@ impl<'dir> Journal<'dir> {
                     .to_owned(),
             )
         };
-        let operation: Operation = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        let operation: Operation =
+            serde_json::from_slice(&bytes).map_err(|_invalid_json| invalid())?;
         let migrated = bytes
             .windows(b"\"device_serial\"".len())
             .any(|key| key == b"\"device_serial\"");
@@ -245,7 +247,7 @@ impl<'dir> Journal<'dir> {
                 Operation::Receipt(receipt) => &receipt.device_unique_number,
                 Operation::Report(report) => &report.device_unique_number,
             };
-            if !fiscal::device::valid_unique_number(identity) {
+            if !valid_unique_number(identity) {
                 return Err(invalid());
             }
             self.save(&operation)?;

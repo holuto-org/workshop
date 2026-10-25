@@ -46,6 +46,18 @@ Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
       "letter": "B",
       "vatRate": "8"
     }
+    },
+    {
+      "letter": "C",
+      "vatRate": "5"
+    },
+    {
+      "letter": "D",
+      "vatRate": "0"
+    },
+    {
+      "letter": "E",
+      "vatRate": "zw"
   ]
 }
 ```
@@ -94,7 +106,7 @@ Metadata: `orderId`, integer `orderNumber`, `printerId`, `kind`, nullable
 allocation and have one line per VAT rate, quantity 1.
 
 `total` sums gross line totals. `advances` contains `{vatLetter, vatRate, amount}`
-deductions, at most one per slot, each positive; duplicates and zero deductions
+deductions, at most one per letter, each positive; duplicates and zero deductions
 fail before fiscal commands. Advance jobs have no deductions. `payments`
 contains `{form, amount}`; forms are `cash`, `card`, `transfer`, `mobile` and
 `credit`. Decimals are unsigned plain strings such as `12.50`, with an optional
@@ -136,7 +148,7 @@ other ports, even when preferences are stale.
 
 An unidentified capability profile (for example unknown firmware or an
 unsupported code page) stays visible as not ready. The worker keeps running
-and rechecks it every 15 seconds, without sending invalid session/heartbeat
+and rechecks it every 15 seconds, without sending invalid session
 telemetry or claiming jobs. Once the device has describable capabilities,
 connection and normal readiness checks resume. Novitus discovery accepts both
 power-on error mode 0 and preconfigured mode 3 without changing printer settings.

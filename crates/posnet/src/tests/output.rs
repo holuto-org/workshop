@@ -3,7 +3,7 @@ use jiff::civil::date;
 use super::{Recorder, printer, sale, simulator};
 use crate::{
     capabilities::capabilities,
-    simulator::{SERIAL, Simulator},
+    simulator::{Simulator, UNIQUE_NUMBER},
     testing::{BRAND, line, pay},
 };
 use fiscal::{
@@ -159,7 +159,7 @@ macro_rules! report_frames {
         fn $name() {
             let sim = simulator();
             printer(&sim)
-                .print_report($report, SERIAL, &mut Recorder::default())
+                .print_report($report, UNIQUE_NUMBER, &mut Recorder::default())
                 .unwrap();
             insta::assert_snapshot!(stream(&sim, 0));
             assert_eq!(sim.reports().len(), 1);

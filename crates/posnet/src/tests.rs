@@ -16,7 +16,7 @@ use crate::{
     capabilities::capabilities,
     frame,
     printer::Printer,
-    simulator::{Fault, SERIAL, Simulator},
+    simulator::{Fault, Simulator, UNIQUE_NUMBER},
     testing::{BRAND, line, pay},
 };
 
@@ -180,7 +180,7 @@ fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
             "{field}={value}: {error:?}"
         );
         let report = device
-            .print_report(Report::Daily, SERIAL, &mut journal)
+            .print_report(Report::Daily, UNIQUE_NUMBER, &mut journal)
             .unwrap_err();
         assert!(
             matches!(&report,Error::NotReady(reason) if reason == problem),
@@ -386,7 +386,7 @@ fn refused_trinit_and_report_commands_are_certain_but_other_named_errors_are_not
         let mut journal = Recorder::default();
         let error = if let Some(report) = report {
             device
-                .print_report(report, SERIAL, &mut journal)
+                .print_report(report, UNIQUE_NUMBER, &mut journal)
                 .unwrap_err()
         } else {
             device
@@ -413,7 +413,7 @@ fn refused_trinit_and_report_commands_are_certain_but_other_named_errors_are_not
     );
     assert!(
         matches!(
-            printer(&sim).print_report(Report::Daily, SERIAL, &mut Recorder::default()),
+            printer(&sim).print_report(Report::Daily, UNIQUE_NUMBER, &mut Recorder::default()),
             Err(Error::Uncertain(_))
         ),
         "a foreign refusal proves nothing about dailyrep"
@@ -466,7 +466,7 @@ fn invalid_reports_are_refused_without_sending_a_report() {
         let sim = simulator();
         assert!(
             matches!(
-                printer(&sim).print_report(report, SERIAL, &mut Recorder::default()),
+                printer(&sim).print_report(report, UNIQUE_NUMBER, &mut Recorder::default()),
                 Err(Error::Invalid(_))
             ),
             "{report:?}"
@@ -492,15 +492,15 @@ fn detection_only_switches_when_permitted_and_preserves_permission_guidance() {
     );
     assert_eq!(commands(&sim), Vec::<String>::new());
     let found = device.detect(true).unwrap();
-    assert_eq!(found.unique_number, SERIAL);
+    assert_eq!(found.unique_number, UNIQUE_NUMBER);
     assert_eq!(device.connection().port, sim.address());
     assert!(
-        device.verify(SERIAL).unwrap().ready(),
+        device.verify(UNIQUE_NUMBER).unwrap().ready(),
         "the same ready device permits resolution"
     );
     sim.set_paper(false);
     assert_eq!(
-        device.verify(SERIAL).unwrap_err().to_string(),
+        device.verify(UNIQUE_NUMBER).unwrap_err().to_string(),
         "Brak papieru"
     );
     let mut denied = Printer::new(
@@ -623,7 +623,7 @@ macro_rules! report_faults {
                 sim.fault($command, fault);
                 let mut journal = Recorder::default();
                 let error = printer(&sim)
-                    .print_report($report, SERIAL, &mut journal)
+                    .print_report($report, UNIQUE_NUMBER, &mut journal)
                     .unwrap_err();
                 assert!(matches!(error, Error::Uncertain(_)), "{error:?}");
                 assert_eq!(fiscal_commands(&sim), [$command], "never resend a report");
@@ -768,7 +768,7 @@ fn a_report_execution_error_keeps_the_effect_uncertain_without_a_second_send() {
         sim.fault(command, Fault::ExecutionError);
         let mut journal = Recorder::default();
         let error = printer(&sim)
-            .print_report(report, SERIAL, &mut journal)
+            .print_report(report, UNIQUE_NUMBER, &mut journal)
             .unwrap_err();
         let Error::Uncertain(inner) = &error else {
             panic!("{error:?}")
@@ -813,7 +813,7 @@ fn a_trinit_execution_error_has_no_receipt_and_its_open_transaction_blocks_prefl
     assert_eq!(fiscal_commands(&sim), ["trinit"]);
     assert_eq!(journal.stages, ["trinit"]);
     assert_eq!(
-        device.verify(SERIAL).unwrap_err().to_string(),
+        device.verify(UNIQUE_NUMBER).unwrap_err().to_string(),
         "Otwarta transakcja. Dokończ lub anuluj ją na drukarce"
     );
     assert_eq!(

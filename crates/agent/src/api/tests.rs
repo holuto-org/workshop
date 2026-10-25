@@ -363,7 +363,7 @@ fn non_json_server_error_retains_status_not_a_fake_network_diagnosis() -> TestRe
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn malformed_nullable_session_fields_and_foreign_serial_are_rejected() -> TestResult {
+fn malformed_nullable_session_fields_and_foreign_unique_number_are_rejected() -> TestResult {
     for changes in [
         json!({"uniqueNumber":"OTHER"}),
         json!({"capabilities":{"maxItemNameLength":0}}),
@@ -507,7 +507,13 @@ fn a_malformed_page_is_rejected_whole() -> TestResult {
 fn invalid_physical_serial_is_refused_without_sending() -> TestResult {
     let server = Holuto::new();
     let _valid = api(&server)?;
-    for unique_number in ["", " SERIAL", "SERIAL ", "ŁÓDŹ", "bad\nserial"] {
+    for unique_number in [
+        "",
+        " UNIQUE_NUMBER",
+        "UNIQUE_NUMBER ",
+        "ŁÓDŹ",
+        "bad\nserial",
+    ] {
         assert!(
             matches!(
                 Api::new(server.url(), server.token(), unique_number),
@@ -752,5 +758,5 @@ fn pairing_rejects_malformed_credentials_without_exposing_them() -> TestResult {
 #[test]
 fn voided_is_terminal_but_never_a_reportable_outcome() {
     assert!(super::model::JobState::Voided.terminal());
-    assert!(serde_json::from_str::<super::model::Outcome>("\"voided\"").is_err());
+    assert!(serde_json::from_str::<Outcome>("\"voided\"").is_err());
 }

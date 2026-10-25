@@ -34,6 +34,21 @@ pub struct VatRate {
 }
 
 impl VatRate {
+    pub const fn legal_letter(self) -> bool {
+        if !self.active() {
+            return true;
+        }
+        match self.slot {
+            0 => matches!(self.kind, VatKind::Rate { basis_points: 2300 }),
+            1 => matches!(self.kind, VatKind::Rate { basis_points: 800 }),
+            2 => matches!(self.kind, VatKind::Rate { basis_points: 500 }),
+            3 => matches!(self.kind, VatKind::Rate { basis_points: 0 }),
+            4 => matches!(self.kind, VatKind::Exempt),
+            5 | 6 => true,
+            _ => false,
+        }
+    }
+
     pub const fn active(self) -> bool {
         !matches!(self.kind, VatKind::Inactive)
     }
@@ -130,9 +145,12 @@ impl Device {
 
     /// UI eligibility only; the driver must still run operation-specific preflight.
     pub fn daily_report_allowed(&self) -> bool {
-        self.problems
-            .iter()
-            .all(|problem| matches!(problem, Problem::DailyReportOverdue))
+        valid_unique_number(&self.unique_number)
+            && self.vat.iter().all(|rate| rate.legal_letter())
+            && self
+                .problems
+                .iter()
+                .all(|problem| matches!(problem, Problem::DailyReportOverdue))
     }
 
     pub fn description(&self) -> String {
@@ -164,7 +182,7 @@ impl Device {
     }
 
     /// Refuses a printer other than the one the operation belongs to.
-    pub fn require_serial(&self, unique_number: &str) -> Result<(), Error> {
+    pub fn require_unique_number(&self, unique_number: &str) -> Result<(), Error> {
         if self.unique_number == unique_number {
             Ok(())
         } else {
@@ -182,22 +200,11 @@ mod tests;
 
 pub fn valid_unique_number(value: &str) -> bool {
     value.len() == 13
-        && value.as_bytes()[..3].iter().all(u8::is_ascii_uppercase)
-        && value.as_bytes()[3..].iter().all(u8::is_ascii_digit)
-}
-impl VatRate {
-    pub const fn legal_letter(self) -> bool {
-        if !self.active() {
-            return true;
-        }
-        match self.slot {
-            0 => matches!(self.kind, VatKind::Rate { basis_points: 2300 }),
-            1 => matches!(self.kind, VatKind::Rate { basis_points: 800 }),
-            2 => matches!(self.kind, VatKind::Rate { basis_points: 500 }),
-            3 => matches!(self.kind, VatKind::Rate { basis_points: 0 }),
-            4 => matches!(self.kind, VatKind::Exempt),
-            5 | 6 => true,
-            _ => false,
-        }
-    }
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if index < 3 {
+                byte.is_ascii_uppercase()
+            } else {
+                byte.is_ascii_digit()
+            }
+        })
 }

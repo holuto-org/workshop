@@ -377,7 +377,7 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
     use std::sync::{Mutex, mpsc};
 
     use agent::status::Snapshot;
-    use posnet::simulator::{Fault, SERIAL};
+    use posnet::simulator::{Fault, UNIQUE_NUMBER};
 
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
@@ -559,7 +559,7 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
         "state changes publish once; duplicate device polls and acknowledgements do not"
     );
     for snapshot in snapshots.iter().skip(2) {
-        assert_eq!(snapshot.unique_number.as_deref(), Some(SERIAL));
+        assert_eq!(snapshot.unique_number.as_deref(), Some(UNIQUE_NUMBER));
         assert_eq!(
             snapshot.printer_id.as_deref(),
             Some("00000000-0000-0000-0000-000000000009")

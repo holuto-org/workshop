@@ -1,4 +1,4 @@
-use super::{Capabilities, Device, Problem, VatKind, VatRate, Vendor};
+use super::{Capabilities, Device, Problem, VatKind, VatRate, Vendor, valid_unique_number};
 
 #[test]
 fn vendor_serializes_snake_case() {
@@ -76,5 +76,24 @@ fn daily_report_eligibility_only_ignores_overdue_reports_for_every_vendor() {
             );
             assert_eq!(device.require_ready().is_ok(), ready);
         }
+    }
+}
+
+#[test]
+fn fiscal_memory_unique_number_uses_exact_ascii_format() {
+    for identity in ["ABC1234567890", "ZZZ0000000000"] {
+        assert!(valid_unique_number(identity));
+    }
+    for identity in [
+        "",
+        "ABC123456789",
+        "ABC12345678901",
+        "abc1234567890",
+        "AB11234567890",
+        "ABC123456789x",
+        "ĄBC1234567890",
+        " ABC1234567890",
+    ] {
+        assert!(!valid_unique_number(identity));
     }
 }

@@ -50,7 +50,7 @@ $processPathBefore = [Environment]::GetEnvironmentVariable('Path', 'Process')
 $output = (Invoke-HolutoInstall -Release 'v1.2.3' -DryRun | Out-String)
 Assert-True ($output.Contains('https://github.com/holuto-org/workshop/releases/download/v1.2.3/workshop-win-x64.exe')) 'Dry-run did not pin the exact asset URL'
 Assert-True ($output.Contains('SHA256SUMS.txt')) 'Dry-run omitted checksum verification'
-Assert-True ($output.Contains('--signer-workflow holuto-org/workshop/.github/workflows/release.yml')) 'Dry-run omitted signer restriction'
+Assert-True ($output.Contains('--signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master')) 'Dry-run omitted signer or source ref restriction'
 Assert-True ($output.Contains('workshop.exe')) 'Dry-run omitted install target'
 Assert-True ($output.Contains('Holuto Workshop.lnk')) 'Dry-run omitted renamed shortcut'
 Assert-True ($output.Contains('user PATH')) 'Dry-run omitted user PATH mutation'
@@ -242,8 +242,8 @@ try {
         Assert-True (-not (Test-Path -LiteralPath $installedExe)) "Installed despite: $($case.Error)"
         Assert-True (@(Get-ChildItem -LiteralPath $installTemp -Force).Count -eq 0) "Left downloads behind after: $($case.Error)"
     }
-    $verified = @($script:gh.Calls | Where-Object { $_ -like 'attestation verify *workshop-win-x64.exe --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml' })
-    Assert-True ($verified.Count -eq 1) 'Attestation was not bound to the release workflow'
+    $verified = @($script:gh.Calls | Where-Object { $_ -like 'attestation verify *workshop-win-x64.exe --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master' })
+    Assert-True ($verified.Count -eq 1) 'Attestation was not bound to the release workflow on master'
 } finally {
     $env:TMP = $savedTemp.TMP; $env:TEMP = $savedTemp.TEMP; $env:TMPDIR = $savedTemp.TMPDIR
     Remove-Item -LiteralPath $installRoot -Recurse -Force

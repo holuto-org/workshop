@@ -82,8 +82,11 @@ try {
 } finally {
     # Production builds also run a Sentry crash reporter child from the same EXE;
     # Windows cannot delete an image until every process using it has exited.
-    $tree = @($process) + @(Get-Process -Name workshop -ErrorAction Ignore | Where-Object { $_.Parent.Id -eq $process.Id })
-    if (-not $process.HasExited) { $process.Kill($true) }
+    # After a crash the reporter outlives its parent, so `Parent` no longer finds it:
+    # match the uniquely named copy instead (the leaf survives 8.3 TEMP paths).
+    $image = '*\' + (Split-Path -Leaf $installed) + '\workshop.exe'
+    $tree = @($process) + @(Get-Process -Name workshop -ErrorAction Ignore | Where-Object { $_.Id -ne $process.Id -and $_.Path -like $image })
+    foreach ($member in $tree) { if (-not $member.HasExited) { $member.Kill($true) } }
     foreach ($member in $tree) { $member.WaitForExit() }
     Remove-Item -LiteralPath $installed -Recurse -Force
     # Absent before launch (checked above), so this is only the state this smoke created.

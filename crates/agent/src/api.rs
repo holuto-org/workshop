@@ -6,6 +6,8 @@
 pub(crate) mod contract;
 pub mod model;
 
+use fiscal::device::valid_unique_number;
+
 use std::{fmt, io::ErrorKind, time::Duration};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -136,7 +138,7 @@ impl fmt::Debug for Api {
 }
 
 impl Api {
-    /// Exchanges a single-use human code; never sends a token or printer unique_number.
+    /// Exchanges a single-use human code; never sends a token or printer identity.
     pub fn pair(api_url: &str, code: &str) -> Result<Pairing, Error> {
         if api_url.trim().is_empty() {
             return Err(Error::Invalid("Wpisz adres API w Ustawieniach.".to_owned()));
@@ -204,8 +206,8 @@ impl Api {
                 "Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned(),
             ));
         }
-        let serial_valid = fiscal::device::valid_unique_number(unique_number);
-        if !serial_valid {
+        let identity_valid = valid_unique_number(unique_number);
+        if !identity_valid {
             return Err(Error::Invalid(
                 "Numer unikatowy musi zawierać 3 wielkie litery i 10 cyfr.".to_owned(),
             ));
@@ -298,7 +300,7 @@ impl Api {
         Ok(())
     }
 
-    /// Session and heartbeat carry the unique_number in the body, not a header.
+    /// Sessions carry the unique number in their body; all other routes use its header.
     fn headers<B>(
         &self,
         request: RequestBuilder<B>,
@@ -328,7 +330,7 @@ impl Api {
         self.telemetry("session", telemetry)
     }
 
-    pub fn heartbeat(&mut self) -> Result<(), ApiError> {
+    pub fn heartbeat(&self) -> Result<(), ApiError> {
         let _: Option<()> = self.post("heartbeat", None::<&()>)?;
         Ok(())
     }
