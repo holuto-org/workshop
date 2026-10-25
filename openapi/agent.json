@@ -1937,7 +1937,7 @@
         }
       },
       "Forbidden": {
-        "description": "The audience, context, permission, capability or CSRF check refused access.",
+        "description": "The audience, context, permission or CSRF check refused access.",
         "content": {
           "application/problem+json": {
             "schema": {

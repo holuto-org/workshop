@@ -178,11 +178,9 @@ pub(crate) fn token() -> String {
 }
 
 fn next_token(next: &AtomicU16) -> String {
-    let value = next
-        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-            Some((value + 1) % 10_000)
-        })
-        .unwrap_or_else(|value| value);
+    let value = next.update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        (value + 1) % 10_000
+    });
     format!("{value:04}")
 }
 

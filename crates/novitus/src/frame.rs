@@ -29,9 +29,7 @@ const fn hex_digit(nibble: u8) -> u8 {
 
 pub fn decode(raw: &[u8]) -> Result<&[u8], Error> {
     let payload = unframe(raw)?;
-    let (body, checksum) = payload
-        .split_at_checked(payload.len().saturating_sub(2))
-        .ok_or_else(corrupt)?;
+    let (body, checksum) = payload.split_at(payload.len().saturating_sub(2));
     if body.is_empty() {
         return Err(corrupt());
     }

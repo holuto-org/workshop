@@ -164,20 +164,18 @@ pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
             error = Some(code.parse::<u32>().map_err(|parse| {
                 Error::Protocol(format!("Nieprawidłowy kod błędu drukarki: {parse}."))
             })?);
-        } else if let Some(value) = field.strip_prefix('@') {
-            if reply.iter().any(|(key, _)| key == "@") {
-                return Err(Error::Protocol(
-                    "Powtórzony parametr w odpowiedzi drukarki.".to_owned(),
-                ));
-            }
-            reply.push(("@".to_owned(), value.to_owned()));
         } else {
-            let split = field.char_indices().nth(KEY_LENGTH - 1);
-            let split = split.map(|(index, character)| index + character.len_utf8());
-            let Some((key, value)) = split.map(|index| field.split_at(index)) else {
-                return Err(Error::Protocol(
-                    "Niepełny parametr odpowiedzi drukarki.".to_owned(),
-                ));
+            let (key, value) = if let Some(value) = field.strip_prefix('@') {
+                ("@", value)
+            } else {
+                let split = field.char_indices().nth(KEY_LENGTH - 1);
+                let split = split.map(|(index, character)| index + character.len_utf8());
+                let Some(pair) = split.map(|index| field.split_at(index)) else {
+                    return Err(Error::Protocol(
+                        "Niepełny parametr odpowiedzi drukarki.".to_owned(),
+                    ));
+                };
+                pair
             };
             if reply.iter().any(|(name, _)| name == key) {
                 return Err(Error::Protocol(

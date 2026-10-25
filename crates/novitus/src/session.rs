@@ -234,11 +234,12 @@ impl Session {
                 };
                 frame::unframe(raw).is_ok_and(|body| !body.starts_with(b"@s"))
             });
-            let event = if let Some(position) = queued {
-                self.queued.remove(position).ok_or_else(frame::corrupt)?
-            } else {
-                self.next_event(deadline)?
-            };
+            let event =
+                if let Some(event) = queued.and_then(|position| self.queued.remove(position)) {
+                    event
+                } else {
+                    self.next_event(deadline)?
+                };
             let Event::Frame(raw) = event else {
                 self.enqueue(event)?;
                 continue;
