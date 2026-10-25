@@ -474,10 +474,12 @@ impl Application {
     fn worker_event(event: Event) {
         // The worker has its own Sentry hub: tag it before it can print or panic.
         if let Event::Connected {
-            printer_id, serial, ..
+            printer_id,
+            unique_number,
+            ..
         } = &event
         {
-            telemetry::printer(printer_id, serial);
+            telemetry::printer(printer_id, unique_number);
         }
         let _event_loop_closed = slint::invoke_from_event_loop(move || {
             with_app(move |app| {
@@ -555,12 +557,12 @@ impl Application {
             },
             Event::Connected {
                 printer_id,
-                serial,
+                unique_number,
                 port,
             } => {
-                telemetry::printer(&printer_id, &serial);
+                telemetry::printer(&printer_id, &unique_number);
                 self.model.connected = true;
-                self.model.serial = serial;
+                self.model.unique_number = unique_number;
                 self.model.printer_id = Some(printer_id);
                 self.model.settings.port = port;
                 self.model.tab = Tab::Documents;

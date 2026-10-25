@@ -30,7 +30,7 @@ pub enum Fault {
 struct State {
     model: String,
     firmware: String,
-    serial: String,
+    unique_number: String,
     page: String,
     header: String,
     clock: String,
@@ -53,7 +53,7 @@ impl Default for State {
         Self {
             model: "ELZAB CUBE online".to_owned(),
             firmware: "MD06.02".to_owned(),
-            serial: "ABC1234567890".to_owned(),
+            unique_number: "ABC1234567890".to_owned(),
             page: "CP1250".to_owned(),
             header: "Warsztat Łódź".to_owned(),
             clock: "261024120000".to_owned(),
@@ -118,8 +118,8 @@ impl Simulator {
         firmware.clone_into(&mut state.firmware);
     }
 
-    pub fn set_serial(&self, serial: &str) {
-        serial.clone_into(&mut lock(&self.state).serial);
+    pub fn set_serial(&self, unique_number: &str) {
+        unique_number.clone_into(&mut lock(&self.state).unique_number);
     }
 
     pub fn set_code_page(&self, page: &str) {
@@ -292,7 +292,7 @@ fn read(state: &State, body: &str) -> Option<String> {
     let command = fields.next().unwrap_or_default();
     Some(match command {
         "XTR" => format!("\x1dB{}\x1dC172\x1dD{}", state.model, state.firmware),
-        "FNR" => format!("\x1dB{}", state.serial),
+        "FNR" => format!("\x1dB{}", state.unique_number),
         "XHR" if fields.next() == Some("w") => format!("\x1dwA{}", state.page),
         "ySR" => {
             let [one, mut two, mut three] = state.status;

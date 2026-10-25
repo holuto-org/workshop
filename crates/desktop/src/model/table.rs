@@ -126,7 +126,16 @@ impl Row for Document {
             self.kind.label().into(),
             self.customer_name.as_deref().unwrap_or("—").into(),
             zloty(self.amount).into(),
-            timestamp_label(self.occurred_at).into(),
+            format!(
+                "{}{}",
+                if self.is_overdue {
+                    "PO TERMINIE · "
+                } else {
+                    ""
+                },
+                timestamp_label(self.due_at)
+            )
+            .into(),
         ]
     }
 
@@ -140,7 +149,7 @@ impl Row for Document {
                 text_order,
             ),
             3 => self.amount.cmp(&other.amount),
-            4 => self.occurred_at.cmp(&other.occurred_at),
+            4 => self.due_at.cmp(&other.due_at),
             _ => Ordering::Equal,
         }
     }

@@ -1,6 +1,6 @@
 //! Stateful loopback Holuto service, used through the production HTTP client.
 //!
-//! Mirrors the `/agent` contract: routes, authentication, serial headers and
+//! Mirrors the `/agent` contract: routes, authentication, unique_number headers and
 //! binding, inflight exclusion, attempt/result idempotency, unknown upgrades,
 //! staff-only resolution, a fresh attempt on take and future issue times.
 //! Fixtures intentionally contain synthetic customer data only.
@@ -43,15 +43,15 @@ pub const ORDER_ID: Uuid = Uuid::from_u128(10);
 pub const ALLOCATION_ID: Uuid = Uuid::from_u128(12);
 const TOKEN: &str = "synthetic-device-token";
 
-/// Posnet telemetry for the pairing `serial`, as the agent sends it once connected.
+/// Posnet telemetry for the pairing `unique_number`, as the agent sends it once connected.
 #[cfg(test)]
-pub(crate) fn telemetry(serial: &str) -> Telemetry {
-    let mut telemetry = Telemetry::new(serial, Vendor::Posnet);
+pub(crate) fn telemetry(unique_number: &str) -> Telemetry {
+    let mut telemetry = Telemetry::new(unique_number, Vendor::Posnet);
     let _skipped = telemetry.describe(&Device {
         vendor: Vendor::Posnet,
         model: "POSNET TEMO ONLINE".to_owned(),
         firmware: "32.01".to_owned(),
-        serial: serial.to_owned(),
+        unique_number: unique_number.to_owned(),
         problems: Vec::new(),
         vat: Vec::new(),
         capabilities: capabilities(),
@@ -87,7 +87,7 @@ pub struct RequestLog {
     pub body: Value,
     /// Authorization is checked but never retained in diagnostics.
     pub authenticated: bool,
-    pub serial: Option<String>,
+    pub unique_number: Option<String>,
     pub app_version: Option<String>,
     pub language: Option<String>,
     pub sentry_trace: Option<String>,
@@ -96,7 +96,7 @@ pub struct RequestLog {
 
 #[derive(Default)]
 struct State {
-    serial: Option<String>,
+    unique_number: Option<String>,
     unauthorized: bool,
     vendor: Option<String>,
     pairing: Option<(String, Instant)>,
@@ -356,7 +356,7 @@ fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
         body,
         authenticated: header(&request, "Authorization").as_deref()
             == Some(&format!("Bearer {}", token.as_deref().unwrap_or(TOKEN))),
-        serial: header(&request, "X-Device-Serial"),
+        unique_number: header(&request, "X-Device-Unique-Number"),
         app_version: header(&request, "App-Version"),
         language: header(&request, "Accept-Language"),
         sentry_trace: header(&request, "sentry-trace"),
@@ -632,41 +632,45 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
     }
     let url = url::Url::parse(&format!("http://localhost{}", request.path)).unwrap();
     let path = url.path();
-    if matches!(path, "/agent/session" | "/agent/heartbeat") && request.method == "POST" {
-        let Some(serial) = request.body["serial"].as_str() else {
+    if path == "/agent/session" && request.method == "POST" {
+        let Some(unique_number) = request.body["uniqueNumber"].as_str() else {
             return refused(400, "validation_failed");
         };
-        if state.serial.as_deref().is_some_and(|bound| bound != serial) {
-            return refused(403, "fiscal_serial_mismatch");
+        if state
+            .unique_number
+            .as_deref()
+            .is_some_and(|bound| bound != unique_number)
+        {
+            return refused(403, "fiscal_unique_number_mismatch");
         }
         let vendor = request.body["vendor"].as_str().unwrap();
         if state.vendor.as_deref().is_some_and(|bound| bound != vendor) {
             return refused(403, "fiscal_vendor_mismatch");
         }
         state.vendor = Some(vendor.to_owned());
-        state.serial = Some(serial.to_owned());
+        state.unique_number = Some(unique_number.to_owned());
         state.telemetry = request.body.clone();
         let mut status = status_json();
-        status["printer"]["deviceSerial"] = json!(serial);
+        status["printer"]["uniqueNumber"] = json!(unique_number);
         for name in [
             "vendor",
-            "maxQuantityDecimals",
             "capabilities",
             "model",
             "firmware",
             "appVersion",
-            "vatSlots",
-            "maxItemNameLength",
-            "maxLinesPerReceipt",
-            "maxCompanyNameLength",
-            "allowedCharacters",
+            "vatRates",
         ] {
             status["printer"][name] = request.body[name].clone();
         }
         return (200, status);
     }
-    if state.serial.as_deref() != request.serial.as_deref() || state.serial.is_none() {
-        return refused(403, "fiscal_serial_mismatch");
+    if state.unique_number.as_deref() != request.unique_number.as_deref()
+        || state.unique_number.is_none()
+    {
+        return refused(403, "fiscal_unique_number_mismatch");
+    }
+    if path == "/agent/heartbeat" && request.method == "POST" {
+        return (204, Value::Null);
     }
     if path == "/agent/documents" && request.method == "GET" {
         return documents_page(state, &url);
@@ -693,17 +697,9 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         return (204, Value::Null);
     }
     if path == "/agent/jobs" && request.method == "POST" {
-        if [
-            "vendor",
-            "maxQuantityDecimals",
-            "capabilities",
-            "maxItemNameLength",
-            "maxLinesPerReceipt",
-            "maxCompanyNameLength",
-            "allowedCharacters",
-        ]
-        .iter()
-        .any(|field| state.telemetry[field].is_null())
+        if ["vendor", "capabilities"]
+            .iter()
+            .any(|field| state.telemetry[field].is_null())
         {
             return refused(409, "fiscal_printer_limits_unknown");
         }
@@ -731,7 +727,9 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         {
             return refused(409, "fiscal_printer_zero_total_unsupported");
         }
-        let decimals = state.telemetry["maxQuantityDecimals"].as_u64().unwrap();
+        let decimals = state.telemetry["capabilities"]["maxQuantityDecimals"]
+            .as_u64()
+            .unwrap();
         if job["lines"].as_array().unwrap().iter().any(|line| {
             line["quantity"]
                 .as_str()
@@ -818,9 +816,9 @@ pub fn job_json() -> Value {
         "companyName": "Warsztat Kowalski", "buyerNip": null, "total": "250.00",
         "lines": [
             {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100.00",
-             "total": "200.00", "vatRate": "23", "vatSlot": 0},
+             "total": "200.00", "vatRate": "23", "vatLetter": "A"},
             {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
-             "total": "50.00", "vatRate": "8", "vatSlot": 1}
+             "total": "50.00", "vatRate": "8", "vatLetter": "B"}
         ],
         "attempt": ATTEMPT, "receiptNumber": null, "result": null,
         "createdAt": "2026-10-16T10:00:00Z", "takenAt": "2026-10-16T10:01:00Z",
@@ -837,13 +835,12 @@ pub fn with(mut value: Value, changes: &Value) -> Value {
 }
 pub fn printer_json() -> Value {
     json!({
-        "id": PRINTER_ID, "branchId": Uuid::from_u128(11), "name": "Workshop",
-        "vendor": "posnet", "maxQuantityDecimals": 8,
-        "capabilities": {"advanceDeductions": true, "zeroTotalReceipts": true},
-        "deviceSerial": "DEMO0000001", "model": "POSNET TEMO ONLINE", "firmware": "32.01",
-        "appVersion": "0.2.0", "vatSlots": [], "maxItemNameLength": 80,
-        "maxLinesPerReceipt": 500, "maxCompanyNameLength": 40,
-        "allowedCharacters": "ABCabc 0123456789.,-ĄąĘęŁłŃńÓóŚśŹźŻżĆć"
+        "id":PRINTER_ID,"branchId":Uuid::from_u128(11),"name":"Workshop",
+        "vendor":"posnet","uniqueNumber":"DEM0000000001","model":"POSNET TEMO ONLINE",
+        "firmware":"32.01","appVersion":"0.2.0","vatRates":[],
+        "capabilities":{"advanceDeductions":true,"zeroTotalReceipts":true,
+            "maxQuantityDecimals":8,"maxItemNameLength":80,"maxLinesPerReceipt":500,
+            "maxCompanyNameLength":40,"allowedCharacters":"ABCabc 0123456789.,-ĄąĘęŁłŃńÓóŚśŹźŻżĆć"}
     })
 }
 pub fn status_json() -> Value {

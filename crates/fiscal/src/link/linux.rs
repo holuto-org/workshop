@@ -1,4 +1,4 @@
-//! Passive serial-core UART metadata; never opens the device node.
+//! Passive unique_number-core UART metadata; never opens the device node.
 
 use std::{fs, path::Path};
 

@@ -37,7 +37,7 @@ fn claimed(
         attempt: ATTEMPT,
         issued_at: "2025-01-02T12:00:00Z".parse()?,
         vendor: Vendor::Posnet,
-        device_serial: SERIAL.to_owned(),
+        device_unique_number: SERIAL.to_owned(),
         device,
         summary: None,
         result,
@@ -413,13 +413,13 @@ fn telemetry_reports_device_vendor_capabilities_and_precision() -> TestResult {
     for request in server
         .requests()
         .iter()
-        .filter(|request| matches!(request.path.as_str(), "/agent/session" | "/agent/heartbeat"))
+        .filter(|request| request.path == "/agent/session")
     {
         assert_eq!(request.body["vendor"], "posnet");
-        assert_eq!(request.body["maxQuantityDecimals"], 8);
+        assert_eq!(request.body["capabilities"]["maxQuantityDecimals"], 8);
         assert_eq!(
             request.body["capabilities"],
-            json!({"advanceDeductions": true, "zeroTotalReceipts": true})
+            serde_json::to_value(&agent.telemetry.capabilities)?
         );
     }
     Ok(())
@@ -437,7 +437,7 @@ fn claimed_job_needing_unqualified_capability_fails_without_fiscal_commands() ->
             true,
             8,
             json!({
-                "advances": [{"vatSlot": 0, "vatRate": "23", "amount": "100.00"}],
+                "advances": [{"vatLetter": "A", "vatRate": "23", "amount": "100.00"}],
                 "payments": [{"form": "card", "amount": "150.00"}]
             }),
             "Drukarka nie obsługuje rozliczenia zaliczek.",
@@ -448,8 +448,8 @@ fn claimed_job_needing_unqualified_capability_fails_without_fiscal_commands() ->
             8,
             json!({
                 "advances": [
-                    {"vatSlot": 0, "vatRate": "23", "amount": "200.00"},
-                    {"vatSlot": 1, "vatRate": "8", "amount": "50.00"}
+                    {"vatLetter": "A", "vatRate": "23", "amount": "200.00"},
+                    {"vatLetter": "B", "vatRate": "8", "amount": "50.00"}
                 ], "payments": []
             }),
             "Drukarka nie obsługuje paragonu opłaconego w całości zaliczkami.",
@@ -460,7 +460,7 @@ fn claimed_job_needing_unqualified_capability_fails_without_fiscal_commands() ->
             3,
             json!({
                 "lines": [{"name": "Usługa", "quantity": "1.0001", "unitPrice": "250.00",
-                    "total": "250.03", "vatRate": "23", "vatSlot": 0}],
+                    "total": "250.03", "vatRate": "23", "vatLetter": "A"}],
                 "total": "250.03", "payments": [{"form": "card", "amount": "250.03"}]
             }),
             "Ilość może mieć najwyżej 3 miejsc po przecinku.",
@@ -519,7 +519,7 @@ fn oversized_job_is_rejected_as_invalid_without_journal_or_result() -> TestResul
     let server = Holuto::new();
     let line = json!({
         "name": "Pozycja", "quantity": "1", "unitPrice": "0.01",
-        "total": "0.01", "vatRate": "23", "vatSlot": 0
+        "total": "0.01", "vatRate": "23", "vatLetter": "A"
     });
     let changes = json!({"lines": vec![line; 501], "total": "5.01"});
     let _id = server.enqueue(with(job_json(), &changes));
@@ -558,11 +558,11 @@ fn invalid_money_vat_or_text_fails_before_fiscal_commands() -> TestResult {
         json!({"total":"249.99"}),
         json!({"lines": [{
             "name": "Pozycja", "quantity": "1", "unitPrice": "250.001",
-            "total": "250.00", "vatRate": "23", "vatSlot": 0
+            "total": "250.00", "vatRate": "23", "vatLetter": "A"
         }]}),
         json!({"lines": [{
             "name": "Pozycja", "quantity": "1", "unitPrice": "250.00",
-            "total": "250.00", "vatRate": "8", "vatSlot": 0
+            "total": "250.00", "vatRate": "8", "vatLetter": "A"
         }]}),
         json!({"companyName":"Firma 🛠"}),
     ] {
@@ -626,7 +626,7 @@ fn interrupted_report_is_acknowledged_without_reissuing_it() -> TestResult {
     let operation = ReportOperation {
         report: Report::Daily,
         vendor: Vendor::Posnet,
-        device_serial: SERIAL.to_owned(),
+        device_unique_number: SERIAL.to_owned(),
         started_at: "2025-01-02T12:00:00Z".parse()?,
         device: Device::Dispatching {
             stage: "dailyrep".to_owned(),
@@ -754,14 +754,15 @@ fn unready_printer_updates_telemetry_but_does_not_claim_a_job() -> TestResult {
     let requests = server.requests();
     let heartbeat = requests
         .iter()
-        .find(|request| request.path == "/agent/heartbeat")
+        .find(|request| request.path == "/agent/session")
         .ok_or("missing heartbeat")?;
-    assert_eq!(heartbeat.body["serial"], SERIAL);
+    assert_eq!(heartbeat.body["uniqueNumber"], SERIAL);
     assert_eq!(
-        heartbeat.body["vatSlots"],
+        heartbeat.body["vatRates"],
         json!([
-            {"slot": 0, "vatRate": "23"}, {"slot": 1, "vatRate": "8"},
-            {"slot": 2, "vatRate": "0"}, {"slot": 6, "vatRate": "zw"}
+            {"letter": "A", "vatRate": "23"}, {"letter": "B", "vatRate": "8"},
+            {"letter": "C", "vatRate": "5"}, {"letter": "D", "vatRate": "0"},
+            {"letter": "E", "vatRate": "zw"}
         ])
     );
     assert!(
@@ -889,9 +890,9 @@ fn advance_allocation_and_named_mobile_payment_print_without_mutation() -> TestR
             "total": "250.00", "payments": [{"form": "mobile", "amount": "250.00"}],
             "lines": [
                 {"name": "Zaliczka 23%", "quantity": "1", "unitPrice": "200.00",
-                 "total": "200.00", "vatRate": "23", "vatSlot": 0},
+                 "total": "200.00", "vatRate": "23", "vatLetter": "A"},
                 {"name": "Zaliczka 8%", "quantity": "1", "unitPrice": "50.00",
-                 "total": "50.00", "vatRate": "8", "vatSlot": 1}
+                 "total": "50.00", "vatRate": "8", "vatLetter": "B"}
             ]
         }),
     ));
@@ -931,13 +932,14 @@ fn advance_allocation_and_named_mobile_payment_print_without_mutation() -> TestR
     let requests = server.requests();
     let heartbeat = requests
         .iter()
-        .find(|request| request.path == "/agent/heartbeat")
+        .find(|request| request.path == "/agent/session")
         .ok_or("missing VAT mapping evidence")?;
     assert_eq!(
-        heartbeat.body["vatSlots"],
+        heartbeat.body["vatRates"],
         json!([
-            {"slot": 0, "vatRate": "23"}, {"slot": 1, "vatRate": "8"},
-            {"slot": 2, "vatRate": "0"}, {"slot": 6, "vatRate": "zw"}
+            {"letter": "A", "vatRate": "23"}, {"letter": "B", "vatRate": "8"},
+            {"letter": "C", "vatRate": "5"}, {"letter": "D", "vatRate": "0"},
+            {"letter": "E", "vatRate": "zw"}
         ])
     );
     assert_eq!(server.job(JOB_ID)["state"], "done");
@@ -1031,7 +1033,9 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
     };
     let document: Document = serde_json::from_value(json!({
         "kind": "sale", "orderId": JOB_ID, "orderNumber": 10, "allocationId": null,
-        "amount": "9876.54", "customerName": "PrivateCustomer", "occurredAt": "2025-01-02T12:00:00Z"
+        "amount": "9876.54", "customerName": "PrivateCustomer", "occurredAt": "2025-01-02T12:00:00Z",
+        "dueAt": "2025-01-02T12:00:00Z",
+        "isOverdue": false
     }))?;
     let nip = BuyerNip::parse("5261040828")?;
     let result = JobResult::failed("PrivateResultReason");
@@ -1071,21 +1075,21 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
     reason = "Assertions prove wrong-vendor evidence cannot be settled."
 )]
 fn resolution_requires_the_same_vendor_and_serial() -> TestResult {
-    for (vendor, serial) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+    for (vendor, unique_number) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
         let sim = Simulator::start();
         let server = Holuto::new();
         server.insert(job_json());
         let (_temporary, dir) = state_dir();
         let mut operation = claimed(Device::NotStarted, None)?;
         operation.vendor = vendor;
-        operation.device_serial = serial.to_owned();
+        operation.device_unique_number = unique_number.to_owned();
         Journal::new(&dir).save(&Operation::Receipt(operation))?;
         let bytes = fs::read(dir.file("operation.json"))?;
         let mut agent = agent(&sim, &dir, &server)?;
         let requests = server.requests().len();
         let frames = sim.frames();
         let expected = format!(
-            "Niepotwierdzony paragon dotyczy drukarki {vendor:?} {serial}. Podłącz ją, \
+            "Niepotwierdzony paragon dotyczy drukarki {vendor:?} {unique_number}. Podłącz ją, \
              aby uzgodnić wynik z Holuto."
         );
         assert!(matches!(agent.settle(), Err(Error::Blocked(message)) if message == expected));
@@ -1104,14 +1108,14 @@ fn resolution_requires_the_same_vendor_and_serial() -> TestResult {
     reason = "Assertions prove wrong-device reports stay unresolved."
 )]
 fn report_resolution_requires_the_same_vendor_and_serial() -> TestResult {
-    for (vendor, serial) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+    for (vendor, unique_number) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
         let sim = Simulator::start();
         let server = Holuto::new();
         let (_temporary, dir) = state_dir();
         Journal::new(&dir).save(&Operation::Report(ReportOperation {
             report: Report::Daily,
             vendor,
-            device_serial: serial.to_owned(),
+            device_unique_number: unique_number.to_owned(),
             started_at: "2025-01-02T12:00:00Z".parse()?,
             device: Device::Dispatching {
                 stage: "dailyrep".to_owned(),
@@ -1121,8 +1125,9 @@ fn report_resolution_requires_the_same_vendor_and_serial() -> TestResult {
         let agent = agent(&sim, &dir, &server)?;
         let bytes = fs::read(dir.file("operation.json"))?;
         let frames = sim.frames();
-        let expected =
-            format!("Podłącz drukarkę {vendor:?} {serial}, której dotyczy przerwany raport.");
+        let expected = format!(
+            "Podłącz drukarkę {vendor:?} {unique_number}, której dotyczy przerwany raport."
+        );
         assert!(
             matches!(agent.resolve_report(), Err(Error::Blocked(message)) if message == expected)
         );
@@ -1140,7 +1145,7 @@ fn report_resolution_requires_the_same_vendor_and_serial() -> TestResult {
     reason = "Assertions prove wrong-device orphan evidence stays unresolved."
 )]
 fn orphan_acknowledgement_requires_the_same_vendor_and_serial() -> TestResult {
-    for (vendor, serial) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
+    for (vendor, unique_number) in [(Vendor::Novitus, SERIAL), (Vendor::Posnet, "OTHER")] {
         let sim = Simulator::start();
         let server = Holuto::new();
         server.insert(with(job_json(), &json!({"state": "failed"})));
@@ -1152,14 +1157,14 @@ fn orphan_acknowledgement_requires_the_same_vendor_and_serial() -> TestResult {
             None,
         )?;
         operation.vendor = vendor;
-        operation.device_serial = serial.to_owned();
+        operation.device_unique_number = unique_number.to_owned();
         Journal::new(&dir).save(&Operation::Receipt(operation))?;
         let mut agent = agent(&sim, &dir, &server)?;
         let bytes = fs::read(dir.file("operation.json"))?;
         let frames = sim.frames();
         let requests = server.requests().len();
         let expected =
-            format!("Podłącz drukarkę {vendor:?} {serial}, która wydrukowała ten paragon.");
+            format!("Podłącz drukarkę {vendor:?} {unique_number}, która wydrukowała ten paragon.");
         let result = agent.acknowledge_orphaned_receipt();
         assert!(matches!(result, Err(Error::Blocked(message)) if message == expected));
         assert_eq!(fs::read(dir.file("operation.json"))?, bytes);

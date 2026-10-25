@@ -52,7 +52,7 @@ fn daily_report_eligibility_only_ignores_overdue_reports_for_every_vendor() {
                 vendor,
                 model: String::new(),
                 firmware: String::new(),
-                serial: String::new(),
+                unique_number: "TST0000000001".to_owned(),
                 problems,
                 vat: vec![],
                 capabilities: Capabilities {

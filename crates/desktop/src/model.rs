@@ -72,7 +72,7 @@ pub(crate) struct Model {
     pub(crate) stopping: bool,
     pub(crate) saving: bool,
     pub(crate) connected: bool,
-    pub(crate) serial: String,
+    pub(crate) unique_number: String,
     pub(crate) vendor: Option<Vendor>,
     pub(crate) printer_id: Option<String>,
     pub(crate) device: Option<Device>,
@@ -111,7 +111,7 @@ impl Model {
             stopping: false,
             saving: false,
             connected: false,
-            serial: String::new(),
+            unique_number: String::new(),
             vendor: None,
             printer_id: None,
             device: None,
@@ -177,7 +177,7 @@ impl Model {
             connected: self.connected,
             vendor: self.vendor,
             // Keep the last connected identity, like the retained fiscal block, after Stop.
-            serial: (!self.serial.is_empty()).then(|| self.serial.clone()),
+            unique_number: (!self.unique_number.is_empty()).then(|| self.unique_number.clone()),
             printer_id: self.printer_id.clone(),
             blocked: self.blocked,
             report_unresolved: self.report_unresolved,
@@ -191,8 +191,8 @@ impl Model {
         snapshot.processing == processing
             && snapshot.connected == self.connected
             && snapshot.vendor == self.vendor
-            && snapshot.serial.as_deref()
-                == (!self.serial.is_empty()).then_some(self.serial.as_str())
+            && snapshot.unique_number.as_deref()
+                == (!self.unique_number.is_empty()).then_some(self.unique_number.as_str())
             && snapshot.printer_id == self.printer_id
             && snapshot.blocked == self.blocked
             && snapshot.report_unresolved == self.report_unresolved
@@ -360,7 +360,7 @@ impl Model {
         } else if let Some(status) = self.device.as_ref().filter(|status| !status.ready()) {
             format!("Drukarka niegotowa: {}", status.description())
         } else if self.connected {
-            format!("Połączono · {}", self.serial)
+            format!("Połączono · {}", self.unique_number)
         } else if self.running {
             "Łączenie…".into()
         } else {

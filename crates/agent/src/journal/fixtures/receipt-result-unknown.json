@@ -4,7 +4,7 @@
     "attempt": "00000000-0000-0000-0000-000000000002",
     "issued_at": "2026-10-16T10:00:00Z",
     "vendor": "posnet",
-    "device_serial": "POSNET-123456",
+    "device_unique_number": "POS0000123456",
     "device": {
       "dispatching": {
         "stage": "trline"

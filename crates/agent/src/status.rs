@@ -34,8 +34,8 @@ pub struct Snapshot {
     pub connected: bool,
     /// Last known physical device vendor; may remain set while disconnected.
     pub vendor: Option<Vendor>,
-    /// Last known physical device serial; may remain set while disconnected.
-    pub serial: Option<String>,
+    /// Last known physical device unique_number; may remain set while disconnected.
+    pub unique_number: Option<String>,
     /// Last known Holuto printer identity; may remain set while disconnected.
     pub printer_id: Option<String>,
     pub blocked: bool,

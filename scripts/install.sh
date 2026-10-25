@@ -174,7 +174,7 @@ else
   printf 'No sudo. The image is quarantined like a browser download, so Gatekeeper checks the app on first launch; if it blocks opening, review the app in System Settings > Privacy & Security and approve it manually.\n'
 fi
 if command -v gh >/dev/null 2>&1; then
-  printf 'Verification: SHA-256 plus gh attestation verify ARTIFACT --repo %s --signer-workflow %s/.github/workflows/release.yml\n' "$repo" "$repo"
+  printf 'Verification: SHA-256 plus gh attestation verify ARTIFACT --repo %s --signer-workflow %s/.github/workflows/release.yml (gh must be signed in to github.com)\n' "$repo" "$repo"
 else
   printf 'WARNING: gh is absent; checksum-only verification is weaker and does not authenticate the release workflow.\n' >&2
 fi
@@ -193,6 +193,11 @@ else
   [[ ! -L $target ]] || fail 'The target app is a symbolic link; refusing to replace it.'
   [[ ! -e $target || -d $target ]] || fail 'The target app is not a directory.'
   check_launcher
+fi
+# gh cannot verify attestations without a sign-in; stop before downloading instead of reporting a failed verification.
+if command -v gh >/dev/null 2>&1; then
+  gh auth status --hostname github.com >/dev/null ||
+    fail 'gh is installed but not signed in to github.com, so attestation cannot be verified. Sign in with gh auth login, then rerun; nothing was downloaded.'
 fi
 
 umask 077

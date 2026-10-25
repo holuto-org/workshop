@@ -20,20 +20,22 @@ const OTHER_PRINTER: Uuid = Uuid::from_u128(15);
 const STATES: [&str; 6] = ["queued", "taken", "done", "failed", "expired", "unknown"];
 
 fn api(server: &Holuto) -> Result<Api, Box<dyn StdError>> {
-    let mut api = Api::new(server.url(), server.token(), "DEMO0000001")?;
+    let mut api = Api::new(server.url(), server.token(), "DEM0000000001")?;
     api.session(&telemetry())?;
     Ok(api)
 }
 
 fn telemetry() -> Telemetry {
-    super::telemetry("DEMO0000001")
+    super::telemetry("DEM0000000001")
 }
 
 fn document(order: Uuid, allocation: Option<Uuid>, occurred_at: &str) -> Value {
     json!({
         "kind": if allocation.is_some() { "advance" } else { "sale" },
         "orderId": order, "orderNumber": 10, "allocationId": allocation,
-        "amount": "250.00", "customerName": null, "occurredAt": occurred_at
+        "amount": "250.00", "customerName": null, "occurredAt": occurred_at,
+        "dueAt": occurred_at,
+        "isOverdue": false
     })
 }
 
@@ -50,7 +52,7 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
             true,
             8,
             json!({
-                "advances": [{"vatSlot": 0, "vatRate": "23", "amount": "100.00"}],
+                "advances": [{"vatLetter": "A", "vatRate": "23", "amount": "100.00"}],
                 "payments": [{"form": "card", "amount": "150.00"}]
             }),
             "fiscal_printer_advances_unsupported",
@@ -61,8 +63,8 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
             8,
             json!({
                 "advances": [
-                    {"vatSlot": 0, "vatRate": "23", "amount": "200.00"},
-                    {"vatSlot": 1, "vatRate": "8", "amount": "50.00"}
+                    {"vatLetter": "A", "vatRate": "23", "amount": "200.00"},
+                    {"vatLetter": "B", "vatRate": "8", "amount": "50.00"}
                 ], "payments": []
             }),
             "fiscal_printer_zero_total_unsupported",
@@ -73,7 +75,7 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
             3,
             json!({
                 "lines": [{"name": "Usługa", "quantity": "1.0001", "unitPrice": "250.00",
-                    "total": "250.03", "vatRate": "23", "vatSlot": 0}],
+                    "total": "250.03", "vatRate": "23", "vatLetter": "A"}],
                 "total": "250.03", "payments": [{"form": "card", "amount": "250.03"}]
             }),
             "fiscal_printer_quantity_precision",
@@ -84,8 +86,8 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
         let mut telemetry = telemetry();
         telemetry.capabilities.advance_deductions = advances;
         telemetry.capabilities.zero_total_receipts = zero;
-        telemetry.max_quantity_decimals = precision;
-        let mut api = Api::new(server.url(), server.token(), "DEMO0000001")?;
+        telemetry.capabilities.max_quantity_decimals = precision;
+        let mut api = Api::new(server.url(), server.token(), "DEM0000000001")?;
         api.session(&telemetry)?;
         let document: Document =
             serde_json::from_value(document(ORDER_ID, None, "2026-10-16T10:00:00Z"))?;
@@ -115,13 +117,13 @@ fn queue_precision_ignores_trailing_zeros_and_accepts_the_device_boundary() -> T
             job_json(),
             &json!({
                 "lines": [{"name": "Usługa", "quantity": quantity, "unitPrice": "100.00",
-                    "total": "112.30", "vatRate": "23", "vatSlot": 0}],
+                    "total": "112.30", "vatRate": "23", "vatLetter": "A"}],
                 "total": "112.30", "payments": [{"form": "card", "amount": "112.30"}]
             }),
         ));
         let mut telemetry = telemetry();
-        telemetry.max_quantity_decimals = 3;
-        let mut api = Api::new(server.url(), server.token(), "DEMO0000001")?;
+        telemetry.capabilities.max_quantity_decimals = 3;
+        let mut api = Api::new(server.url(), server.token(), "DEM0000000001")?;
         api.session(&telemetry)?;
         let document: Document =
             serde_json::from_value(document(ORDER_ID, None, "2026-10-16T10:00:00Z"))?;
@@ -416,12 +418,12 @@ fn pairing_is_single_use_and_revokes_each_previous_device_credential() -> TestRe
     let server = Holuto::new();
     server.pairing_code("ABCD1234");
     let first = Api::pair(server.url(), "abcd-1234")?;
-    let mut original = Api::new(server.url(), server.token(), "DEMO0000001")?;
+    let mut original = Api::new(server.url(), server.token(), "DEM0000000001")?;
     assert!(matches!(
         original.session(&telemetry()),
         Err(ApiError::Unauthorized)
     ));
-    let mut paired = Api::new(server.url(), first.token.as_str(), "DEMO0000001")?;
+    let mut paired = Api::new(server.url(), first.token.as_str(), "DEM0000000001")?;
     paired.session(&telemetry())?;
     assert!(matches!(
         Api::pair(server.url(), "ABCD1234"),
@@ -464,7 +466,7 @@ fn expired_invalid_and_throttled_pairing_proofs_do_not_revoke_the_token() -> Tes
             status: 429, detail: Some(detail),
         })) if detail == "rate_limited"
     ));
-    let mut original = Api::new(server.url(), server.token(), "DEMO0000001")?;
+    let mut original = Api::new(server.url(), server.token(), "DEM0000000001")?;
     original.session(&telemetry())?;
     server.pairing_throttled(false);
     assert_eq!(
@@ -492,7 +494,7 @@ fn pairing_limits_guesses_without_consuming_a_valid_code() -> TestResult {
         Api::pair(server.url(), "ABCD1234"),
         Err(crate::Error::Api(ApiError::Status { status: 429, .. }))
     ));
-    let mut original = Api::new(server.url(), server.token(), "DEMO0000001")?;
+    let mut original = Api::new(server.url(), server.token(), "DEM0000000001")?;
     original.session(&telemetry())?;
     Ok(())
 }

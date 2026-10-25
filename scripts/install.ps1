@@ -169,6 +169,8 @@ function Invoke-HolutoInstall {
         [switch]$DryRun
     )
     $ErrorActionPreference = 'Stop'
+    # Windows PowerShell 5.1 redraws progress per chunk, slowing Invoke-WebRequest by an order of magnitude.
+    $ProgressPreference = 'SilentlyContinue'
     if ($PSVersionTable.PSVersion -lt [Version]'5.1') { throw 'PowerShell 5.1 or newer is required.' }
     $platform = Get-HolutoPlatform
     Assert-HolutoPlatform -Platform $platform -DryRun:$DryRun
@@ -193,7 +195,7 @@ function Invoke-HolutoInstall {
             Write-Output "DRY RUN: Invoke-WebRequest $base/$asset -OutFile <unique-temp>\$asset"
             Write-Output "DRY RUN: Invoke-WebRequest $base/SHA256SUMS.txt -OutFile <unique-temp>\SHA256SUMS.txt"
             Write-Output 'DRY RUN: Require one exact 64-hex manifest entry and matching Get-FileHash -Algorithm SHA256.'
-            Write-Output "DRY RUN: If gh exists: gh attestation verify <unique-temp>\$asset --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml (failure is fatal)."
+            Write-Output "DRY RUN: If gh exists, it must be signed in to github.com (gh auth status), then: gh attestation verify <unique-temp>\$asset --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml (failure is fatal)."
             Write-Output 'DRY RUN: Only if gh is absent, warn and use weaker checksum-only integrity.'
             Write-Output "DRY RUN: Refuse a running app or a newer installed version; retain Internet Zone.Identifier, stage verified EXE, skip equal hash or atomically replace $target; create shortcut with WScript.Shell."
             Write-Output "DRY RUN: Append $directory to user PATH and process PATH only if absent, preserving existing entries."
@@ -205,6 +207,12 @@ function Invoke-HolutoInstall {
         Assert-HolutoPlainPath -Path $shortcutPath
         if (Test-Path -LiteralPath $target -PathType Leaf) {
             Assert-HolutoNotDowngrade -InstalledVersion (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -Release $Release
+        }
+        $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        # gh cannot verify attestations without a sign-in; stop before downloading instead of reporting a failed verification.
+        if ($gh) {
+            & $gh.Source auth status --hostname github.com | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'gh is installed but not signed in to github.com, so attestation cannot be verified. Sign in with gh auth login, then rerun; nothing was downloaded.' }
         }
         $temporary = Join-Path ([IO.Path]::GetTempPath()) ('workshop-install-' + [Guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory($temporary)
@@ -219,7 +227,6 @@ function Invoke-HolutoInstall {
         if ((Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected) {
             throw 'Downloaded executable SHA-256 does not match SHA256SUMS.txt. Nothing was installed.'
         }
-        $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($gh) {
             & $gh.Source attestation verify $artifact --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml
             if ($LASTEXITCODE -ne 0) { throw 'GitHub attestation verification failed. Nothing was installed; no checksum-only fallback is allowed when gh is installed.' }

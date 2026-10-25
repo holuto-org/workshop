@@ -138,7 +138,7 @@ fn overdue_daily_report_blocks_receipts_but_allows_daily_report() {
                 year: 2025,
                 month: 9
             },
-            &expected.serial,
+            &expected.unique_number,
             &mut log
         ),
         Err(Error::NotReady(_))
@@ -146,7 +146,7 @@ fn overdue_daily_report_blocks_receipts_but_allows_daily_report() {
     assert_eq!(log.commands, Vec::<&str>::new());
     assert_eq!(fiscal(&sim), Vec::<String>::new());
     assert!(matches!(
-        driver.print_report(Report::Daily, &expected.serial, &mut log),
+        driver.print_report(Report::Daily, &expected.unique_number, &mut log),
         Err(Error::Uncertain(_))
     ));
     assert_eq!(log.commands, ["RRP"]);
@@ -187,7 +187,7 @@ fn identify_accepts_online_models_only() {
             .unwrap()
             .unwrap();
         assert!(device.ready(), "{}", device.description());
-        assert_eq!(device.serial, "ABC1234567890");
+        assert_eq!(device.unique_number, "ABC1234567890");
     }
     for model in [
         "ELZAB ZETA",

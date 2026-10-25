@@ -54,10 +54,10 @@ impl Driver for Printer {
         Ok(preflight(&mut self.session()?, false)?.device)
     }
 
-    fn verify(&self, serial: &str) -> Result<Device, Error> {
+    fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
         device.require_ready()?;
-        device.require_serial(serial)?;
+        device.require_serial(unique_number)?;
         Ok(device)
     }
 
@@ -70,7 +70,7 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let checked = preflight(&mut session, false)?;
         checked.device.require_ready()?;
-        checked.device.require_serial(&expected.serial)?;
+        checked.device.require_serial(&expected.unique_number)?;
         if expected.vendor != Vendor::Elzab || checked.device.vat != expected.vat {
             return Err(Error::Invalid(
                 "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie.".to_owned(),
@@ -119,13 +119,13 @@ impl Driver for Printer {
     fn print_report(
         &self,
         report: Report,
-        serial: &str,
+        unique_number: &str,
         journal: &mut dyn Journal,
     ) -> Result<(), Error> {
         let mut session = self.session()?;
         let checked = preflight(&mut session, report == Report::Daily)?;
         checked.device.require_ready()?;
-        checked.device.require_serial(serial)?;
+        checked.device.require_serial(unique_number)?;
         let (command, body) = match report {
             Report::Daily => {
                 let _before = read_number(&mut session, "RNR", 'A')?;
@@ -225,7 +225,7 @@ fn preflight_identity(
         vendor: Vendor::Elzab,
         model,
         firmware,
-        serial: String::new(),
+        unique_number: String::new(),
         problems: vec![],
         vat: vec![],
         capabilities,
@@ -233,12 +233,14 @@ fn preflight_identity(
     if profile.is_none() {
         device.problems.push("Nieznany model Elzab ONLINE".into());
     }
-    let serial = query(session, "FNR", "FNR")?;
-    let serial = field(&serial, 'B')?;
-    if !(1..=14).contains(&serial.len()) || !serial.bytes().all(|b| (0x21..=0x7E).contains(&b)) {
+    let unique_number = query(session, "FNR", "FNR")?;
+    let unique_number = field(&unique_number, 'B')?;
+    if !(1..=14).contains(&unique_number.len())
+        || !unique_number.bytes().all(|b| (0x21..=0x7E).contains(&b))
+    {
         return Err(frame::corrupt());
     }
-    serial.clone_into(&mut device.serial);
+    unique_number.clone_into(&mut device.unique_number);
     let page = query(session, "XHR", "XHR\x1dw")?;
     if field(&page, 'w')? != "ACP1250" {
         device

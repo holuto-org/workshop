@@ -33,7 +33,7 @@ fn receipt(device: Device) -> Result<ReceiptOperation, Box<dyn StdError>> {
         attempt: Uuid::from_u128(2),
         issued_at: "2026-10-16T10:00:00Z".parse()?,
         vendor: Vendor::Posnet,
-        device_serial: "POSNET-123456".to_owned(),
+        device_unique_number: "POS0000123456".to_owned(),
         device,
         summary,
         result: None,
@@ -45,7 +45,7 @@ fn report(report: Report, device: Device) -> Result<ReportOperation, Box<dyn Std
     Ok(ReportOperation {
         report,
         vendor: Vendor::Posnet,
-        device_serial: "POSNET-123456".to_owned(),
+        device_unique_number: "POS0000123456".to_owned(),
         started_at: "2026-10-16T10:00:00Z".parse()?,
         device,
         acknowledged_at: None,

@@ -196,6 +196,59 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     }
 }
 
+# A real install stops before writing the target when gh is not signed in, the
+# checksum does not match, or attestation fails. Only external effects are faked.
+$script:gh = @{ Auth = 0; Attestation = 0; Calls = @() }
+$fakeGh = [pscustomobject]@{ Source = {
+    $script:gh.Calls += ($args -join ' ')
+    $global:LASTEXITCODE = if ($args[0] -eq 'auth') { $script:gh.Auth } else { $script:gh.Attestation }
+} }
+function Get-Command {
+    param([string]$Name, $CommandType, $ErrorAction)
+    if ($Name -eq 'gh') { return $fakeGh }
+    Microsoft.PowerShell.Core\Get-Command $Name
+}
+$script:downloads = 0
+$script:manifestDigest = ''
+function Invoke-WebRequest {
+    param([switch]$UseBasicParsing, [int]$TimeoutSec, [string]$Uri, [string]$OutFile)
+    $script:downloads++
+    $content = if ($Uri.EndsWith('/SHA256SUMS.txt')) { "$script:manifestDigest  workshop-win-x64.exe`n" } else { 'fixture exe' }
+    [IO.File]::WriteAllText($OutFile, $content)
+}
+function Get-Process { return @() }
+# A regression that slips past verification must not reach the real user PATH.
+function Add-HolutoUserPath { throw 'Unexpected user PATH write' }
+$exeDigest = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes('fixture exe'))).Replace('-', '').ToLowerInvariant()
+$installRoot = Join-Path ([IO.Path]::GetTempPath()) ('holuto-install-test-' + [Guid]::NewGuid().ToString('N'))
+$installTemp = Join-Path $installRoot 'Temp'
+[void][IO.Directory]::CreateDirectory($installTemp)
+$savedTemp = @{ TMP = $env:TMP; TEMP = $env:TEMP; TMPDIR = $env:TMPDIR }
+$script:platform.LocalAppData = Join-Path $installRoot 'LocalAppData'
+$script:platform.Programs = Join-Path $installRoot 'Programs'
+$installedExe = Join-Path $script:platform.LocalAppData 'Programs\Holuto Workshop\workshop.exe'
+try {
+    $env:TMP = $installTemp; $env:TEMP = $installTemp; $env:TMPDIR = $installTemp
+    foreach ($case in @(
+        @{ Auth = 1; Attestation = 0; Digest = $exeDigest; Error = 'not signed in.*gh auth login'; Downloads = 0 },
+        @{ Auth = 0; Attestation = 0; Digest = '0' * 64; Error = 'does not match SHA256SUMS'; Downloads = 2 },
+        @{ Auth = 0; Attestation = 1; Digest = $exeDigest; Error = 'attestation verification failed'; Downloads = 2 }
+    )) {
+        $script:gh = @{ Auth = $case.Auth; Attestation = $case.Attestation; Calls = @() }
+        $script:downloads = 0
+        $script:manifestDigest = $case.Digest
+        Assert-Throws { Invoke-HolutoInstall -Release 'v1.2.3' | Out-Null } $case.Error
+        Assert-True ($script:downloads -eq $case.Downloads) "Unexpected downloads before: $($case.Error)"
+        Assert-True (-not (Test-Path -LiteralPath $installedExe)) "Installed despite: $($case.Error)"
+        Assert-True (@(Get-ChildItem -LiteralPath $installTemp -Force).Count -eq 0) "Left downloads behind after: $($case.Error)"
+    }
+    $verified = @($script:gh.Calls | Where-Object { $_ -like 'attestation verify *workshop-win-x64.exe --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml' })
+    Assert-True ($verified.Count -eq 1) 'Attestation was not bound to the release workflow'
+} finally {
+    $env:TMP = $savedTemp.TMP; $env:TEMP = $savedTemp.TEMP; $env:TMPDIR = $savedTemp.TMPDIR
+    Remove-Item -LiteralPath $installRoot -Recurse -Force
+}
+
 # Both the renamed binary and the previous app must be shut down, never killed.
 $script:processes = @()
 function Get-Process { return $script:processes }

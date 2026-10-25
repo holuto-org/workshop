@@ -28,7 +28,6 @@ use model::{Job, Page, Pairing, PrinterStatus, QueueForm, ResultForm, Telemetry}
 pub const DOCUMENTS_LIMIT: usize = 100;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
-const MAX_SERIAL_LENGTH: usize = 32;
 /// Sent as `agent/<SemVer>` for the backend's `App-Version` gate.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -123,21 +122,21 @@ pub struct Api {
     agent: Agent,
     base_url: String,
     authorization: settings::Token,
-    serial: String,
+    unique_number: String,
     printer_id: Option<Uuid>,
 }
 
 impl fmt::Debug for Api {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Api")
-            .field("serial", &self.serial)
+            .field("uniqueNumber", &self.unique_number)
             .field("printer_id", &self.printer_id)
             .finish_non_exhaustive()
     }
 }
 
 impl Api {
-    /// Exchanges a single-use human code; never sends a token or printer serial.
+    /// Exchanges a single-use human code; never sends a token or printer unique_number.
     pub fn pair(api_url: &str, code: &str) -> Result<Pairing, Error> {
         if api_url.trim().is_empty() {
             return Err(Error::Invalid("Wpisz adres API w Ustawieniach.".to_owned()));
@@ -197,7 +196,7 @@ impl Api {
         Ok(paired)
     }
 
-    pub fn new(api_url: &str, token: &str, serial: &str) -> Result<Self, Error> {
+    pub fn new(api_url: &str, token: &str, unique_number: &str) -> Result<Self, Error> {
         let base_url = settings::api_url(api_url)?;
         if !(1..=4096).contains(&token.len()) || !token.bytes().all(|byte| byte.is_ascii_graphic())
         {
@@ -205,21 +204,17 @@ impl Api {
                 "Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned(),
             ));
         }
-        let serial_valid = (1..=MAX_SERIAL_LENGTH).contains(&serial.len())
-            && serial
-                .bytes()
-                .all(|byte| byte == b' ' || byte.is_ascii_graphic())
-            && serial.trim() == serial;
+        let serial_valid = fiscal::device::valid_unique_number(unique_number);
         if !serial_valid {
             return Err(Error::Invalid(
-                "Numer drukarki musi zawierać 1-32 drukowalne znaki ASCII.".to_owned(),
+                "Numer unikatowy musi zawierać 3 wielkie litery i 10 cyfr.".to_owned(),
             ));
         }
         Ok(Self {
             agent: http_agent(&base_url),
             base_url,
             authorization: format!("Bearer {token}").into(),
-            serial: serial.to_owned(),
+            unique_number: unique_number.to_owned(),
             printer_id: None,
         })
     }
@@ -291,7 +286,9 @@ impl Api {
     fn telemetry(&mut self, path: &str, telemetry: &Telemetry) -> Result<(), ApiError> {
         let status: PrinterStatus = self.post(path, Some(telemetry))?.ok_or_else(empty)?;
         let printer = status.printer;
-        printer.check(&self.serial).map_err(ApiError::Response)?;
+        printer
+            .check(&self.unique_number)
+            .map_err(ApiError::Response)?;
         if self.printer_id.is_some_and(|id| id != printer.id) {
             return Err(ApiError::Response(
                 "parowanie przypisane do innej drukarki".to_owned(),
@@ -301,7 +298,7 @@ impl Api {
         Ok(())
     }
 
-    /// Session and heartbeat carry the serial in the body, not a header.
+    /// Session and heartbeat carry the unique_number in the body, not a header.
     fn headers<B>(
         &self,
         request: RequestBuilder<B>,
@@ -311,16 +308,16 @@ impl Api {
             .header("Authorization", self.authorization.as_str())
             .header("App-Version", format!("agent/{APP_VERSION}"))
             .header("Accept-Language", "pl");
-        let request = if matches!(path, "session" | "heartbeat") {
+        let request = if path == "session" {
             request
         } else {
-            request.header("X-Device-Serial", &self.serial)
+            request.header("X-Device-Unique-Number", &self.unique_number)
         };
         trace_headers(request)
     }
 
-    pub fn serial(&self) -> &str {
-        &self.serial
+    pub fn unique_number(&self) -> &str {
+        &self.unique_number
     }
 
     pub const fn printer_id(&self) -> Option<Uuid> {
@@ -331,8 +328,9 @@ impl Api {
         self.telemetry("session", telemetry)
     }
 
-    pub fn heartbeat(&mut self, telemetry: &Telemetry) -> Result<(), ApiError> {
-        self.telemetry("heartbeat", telemetry)
+    pub fn heartbeat(&mut self) -> Result<(), ApiError> {
+        let _: Option<()> = self.post("heartbeat", None::<&()>)?;
+        Ok(())
     }
 
     pub fn take(&self) -> Result<Option<Job>, ApiError> {

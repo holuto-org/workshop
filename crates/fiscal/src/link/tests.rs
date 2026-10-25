@@ -161,8 +161,8 @@ fn macos_keeps_callout_drops_dialin_duplicates() {
             vec![
                 usb("/dev/tty.usbmodem", 0x1424, 0x10B0),
                 usb("/dev/cu.usbmodem", 0x1424, 0x10B0),
-                port("/dev/tty.serial", SerialPortType::PciPort),
-                port("/dev/cu.serial", SerialPortType::PciPort),
+                port("/dev/tty.unique_number", SerialPortType::PciPort),
+                port("/dev/cu.unique_number", SerialPortType::PciPort),
                 port("/dev/cu.Bluetooth", SerialPortType::BluetoothPort),
             ],
             Os::Macos,
@@ -170,7 +170,7 @@ fn macos_keeps_callout_drops_dialin_duplicates() {
         ),
         vec![
             candidate("/dev/cu.usbmodem", Some(Vendor::Posnet)),
-            candidate("/dev/cu.serial", None),
+            candidate("/dev/cu.unique_number", None),
         ]
     );
 }

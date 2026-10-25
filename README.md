@@ -69,7 +69,7 @@ unblock printing; unresolved evidence requires human reconciliation.
 (`vendor`: `"posnet"`, `"novitus"`, `"elzab"` or `null` for detection), diagnostics
 (`telemetryEnabled`) and start-processing-on-launch preferences. Keep it
 private, out of logs, and protected by profile ACLs on Windows. `operation.json`
-is the fiscal journal: every receipt/report records its vendor and serial, both
+is the fiscal journal: every receipt/report records its vendor and fiscal memory unique number, both
 required for resolution; malformed files block.
 `history.jsonl` is local receipt history, compacted to
 the newest 500 receipts. `instance.lock` prevents a second instance from using
@@ -81,7 +81,7 @@ modes.
 Settings and `status.json` are persisted by one background FIFO writer. Starting
 waits for successful settings persistence; quitting waits cooperatively for
 pending writes and the worker. `status.json` contains only processing/connection
-flags, last known device vendor/serial, fiscal-block flags and its update
+flags, last known device vendor/unique number, fiscal-block flags and its update
 timestamp, never credentials or customer data. It is display state, not fiscal
 evidence.
 
@@ -168,7 +168,7 @@ It never scans with an unresolved operation: the device must not change.
 ## Desktop app
 
 - **Do wydruku** — eligible advances and sales for the printer's branch, showing
-  kind, amount and event date. Queue a document with an optional buyer NIP;
+  kind, amount and legal deadline, with overdue documents marked explicitly. Queue a document with an optional buyer NIP;
   Holuto derives payments and advance deductions. Unpaid final-sale balances
   print as credit. Receipt lines and totals are not locally editable. Documents
   above the printer's amount limit remain listed but cannot execute. Each poll
@@ -204,7 +204,7 @@ higher-precision prices; inconsistent line gross totals also fail before printin
 The printer calculates VAT. Each line uses its assigned slot for `23`, `8`, `5`,
 `0` or `zw`; mixed rates are supported, with no highest-rate or whole-receipt
 fallback. Holuto omits zero-price lines; the agent rejects any it receives.
-Missing VAT-slot mappings reject queueing, never substitute a rate.
+Missing VAT-letter mappings reject queueing, never substitute a rate.
 Buyer NIP, advance deductions and payments reach the device unchanged.
 Line and company names must print in full as
 received; unsupported text fails before fiscal commands, never transliterated or
@@ -277,7 +277,7 @@ builds never report. **Udostępniaj diagnostykę** defaults on. Live opt-out gat
 new structured telemetry; restart to disable native crash reporting.
 
 Structured diagnostics retain reviewed messages, sanitized errors/frames,
-timing/status, release-health sessions and printer ID/device serial; payloads,
+timing/status, release-health sessions and printer ID/device unique number; payloads,
 arbitrary fields, hostnames and local paths are scrubbed. Native dumps contain
 process memory and may expose sensitive data despite those hooks. See
 [Diagnostics and privacy](docs/telemetry.md) for the exact allowlist, lifecycle,

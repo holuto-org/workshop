@@ -127,7 +127,7 @@ fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
             "OTHER",
             "Wybrane urządzenie nie jest drukarką Temo Online",
         ),
-        ("nu", "", "Wybrane urządzenie nie jest drukarką Temo Online"),
+        ("nu", "", "Nieprawidłowy numer unikatowy drukarki"),
         #[cfg(not(workshop_acceptance))]
         ("fs", "0", "Drukarka nie jest w trybie fiskalnym"),
         ("hr", "0", "Drukarka nie ma zaprogramowanego nagłówka"),
@@ -218,7 +218,7 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
         let expected = device.probe().unwrap();
         let receipt = if mode == "inactive" {
             Receipt::new(
-                vec![line("Olej", "1", "1", 3)],
+                vec![line("Olej", "1", "1", 5)],
                 vec![],
                 vec![pay(PaymentForm::Cash, 100)],
                 None,
@@ -245,10 +245,7 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
                 error.to_string(),
                 "Wybrana stawka VAT jest nieaktywna na drukarce."
             ),
-            "changed" => assert_eq!(
-                error.to_string(),
-                "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
-            ),
+            "changed" => assert_eq!(error.to_string(), "Nieprawidłowe przypisanie liter VAT A–E"),
             "none" => assert_eq!(error.to_string(), "Brak aktywnych stawek VAT"),
             "missing" => assert!(matches!(error, Error::Protocol(_)), "{error:?}"),
             _ => panic!("unknown fixture mode"),
@@ -262,7 +259,7 @@ fn a_device_swap_refuses_receipts_reports_and_resolution() {
     let sim = simulator();
     let device = printer(&sim);
     let mut expected = device.probe().unwrap();
-    expected.serial = "OLD".to_owned();
+    expected.unique_number = "OLD".to_owned();
     for error in [
         device
             .print_receipt(&sale(), &expected, &mut Recorder::default())
@@ -274,7 +271,7 @@ fn a_device_swap_refuses_receipts_reports_and_resolution() {
     ] {
         assert_eq!(
             error.to_string(),
-            "Podłączona drukarka DEMO0000001 nie jest drukarką OLD, której dotyczy operacja."
+            "Podłączona drukarka DEM0000000001 nie jest drukarką OLD, której dotyczy operacja."
         );
     }
     assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
@@ -495,7 +492,7 @@ fn detection_only_switches_when_permitted_and_preserves_permission_guidance() {
     );
     assert_eq!(commands(&sim), Vec::<String>::new());
     let found = device.detect(true).unwrap();
-    assert_eq!(found.serial, SERIAL);
+    assert_eq!(found.unique_number, SERIAL);
     assert_eq!(device.connection().port, sim.address());
     assert!(
         device.verify(SERIAL).unwrap().ready(),

@@ -20,9 +20,9 @@
         "operationId": "agent_documents",
         "parameters": [
           {
-            "name": "X-Device-Serial",
+            "name": "X-Device-Unique-Number",
             "in": "header",
-            "description": "Serial number pinned by the printer's first session.",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
               "type": "string"
@@ -95,26 +95,19 @@
     "/agent/heartbeat": {
       "post": {
         "operationId": "heartbeat",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Telemetry"
-              }
+        "parameters": [
+          {
+            "name": "X-Device-Unique-Number",
+            "in": "header",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrinterStatus"
-                }
-              }
-            }
-          },
+          "204": {},
           "400": {
             "$ref": "#/components/responses/BadRequest"
           },
@@ -124,17 +117,8 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
           "408": {
             "$ref": "#/components/responses/RequestTimeout"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
           },
           "426": {
             "$ref": "#/components/responses/UpgradeRequired"
@@ -159,9 +143,9 @@
         "operationId": "device_queue",
         "parameters": [
           {
-            "name": "X-Device-Serial",
+            "name": "X-Device-Unique-Number",
             "in": "header",
-            "description": "Serial number pinned by the printer's first session.",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
               "type": "string"
@@ -238,9 +222,9 @@
         "operationId": "take",
         "parameters": [
           {
-            "name": "X-Device-Serial",
+            "name": "X-Device-Unique-Number",
             "in": "header",
-            "description": "Serial number pinned by the printer's first session.",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
               "type": "string"
@@ -311,9 +295,9 @@
             }
           },
           {
-            "name": "X-Device-Serial",
+            "name": "X-Device-Unique-Number",
             "in": "header",
-            "description": "Serial number pinned by the printer's first session.",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
               "type": "string"
@@ -383,9 +367,9 @@
             }
           },
           {
-            "name": "X-Device-Serial",
+            "name": "X-Device-Unique-Number",
             "in": "header",
-            "description": "Serial number pinned by the printer's first session.",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
               "type": "string"
@@ -669,7 +653,7 @@
       "AdvanceDeduction": {
         "type": "object",
         "required": [
-          "vatSlot",
+          "vatLetter",
           "vatRate",
           "amount"
         ],
@@ -677,11 +661,11 @@
           "amount": {
             "$ref": "#/components/schemas/PositiveAmount_Amount"
           },
+          "vatLetter": {
+            "$ref": "#/components/schemas/FiscalVatLetter"
+          },
           "vatRate": {
             "$ref": "#/components/schemas/VatRate"
-          },
-          "vatSlot": {
-            "$ref": "#/components/schemas/VatSlotNumber"
           }
         },
         "additionalProperties": false
@@ -695,7 +679,9 @@
           "orderNumber",
           "amount",
           "customerName",
-          "occurredAt"
+          "occurredAt",
+          "dueAt",
+          "isOverdue"
         ],
         "properties": {
           "allocationId": {
@@ -720,6 +706,13 @@
                 "type": "null"
               }
             ]
+          },
+          "dueAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isOverdue": {
+            "type": "boolean"
           },
           "kind": {
             "$ref": "#/components/schemas/FiscalReceiptKind"
@@ -898,7 +891,9 @@
                 "orderNumber",
                 "amount",
                 "customerName",
-                "occurredAt"
+                "occurredAt",
+                "dueAt",
+                "isOverdue"
               ],
               "properties": {
                 "allocationId": {
@@ -923,6 +918,13 @@
                       "type": "null"
                     }
                   ]
+                },
+                "dueAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "isOverdue": {
+                  "type": "boolean"
                 },
                 "kind": {
                   "$ref": "#/components/schemas/FiscalReceiptKind"
@@ -1048,7 +1050,8 @@
           "done",
           "failed",
           "expired",
-          "unknown"
+          "unknown",
+          "voided"
         ]
       },
       "FiscalPaymentForm": {
@@ -1073,6 +1076,18 @@
         "enum": [
           "advance",
           "sale"
+        ]
+      },
+      "FiscalVatLetter": {
+        "type": "string",
+        "enum": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G"
         ]
       },
       "FiscalVendor": {
@@ -1361,32 +1376,17 @@
         "type": "object",
         "required": [
           "vendor",
-          "maxQuantityDecimals",
           "capabilities",
-          "maxItemNameLength",
-          "maxCompanyNameLength",
-          "maxLinesPerReceipt",
-          "allowedCharacters",
           "id",
           "branchId",
           "name",
-          "deviceSerial",
+          "uniqueNumber",
           "model",
           "firmware",
           "appVersion",
-          "vatSlots"
+          "vatRates"
         ],
         "properties": {
-          "allowedCharacters": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/AllowedCharacters"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "appVersion": {
             "oneOf": [
               {
@@ -1410,16 +1410,6 @@
               }
             ]
           },
-          "deviceSerial": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Code"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "firmware": {
             "oneOf": [
               {
@@ -1432,46 +1422,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/FiscalPrinterId"
-          },
-          "maxCompanyNameLength": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PrinterLimit"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "maxItemNameLength": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PrinterLimit"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "maxLinesPerReceipt": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PrinterLimit"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "maxQuantityDecimals": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/QuantityDecimals"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "model": {
             "oneOf": [
@@ -1486,10 +1436,20 @@
           "name": {
             "$ref": "#/components/schemas/Label"
           },
-          "vatSlots": {
+          "uniqueNumber": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UniqueNumber"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vatRates": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/VatSlot"
+              "$ref": "#/components/schemas/VatRateMapping"
             }
           },
           "vendor": {
@@ -1508,12 +1468,32 @@
       "PrinterCapabilities": {
         "type": "object",
         "required": [
+          "maxItemNameLength",
+          "maxCompanyNameLength",
+          "maxLinesPerReceipt",
+          "allowedCharacters",
+          "maxQuantityDecimals",
           "advanceDeductions",
           "zeroTotalReceipts"
         ],
         "properties": {
           "advanceDeductions": {
             "type": "boolean"
+          },
+          "allowedCharacters": {
+            "$ref": "#/components/schemas/AllowedCharacters"
+          },
+          "maxCompanyNameLength": {
+            "$ref": "#/components/schemas/PrinterLimit"
+          },
+          "maxItemNameLength": {
+            "$ref": "#/components/schemas/PrinterLimit"
+          },
+          "maxLinesPerReceipt": {
+            "$ref": "#/components/schemas/PrinterLimit"
+          },
+          "maxQuantityDecimals": {
+            "$ref": "#/components/schemas/QuantityDecimals"
           },
           "zeroTotalReceipts": {
             "type": "boolean"
@@ -1610,7 +1590,7 @@
           "unitPrice",
           "total",
           "vatRate",
-          "vatSlot"
+          "vatLetter"
         ],
         "properties": {
           "name": {
@@ -1625,11 +1605,11 @@
           "unitPrice": {
             "$ref": "#/components/schemas/PositiveUnitPrice_UnitPrice"
           },
+          "vatLetter": {
+            "$ref": "#/components/schemas/FiscalVatLetter"
+          },
           "vatRate": {
             "$ref": "#/components/schemas/VatRate"
-          },
-          "vatSlot": {
-            "$ref": "#/components/schemas/VatSlotNumber"
           }
         },
         "additionalProperties": false
@@ -1704,22 +1684,14 @@
         "type": "object",
         "required": [
           "vendor",
-          "maxQuantityDecimals",
           "capabilities",
-          "maxItemNameLength",
-          "maxCompanyNameLength",
-          "maxLinesPerReceipt",
-          "allowedCharacters",
-          "serial",
+          "uniqueNumber",
           "model",
           "firmware",
           "appVersion",
-          "vatSlots"
+          "vatRates"
         ],
         "properties": {
-          "allowedCharacters": {
-            "$ref": "#/components/schemas/AllowedCharacters"
-          },
           "appVersion": {
             "$ref": "#/components/schemas/Code"
           },
@@ -1729,28 +1701,16 @@
           "firmware": {
             "$ref": "#/components/schemas/Code"
           },
-          "maxCompanyNameLength": {
-            "$ref": "#/components/schemas/PrinterLimit"
-          },
-          "maxItemNameLength": {
-            "$ref": "#/components/schemas/PrinterLimit"
-          },
-          "maxLinesPerReceipt": {
-            "$ref": "#/components/schemas/PrinterLimit"
-          },
-          "maxQuantityDecimals": {
-            "$ref": "#/components/schemas/QuantityDecimals"
-          },
           "model": {
             "$ref": "#/components/schemas/Code"
           },
-          "serial": {
-            "$ref": "#/components/schemas/Code"
+          "uniqueNumber": {
+            "$ref": "#/components/schemas/UniqueNumber"
           },
-          "vatSlots": {
+          "vatRates": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/VatSlot"
+              "$ref": "#/components/schemas/VatRateMapping"
             }
           },
           "vendor": {
@@ -1778,6 +1738,13 @@
         "minLength": 43,
         "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
       },
+      "UniqueNumber": {
+        "type": "string",
+        "examples": [
+          "ABC1234567890"
+        ],
+        "pattern": "^[A-Z]{3}[0-9]{10}$"
+      },
       "VatRate": {
         "type": "string",
         "description": "Polish VAT rates as `KSeF` codes them; `zw` marks an exempt supply.",
@@ -1789,29 +1756,21 @@
           "zw"
         ]
       },
-      "VatSlot": {
+      "VatRateMapping": {
         "type": "object",
         "required": [
-          "slot",
+          "letter",
           "vatRate"
         ],
         "properties": {
-          "slot": {
-            "$ref": "#/components/schemas/VatSlotNumber"
+          "letter": {
+            "$ref": "#/components/schemas/FiscalVatLetter"
           },
           "vatRate": {
             "$ref": "#/components/schemas/VatRate"
           }
         },
         "additionalProperties": false
-      },
-      "VatSlotNumber": {
-        "type": "integer",
-        "examples": [
-          0
-        ],
-        "maximum": 15,
-        "minimum": 0
       },
       "Versioned_Job": {
         "type": "object",

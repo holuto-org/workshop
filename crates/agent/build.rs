@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_derive("Eq".into());
     for (schema, name) in [
         ("VatRate", "VatCode"),
-        ("VatSlot", "VatSlotRate"),
+        ("VatRateMapping", "VatRateMapping"),
         ("Printer", "PrinterInfo"),
         ("FiscalJobState", "JobState"),
         ("ReceiptLine", "JobLine"),
@@ -52,6 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "PositiveQuantityQuantity",
         "PositiveUnitPriceUnitPrice",
         "Title",
+        "UniqueNumber",
     ] {
         let _settings = settings.with_replacement(name, "String", iter::empty());
     }
@@ -99,7 +100,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         "maxCompanyNameLength",
     ] {
         replace_reference(
-            telemetry
+            schemas
+                .get_mut("PrinterCapabilities")
+                .ok_or("missing capabilities")?
                 .pointer_mut(&format!("/properties/{field}"))
                 .ok_or("missing telemetry limit")?,
             "PrinterLimit",

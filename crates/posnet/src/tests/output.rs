@@ -60,7 +60,7 @@ fn mixed_vat_and_fractional_quantity_frames() {
             line("Olej łódź", "0.5", "19.99", 0),
             line("Usługa", "1", "2", 1),
             line("Towar", "1", "3", 2),
-            line("Zwolnione", "1", "4", 6),
+            line("Zwolnione", "1", "4", 4),
         ],
         vec![],
         vec![pay(PaymentForm::Cash, 1900)],

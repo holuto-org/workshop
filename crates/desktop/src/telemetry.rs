@@ -106,7 +106,7 @@ fn scrub_event(mut event: Event<'static>) -> Option<Event<'static>> {
     event.logger = None;
     event
         .tags
-        .retain(|key, _| matches!(key.as_str(), "printer_id" | "device_serial"));
+        .retain(|key, _| matches!(key.as_str(), "printer_id" | "device_unique_number"));
     privacy::scrub_paths(&mut event);
     for exception in &mut event.exception.values {
         exception.value = None;
@@ -139,7 +139,7 @@ fn scrub_log(mut log: Log) -> Option<Log> {
     log.attributes.retain(|key, _| {
         matches!(
             key.as_str(),
-            "sentry.release" | "sentry.environment" | "printer_id" | "device_serial"
+            "sentry.release" | "sentry.environment" | "printer_id" | "device_unique_number"
         )
     });
     Some(log)
@@ -149,14 +149,14 @@ pub(crate) fn set_enabled(enabled: bool) {
     ENABLED.store(enabled && !cfg!(feature = "simulator"), Ordering::SeqCst);
 }
 
-pub(crate) fn printer(printer_id: &str, serial: &str) {
+pub(crate) fn printer(printer_id: &str, unique_number: &str) {
     sentry::configure_scope(|scope| {
         scope.set_tag("printer_id", printer_id);
-        scope.set_tag("device_serial", serial);
+        scope.set_tag("device_unique_number", unique_number);
     });
     sentry::with_integration(|integration: &MinidumpIntegration, _| {
         integration.set_tag("printer_id".into(), Some(printer_id.into()));
-        integration.set_tag("device_serial".into(), Some(serial.into()));
+        integration.set_tag("device_unique_number".into(), Some(unique_number.into()));
     });
 }
 
@@ -208,7 +208,7 @@ impl Transport for SafeTransport {
                 transaction.extra.clear();
                 transaction
                     .tags
-                    .retain(|key, _| matches!(key.as_str(), "printer_id" | "device_serial"));
+                    .retain(|key, _| matches!(key.as_str(), "printer_id" | "device_unique_number"));
                 scrub_contexts(&mut transaction.contexts);
                 for span in &mut transaction.spans {
                     span.description = None;

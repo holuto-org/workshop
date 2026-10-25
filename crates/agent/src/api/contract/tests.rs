@@ -7,7 +7,9 @@ use super::{validate_request, validate_response};
 use crate::{
     api::{
         Api,
-        model::{Job, Outcome, Page, PrinterStatus, QueueForm, ResultForm, Telemetry, VatSlotRate},
+        model::{
+            Job, Outcome, Page, PrinterStatus, QueueForm, ResultForm, Telemetry, VatRateMapping,
+        },
     },
     documents::{Document, ReceiptKind},
     testing::{Holuto, JOB_ID, ORDER_ID, job_json, status_json, telemetry},
@@ -16,10 +18,10 @@ use crate::{
 #[test]
 fn every_client_operation_matches_the_vendored_method_path_and_success_statuses() {
     let server = Holuto::new();
-    let mut api = Api::new(server.url(), server.token(), "TEST-001").unwrap();
-    let telemetry = telemetry("TEST-001");
+    let mut api = Api::new(server.url(), server.token(), "TST0000000001").unwrap();
+    let telemetry = telemetry("TST0000000001");
     api.session(&telemetry).unwrap();
-    api.heartbeat(&telemetry).unwrap();
+    api.heartbeat().unwrap();
     let page = api.documents(None).unwrap();
     assert_eq!(page.items, Vec::<Document>::new());
     assert_eq!(page.next_cursor, None);
@@ -57,7 +59,7 @@ fn every_client_operation_matches_the_vendored_method_path_and_success_statuses(
         serde_json::from_str(include_str!("../../../../../openapi/agent.json")).unwrap();
     let expected = [
         ("POST", "/agent/session", vec!["200"]),
-        ("POST", "/agent/heartbeat", vec!["200"]),
+        ("POST", "/agent/heartbeat", vec!["204"]),
         ("GET", "/agent/documents", vec!["200"]),
         ("POST", "/agent/jobs", vec!["201"]),
         ("POST", "/agent/jobs/take", vec!["200", "204"]),
@@ -118,7 +120,7 @@ fn generated_nullable_response_fields_require_presence_and_keep_per_job_amount_v
     let _removed = status["printer"]
         .as_object_mut()
         .unwrap()
-        .remove("deviceSerial");
+        .remove("uniqueNumber");
     assert!(
         serde_json::from_value::<PrinterStatus>(status).is_err(),
         "missing nullable printer field"
@@ -170,7 +172,9 @@ fn generated_page_preserves_the_domain_decimal_conversion_in_both_directions() {
         "items": [{
             "kind": "sale", "allocationId": null, "orderId": ORDER_ID,
             "orderNumber": 42, "amount": "12.34", "customerName": null,
-            "occurredAt": "2026-10-24T10:00:00Z"
+            "occurredAt": "2026-10-24T10:00:00Z",
+        "dueAt": "2026-10-24T10:00:00Z",
+        "isOverdue": false
         }],
         "nextCursor": null
     });
@@ -190,14 +194,15 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
     value["lines"][0]["name"] = json!("PRIVATE-LINE");
     value["lines"][0]["quantity"] = json!("987.654321");
     value["payments"][0]["amount"] = json!("123.45");
-    value["advances"] = json!([{"vatSlot":0,"vatRate":"23","amount":"33.21"}]);
+    value["advances"] = json!([{"vatLetter": "A","vatRate":"23","amount":"33.21"}]);
     let job: Job = serde_json::from_value(value).unwrap();
     let mut value = status_json();
     value["printer"]["name"] = json!("PRIVATE-PRINTER-NAME");
     let status: PrinterStatus = serde_json::from_value(value).unwrap();
     let mut telemetry = Telemetry::new("PRIVATE-DEVICE-SERIAL", Vendor::Posnet);
     telemetry.model = "PRIVATE-MODEL".into();
-    let slot: VatSlotRate = serde_json::from_value(json!({"slot":0,"vatRate":"23"})).unwrap();
+    let slot: VatRateMapping =
+        serde_json::from_value(json!({"letter": "A","vatRate":"23"})).unwrap();
     let queue: QueueForm = serde_json::from_value(json!({
         "orderId":ORDER_ID,"kind":"sale","allocationId":null,"buyerNip":"5260250274"
     }))
@@ -210,7 +215,9 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
     let page: Page = serde_json::from_value(json!({
         "items":[{
             "kind":"sale","allocationId":null,"orderId":ORDER_ID,"orderNumber":42,
-            "amount":"987.65","customerName":"PRIVATE-CUSTOMER","occurredAt":"2026-10-24T10:00:00Z"
+            "amount":"987.65","customerName":"PRIVATE-CUSTOMER","occurredAt":"2026-10-24T10:00:00Z",
+        "dueAt": "2026-10-24T10:00:00Z",
+        "isOverdue": false
         }],"nextCursor":"PRIVATE-CURSOR"
     }))
     .unwrap();
@@ -222,7 +229,7 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
         (&status, "PrinterStatus"),
         (&status.printer, "PrinterInfo"),
         (&telemetry, "Telemetry"),
-        (&slot, "VatSlotRate"),
+        (&slot, "VatRateMapping"),
         (&queue, "QueueForm"),
         (&result, "ResultForm"),
         (&page, "Page"),

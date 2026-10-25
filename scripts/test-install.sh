@@ -8,9 +8,11 @@ trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$work/bin" "$work/home"
 export FIXTURE_LOG="$work/calls" FIXTURE_OS=Darwin FIXTURE_ARCH=x86_64
 export FIXTURE_MAC=11.0 FIXTURE_ARM=0 FIXTURE_GLIBC='glibc 2.39'
-export FIXTURE_DOWNLOAD=forbidden FIXTURE_MANIFEST=bad FIXTURE_GH=0
-export FIXTURE_RUNNING=none FIXTURE_MOUNT=forbidden
+export FIXTURE_DOWNLOAD=forbidden FIXTURE_MANIFEST=bad FIXTURE_GH=0 FIXTURE_GH_AUTH=0
+export FIXTURE_RUNNING=none FIXTURE_MOUNT=forbidden FIXTURE_MOVE=real
 FIXTURE_REAL_UNAME=$(command -v uname)
+export FIXTURE_REAL_MV
+FIXTURE_REAL_MV=$(command -v mv)
 export FIXTURE_REAL_HASH
 FIXTURE_REAL_HASH=$(command -v sha256sum || command -v shasum)
 cat > "$work/bin/fixture" <<'FIXTURE'
@@ -58,24 +60,49 @@ case $name in
       */workshop-mac-x64.dmg) printf 'fixture artifact\n' > "$out" ;;
       *) exit 94 ;;
     esac ;;
-  gh) printf 'gh %s\n' "$*" >> "$FIXTURE_LOG"; exit "$FIXTURE_GH" ;;
-  xattr|hdiutil)
+  gh)
+    printf 'gh %s\n' "$*" >> "$FIXTURE_LOG"
+    [[ $* != 'auth status --hostname github.com' ]] || exit "$FIXTURE_GH_AUTH"
+    exit "$FIXTURE_GH" ;;
+  xattr|hdiutil|ditto)
     if [[ $FIXTURE_MOUNT == forbidden ]]; then
       printf 'FORBIDDEN %s %s\n' "$name" "$*" >> "$FIXTURE_LOG"; exit 95
     fi
     printf '%s %s\n' "$name" "$*" >> "$FIXTURE_LOG"
-    # Mounting fails (e.g. blocked by device policy), so detaching has nothing to detach.
-    [[ $name == xattr ]] || exit 1 ;;
-  apt|sudo|ditto|open)
+    case $name:$FIXTURE_MOUNT:$1 in
+      xattr:*) ;;
+      # Mounting fails (e.g. blocked by device policy), so detaching has nothing to detach.
+      hdiutil:fail:*) exit 1 ;;
+      hdiutil:app:attach) cp -R -- "$FIXTURE_IMAGE"/. "${@: -2:1}" ;;
+      hdiutil:app:detach) rm -rf -- "${@: -1}"/* ;;
+      ditto:app:*) cp -R -- "$1" "$2" ;;
+      *) exit 97 ;;
+    esac ;;
+  mv)
+    # The final rename of the staged app fails, as on a full or ejected disk.
+    if [[ $FIXTURE_MOVE == fail-install && ${@: -2:1} == */.workshop-install.*/'Holuto Workshop.app' ]]; then
+      exit 1
+    fi
+    "$FIXTURE_REAL_MV" "$@" ;;
+  apt|sudo|open)
     printf 'FORBIDDEN %s %s\n' "$name" "$*" >> "$FIXTURE_LOG"; exit 95 ;;
   *) exit 96 ;;
 esac
 FIXTURE
 chmod +x "$work/bin/fixture"
-for command in uname sw_vers sysctl getconf pgrep shasum curl gh apt sudo hdiutil ditto open xattr; do
+for command in uname sw_vers sysctl getconf pgrep shasum curl gh apt sudo hdiutil ditto open xattr mv; do
   ln -s fixture "$work/bin/$command"
 done
 export PATH="$work/bin:$PATH" HOME="$work/home"
+export FIXTURE_IMAGE="$work/image"
+fixture_app() {
+  mkdir -p "$1/Contents/MacOS"
+  printf '#!/bin/sh\n' > "$1/Contents/MacOS/workshop"
+  chmod +x "$1/Contents/MacOS/workshop"
+  printf '%s\n' "$3" > "$1/Contents/marker"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>%s</string></dict></plist>\n' \
+    "$2" > "$1/Contents/Info.plist"
+}
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 run() {
@@ -182,6 +209,13 @@ if ((EUID != 0)); then
   [[ $(readlink "$HOME/.local/bin/workshop") == /unrelated/workshop ]] || fail 'changed unrelated symlink'
   rm "$HOME/.local/bin/workshop"
   ln -s "$HOME/Applications/Holuto Workshop.app/Contents/MacOS/workshop" "$HOME/.local/bin/workshop"
+  # gh needs a sign-in to verify attestations: stop before downloading and say so.
+  FIXTURE_GH_AUTH=1
+  run --release v1.2.3
+  [[ $status != 0 ]] || fail 'continued with an unauthenticated gh'
+  contains 'gh auth login'
+  ! grep -F 'curl ' "$FIXTURE_LOG" >/dev/null || fail 'downloaded although gh cannot verify attestations'
+  FIXTURE_GH_AUTH=0
   for FIXTURE_MANIFEST in bad missing duplicate mismatch valid; do
     if [[ $FIXTURE_MANIFEST == valid ]]; then
       if command -v sha256sum >/dev/null 2>&1; then
@@ -219,6 +253,34 @@ if ((EUID != 0)); then
   [[ $(grep -E '^(xattr|hdiutil) ' "$FIXTURE_LOG" | cut -d' ' -f1) == $'xattr\nhdiutil' ]] || fail 'image was mounted before it was quarantined'
   attached=$(grep '^hdiutil attach ' "$FIXTURE_LOG")
   [[ ! -e ${attached##* } ]] || fail 'left the downloaded image behind after a failed mount'
+  # An update swaps in the complete staged app; if the final rename fails, the
+  # previous app is restored. The installer reads versions with macOS PlistBuddy.
+  if [[ -x /usr/libexec/PlistBuddy ]]; then
+    FIXTURE_MOUNT=app
+    fixture_app "$FIXTURE_IMAGE/Holuto Workshop.app" 1.2.3 new
+    installed="$HOME/Applications/Holuto Workshop.app"
+    for FIXTURE_MOVE in real fail-install; do
+      rm -rf -- "$HOME/Applications"
+      fixture_app "$installed" 1.2.0 old
+      run --release v1.2.3
+      if [[ $FIXTURE_MOVE == real ]]; then
+        [[ $status == 0 ]] || fail 'verified update failed'
+        [[ $(cat "$installed/Contents/marker") == new ]] || fail 'update did not install the staged app'
+      else
+        [[ $status != 0 ]] || fail 'accepted a failed app rename'
+        [[ $(cat "$installed/Contents/marker") == old ]] || fail 'failed update did not restore the previous app'
+        ! grep -E 'Restore the previous app manually|Previous app preserved' "$work/output" >/dev/null ||
+          fail 'restorable update asked for manual recovery'
+      fi
+      [[ -z $(find "$HOME/Applications" -mindepth 1 -maxdepth 1 -name '.workshop-install.*') ]] ||
+        fail "left staging or backup behind after: $FIXTURE_MOVE"
+      [[ $(readlink "$HOME/.local/bin/workshop") == "$installed/Contents/MacOS/workshop" ]] || fail 'changed the launcher'
+      grep -F 'hdiutil detach' "$FIXTURE_LOG" >/dev/null || fail 'left the image mounted'
+    done
+    FIXTURE_MOVE=real
+  else
+    printf 'PlistBuddy unavailable: macOS app replacement fixtures need a macOS runner.\n'
+  fi
   FIXTURE_MOUNT=forbidden
 else
   printf 'Root runner: full-mode verification fixtures need an unprivileged CI user.\n'

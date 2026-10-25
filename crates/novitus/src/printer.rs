@@ -59,10 +59,10 @@ impl Driver for Printer {
         Ok(preflight(&mut self.session()?)?.device)
     }
 
-    fn verify(&self, serial: &str) -> Result<Device, Error> {
+    fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
         device.require_ready()?;
-        device.require_serial(serial)?;
+        device.require_serial(unique_number)?;
         Ok(device)
     }
 
@@ -75,7 +75,7 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let checked = preflight(&mut session)?;
         checked.device.require_ready()?;
-        checked.device.require_serial(&expected.serial)?;
+        checked.device.require_serial(&expected.unique_number)?;
         if expected.vendor != Vendor::Novitus || checked.device.vat != expected.vat {
             return Err(Error::Invalid(
                 "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie.".to_owned(),
@@ -122,13 +122,13 @@ impl Driver for Printer {
     fn print_report(
         &self,
         report: Report,
-        serial: &str,
+        unique_number: &str,
         journal: &mut dyn Journal,
     ) -> Result<(), Error> {
         let mut session = self.session()?;
         let checked = preflight(&mut session)?;
         checked.device.require_ready()?;
-        checked.device.require_serial(serial)?;
+        checked.device.require_serial(unique_number)?;
         let today = checked.date;
         let (command, body, timeout) = match report {
             Report::Daily => (
@@ -232,7 +232,7 @@ fn preflight_identity(
         vendor: Vendor::Novitus,
         model,
         firmware,
-        serial: String::new(),
+        unique_number: String::new(),
         problems: vec![],
         vat: vec![],
         capabilities,
@@ -280,9 +280,9 @@ fn preflight_identity(
             .push("Brak zaprogramowanego nagłówka".into());
     }
     let vat = session.command("23#s", TIMEOUT)?;
-    let (rates, serial, idle) = vat_table(&vat.body)?;
+    let (rates, unique_number, idle) = vat_table(&vat.body)?;
     device.vat = rates;
-    device.serial = serial;
+    device.unique_number = unique_number;
     if !idle {
         device
             .problems
@@ -428,16 +428,18 @@ fn vat_table(body: &str) -> Result<(Vec<VatRate>, String, bool), Error> {
         let _value = decimal::parse(fields.next().ok_or_else(frame::corrupt)?, 2)
             .ok_or_else(frame::corrupt)?;
     }
-    let serial = fields.next().ok_or_else(frame::corrupt)?;
-    if serial.len() != 13
-        || !serial.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    let unique_number = fields.next().ok_or_else(frame::corrupt)?;
+    if unique_number.len() != 13
+        || !unique_number
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric())
         || fields.next().is_some()
     {
         return Err(frame::corrupt());
     }
     Ok((
         rates,
-        serial.to_owned(),
+        unique_number.to_owned(),
         status.first() == Some(&"0")
             && (status.get(1) == Some(&"1")
                 || (cfg!(workshop_acceptance) && status.get(1) == Some(&"0")))

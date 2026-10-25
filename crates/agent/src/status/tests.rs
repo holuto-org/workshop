@@ -14,7 +14,7 @@ const GOLDEN: &str = r#"{
   "processing": true,
   "connected": true,
   "vendor": "posnet",
-  "serial": "TEMO-1234",
+  "uniqueNumber": "TEMO-1234",
   "printerId": "printer-5678",
   "blocked": true,
   "reportUnresolved": false,
@@ -27,7 +27,7 @@ fn snapshot() -> Result<Snapshot, jiff::Error> {
         processing: true,
         connected: true,
         vendor: Some(Vendor::Posnet),
-        serial: Some("TEMO-1234".to_owned()),
+        unique_number: Some("TEMO-1234".to_owned()),
         printer_id: Some("printer-5678".to_owned()),
         blocked: true,
         report_unresolved: false,
@@ -87,7 +87,7 @@ fn disconnected_snapshot_retains_identity_and_blocks_without_inventing_processin
             "processing": false,
             "connected": false,
             "vendor": "posnet",
-            "serial": "TEMO-1234",
+            "uniqueNumber": "TEMO-1234",
             "printerId": "printer-5678",
             "blocked": true,
             "reportUnresolved": true,
@@ -95,12 +95,12 @@ fn disconnected_snapshot_retains_identity_and_blocks_without_inventing_processin
             "updatedAt": "2026-10-24T12:34:56Z"
         })
     );
-    stopped.serial = None;
+    stopped.unique_number = None;
     stopped.vendor = None;
     stopped.printer_id = None;
     stopped.save(&dir)?;
     let stored = serde_json::from_slice::<serde_json::Value>(&fs::read(dir.file("status.json"))?)?;
-    assert_eq!(stored["serial"], serde_json::Value::Null);
+    assert_eq!(stored["uniqueNumber"], serde_json::Value::Null);
     assert_eq!(stored["vendor"], serde_json::Value::Null);
     assert_eq!(stored["printerId"], serde_json::Value::Null);
     assert_eq!(Snapshot::load_at(dir.path())?, Some(stopped));
@@ -121,8 +121,8 @@ fn malformed_snapshot_errors_never_echo_values_or_unknown_keys() -> TestResult {
         GOLDEN.replace("  \"processing\": true,\n", ""),
         GOLDEN.replace("\"processing\": true", "\"processing\": \"secret-token\""),
         GOLDEN.replace(
-            "\"serial\": \"TEMO-1234\"",
-            "\"serial\": {\"customer\": \"private-name\"}",
+            "\"unique_number\": \"TEMO-1234\"",
+            "\"unique_number\": {\"customer\": \"private-name\"}",
         ),
         GOLDEN.replace(
             "\"2026-10-24T12:34:56Z\"",

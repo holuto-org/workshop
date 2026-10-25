@@ -96,7 +96,7 @@ fn config_show_and_status_report_vendor() -> TestResult {
         processing: true,
         connected: true,
         vendor: Some(Vendor::Novitus),
-        serial: Some("SAME-SERIAL".into()),
+        unique_number: Some("SAME-SERIAL".into()),
         printer_id: None,
         blocked: true,
         report_unresolved: true,
@@ -308,7 +308,7 @@ fn status_exposes_the_running_apps_published_state_without_configuration_secrets
         processing: true,
         connected: true,
         vendor: None,
-        serial: Some("DEMO0000001".into()),
+        unique_number: Some("DEM0000000001".into()),
         printer_id: Some("00000000-0000-0000-0000-000000000009".into()),
         blocked: true,
         report_unresolved: false,
@@ -320,7 +320,7 @@ fn status_exposes_the_running_apps_published_state_without_configuration_secrets
     assert_eq!(
         response.value,
         json!({"ok":true,"appRunning":true,"state":{
-            "processing":true,"connected":true,"serial":"DEMO0000001","vendor":null,
+            "processing":true,"connected":true,"uniqueNumber":"DEM0000000001","vendor":null,
             "printerId":"00000000-0000-0000-0000-000000000009",
             "blocked":true,"reportUnresolved":false,"orphanedReceipt":true,
             "updatedAt":"2026-10-24T12:34:56Z"

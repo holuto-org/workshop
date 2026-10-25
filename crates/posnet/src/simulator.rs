@@ -1,4 +1,4 @@
-//! Offline TCP Temo peer using the serial driver's [`Session`](crate::session::Session),
+//! Offline TCP Temo peer using the unique_number driver's [`Session`](crate::session::Session),
 //! with one session at a time.
 
 use std::{
@@ -36,10 +36,10 @@ use crate::{
     text,
 };
 
-pub const SERIAL: &str = "DEMO0000001";
+pub const SERIAL: &str = "DEM0000000001";
 const POLL: Duration = Duration::from_millis(1);
 const DEFAULT_VAT: [&str; 7] = [
-    "23,00", "8,00", "0,00", "101,00", "101,00", "101,00", "100,00",
+    "23,00", "8,00", "5,00", "0,00", "100,00", "101,00", "101,00",
 ];
 
 pub type Params = BTreeMap<String, String>;
@@ -344,9 +344,9 @@ impl Driver for SimDriver {
         self.printer.probe().map(|device| self.describe(device))
     }
 
-    fn verify(&self, serial: &str) -> Result<Device, Error> {
+    fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         self.printer
-            .verify(serial)
+            .verify(unique_number)
             .map(|device| self.describe(device))
     }
 
@@ -362,10 +362,10 @@ impl Driver for SimDriver {
     fn print_report(
         &self,
         report: Report,
-        serial: &str,
+        unique_number: &str,
         journal: &mut dyn Journal,
     ) -> Result<(), Error> {
-        self.printer.print_report(report, serial, journal)
+        self.printer.print_report(report, unique_number, journal)
     }
 }
 

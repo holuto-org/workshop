@@ -108,10 +108,10 @@ impl Driver for Printer {
     }
 
     /// Requires the paired device to be ready before resolving an interrupted operation.
-    fn verify(&self, serial: &str) -> Result<Device, Error> {
+    fn verify(&self, unique_number: &str) -> Result<Device, Error> {
         let device = self.probe()?;
         device.require_ready()?;
-        device.require_serial(serial)?;
+        device.require_serial(unique_number)?;
         Ok(device)
     }
 
@@ -126,7 +126,7 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let device = read_device(&mut session)?;
         device.require_ready()?;
-        device.require_serial(&expected.serial)?;
+        device.require_serial(&expected.unique_number)?;
         if device.vat != expected.vat {
             return Err(Error::Invalid(
                 "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
@@ -166,7 +166,7 @@ impl Driver for Printer {
     fn print_report(
         &self,
         report: Report,
-        serial: &str,
+        unique_number: &str,
         journal: &mut dyn Journal,
     ) -> Result<(), Error> {
         if let Report::Periodic { from, to, .. } = report
@@ -179,7 +179,7 @@ impl Driver for Printer {
         let mut session = self.session()?;
         let device = read_device(&mut session)?;
         device.require_ready()?;
-        device.require_serial(serial)?;
+        device.require_serial(unique_number)?;
         let step = match report {
             Report::Daily => {
                 let clock = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
@@ -457,7 +457,7 @@ fn device_from(
 ) -> Result<Device, Error> {
     let name = identity.require("nm")?.to_owned();
     let version = identity.require("vr")?.to_owned();
-    let serial = identity.require("nu")?.to_owned();
+    let unique_number = identity.require("nu")?.to_owned();
     let fiscal = boolean(common.require("fs")?)?;
     let header = boolean(common.require("hr")?)?;
     let queue_empty = boolean(device.require("qe")?)?;
@@ -479,7 +479,7 @@ fn device_from(
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let mut problems = Vec::new();
-    if name != TEMO || serial.trim().is_empty() {
+    if name != TEMO || unique_number.trim().is_empty() {
         problems.push("Wybrane urządzenie nie jest drukarką Temo Online".into());
     }
     if !fiscal && !cfg!(workshop_acceptance) {
@@ -511,7 +511,7 @@ fn device_from(
         vendor: Vendor::Posnet,
         model: name,
         firmware: version,
-        serial,
+        unique_number,
         problems,
         vat: rates,
         capabilities: capabilities(),

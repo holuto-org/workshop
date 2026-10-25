@@ -19,7 +19,7 @@ interruptMode: never
 - `operation.json` is fiscal evidence. Persist intent before preflight and each
   stage before its command (`fiscal::journal::Journal::dispatching`); an
   unreadable, corrupt or mismatched journal blocks and is never deleted or reset
-  as recovery. Resolution requires the same vendor and serial.
+  as recovery. Resolution requires the same vendor and unique number.
 - Every write goes through `store::write_durably` (temp file, fsync, atomic
   replace; write-through on Windows). Unix modes: state directory 0700, files
   0600. Windows state lives in the Local AppData Known Folder, never an

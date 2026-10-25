@@ -16,6 +16,8 @@ fn document() -> Document {
         amount: 25_000,
         customer_name: Some("Jan Kowalski".into()),
         occurred_at: Timestamp::UNIX_EPOCH,
+        due_at: Timestamp::UNIX_EPOCH,
+        is_overdue: false,
     }
 }
 fn ready() -> Model {
@@ -25,7 +27,7 @@ fn ready() -> Model {
         vendor: Vendor::Posnet,
         model: String::new(),
         firmware: String::new(),
-        serial: String::new(),
+        unique_number: "TST0000000001".to_owned(),
         problems: Vec::new(),
         vat: Vec::new(),
         capabilities: capabilities(),
@@ -191,7 +193,7 @@ fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data()
     let mut model = ready();
     model.running = true;
     model.vendor = Some(Vendor::Posnet);
-    model.serial = "SERIAL42".into();
+    model.unique_number = "SERIAL42".into();
     model.printer_id = Some("printer-42".into());
     model.blocked = true;
     model.report_unresolved = true;
@@ -206,7 +208,7 @@ fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data()
         Snapshot {
             processing: false,
             connected: false,
-            serial: Some("SERIAL42".into()),
+            unique_number: Some("SERIAL42".into()),
             vendor: Some(Vendor::Posnet),
             printer_id: Some("printer-42".into()),
             blocked: true,
@@ -223,7 +225,7 @@ fn each_public_status_change_invalidates_the_previous_publication() {
     let changes: [fn(&mut Model); 8] = [
         |model| model.running = true,
         |model| model.connected = true,
-        |model| model.serial = "SERIAL42".into(),
+        |model| model.unique_number = "SERIAL42".into(),
         |model| model.vendor = Some(Vendor::Novitus),
         |model| model.printer_id = Some("printer-42".into()),
         |model| model.blocked = true,

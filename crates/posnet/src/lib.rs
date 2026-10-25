@@ -1,4 +1,4 @@
-//! Posnet Temo Online driver over a serial port.
+//! Posnet Temo Online driver over a unique_number port.
 //!
 //! Each operation opens an exclusive session and verifies identity, fiscal mode, header,
 //! mechanism, command queue, transaction state and VAT table before fiscal commands.

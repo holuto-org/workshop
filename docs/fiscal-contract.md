@@ -18,36 +18,41 @@ backend changes first.
 Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
 `App-Version: agent/<version>` and `Accept-Language: pl`, plus SDK-provided
 `sentry-trace` propagation. `POST /agent/pair` exchanges `{code}` for
-`{token, printerId}` without bearer or device-serial headers.
-`POST /agent/session` and `POST /agent/heartbeat` send fresh telemetry:
+`{token, printerId}` without bearer or device-identity headers.
+`POST /agent/session` sends telemetry at startup and whenever the device profile changes:
 
 ```json
 {
-  "serial": "device-serial",
   "vendor": "posnet",
   "model": "POSNET TEMO ONLINE",
   "firmware": "32.01",
   "appVersion": "0.2.0",
-  "vatSlots": [
-    { "slot": 0, "vatRate": "23" },
-    { "slot": 1, "vatRate": "8" }
-  ],
-  "maxItemNameLength": 80,
-  "maxLinesPerReceipt": 500,
-  "maxCompanyNameLength": 40,
-  "maxQuantityDecimals": 8,
   "capabilities": {
     "advanceDeductions": true,
-    "zeroTotalReceipts": true
+    "zeroTotalReceipts": true,
+    "maxItemNameLength": 80,
+    "maxLinesPerReceipt": 500,
+    "maxCompanyNameLength": 40,
+    "maxQuantityDecimals": 8,
+    "allowedCharacters": " !\"#$%&'()*+,-./0123…"
   },
-  "allowedCharacters": " !\"#$%&'()*+,-./0123…"
+  "uniqueNumber": "ABC1234567890",
+  "vatRates": [
+    {
+      "letter": "A",
+      "vatRate": "23"
+    },
+    {
+      "letter": "B",
+      "vatRate": "8"
+    }
+  ]
 }
 ```
 
 `vendor` is `"posnet"`, `"novitus"` or `"elzab"` and binds alongside the physical
-serial. `vatSlots` is the actual device table (Temo Online has slots 0–6, A–G;
-the contract allows 0–15), rates `"23"`, `"8"`, `"5"`, `"0"` or `"zw"`. Each
-session/heartbeat replaces the backend mapping. `maxItemNameLength`,
+unique number. `vatRates` is the actual device table, with letters A–G and rates `"23"`, `"8"`, `"5"`, `"0"` or `"zw"`. Each
+session replaces the backend mapping. A–E mean 23%, 8%, 5%, 0% and exempt respectively; F/G retain other programmed rates. Illegal A–E assignments remain visible locally as not ready and are not uploaded. `maxItemNameLength`,
 `maxLinesPerReceipt`, `maxCompanyNameLength`, `allowedCharacters` (all printable
 characters, NFC), `maxQuantityDecimals` (0–8) and `capabilities` are required
 before queueing. The backend rejects names outside the limits, excessive
@@ -58,14 +63,14 @@ quantity precision (ignoring trailing zeros), advance deductions without
 fresh device profile before any fiscal command and reports unprintable jobs as
 failed.
 
-Session/heartbeat bind and verify the physical serial and vendor; a mismatch
-fails with 403 `fiscal_serial_mismatch` or `fiscal_vendor_mismatch`.
-Other requests carry the same `X-Device-Serial` header; device swaps are rejected
+Sessions bind the fiscal memory unique number (`^[A-Z]{3}[0-9]{10}$`) and vendor; a mismatch
+fails with 403 `fiscal_unique_number_mismatch` or `fiscal_vendor_mismatch`.
+Bodyless `POST /agent/heartbeat` returns 204; it and other authenticated requests carry the same `X-Device-Unique-Number` header; device swaps are rejected
 before taking or printing jobs.
 
 - **`GET /agent/documents?limit=100[&cursor=…]`**:
   `{items:[{kind, orderId, orderNumber, allocationId, amount, customerName,`
-  `occurredAt}], nextCursor}`. Return `nextCursor` unchanged and URL-encoded;
+  `occurredAt, dueAt, isOverdue}], nextCursor}`. Return `nextCursor` unchanged and URL-encoded;
   null ends pagination. Kind is `advance` or `sale`. Advances identify their
   allocation and payment time; sales use null allocation and posting time.
 - **`POST /agent/jobs`**: Queue `{kind, orderId, allocationId, buyerNip}`.
@@ -78,13 +83,13 @@ before taking or printing jobs.
   `failed` or `unknown`; `done` requires receipt number and issue time,
   otherwise both are null.
 
-Job lines: `name`, `quantity`, `unitPrice`, `total`, `vatRate`, `vatSlot`.
+Job lines: `name`, `quantity`, `unitPrice`, `total`, `vatRate`, `vatLetter`.
 Metadata: `orderId`, integer `orderNumber`, `printerId`, `kind`, nullable
 `allocationId`, `etag`, `buyerNip`, `companyName`, `total`, `advances`,
 `payments`, immutable attempt and lifecycle timestamps. Advances identify their
 allocation and have one line per VAT rate, quantity 1.
 
-`total` sums gross line totals. `advances` contains `{vatSlot, vatRate, amount}`
+`total` sums gross line totals. `advances` contains `{vatLetter, vatRate, amount}`
 deductions, at most one per slot, each positive; duplicates and zero deductions
 fail before fiscal commands. Advance jobs have no deductions. `payments`
 contains `{form, amount}`; forms are `cash`, `card`, `transfer`, `mobile` and
@@ -95,7 +100,7 @@ protocol shapes are unsupported.
 ## Device capabilities
 
 These limits come from each driver's `fiscal::device::Capabilities`; the wire
-capabilities contain only the two receipt flags, not `company_footer`.
+capabilities group contains all seven limits and receipt flags; `company_footer` stays local.
 `posnet::capabilities` defines the documented Temo Online limits: eight quantity
 decimals, 80-character item names (`trline`), 500 lines (`trinit`),
 40-character company footer lines (`trftrln`) and printable CP1250 from
@@ -177,3 +182,7 @@ header, VAT and Warsaw clock in the printing session. Advances use per-slot
 `LDS`; zero-total receipts and company footers stay disabled. Only a matched
 transport rejection of the initial `LOR` is a certain refusal; every later
 failure, and every accepted daily `RRP`, is unknown until a person resolves it.
+
+## Advisory deadlines and voided receipts
+
+The documents table displays `dueAt` and marks `isOverdue` explicitly. Deadlines never queue or print anything; staff still choose every document. A `voided` job is a terminal, already-printed receipt cancelled in the obvious-mistake register. Recovery acknowledges its local journal without printing or reporting a replacement.

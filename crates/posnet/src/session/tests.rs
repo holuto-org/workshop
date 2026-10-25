@@ -198,7 +198,7 @@ fn serial_timeout_and_partial_reads(
             session.command("trinit", &[], TIMEOUT),
             Err(Error::Timeout("trinit"))
         ),
-        "serial silence is a timeout"
+        "unique_number silence is a timeout"
     );
     let mut received = vec![0; expected.len()];
     io::Read::read_exact(&mut peer, &mut received).unwrap();
@@ -207,7 +207,7 @@ fn serial_timeout_and_partial_reads(
     io::Write::write_all(&mut peer, &response[..5]).unwrap();
     let deadline = Instant::now() + Duration::from_secs(1);
     let handle = Builder::new()
-        .name("serial reply".to_owned())
+        .name("unique_number reply".to_owned())
         .spawn(move || {
             let mut command = vec![0; frame::encode("scnt", &[]).unwrap().len()];
             io::Read::read_exact(&mut peer, &mut command).unwrap();
@@ -258,12 +258,12 @@ mod pty {
         let (_master, session, path) = pair();
         assert!(
             SerialLink.open(&path, 9600).is_err(),
-            "second serial open must fail"
+            "second unique_number open must fail"
         );
         drop(session);
         assert!(
             SerialLink.open(&path, 9600).is_ok(),
-            "drop releases serial ownership"
+            "drop releases unique_number ownership"
         );
     }
 

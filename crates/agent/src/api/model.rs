@@ -1,19 +1,16 @@
-//! `/agent` bodies from backend `openapi/agent.json`.
+//! `/agent` wire bodies generated from the vendored contract.
 //!
-//! Decimal strings let malformed amounts fail individual jobs, not entire responses.
-//! `Option::deserialize` requires nullable fields to be present; plain `Option` does not.
+//! Decimal strings remain unvalidated until the individual job reaches the fiscal boundary.
 
+use super::{APP_VERSION, DOCUMENTS_LIMIT};
+use crate::documents::{Document, ReceiptKind};
 use fiscal::{
     device::{Device, VatKind, VatRate, Vendor},
     receipt::VAT_SLOTS,
 };
 use uuid::Uuid;
 
-use super::{APP_VERSION, DOCUMENTS_LIMIT};
-use crate::documents::{Document, ReceiptKind};
-
 type AppVersion = &'static str;
-
 #[expect(
     unused_qualifications,
     unreachable_pub,
@@ -21,14 +18,14 @@ type AppVersion = &'static str;
     clippy::absolute_paths,
     clippy::renamed_function_params,
     clippy::needless_raw_strings,
-    reason = "typify's generated paths, helper visibility and raw doc strings"
+    reason = "typify generated paths and helper visibility"
 )]
 mod wire {
     include!(concat!(env!("OUT_DIR"), "/agent-wire.rs"));
 }
-
 pub type VatCode = wire::VatCode;
-pub type VatSlotRate = wire::VatSlotRate;
+pub type VatLetter = wire::FiscalVatLetter;
+pub type VatRateMapping = wire::VatRateMapping;
 pub type Telemetry = wire::Telemetry;
 pub type PrinterCapabilities = wire::PrinterCapabilities;
 pub type PrinterStatus = wire::PrinterStatus;
@@ -42,11 +39,33 @@ pub type Page = wire::Page;
 pub type Pairing = wire::Pairing;
 pub type PairForm = wire::PairForm;
 
-/// Backend slot limit; the printer has seven.
-const MAX_BACKEND_SLOTS: u8 = 16;
+impl VatLetter {
+    pub const fn slot(self) -> u8 {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
+            Self::C => 2,
+            Self::D => 3,
+            Self::E => 4,
+            Self::F => 5,
+            Self::G => 6,
+        }
+    }
 
+    pub const fn from_slot(slot: u8) -> Option<Self> {
+        match slot {
+            0 => Some(Self::A),
+            1 => Some(Self::B),
+            2 => Some(Self::C),
+            3 => Some(Self::D),
+            4 => Some(Self::E),
+            5 => Some(Self::F),
+            6 => Some(Self::G),
+            _ => None,
+        }
+    }
+}
 impl VatCode {
-    /// `None` for printer rates Holuto does not support.
     pub const fn of(rate: VatRate) -> Option<Self> {
         match rate.kind {
             VatKind::Exempt => Some(Self::Zw),
@@ -71,106 +90,87 @@ impl VatCode {
         }
     }
 }
-
 impl Telemetry {
-    /// Device identity and limits stay empty until [`Self::describe`] reads them.
-    pub fn new(serial: &str, vendor: Vendor) -> Self {
+    pub fn new(unique_number: &str, vendor: Vendor) -> Self {
         Self {
-            allowed_characters: String::new(),
             app_version: APP_VERSION,
             capabilities: PrinterCapabilities {
                 advance_deductions: false,
                 zero_total_receipts: false,
+                max_item_name_length: 0,
+                max_company_name_length: 0,
+                max_lines_per_receipt: 0,
+                max_quantity_decimals: 0,
+                allowed_characters: String::new(),
             },
-            firmware: String::new(),
-            max_company_name_length: 0,
-            max_item_name_length: 0,
-            max_lines_per_receipt: 0,
-            max_quantity_decimals: 0,
-            model: String::new(),
-            serial: serial.to_owned(),
-            vat_slots: Vec::new(),
+            unique_number: unique_number.to_owned(),
             vendor,
+            model: String::new(),
+            firmware: String::new(),
+            vat_rates: Vec::new(),
         }
     }
 
-    /// Takes identity, limits and VAT slots from the connected device; returns notices for
-    /// active rates Holuto does not support.
     pub(crate) fn describe(&mut self, device: &Device) -> Vec<String> {
-        let (slots, skipped) = printer_slots(&device.vat);
+        let (rates, skipped) = printer_slots(&device.vat);
         self.vendor = device.vendor;
         device.model.clone_into(&mut self.model);
         device.firmware.clone_into(&mut self.firmware);
-        let capabilities = &device.capabilities;
-        self.max_quantity_decimals = capabilities.max_quantity_decimals;
+        let c = &device.capabilities;
         self.capabilities = PrinterCapabilities {
-            advance_deductions: capabilities.advance_deductions,
-            zero_total_receipts: capabilities.zero_total_receipts,
+            advance_deductions: c.advance_deductions,
+            zero_total_receipts: c.zero_total_receipts,
+            max_item_name_length: c.max_item_name,
+            max_company_name_length: c.max_company_name,
+            max_lines_per_receipt: c.max_lines,
+            max_quantity_decimals: c.max_quantity_decimals,
+            allowed_characters: c.allowed_characters.clone(),
         };
-        self.max_item_name_length = capabilities.max_item_name;
-        self.max_lines_per_receipt = capabilities.max_lines;
-        self.max_company_name_length = capabilities.max_company_name;
-        capabilities
-            .allowed_characters
-            .clone_into(&mut self.allowed_characters);
-        self.vat_slots = slots;
+        self.vat_rates = rates;
         skipped
     }
 }
-
 impl PrinterInfo {
-    pub(crate) fn check(&self, serial: &str) -> Result<(), String> {
+    pub(crate) fn check(&self, unique_number: &str) -> Result<(), String> {
         if self
-            .device_serial
+            .unique_number
             .as_deref()
-            .is_some_and(|paired| paired != serial)
+            .is_some_and(|paired| paired != unique_number)
         {
             return Err("sparowano z inną drukarką".to_owned());
         }
-        if self
-            .max_quantity_decimals
-            .is_some_and(|decimals| decimals > 8)
-        {
-            return Err("nieprawidłowa precyzja ilości drukarki".to_owned());
+        if let Some(c) = &self.capabilities {
+            if c.max_quantity_decimals > 8 {
+                return Err("nieprawidłowa precyzja ilości drukarki".to_owned());
+            }
+            if [
+                c.max_item_name_length,
+                c.max_company_name_length,
+                c.max_lines_per_receipt,
+            ]
+            .contains(&0)
+            {
+                return Err("zerowy limit drukarki".to_owned());
+            }
+            if c.allowed_characters.is_empty() {
+                return Err("pusta lista znaków drukarki".to_owned());
+            }
         }
-        if [
-            self.max_item_name_length,
-            self.max_lines_per_receipt,
-            self.max_company_name_length,
-        ]
-        .contains(&Some(0))
-        {
-            return Err("zerowy limit drukarki".to_owned());
-        }
-        if self
-            .allowed_characters
-            .as_deref()
-            .is_some_and(str::is_empty)
-        {
-            return Err("pusta lista znaków drukarki".to_owned());
-        }
-        if self.vat_slots.len() > usize::from(MAX_BACKEND_SLOTS)
-            || self
-                .vat_slots
-                .iter()
-                .any(|slot| slot.slot >= MAX_BACKEND_SLOTS)
-        {
-            return Err("nieprawidłowe sloty VAT".to_owned());
+        if self.vat_rates.len() > usize::from(VAT_SLOTS) {
+            return Err("nieprawidłowe litery VAT".to_owned());
         }
         Ok(())
     }
 }
-
 impl JobState {
-    /// Authoritative staff or backend resolution.
     pub const fn terminal(self) -> bool {
-        matches!(self, Self::Done | Self::Failed | Self::Expired)
+        matches!(
+            self,
+            Self::Done | Self::Failed | Self::Expired | Self::Voided
+        )
     }
 }
-
 impl Job {
-    /// `max_lines` is the connected device's limit; paths without a device (recovery) pass
-    /// `None` and only require a nonempty job.
     pub(crate) fn check(
         &self,
         printer_id: Option<Uuid>,
@@ -194,25 +194,16 @@ impl Job {
         if self.kind == ReceiptKind::Advance && !self.advances.is_empty() {
             return Err("zaliczka nie może odliczać zaliczek".to_owned());
         }
-        let mut slots = self
-            .lines
-            .iter()
-            .map(|line| line.vat_slot)
-            .chain(self.advances.iter().map(|advance| advance.vat_slot));
-        if slots.any(|slot| slot >= MAX_BACKEND_SLOTS) {
-            return Err("nieprawidłowy slot VAT".to_owned());
-        }
         if self
             .buyer_nip
             .as_deref()
-            .is_some_and(|nip| nip.len() != 10 || !nip.bytes().all(|byte| byte.is_ascii_digit()))
+            .is_some_and(|nip| nip.len() != 10 || !nip.bytes().all(|b| b.is_ascii_digit()))
         {
             return Err("nieprawidłowy NIP nabywcy".to_owned());
         }
         Ok(())
     }
 }
-
 impl From<Outcome> for JobState {
     fn from(value: Outcome) -> Self {
         match value {
@@ -222,9 +213,7 @@ impl From<Outcome> for JobState {
         }
     }
 }
-
 impl Page {
-    /// Rejects the whole page if any item is invalid.
     pub(crate) fn check(&self) -> Result<(), String> {
         if self.items.len() > DOCUMENTS_LIMIT {
             return Err("strona przekracza limit".to_owned());
@@ -235,24 +224,17 @@ impl Page {
         self.items.iter().try_for_each(Document::check)
     }
 }
-
-pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatSlotRate>, Vec<String>) {
-    let mut slots = Vec::new();
+pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<String>) {
+    let mut mapped = Vec::new();
     let mut skipped = Vec::new();
-    for rate in rates
-        .iter()
-        .filter(|rate| rate.active() && rate.slot < VAT_SLOTS)
-    {
-        match VatCode::of(*rate) {
-            Some(vat_rate) => slots.push(VatSlotRate {
-                slot: rate.slot,
-                vat_rate,
-            }),
-            None => skipped.push(format!(
+    for rate in rates.iter().filter(|r| r.active() && r.slot < VAT_SLOTS) {
+        match (VatCode::of(*rate), VatLetter::from_slot(rate.slot)) {
+            (Some(vat_rate), Some(letter)) => mapped.push(VatRateMapping { letter, vat_rate }),
+            _ => skipped.push(format!(
                 "Pomijam nieobsługiwaną stawkę VAT w slocie {}",
                 rate.label()
             )),
         }
     }
-    (slots, skipped)
+    (mapped, skipped)
 }

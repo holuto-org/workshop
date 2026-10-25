@@ -98,7 +98,7 @@ fn ready(app: &Rc<RefCell<Application>>) {
     let mut app = app.borrow_mut();
     app.event(Event::Connected {
         printer_id: "printer-42".into(),
-        serial: "SERIAL42".into(),
+        unique_number: "SERIAL42".into(),
         port: "test".into(),
     });
     app.event(Event::Device {
@@ -106,7 +106,7 @@ fn ready(app: &Rc<RefCell<Application>>) {
             vendor: Vendor::Posnet,
             model: "TEMO".into(),
             firmware: "32.01".into(),
-            serial: "SERIAL42".into(),
+            unique_number: "SERIAL42".into(),
             problems: Vec::new(),
             vat: Vec::new(),
             capabilities: capabilities(),
@@ -124,6 +124,8 @@ fn ready(app: &Rc<RefCell<Application>>) {
             amount: 25_000,
             customer_name: Some("Jan Kowalski".into()),
             occurred_at: Timestamp::UNIX_EPOCH,
+            due_at: Timestamp::UNIX_EPOCH,
+            is_overdue: false,
         }],
         page: 1,
         has_next: true,

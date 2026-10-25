@@ -87,7 +87,7 @@ pub enum Event {
     },
     Connected {
         printer_id: String,
-        serial: String,
+        unique_number: String,
         port: String,
     },
     /// Credentials have already been durably saved; this event contains no secret.
@@ -135,11 +135,13 @@ impl fmt::Debug for Event {
                 .field("failure", failure)
                 .finish_non_exhaustive(),
             Self::Connected {
-                printer_id, serial, ..
+                printer_id,
+                unique_number,
+                ..
             } => f
                 .debug_struct("Connected")
                 .field("printer_id", printer_id)
-                .field("serial", serial)
+                .field("unique_number", unique_number)
                 .finish_non_exhaustive(),
             Self::Documents {
                 items,
@@ -371,7 +373,11 @@ fn run(
             vendor: status.vendor,
         });
     }
-    let api = Api::new(&settings.api_url, settings.token.as_str(), &status.serial)?;
+    let api = Api::new(
+        &settings.api_url,
+        settings.token.as_str(),
+        &status.unique_number,
+    )?;
     let waiting = |problem: Option<&str>| {
         if problem.is_some() {
             tracing::warn!("Printer requires operator intervention");
@@ -400,14 +406,21 @@ fn run(
         .printer_id()
         .map(|id| id.to_string())
         .unwrap_or_default();
-    tracing::info!(printer_id, device_serial = status.serial, "Connected");
+    tracing::info!(
+        printer_id,
+        device_unique_number = status.unique_number,
+        "Connected"
+    );
     sink(Event::Connected {
         printer_id,
-        serial: status.serial.clone(),
+        unique_number: status.unique_number.clone(),
         port,
     });
     sink(Event::Status {
-        text: format!("Połączono: {}. Oczekiwanie na zlecenia.", status.serial),
+        text: format!(
+            "Połączono: {}. Oczekiwanie na zlecenia.",
+            status.unique_number
+        ),
         tone: Tone::Success,
     });
     for notice in notices {

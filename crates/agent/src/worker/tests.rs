@@ -100,7 +100,7 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
         },
         Event::Connected {
             printer_id: "printer-id".to_owned(),
-            serial: "device-serial".to_owned(),
+            unique_number: "device-unique_number".to_owned(),
             port: "private-port".to_owned(),
         },
         Event::Paired {
@@ -119,7 +119,7 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
             "Documents { count: 1, page: 2, has_next: true }",
             "HistoryChanged { count: 1 }",
             "PortDetected(..)",
-            "Connected { printer_id: \"printer-id\", serial: \"device-serial\", .. }",
+            "Connected { printer_id: \"printer-id\", unique_number: \"device-unique_number\", .. }",
             "Paired { printer_id: \"printer-id\" }",
             "PairingFailed { failure: Communication, .. }",
         ]
@@ -337,7 +337,7 @@ fn document(number: u128) -> Value {
         "allocationId": null,
         "amount": "10.00",
         "customerName": null,
-        "occurredAt": "2026-10-16T10:00:00Z"
+        "occurredAt": "2026-10-16T10:00:00Z", "dueAt": "2026-10-16T10:00:00Z", "isOverdue": false
     })
 }
 
@@ -399,8 +399,8 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
     assert!(received.iter().any(|event| matches!(event,
-        Event::Connected { printer_id, serial, port }
-        if printer_id == &PRINTER_ID.to_string() && serial == SERIAL && port == sim.address()
+        Event::Connected { printer_id, unique_number, port }
+        if printer_id == &PRINTER_ID.to_string() && unique_number == SERIAL && port == sim.address()
     )));
     assert!(
         !received
@@ -1369,7 +1369,7 @@ fn full_receipt_job() -> Value {
         job_json(),
         &json!({
             "buyerNip": "5261040828",
-            "advances": [{"vatSlot": 0, "vatRate": "23", "amount": "100.00"}],
+            "advances": [{"vatLetter": "A", "vatRate": "23", "amount": "100.00"}],
             "payments": [{"form": "card", "amount": "150.00"}]
         }),
     )
@@ -1628,7 +1628,7 @@ fn worker_recovery_uses_dispatch_evidence_without_ever_reissuing_a_fiscal_comman
                 attempt: ATTEMPT,
                 issued_at: "2025-01-02T12:00:00Z".parse().unwrap(),
                 vendor: Vendor::Posnet,
-                device_serial: SERIAL.to_owned(),
+                device_unique_number: SERIAL.to_owned(),
                 device: device.clone(),
                 summary: None,
                 result: None,

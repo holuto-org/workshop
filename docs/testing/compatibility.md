@@ -6,10 +6,10 @@ The repository pins the on-disk formats. Keep sanitized, literal golden
 fixtures, not fixtures serialized by the reader/writer under test. Never infer
 that an unreadable journal can be discarded.
 
-- **`operation.json`**: Receipt/report variants include vendor and serial.
+- **`operation.json`**: Receipt/report variants include vendor and unique number.
   `NotStarted`, `Dispatching`, completed with/without number, results and
   settlements retain their meaning across restart. Resolution requires the same
-  vendor and serial and never reissues commands.
+  vendor and unique number and never reissues commands.
 - **`settings.json`**: API URL/token/port/baud/diagnostics/autostart and nullable
   vendor retain meaning; unknown fields and a missing `vendor` fail closed.
   Diagnostics opt-out survives save/load/restart.
@@ -23,8 +23,7 @@ each OS; Linux rename does not prove Windows write-through.
 
 ## `/agent` and the backend
 
-The production authority is `../backend`'s `/agent` handlers and OpenAPI, not
-the fake. Compare session/heartbeat vendor + serial binding, current per-driver
+The vendored OpenAPI is the production contract, not the fake. Compare session/heartbeat vendor + unique number binding, current per-driver
 limits/VAT/capabilities, document pagination, queue inputs, take attempts,
 terminal states and result idempotency/refusals with those handlers. Update
 `agent::testing` loopback fake in the same change, then prove requests through
@@ -56,7 +55,7 @@ contract changes together; use sanitized recorded contract examples and the
 backend's own tests, never probe production with a real token or queue fiscal
 work as a compatibility check.
 
-Session/heartbeat require `vendor`, `maxQuantityDecimals`,
+Sessions require `vendor`, `uniqueNumber`, `capabilities.maxQuantityDecimals`,
 `capabilities.advanceDeductions` and `capabilities.zeroTotalReceipts`. Test
 backend refusal of unsupported advances, zero-total sales and excess quantity
 precision, plus independent local refusal before any fiscal command.
@@ -81,3 +80,5 @@ and unused-dependency checks. See [CI](../ci.md).
 `--all-features` must retain production fiscal-mode and unqualified-capability
 gates. Acceptance uses a separate debug-only cfg, not a feature; run its
 [isolated suite and release-rejection check](hardware-acceptance.md).
+
+The operation journal losslessly migrates the legacy `device_serial` key to `device_unique_number` only when the unchanged identity already has the canonical fiscal-memory format. The migrated record is durably saved before recovery continues. Ambiguous, malformed or noncanonical old identities block and retain the original evidence; never delete a journal to unblock printing. Display-only old `status.json` caches may be discarded; settings/token format is unchanged. Heartbeats are bodyless, return 204 and carry the unique-number header.

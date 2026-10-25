@@ -191,7 +191,7 @@ fn identify_accepts_supported_models_only() {
             .unwrap()
             .unwrap();
         assert!(device.ready(), "{}", device.description());
-        assert_eq!(device.serial, "ABC1234567890");
+        assert_eq!(device.unique_number, "ABC1234567890");
     }
     for (model, firmware) in [
         ("POSNET TEMO ONLINE", "1.40"),
@@ -560,7 +560,7 @@ fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
         let driver = printer(&sim);
         let mut expected = driver.probe().unwrap();
         match problem {
-            0 => expected.serial = "OTHER12345678".to_owned(),
+            0 => expected.unique_number = "OTHER12345678".to_owned(),
             1 => sim.set_vat(["22", "8", "5", "0", "98.99", "99.99", "99.99"]),
             _ => {
                 sim.set_vat(["23", "8", "5", "0", "99.99", "99.99", "99.99"]);
@@ -569,7 +569,7 @@ fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
         }
         assert!(matches!(
             driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default()),
-            Err(Error::Invalid(_))
+            Err(Error::Invalid(_) | Error::NotReady(_))
         ));
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }

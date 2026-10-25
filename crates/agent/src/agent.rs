@@ -49,7 +49,7 @@ pub(crate) struct News {
     pub(crate) history: Option<Vec<HistoryEntry>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Blocked {
     /// Unsettled receipt; staff resolve it in Holuto.
     Receipt,
@@ -71,6 +71,7 @@ pub(crate) struct Agent<'dir> {
     waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     news: News,
     orphaned_receipt: bool,
+    telemetry_changed: bool,
 }
 
 impl<'dir> Agent<'dir> {
@@ -80,7 +81,7 @@ impl<'dir> Agent<'dir> {
         dir: &'dir StateDir,
         waiting: &'dir (dyn Fn(Option<&str>) + Sync),
     ) -> Self {
-        let telemetry = Telemetry::new(api.serial(), printer.vendor());
+        let telemetry = Telemetry::new(api.unique_number(), printer.vendor());
         Self {
             printer,
             api,
@@ -91,6 +92,7 @@ impl<'dir> Agent<'dir> {
             waiting,
             news: News::default(),
             orphaned_receipt: false,
+            telemetry_changed: true,
         }
     }
 
@@ -108,14 +110,21 @@ impl<'dir> Agent<'dir> {
 
     /// Updates telemetry; returns notices for active VAT rates Holuto does not support.
     pub(crate) fn describe(&mut self, device: PrinterDevice) -> Result<Vec<String>, Error> {
-        if device.serial != self.api.serial() {
+        if device.unique_number != self.api.unique_number() {
             return Err(Error::Blocked(format!(
                 "Podłączona drukarka {} nie jest drukarką {} sparowaną przy uruchomieniu. \
                  Podłącz ją ponownie albo zatrzymaj i uruchom obsługę.",
-                device.serial,
-                self.api.serial()
+                device.unique_number,
+                self.api.unique_number()
             )));
         }
+        self.telemetry_changed |= self.status.as_ref().is_none_or(|prior| {
+            prior.vendor != device.vendor
+                || prior.model != device.model
+                || prior.firmware != device.firmware
+                || prior.vat != device.vat
+                || prior.capabilities != device.capabilities
+        });
         let skipped = if device.describable_capabilities().is_some() {
             self.telemetry.describe(&device)
         } else {
@@ -131,6 +140,7 @@ impl<'dir> Agent<'dir> {
             return Ok(false);
         }
         self.api.session(&self.telemetry)?;
+        self.telemetry_changed = false;
         Ok(true)
     }
 
@@ -173,7 +183,10 @@ impl<'dir> Agent<'dir> {
             self.news.notices.push(self.not_ready_notice());
             return Ok(RETRY);
         }
-        self.api.heartbeat(&self.telemetry)?;
+        if self.telemetry_changed {
+            self.session()?;
+        }
+        self.api.heartbeat()?;
         if let Some(blocked) = self.settle()? {
             self.news.notices.push(
                 match blocked {
@@ -218,11 +231,11 @@ impl<'dir> Agent<'dir> {
                 .to_owned(),
             ));
         }
-        let serial = self.api.serial().to_owned();
+        let unique_number = self.api.unique_number().to_owned();
         let mut operation = ReportOperation {
             report,
             vendor: self.printer.vendor(),
-            device_serial: serial.clone(),
+            device_unique_number: unique_number.clone(),
             started_at: Timestamp::now(),
             device: Device::NotStarted,
             acknowledged_at: None,
@@ -232,7 +245,10 @@ impl<'dir> Agent<'dir> {
             operation: &mut operation,
             waiting: self.waiting,
         };
-        if let Err(error) = self.printer.print_report(report, &serial, &mut dispatch) {
+        if let Err(error) = self
+            .printer
+            .print_report(report, &unique_number, &mut dispatch)
+        {
             if matches!(error, PrinterError::Device { .. })
                 && matches!(operation.device, Device::Dispatching { .. })
             {
@@ -263,13 +279,15 @@ impl<'dir> Agent<'dir> {
                 ));
             },
         };
-        if report.vendor != self.printer.vendor() || report.device_serial != self.api.serial() {
+        if report.vendor != self.printer.vendor()
+            || report.device_unique_number != self.api.unique_number()
+        {
             return Err(Error::Blocked(format!(
                 "Podłącz drukarkę {:?} {}, której dotyczy przerwany raport.",
-                report.vendor, report.device_serial
+                report.vendor, report.device_unique_number
             )));
         }
-        let _status = self.printer.verify(&report.device_serial)?;
+        let _status = self.printer.verify(&report.device_unique_number)?;
         report.acknowledged_at = Some(Timestamp::now());
         self.journal.save(&Operation::Report(report))
     }
@@ -281,12 +299,13 @@ impl<'dir> Agent<'dir> {
             Some(Operation::Report(_)) => return Ok(Some(Blocked::Report)),
             Some(Operation::Receipt(operation)) => operation,
         };
-        if operation.vendor != self.printer.vendor() || operation.device_serial != self.api.serial()
+        if operation.vendor != self.printer.vendor()
+            || operation.device_unique_number != self.api.unique_number()
         {
             return Err(Error::Blocked(format!(
                 "Niepotwierdzony paragon dotyczy drukarki {:?} {}. Podłącz ją, aby uzgodnić wynik \
                  z Holuto.",
-                operation.vendor, operation.device_serial
+                operation.vendor, operation.device_unique_number
             )));
         }
         let remote = self.api.job(operation.job_id)?;
@@ -409,7 +428,7 @@ impl<'dir> Agent<'dir> {
             attempt,
             issued_at: Timestamp::now(),
             vendor: self.printer.vendor(),
-            device_serial: self.api.serial().to_owned(),
+            device_unique_number: self.api.unique_number().to_owned(),
             device: Device::NotStarted,
             summary: None,
             result: None,
@@ -475,20 +494,20 @@ impl<'dir> Agent<'dir> {
         if !job.advances.is_empty() && !capabilities.advance_deductions {
             return Err("Drukarka nie obsługuje rozliczenia zaliczek.".to_owned());
         }
-        let rates = &self.telemetry.vat_slots;
+        let rates = &self.telemetry.vat_rates;
         let slot_rate = |slot: u8, rate| {
             rates
                 .iter()
-                .any(|known| known.slot == slot && known.vat_rate == rate)
+                .any(|known| known.letter.slot() == slot && known.vat_rate == rate)
         };
         let mismatch = job
             .lines
             .iter()
-            .map(|line| (line.vat_slot, line.vat_rate))
+            .map(|line| (line.vat_letter.slot(), line.vat_rate))
             .chain(
                 job.advances
                     .iter()
-                    .map(|advance| (advance.vat_slot, advance.vat_rate)),
+                    .map(|advance| (advance.vat_letter.slot(), advance.vat_rate)),
             )
             .find(|(slot, rate)| !slot_rate(*slot, *rate));
         if let Some((slot, rate)) = mismatch {
@@ -504,7 +523,7 @@ impl<'dir> Agent<'dir> {
                 &item.name,
                 quantity(&item.quantity)?,
                 amount("Cena", &item.unit_price)?,
-                slot(item.vat_slot)?,
+                slot(item.vat_letter.slot())?,
                 capabilities,
             )
             .map_err(|error| error.to_string())?;
@@ -524,7 +543,7 @@ impl<'dir> Agent<'dir> {
             .iter()
             .map(|advance| {
                 Ok(Advance {
-                    vat: slot(advance.vat_slot)?,
+                    vat: slot(advance.vat_letter.slot())?,
                     amount: amount("Zaliczka", &advance.amount)?,
                 })
             })
@@ -634,14 +653,15 @@ impl<'dir> Agent<'dir> {
                 "Brak wydrukowanego paragonu do wyjaśnienia.".to_owned(),
             ));
         }
-        if operation.vendor != self.printer.vendor() || operation.device_serial != self.api.serial()
+        if operation.vendor != self.printer.vendor()
+            || operation.device_unique_number != self.api.unique_number()
         {
             return Err(Error::Blocked(format!(
                 "Podłącz drukarkę {:?} {}, która wydrukowała ten paragon.",
-                operation.vendor, operation.device_serial
+                operation.vendor, operation.device_unique_number
             )));
         }
-        let _status = self.printer.verify(&operation.device_serial)?;
+        let _status = self.printer.verify(&operation.device_unique_number)?;
         let remote = self.api.job(operation.job_id)?;
         remote
             .check(self.api.printer_id(), None)

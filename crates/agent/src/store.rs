@@ -179,18 +179,14 @@ pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .map_err(io::Error::from)
 }
 
-#[cfg(unix)]
-fn private_new_file() -> fs::OpenOptions {
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let mut options = File::options();
-    _ = options.write(true).create_new(true).mode(0o600);
-    options
-}
-
-#[cfg(not(unix))]
 fn private_new_file() -> fs::OpenOptions {
     let mut options = File::options();
     _ = options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let _options = options.mode(0o600);
+    }
     options
 }
 

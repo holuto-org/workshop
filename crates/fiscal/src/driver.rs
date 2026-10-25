@@ -23,8 +23,8 @@ pub trait Driver: Send + fmt::Debug {
     /// Reads identity, readiness and VAT table without printing.
     fn probe(&self) -> Result<Device, Error>;
 
-    /// Requires the paired device `serial` to be connected and ready.
-    fn verify(&self, serial: &str) -> Result<Device, Error>;
+    /// Requires the paired device `unique_number` to be connected and ready.
+    fn verify(&self, unique_number: &str) -> Result<Device, Error>;
 
     /// Rechecks identity, readiness and the VAT table `expected` before printing.
     fn print_receipt(
@@ -37,7 +37,7 @@ pub trait Driver: Send + fmt::Debug {
     fn print_report(
         &self,
         report: Report,
-        serial: &str,
+        unique_number: &str,
         journal: &mut dyn Journal,
     ) -> Result<(), Error>;
 }

@@ -65,7 +65,8 @@ pub(crate) struct ReceiptOperation {
     /// The server rejects future timestamps.
     pub(crate) issued_at: Timestamp,
     pub(crate) vendor: Vendor,
-    pub(crate) device_serial: String,
+    #[serde(alias = "device_serial")]
+    pub(crate) device_unique_number: String,
     pub(crate) device: Device,
     /// Printed contents for local history.
     pub(crate) summary: Option<Summary>,
@@ -158,7 +159,8 @@ pub(crate) struct Settlement {
 pub(crate) struct ReportOperation {
     pub(crate) report: Report,
     pub(crate) vendor: Vendor,
-    pub(crate) device_serial: String,
+    #[serde(alias = "device_serial")]
+    pub(crate) device_unique_number: String,
     pub(crate) started_at: Timestamp,
     pub(crate) device: Device,
     /// Operator confirmed the interrupted report's printout on the same ready device.
@@ -227,13 +229,23 @@ impl<'dir> Journal<'dir> {
         let Some(bytes) = bytes else {
             return Ok(None);
         };
-        serde_json::from_slice(&bytes).map(Some).map_err(|error| {
-            Error::Blocked(format!(
-                "Uszkodzony rejestr operacji ({}): {error}. Drukowanie zablokowane; nie usuwaj \
-                 pliku, rozstrzygnij operację w Holuto.",
-                self.path.display()
-            ))
-        })
+        let invalid = || {
+            Error::Blocked(
+            "Uszkodzony rejestr operacji lub nieobsługiwany format. \
+             Drukowanie zablokowane; nie usuwaj pliku.".to_owned(),
+        )
+        };
+        let operation: Operation=serde_json::from_slice(&bytes).map_err(|_|invalid())?;
+        let migrated=bytes.windows(b"\"device_serial\"".len()).any(|key|key==b"\"device_serial\"");
+        if migrated {
+            let identity=match &operation {
+                Operation::Receipt(receipt)=>&receipt.device_unique_number,
+                Operation::Report(report)=>&report.device_unique_number,
+            };
+            if !fiscal::device::valid_unique_number(identity) {return Err(invalid());}
+            self.save(&operation)?;
+        }
+        Ok(Some(operation))
     }
 
     pub(crate) fn save(&self, operation: &Operation) -> Result<(), Error> {

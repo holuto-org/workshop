@@ -49,6 +49,8 @@ pub struct Document {
     #[serde(deserialize_with = "Option::deserialize")]
     pub customer_name: Option<String>,
     pub occurred_at: Timestamp,
+    pub due_at: Timestamp,
+    pub is_overdue: bool,
 }
 
 impl fmt::Debug for Document {

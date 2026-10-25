@@ -100,7 +100,7 @@ pub struct Device {
     pub vendor: Vendor,
     pub model: String,
     pub firmware: String,
-    pub serial: String,
+    pub unique_number: String,
     /// Empty when ready.
     pub problems: Vec<Problem>,
     pub vat: Vec<VatRate>,
@@ -112,7 +112,9 @@ impl Device {
     /// Readiness problems remain independent: paper-out devices may still be describable.
     pub fn describable_capabilities(&self) -> Option<&Capabilities> {
         let capabilities = &self.capabilities;
-        (capabilities.max_item_name > 0
+        (valid_unique_number(&self.unique_number)
+            && self.vat.iter().all(|r| r.legal_letter())
+            && capabilities.max_item_name > 0
             && capabilities.max_lines > 0
             && capabilities.max_company_name > 0
             && capabilities.max_quantity_decimals <= 8
@@ -120,8 +122,10 @@ impl Device {
         .then_some(capabilities)
     }
 
-    pub const fn ready(&self) -> bool {
+    pub fn ready(&self) -> bool {
         self.problems.is_empty()
+            && valid_unique_number(&self.unique_number)
+            && self.vat.iter().all(|r| r.legal_letter())
     }
 
     /// UI eligibility only; the driver must still run operation-specific preflight.
@@ -134,6 +138,10 @@ impl Device {
     pub fn description(&self) -> String {
         if self.ready() {
             "Gotowa do drukowania".to_owned()
+        } else if !valid_unique_number(&self.unique_number) {
+            "Nieprawidłowy numer unikatowy drukarki".to_owned()
+        } else if !self.vat.iter().all(|r| r.legal_letter()) {
+            "Nieprawidłowe przypisanie liter VAT A–E".to_owned()
         } else {
             let mut description = String::new();
             for problem in &self.problems {
@@ -156,13 +164,14 @@ impl Device {
     }
 
     /// Refuses a printer other than the one the operation belongs to.
-    pub fn require_serial(&self, serial: &str) -> Result<(), Error> {
-        if self.serial == serial {
+    pub fn require_serial(&self, unique_number: &str) -> Result<(), Error> {
+        if self.unique_number == unique_number {
             Ok(())
         } else {
             Err(Error::Invalid(format!(
-                "Podłączona drukarka {} nie jest drukarką {serial}, której dotyczy operacja.",
-                self.serial
+                "Podłączona drukarka {} nie jest drukarką {unique_number}, \
+                 której dotyczy operacja.",
+                self.unique_number
             )))
         }
     }
@@ -170,3 +179,25 @@ impl Device {
 
 #[cfg(test)]
 mod tests;
+
+pub fn valid_unique_number(value: &str) -> bool {
+    value.len() == 13
+        && value.as_bytes()[..3].iter().all(u8::is_ascii_uppercase)
+        && value.as_bytes()[3..].iter().all(u8::is_ascii_digit)
+}
+impl VatRate {
+    pub const fn legal_letter(self) -> bool {
+        if !self.active() {
+            return true;
+        }
+        match self.slot {
+            0 => matches!(self.kind, VatKind::Rate { basis_points: 2300 }),
+            1 => matches!(self.kind, VatKind::Rate { basis_points: 800 }),
+            2 => matches!(self.kind, VatKind::Rate { basis_points: 500 }),
+            3 => matches!(self.kind, VatKind::Rate { basis_points: 0 }),
+            4 => matches!(self.kind, VatKind::Exempt),
+            5 | 6 => true,
+            _ => false,
+        }
+    }
+}

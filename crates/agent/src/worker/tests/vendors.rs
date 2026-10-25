@@ -110,7 +110,7 @@ fn overdue_daily_report_does_not_allow_a_job_claim() {
         false,
     )
     .unwrap();
-    let api = Api::new(holuto.url(), holuto.token(), &status.serial).unwrap();
+    let api = Api::new(holuto.url(), holuto.token(), &status.unique_number).unwrap();
     let waiting = |_problem: Option<&str>| {};
     let mut agent = Agent::new(printer, api, &dir, &waiting);
     let _notices = agent.describe(status).unwrap();
@@ -304,7 +304,7 @@ fn device_becoming_unsupported_mid_session_stops_heartbeats_and_takes_no_jobs() 
             false,
         )
         .unwrap();
-        let api = Api::new(holuto.url(), holuto.token(), &status.serial).unwrap();
+        let api = Api::new(holuto.url(), holuto.token(), &status.unique_number).unwrap();
         let waiting = |_problem: Option<&str>| {};
         let mut agent = Agent::new(printer, api, &dir, &waiting);
         let _notices = agent.describe(status).unwrap();

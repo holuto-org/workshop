@@ -78,7 +78,7 @@ fn panic_and_error_have_printer_tags_and_no_sensitive_payload() -> Result<(), Bo
             "printer identifies the issue"
         );
         assert_eq!(
-            event.tags.get("device_serial").map(String::as_str),
+            event.tags.get("device_unique_number").map(String::as_str),
             Some("SERIAL42"),
             "physical device identifies the issue"
         );

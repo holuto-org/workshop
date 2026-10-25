@@ -20,10 +20,10 @@ use crate::{
 
 type TestResult = Result<(), Box<dyn StdError>>;
 fn telemetry() -> Telemetry {
-    telemetry_for("DEMO0000001")
+    telemetry_for("DEM0000000001")
 }
 fn api(server: &Holuto) -> Result<Api, Error> {
-    Api::new(server.url(), server.token(), "DEMO0000001")
+    Api::new(server.url(), server.token(), "DEM0000000001")
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn vendor_binding_round_trips_all_vendors_and_refuses_device_swaps() -> TestResu
         let mut telemetry = telemetry();
         telemetry.vendor = vendor;
         api.session(&telemetry)?;
-        api.heartbeat(&telemetry)?;
+        api.heartbeat()?;
         assert_eq!(
             server.requests().first().ok_or("no session")?.body["vendor"],
             name
@@ -52,14 +52,14 @@ fn vendor_binding_round_trips_all_vendors_and_refuses_device_swaps() -> TestResu
         } else {
             Vendor::Posnet
         };
-        assert!(matches!(api.heartbeat(&telemetry),
+        assert!(matches!(api.session(&telemetry),
                 Err(ApiError::Status { status: 403, detail: Some(detail) })
                     if detail == "fiscal_vendor_mismatch"));
         telemetry.vendor = vendor;
-        telemetry.serial = "OTHER-SERIAL".to_owned();
-        assert!(matches!(api.heartbeat(&telemetry),
+        telemetry.unique_number = "OTH0000000001".to_owned();
+        assert!(matches!(api.session(&telemetry),
                 Err(ApiError::Status { status: 403, detail: Some(detail) })
-                    if detail == "fiscal_serial_mismatch"));
+                    if detail == "fiscal_unique_number_mismatch"));
     }
     Ok(())
 }
@@ -213,7 +213,7 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
     let _id = server.enqueue(job_json());
     let mut api = api(&server)?;
     api.session(&telemetry())?;
-    api.heartbeat(&telemetry())?;
+    api.heartbeat()?;
     let _page = api.documents(None)?;
     let job = api.take()?.ok_or("missing job")?;
     let _remote = api.job(job.id)?;
@@ -242,8 +242,12 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
             Some(concat!("agent/", env!("CARGO_PKG_VERSION")))
         );
         assert_eq!(
-            request.serial.as_deref(),
-            if index < 2 { None } else { Some("DEMO0000001") }
+            request.unique_number.as_deref(),
+            if index == 0 {
+                None
+            } else {
+                Some("DEM0000000001")
+            }
         );
     }
     Ok(())
@@ -361,10 +365,10 @@ fn non_json_server_error_retains_status_not_a_fake_network_diagnosis() -> TestRe
 )]
 fn malformed_nullable_session_fields_and_foreign_serial_are_rejected() -> TestResult {
     for changes in [
-        json!({"deviceSerial":"OTHER"}),
-        json!({"maxItemNameLength":0}),
-        json!({"maxQuantityDecimals":9}),
-        json!({"allowedCharacters":""}),
+        json!({"uniqueNumber":"OTHER"}),
+        json!({"capabilities":{"maxItemNameLength":0}}),
+        json!({"capabilities":{"maxQuantityDecimals":9}}),
+        json!({"capabilities":{"allowedCharacters":""}}),
     ] {
         let server = Holuto::new();
         let mut status = status_json();
@@ -388,7 +392,7 @@ fn malformed_nullable_session_fields_and_foreign_serial_are_rejected() -> TestRe
     let _removed = status["printer"]
         .as_object_mut()
         .ok_or("not object")?
-        .remove("deviceSerial");
+        .remove("uniqueNumber");
     server.fault(
         "POST",
         "/agent/session",
@@ -503,18 +507,18 @@ fn a_malformed_page_is_rejected_whole() -> TestResult {
 fn invalid_physical_serial_is_refused_without_sending() -> TestResult {
     let server = Holuto::new();
     let _valid = api(&server)?;
-    for serial in ["", " SERIAL", "SERIAL ", "ŁÓDŹ", "bad\nserial"] {
+    for unique_number in ["", " SERIAL", "SERIAL ", "ŁÓDŹ", "bad\nserial"] {
         assert!(
             matches!(
-                Api::new(server.url(), server.token(), serial),
+                Api::new(server.url(), server.token(), unique_number),
                 Err(Error::Invalid(_))
             ),
-            "serial identity is never canonicalized or truncated"
+            "unique_number identity is never canonicalized or truncated"
         );
     }
     assert!(
         server.requests().is_empty(),
-        "invalid serial causes no request"
+        "invalid unique_number causes no request"
     );
     Ok(())
 }
@@ -683,7 +687,7 @@ fn pairing_is_unauthenticated_and_returns_a_redacted_credential() -> TestResult 
     let request = requests.first().ok_or("missing pairing request")?;
     assert_eq!(request.path, "/agent/pair");
     assert!(!request.authenticated);
-    assert_eq!(request.serial, None);
+    assert_eq!(request.unique_number, None);
     assert_eq!(request.body, json!({"code":"ABCD1234"}));
     Ok(())
 }
@@ -743,4 +747,10 @@ fn pairing_rejects_malformed_credentials_without_exposing_them() -> TestResult {
         assert!(!format!("{error:?} {error}").contains("private"));
     }
     Ok(())
+}
+
+#[test]
+fn voided_is_terminal_but_never_a_reportable_outcome() {
+    assert!(super::model::JobState::Voided.terminal());
+    assert!(serde_json::from_str::<super::model::Outcome>("\"voided\"").is_err());
 }
