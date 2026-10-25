@@ -32,9 +32,9 @@ pub fn lookup(model: &str, firmware: &str) -> Option<Profile> {
             // Until read-only 52$i proves attr1 0x0200, advertise only ASCII
             // (N:L538-L546,L599-L602,L1879-L1961).
             allowed_characters: (' '..='~').collect(),
-            advance_deductions: false,
-            zero_total_receipts: false,
-            company_footer: false,
+            advance_deductions: cfg!(workshop_acceptance),
+            zero_total_receipts: cfg!(workshop_acceptance),
+            company_footer: cfg!(workshop_acceptance),
         },
         // HD II is absent from the 24$z width table: use the documented $y
         // width 40 (N:L6935-L6939), not HD's 64. Point's narrow width is 44;

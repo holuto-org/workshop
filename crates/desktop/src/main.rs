@@ -3,6 +3,9 @@
 #[cfg(all(feature = "simulator", not(debug_assertions)))]
 compile_error!("The simulator feature is restricted to local debug builds.");
 
+#[cfg(all(workshop_acceptance, not(debug_assertions)))]
+compile_error!("workshop_acceptance is restricted to local debug builds.");
+
 mod application;
 mod autostart;
 mod cli;

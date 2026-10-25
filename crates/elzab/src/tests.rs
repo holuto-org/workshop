@@ -1,7 +1,9 @@
+#[cfg(not(workshop_acceptance))]
+use crate::receipt as receipt_commands;
 use crate::{
     frame,
     printer::{Printer, identify},
-    profile, receipt as receipt_commands,
+    profile,
     session::Session,
     simulator::{Fault, Simulator},
 };
@@ -17,6 +19,8 @@ use fiscal::{
     report::Report,
 };
 use std::{io, time::Duration};
+#[cfg(workshop_acceptance)]
+mod acceptance;
 #[derive(Default)]
 struct Log {
     commands: Vec<&'static str>,
@@ -91,6 +95,43 @@ fn fiscal(sim: &Simulator) -> Vec<String> {
             )
         })
         .collect()
+}
+
+#[cfg(not(workshop_acceptance))]
+#[test]
+fn non_fiscal_device_is_not_ready_without_acceptance() {
+    let sim = Simulator::start();
+    sim.set_status(0, (1_u128 << 102) | (1_u128 << 98) | 4 | 8, 32);
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(!expected.ready());
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&receipt(0, false), &expected, &mut log),
+        Err(Error::NotReady(_))
+    ));
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal(&sim), Vec::<String>::new());
+}
+
+#[cfg(not(workshop_acceptance))]
+#[test]
+fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command() {
+    // LDS advances are qualified; only zero-total and footer need acceptance.
+    let caps = profile::lookup("ELZAB CUBE online").unwrap().capabilities;
+    assert!(caps.advance_deductions);
+    for (advance, footer) in [(12346, false), (0, true)] {
+        let sim = Simulator::start();
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_receipt(&receipt(advance, footer), &expected, &mut log),
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal(&sim), Vec::<String>::new());
+    }
 }
 #[test]
 fn identify_accepts_online_models_only() {
@@ -211,6 +252,7 @@ fn daily_report_acceptance_is_unknown_and_blocks() {
     assert_eq!(sim.reports(), 0);
     assert_eq!(fiscal(&sim), ["RRP\x1dI1\x1dJ1"]);
 }
+#[cfg(not(workshop_acceptance))]
 #[test]
 fn fully_prepaid_receipt_is_refused_before_open() {
     let sim = Simulator::start();
@@ -669,6 +711,7 @@ fn report_failures_and_transport_rejections_remain_uncertain() {
     }
 }
 
+#[cfg(not(workshop_acceptance))]
 #[test]
 fn unqualified_footer_is_refused_and_qualified_profile_emits_lal() {
     let sim = Simulator::start();

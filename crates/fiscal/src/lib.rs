@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(all(workshop_acceptance, not(debug_assertions)))]
+compile_error!("workshop_acceptance is restricted to local debug builds.");
+
 pub mod cp1250;
 pub mod decimal;
 pub mod device;

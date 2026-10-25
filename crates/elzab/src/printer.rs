@@ -358,9 +358,10 @@ fn readiness(body: &str, problems: &mut Vec<String>, daily: bool) -> Result<(), 
         || any(
             two,
             &[
-                122, 101, 100, 99, 90, 87, 82, 81, 78, 77, 70, 68, 67, 66, 65, 64, 3, 0,
+                122, 101, 100, 99, 90, 87, 82, 81, 78, 77, 70, 68, 67, 66, 65, 64, 0,
             ],
         )
+        || (two & 8 != 0 && !cfg!(workshop_acceptance))
         || ![102, 98, 2].iter().all(|bit| two & (1_u128 << bit) != 0)
         || any(three, &[4, 3, 2, 1, 0])
         || three & (1 << 5) == 0

@@ -523,7 +523,8 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
         "^u" => (format!("1#U{}", state.header), true, true),
         "23#s" => (
             format!(
-                "2#X0;1;0;1;1;0;26;10;24/{}/0/0/0/0/0/0/0/0/0/{}",
+                "2#X0;{};0;1;1;0;26;10;24/{}/0/0/0/0/0/0/0/0/0/{}",
+                u8::from(state.fiscal_mode != 0),
                 state.vat.join("/"),
                 state.unique
             ),

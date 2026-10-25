@@ -126,8 +126,8 @@ pub(crate) fn steps(
         "LCL",
         format!("LCL\x1dRA{}", amount(receipt.fiscal_total())),
     ));
-    // Never reached by candidate profiles. A qualified profile must establish
-    // this post-close LAL ordering before enabling company_footer (OSS §2).
+    // Acceptance can exercise this order; production needs hardware qualification
+    // of post-close LAL before enabling company_footer (OSS §2).
     if let Some(footer) = footer {
         result.push(Step::new("LAL", format!("LAL\x1dQAA{footer}")));
     }

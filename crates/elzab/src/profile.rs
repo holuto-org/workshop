@@ -30,9 +30,9 @@ pub fn lookup(model: &str) -> Option<Profile> {
             max_buyer_nip: 42, // P:2381-2386: line_max_len, conservative narrow width.
             max_quantity_decimals: 5, // P:420-421,781-785.
             allowed_characters: text::printable_cp1250(),
-            advance_deductions: true,   // P:4131-4166, ONLINE LDS extension.
-            zero_total_receipts: false, // Error1008; elzab-oss.md §1 unresolved.
-            company_footer: false,      // Native LAL ordering unqualified, OSS §2.
+            advance_deductions: true, // P:4131-4166, ONLINE LDS extension.
+            zero_total_receipts: cfg!(workshop_acceptance), // Error1008, unqualified.
+            company_footer: cfg!(workshop_acceptance), // Native LAL order unqualified.
         },
         // ONLINE line-by-line variant; P:3583-3620. Never match legacy ZETA.
         open: "LOR\x1dC0",

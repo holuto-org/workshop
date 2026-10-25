@@ -20,6 +20,8 @@ use crate::{
     testing::{BRAND, line, pay},
 };
 
+#[cfg(workshop_acceptance)]
+mod acceptance;
 mod output;
 mod telemetry;
 
@@ -100,6 +102,23 @@ fn fiscal_commands(sim: &Simulator) -> Vec<String> {
         .collect()
 }
 
+#[cfg(not(workshop_acceptance))]
+#[test]
+fn non_fiscal_device_is_not_ready_without_acceptance() {
+    let sim = simulator();
+    sim.set_status("fs", "0");
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(!expected.ready());
+    let mut journal = Recorder::default();
+    assert!(matches!(
+        driver.print_receipt(&sale(), &expected, &mut journal),
+        Err(Error::NotReady(_))
+    ));
+    assert_eq!(journal.stages, Vec::<&str>::new());
+    assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
+}
+
 #[test]
 fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
     for (field, value, problem) in [
@@ -109,6 +128,7 @@ fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
             "Wybrane urządzenie nie jest drukarką Temo Online",
         ),
         ("nu", "", "Wybrane urządzenie nie jest drukarką Temo Online"),
+        #[cfg(not(workshop_acceptance))]
         ("fs", "0", "Drukarka nie jest w trybie fiskalnym"),
         ("hr", "0", "Drukarka nie ma zaprogramowanego nagłówka"),
         ("ds", "1", "Drukarka oczekuje na operatora lub jest w menu"),

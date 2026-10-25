@@ -139,6 +139,45 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  acceptance:
+    name: Debug-only printer acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: --cfg workshop_acceptance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: acceptance-x86_64-unknown-linux-gnu
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
+        with:
+          tool: cargo-nextest@0.9.149
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libfontconfig1-dev
+      - run: cargo build --locked -p workshop
+      - run: |
+          cargo nextest run --locked -p posnet -p novitus -p elzab \
+            --all-features --profile ci -E 'test(acceptance::)'
+      - name: Reject acceptance without debug assertions
+        run: |
+          if cargo build --locked --release -p fiscal > acceptance-release.log 2>&1; then
+            cat acceptance-release.log
+            echo "Release acceptance unexpectedly compiled"
+            exit 1
+          fi
+          cat acceptance-release.log
+          grep -F "workshop_acceptance is restricted to local debug builds." acceptance-release.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: junit-acceptance
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: error
+          retention-days: 7
+
   package:
     if: github.event_name != 'push' && github.event_name != 'workflow_dispatch' || inputs.build-packages
     uses: ./.github/workflows/package.yml

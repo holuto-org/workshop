@@ -480,7 +480,7 @@ fn device_from(
     if name != TEMO || serial.trim().is_empty() {
         problems.push("Wybrane urządzenie nie jest drukarką Temo Online".to_owned());
     }
-    if !fiscal {
+    if !fiscal && !cfg!(workshop_acceptance) {
         problems.push("Drukarka nie jest w trybie fiskalnym".to_owned());
     }
     if !header {

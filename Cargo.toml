@@ -33,6 +33,7 @@ unnameable_types = "warn"
 unreachable_pub = "warn"
 # Slint-generated code overrides this lint; handwritten crates forbid unsafe code.
 unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(workshop_acceptance)"] }
 unused_import_braces = "warn"
 unused_lifetimes = "warn"
 unused_macro_rules = "warn"

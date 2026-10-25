@@ -18,6 +18,8 @@ use crate::{
     session::{Session, identifier},
     simulator::{Fault, Simulator},
 };
+#[cfg(workshop_acceptance)]
+mod acceptance;
 
 #[derive(Default)]
 struct Log {
@@ -120,6 +122,59 @@ fn fiscal_bodies(sim: &Simulator) -> Vec<String> {
             )
         })
         .collect()
+}
+
+#[cfg(not(workshop_acceptance))]
+#[test]
+fn non_fiscal_device_is_not_ready_without_acceptance() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.set_fiscal_mode(0);
+    sim.set_status(0x74, 0x65, "@s0;0;0;00000000;");
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(!expected.ready());
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&receipt(vec![]), &expected, &mut log),
+        Err(Error::NotReady(_))
+    ));
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+}
+
+#[cfg(not(workshop_acceptance))]
+#[test]
+fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command() {
+    for case in 0..3 {
+        let sim = Simulator::start();
+        supported(&sim);
+        let advances = match case {
+            0 => vec![Advance {
+                vat: VatSlot::new(0).unwrap(),
+                amount: Grosze::new(500).unwrap(),
+            }],
+            1 => [(0, 1000), (1, 2000), (4, 3000)]
+                .map(|(slot, amount)| Advance {
+                    vat: VatSlot::new(slot).unwrap(),
+                    amount: Grosze::new(amount).unwrap(),
+                })
+                .to_vec(),
+            _ => {
+                sim.set_header("Inny podatnik");
+                vec![]
+            },
+        };
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_receipt(&receipt(advances), &expected, &mut log),
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new(), "case {case}");
+    }
 }
 
 #[test]
@@ -276,6 +331,7 @@ fn begin_refusal_is_certain_failure() {
     assert_eq!(sim.receipts(), 0);
 }
 
+#[cfg(not(workshop_acceptance))]
 #[test]
 fn unqualified_advance_is_refused_before_begin() {
     let sim = Simulator::start();
@@ -432,6 +488,7 @@ fn monthly_and_periodic_reports_use_calendar_ranges() {
     );
 }
 
+#[cfg(not(workshop_acceptance))]
 #[test]
 fn unqualified_footer_is_refused_before_begin() {
     let sim = Simulator::start();
@@ -707,6 +764,7 @@ fn receipt_is_revalidated_against_actual_model_limits_before_begin() {
     }
 }
 
+#[cfg(not(workshop_acceptance))]
 #[test]
 fn zero_total_is_disabled_in_qualified_profiles_but_encodable_when_enabled() {
     let sim = Simulator::start();

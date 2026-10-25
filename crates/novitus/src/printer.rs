@@ -368,7 +368,9 @@ fn read_readiness(session: &mut Session, problems: &mut Vec<String>) -> Result<(
     if fields.clone().count() != 9 {
         return Err(frame::corrupt());
     }
-    if fields.clone().next() != Some("1") {
+    if fields.clone().next() != Some("1")
+        && !(cfg!(workshop_acceptance) && fields.clone().next() == Some("0"))
+    {
         problems.push("Drukarka nie jest w czynnym trybie fiskalnym".to_owned());
     }
     if fields.clone().nth(5) != Some("0") {
@@ -381,7 +383,7 @@ fn read_readiness(session: &mut Session, problems: &mut Vec<String>) -> Result<(
     if !dle.online
         || dle.paper_or_battery
         || dle.mechanism_error
-        || !enq.fiscal
+        || (!enq.fiscal && !cfg!(workshop_acceptance))
         || enq.transaction
         || extended.flags_wire != [0; 4]
         || extended.last_error != 0
@@ -436,7 +438,10 @@ fn vat_table(body: &str) -> Result<(Vec<VatRate>, String, bool), Error> {
     Ok((
         rates,
         serial.to_owned(),
-        status.first() == Some(&"0") && status.get(1) == Some(&"1") && status.get(2) == Some(&"0"),
+        status.first() == Some(&"0")
+            && (status.get(1) == Some(&"1")
+                || (cfg!(workshop_acceptance) && status.get(1) == Some(&"0")))
+            && status.get(2) == Some(&"0"),
     ))
 }
 fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
