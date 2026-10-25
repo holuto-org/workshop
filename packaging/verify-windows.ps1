@@ -1,3 +1,4 @@
+. (Join-Path $PSScriptRoot 'windows-smoke.ps1')
 $ErrorActionPreference = 'Stop'
 $files = @(Get-ChildItem -Path 'release/workshop-*.exe')
 if ($files.Count -ne 1) { throw 'Expected exactly one release EXE' }
@@ -80,15 +81,7 @@ try {
     if ($process.MainWindowTitle -ne 'Holuto Workshop') { throw "Main window missing: $($process.MainWindowTitle)" }
     Write-Host "Verified main window: $($process.MainWindowTitle)"
 } finally {
-    # Production builds also run a Sentry crash reporter child from the same EXE;
-    # Windows cannot delete an image until every process using it has exited.
-    # After a crash the reporter outlives its parent, so `Parent` no longer finds it:
-    # match the uniquely named copy instead (the leaf survives 8.3 TEMP paths).
-    $image = '*\' + (Split-Path -Leaf $installed) + '\workshop.exe'
-    $tree = @($process) + @(Get-Process -Name workshop -ErrorAction Ignore | Where-Object { $_.Id -ne $process.Id -and $_.Path -like $image })
-    foreach ($member in $tree) { if (-not $member.HasExited) { $member.Kill($true) } }
-    foreach ($member in $tree) { $member.WaitForExit() }
-    Remove-Item -LiteralPath $installed -Recurse -Force
+    Remove-WorkshopSmoke -Process $process -Installed $installed
     # Absent before launch (checked above), so this is only the state this smoke created.
     $state = Join-Path $local 'workshop'
     if (Test-Path -LiteralPath $state) { Remove-Item -LiteralPath $state -Recurse -Force }

@@ -195,7 +195,7 @@ function Invoke-HolutoInstall {
             Write-Output "DRY RUN: Invoke-WebRequest $base/$asset -OutFile <unique-temp>\$asset"
             Write-Output "DRY RUN: Invoke-WebRequest $base/SHA256SUMS.txt -OutFile <unique-temp>\SHA256SUMS.txt"
             Write-Output 'DRY RUN: Require one exact 64-hex manifest entry and matching Get-FileHash -Algorithm SHA256.'
-            Write-Output "DRY RUN: If gh exists, it must be signed in to github.com (gh auth status), then: gh attestation verify <unique-temp>\$asset --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master (failure is fatal)."
+            Write-Output "DRY RUN: If gh exists: gh attestation verify <unique-temp>\$asset --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master (failure is fatal)."
             Write-Output 'DRY RUN: Only if gh is absent, warn and use weaker checksum-only integrity.'
             Write-Output "DRY RUN: Refuse a running app or a newer installed version; retain Internet Zone.Identifier, stage verified EXE, skip equal hash or atomically replace $target; create shortcut with WScript.Shell."
             Write-Output "DRY RUN: Append $directory to user PATH and process PATH only if absent, preserving existing entries."
@@ -209,11 +209,6 @@ function Invoke-HolutoInstall {
             Assert-HolutoNotDowngrade -InstalledVersion (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -Release $Release
         }
         $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        # gh cannot verify attestations without a sign-in; stop before downloading instead of reporting a failed verification.
-        if ($gh) {
-            & $gh.Source auth status --hostname github.com | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'gh is installed but not signed in to github.com, so attestation cannot be verified. Sign in with gh auth login, then rerun; nothing was downloaded.' }
-        }
         $temporary = Join-Path ([IO.Path]::GetTempPath()) ('workshop-install-' + [Guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory($temporary)
         $artifact = Join-Path $temporary $asset
@@ -230,7 +225,7 @@ function Invoke-HolutoInstall {
         if ($gh) {
             # The signer workflow path alone also matches a modified release.yml pushed to any other branch.
             & $gh.Source attestation verify $artifact --repo holuto-org/workshop --signer-workflow holuto-org/workshop/.github/workflows/release.yml --source-ref refs/heads/master
-            if ($LASTEXITCODE -ne 0) { throw 'GitHub attestation verification failed. Nothing was installed; no checksum-only fallback is allowed when gh is installed.' }
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub attestation verification failed (gh must be 2.68.0 or newer and signed in to github.com). Nothing was installed.' }
         } else {
             Write-Warning 'gh is absent: using weaker checksum-only integrity. This does not independently authenticate the release or its build provenance.'
         }

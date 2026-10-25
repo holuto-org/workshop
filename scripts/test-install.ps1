@@ -196,12 +196,12 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
     }
 }
 
-# A real install stops before writing the target when gh is not signed in, the
-# checksum does not match, or attestation fails. Only external effects are faked.
-$script:gh = @{ Auth = 0; Attestation = 0; Calls = @() }
+# A real install stops before writing the target when the checksum does not
+# match or attestation fails. Only external effects are faked.
+$script:gh = @{ Attestation = 0; Calls = @() }
 $fakeGh = [pscustomobject]@{ Source = {
     $script:gh.Calls += ($args -join ' ')
-    $global:LASTEXITCODE = if ($args[0] -eq 'auth') { $script:gh.Auth } else { $script:gh.Attestation }
+    $global:LASTEXITCODE = $script:gh.Attestation
 } }
 function Get-Command {
     param([string]$Name, $CommandType, $ErrorAction)
@@ -230,11 +230,10 @@ $installedExe = Join-Path $script:platform.LocalAppData 'Programs\Holuto Worksho
 try {
     $env:TMP = $installTemp; $env:TEMP = $installTemp; $env:TMPDIR = $installTemp
     foreach ($case in @(
-        @{ Auth = 1; Attestation = 0; Digest = $exeDigest; Error = 'not signed in.*gh auth login'; Downloads = 0 },
-        @{ Auth = 0; Attestation = 0; Digest = '0' * 64; Error = 'does not match SHA256SUMS'; Downloads = 2 },
-        @{ Auth = 0; Attestation = 1; Digest = $exeDigest; Error = 'attestation verification failed'; Downloads = 2 }
+        @{ Attestation = 0; Digest = '0' * 64; Error = 'does not match SHA256SUMS'; Downloads = 2 },
+        @{ Attestation = 1; Digest = $exeDigest; Error = 'attestation verification failed.*2\.68\.0'; Downloads = 2 }
     )) {
-        $script:gh = @{ Auth = $case.Auth; Attestation = $case.Attestation; Calls = @() }
+        $script:gh = @{ Attestation = $case.Attestation; Calls = @() }
         $script:downloads = 0
         $script:manifestDigest = $case.Digest
         Assert-Throws { Invoke-HolutoInstall -Release 'v1.2.3' | Out-Null } $case.Error

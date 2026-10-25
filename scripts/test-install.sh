@@ -8,7 +8,7 @@ trap 'rm -rf -- "$work"' EXIT
 mkdir -p "$work/bin" "$work/home"
 export FIXTURE_LOG="$work/calls" FIXTURE_OS=Darwin FIXTURE_ARCH=x86_64
 export FIXTURE_MAC=11.0 FIXTURE_ARM=0 FIXTURE_GLIBC='glibc 2.39'
-export FIXTURE_DOWNLOAD=forbidden FIXTURE_MANIFEST=bad FIXTURE_GH=0 FIXTURE_GH_AUTH=0
+export FIXTURE_DOWNLOAD=forbidden FIXTURE_MANIFEST=bad FIXTURE_GH=0
 export FIXTURE_RUNNING=none FIXTURE_MOUNT=forbidden FIXTURE_MOVE=real FIXTURE_ASSET=workshop-mac-x64.dmg
 export FIXTURE_APT=forbidden FIXTURE_DEB='workshop amd64 1.2.3' FIXTURE_INSTALLED=
 FIXTURE_REAL_UNAME=$(command -v uname)
@@ -63,7 +63,6 @@ case $name in
     esac ;;
   gh)
     printf 'gh %s\n' "$*" >> "$FIXTURE_LOG"
-    [[ $* != 'auth status --hostname github.com' ]] || exit "$FIXTURE_GH_AUTH"
     exit "$FIXTURE_GH" ;;
   xattr|hdiutil|ditto)
     if [[ $FIXTURE_MOUNT == forbidden ]]; then
@@ -230,13 +229,6 @@ if ((EUID != 0)); then
   [[ $(readlink "$HOME/.local/bin/workshop") == /unrelated/workshop ]] || fail 'changed unrelated symlink'
   rm "$HOME/.local/bin/workshop"
   ln -s "$HOME/Applications/Holuto Workshop.app/Contents/MacOS/workshop" "$HOME/.local/bin/workshop"
-  # gh needs a sign-in to verify attestations: stop before downloading and say so.
-  FIXTURE_GH_AUTH=1
-  run --release v1.2.3
-  [[ $status != 0 ]] || fail 'continued with an unauthenticated gh'
-  contains 'gh auth login'
-  ! grep -F 'curl ' "$FIXTURE_LOG" >/dev/null || fail 'downloaded although gh cannot verify attestations'
-  FIXTURE_GH_AUTH=0
   for FIXTURE_MANIFEST in bad missing duplicate mismatch valid; do
     if [[ $FIXTURE_MANIFEST == valid ]]; then
       if command -v sha256sum >/dev/null 2>&1; then

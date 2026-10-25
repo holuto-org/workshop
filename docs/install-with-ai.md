@@ -157,7 +157,8 @@ launchers and never run both copies against a printer.
      --source-ref refs/heads/master
    ```
 
-   Run for each local `FILE`. Failure, old `gh`, missing attestation or
+   Run for each local `FILE` (`--source-ref` needs `gh` 2.68.0 or newer).
+   Failure, old `gh`, missing attestation or
    authentication/ network failure is a stop, **not** permission to remove `gh`.
    Its credentials, if needed, are handled by the person; never read them. When
    `gh` is absent, explicitly state that only HTTPS plus published SHA-256 is

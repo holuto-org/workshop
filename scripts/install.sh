@@ -174,7 +174,7 @@ else
   printf 'No sudo. The image is quarantined like a browser download, so Gatekeeper checks the app on first launch; if it blocks opening, review the app in System Settings > Privacy & Security and approve it manually.\n'
 fi
 if command -v gh >/dev/null 2>&1; then
-  printf 'Verification: SHA-256 plus gh attestation verify ARTIFACT --repo %s --signer-workflow %s/.github/workflows/release.yml --source-ref refs/heads/master (gh must be signed in to github.com)\n' "$repo" "$repo"
+  printf 'Verification: SHA-256 plus gh attestation verify ARTIFACT --repo %s --signer-workflow %s/.github/workflows/release.yml --source-ref refs/heads/master\n' "$repo" "$repo"
 else
   printf 'WARNING: gh is absent; checksum-only verification is weaker and does not authenticate the release workflow.\n' >&2
 fi
@@ -194,12 +194,6 @@ else
   [[ ! -e $target || -d $target ]] || fail 'The target app is not a directory.'
   check_launcher
 fi
-# gh cannot verify attestations without a sign-in; stop before downloading instead of reporting a failed verification.
-if command -v gh >/dev/null 2>&1; then
-  gh auth status --hostname github.com >/dev/null ||
-    fail 'gh is installed but not signed in to github.com, so attestation cannot be verified. Sign in with gh auth login, then rerun; nothing was downloaded.'
-fi
-
 umask 077
 # Use /tmp so _apt can traverse the absolute package path even if TMPDIR is private.
 work=$(mktemp -d /tmp/workshop-install.XXXXXXXX)
@@ -234,7 +228,7 @@ expected=$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')
 if command -v gh >/dev/null 2>&1; then
   # The signer workflow path alone also matches a modified release.yml pushed to any other branch.
   gh attestation verify "$artifact" --repo "$repo" --signer-workflow "$repo/.github/workflows/release.yml" --source-ref refs/heads/master ||
-    fail 'GitHub attestation verification failed; no checksum-only fallback is allowed when gh is installed.'
+    fail 'GitHub attestation verification failed (gh must be 2.68.0 or newer and signed in to github.com); nothing was installed.'
 fi
 
 if [[ $os == Linux ]]; then
