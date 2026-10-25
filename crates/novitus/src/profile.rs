@@ -3,37 +3,28 @@
 
 use fiscal::{cp1250, device::Capabilities};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Profile {
-    pub capabilities: Capabilities,
-    /// Conservative width independent of paper/font configuration.
-    pub info_line_width: usize,
-}
-
-pub fn lookup(model: &str, firmware: &str) -> Option<Profile> {
-    let (max_item_name, info_line_width) = match (model, firmware) {
+pub fn lookup(model: &str, firmware: &str) -> Option<Capabilities> {
+    // `max_company_name` is the conservative info-line width, independent of paper/font
+    // configuration. HD II has no 24$z width entry: use $y's 40 columns, not HD's 64.
+    let (max_item_name, max_company_name) = match (model, firmware) {
         ("NOVITUS HD II ONLINE", "1.40" | "2.20" | "3.50") => (60, 40),
         ("NOVITUS DEON ONLINE", "1.40") | ("NOVITUS BONO ONLINE", "1.10") => (40, 42),
         ("NOVITUS DEON ONLINE", "220" | "310") | ("NOVITUS BONO ONLINE", "210" | "300") => (60, 42),
         ("NOVITUS POINT", "1.0") => (60, 44),
         _ => return None,
     };
-    Some(Profile {
-        capabilities: Capabilities {
-            max_item_name,
-            max_lines: 255, // No online index wrapping.
-            max_company_name: info_line_width,
-            max_buyer_nip: 16,
-            max_quantity_decimals: 8,
-            // ASCII only until 52$i confirms attr1 bit 0x0200 (full Windows-1250).
-            allowed_characters: (' '..='~').collect(),
-            advance_deductions: cfg!(workshop_acceptance),
-            zero_total_receipts: cfg!(workshop_acceptance),
-            company_footer: cfg!(workshop_acceptance),
-        },
-        // HD II has no 24$z width entry: use $y's 40 columns, not HD's 64.
+    Some(Capabilities {
+        max_item_name,
+        max_lines: 255, // No online index wrapping.
+        max_company_name,
+        max_buyer_nip: 16,
+        max_quantity_decimals: 8,
+        // ASCII only until 52$i confirms attr1 bit 0x0200 (full Windows-1250).
+        allowed_characters: (' '..='~').collect(),
+        advance_deductions: cfg!(workshop_acceptance),
+        zero_total_receipts: cfg!(workshop_acceptance),
         // Footer support still requires hardware qualification.
-        info_line_width,
+        company_footer: cfg!(workshop_acceptance),
     })
 }
 

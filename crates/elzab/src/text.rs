@@ -1,7 +1,13 @@
 //! Configured CP1250 only, never replacement or escaping.
 use fiscal::{cp1250, error::Error};
 
-pub(crate) fn encode_body(body: &str) -> Result<Vec<u8>, Error> {
+/// `command`, then GS and `fields` when there are any.
+pub(crate) fn encode_body(command: &str, fields: &str) -> Result<Vec<u8>, Error> {
+    let body = if fields.is_empty() {
+        command.to_owned()
+    } else {
+        format!("{command}\x1d{fields}")
+    };
     // Separators belong to the command grammar, never caller-supplied text.
     if body
         .chars()
@@ -11,7 +17,7 @@ pub(crate) fn encode_body(body: &str) -> Result<Vec<u8>, Error> {
             "Niedozwolony znak w poleceniu ElzabSTX.".to_owned(),
         ));
     }
-    cp1250::encode(body)
+    cp1250::encode(&body)
         .ok_or_else(|| Error::Invalid("Polecenie nie mieści się w CP1250.".to_owned()))
 }
 

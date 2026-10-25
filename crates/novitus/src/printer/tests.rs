@@ -54,9 +54,7 @@ fn supported(sim: &Simulator) {
     sim.set_identity("NOVITUS HD II ONLINE", "1.40");
 }
 fn receipt(advances: Vec<Advance>) -> Receipt {
-    let caps = profile::lookup("NOVITUS HD II ONLINE", "1.40")
-        .unwrap()
-        .capabilities;
+    let caps = profile::lookup("NOVITUS HD II ONLINE", "1.40").unwrap();
     let lines = [
         ("Naprawa", 1000, 0),
         ("Olej", 2000, 1),
@@ -918,11 +916,11 @@ fn experimental_advance_allocation_and_footer_are_exact_and_gated() {
     let sim = Simulator::start();
     supported(&sim);
     let mut session = Session::open(sim.link().as_ref(), &connection(&sim)).unwrap();
-    let mut profile = profile::lookup("NOVITUS HD II ONLINE", "1.40").unwrap();
-    profile.capabilities.advance_deductions = true;
-    profile.capabilities.company_footer = true;
-    profile.capabilities.allowed_characters.push_str("Łóź");
-    let caps = &profile.capabilities;
+    let mut caps = profile::lookup("NOVITUS HD II ONLINE", "1.40").unwrap();
+    caps.advance_deductions = true;
+    caps.company_footer = true;
+    caps.allowed_characters.push_str("Łóź");
+    let caps = &caps;
     let lines = [("Pierwszy", 1000), ("Drugi", 2000)]
         .map(|(name, value)| {
             Line::new(
@@ -956,13 +954,7 @@ fn experimental_advance_allocation_and_footer_are_exact_and_gated() {
         caps,
     )
     .unwrap();
-    let steps = receipt::steps(
-        &job,
-        Some("Łódź"),
-        &profile.capabilities,
-        profile.info_line_width,
-    )
-    .unwrap();
+    let steps = receipt::steps(&job, Some("Łódź"), caps).unwrap();
     super::dispatch(&mut session, &steps, &mut Log::default()).unwrap();
     assert_eq!(
         fiscal_bodies(&sim),
@@ -1096,7 +1088,7 @@ fn receipt_is_revalidated_against_actual_model_limits_before_begin() {
 fn zero_total_is_disabled_in_qualified_profiles_but_encodable_when_enabled() {
     let sim = Simulator::start();
     supported(&sim);
-    let mut profile = profile::lookup("NOVITUS HD II ONLINE", "1.40").unwrap();
+    let mut caps = profile::lookup("NOVITUS HD II ONLINE", "1.40").unwrap();
     let job = receipt(vec![
         Advance {
             vat: VatSlot::new(0).unwrap(),
@@ -1112,16 +1104,16 @@ fn zero_total_is_disabled_in_qualified_profiles_but_encodable_when_enabled() {
         },
     ]);
     assert!(matches!(
-        receipt::steps(&job, None, &profile.capabilities, profile.info_line_width),
+        receipt::steps(&job, None, &caps),
         Err(Error::Invalid(_))
     ));
-    profile.capabilities.advance_deductions = true;
+    caps.advance_deductions = true;
     assert!(matches!(
-        receipt::steps(&job, None, &profile.capabilities, profile.info_line_width),
+        receipt::steps(&job, None, &caps),
         Err(Error::Invalid(_))
     ));
-    profile.capabilities.zero_total_receipts = true;
-    let steps = receipt::steps(&job, None, &profile.capabilities, profile.info_line_width).unwrap();
+    caps.zero_total_receipts = true;
+    let steps = receipt::steps(&job, None, &caps).unwrap();
     assert!(!steps.iter().any(|step| step.command == "$b"));
     let mut session = Session::open(sim.link().as_ref(), &connection(&sim)).unwrap();
     super::dispatch(&mut session, &steps, &mut Log::default()).unwrap();

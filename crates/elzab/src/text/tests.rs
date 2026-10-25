@@ -9,8 +9,8 @@ fn printable_cp1250_round_trips_every_advertised_character() {
 #[test]
 fn text_never_injects_control_separators_or_substitutes_glyphs() {
     assert_eq!(
-        encode_body("LNP\x1dOAŁódź\x1eBx\x1fA1").unwrap(),
+        encode_body("LNP", "OAŁódź\x1eBx\x1fA1").unwrap(),
         b"LNP\x1dOA\xA3\xF3d\x9F\x1eBx\x1fA1"
     );
-    assert!(matches!(encode_body("LOR\x02"), Err(Error::Invalid(_))));
+    assert!(matches!(encode_body("LOR\x02", ""), Err(Error::Invalid(_))));
 }

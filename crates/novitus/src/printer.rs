@@ -94,16 +94,8 @@ impl Driver for Printer {
                 "Wybrana stawka VAT jest nieaktywna.".to_owned(),
             ));
         }
-        let info_line_width = checked
-            .info_line_width
-            .ok_or_else(|| Error::NotReady("Nieznany profil drukarki Novitus.".to_owned()))?;
         let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
-        let steps = receipt::steps(
-            receipt,
-            footer,
-            &checked.device.capabilities,
-            info_line_width,
-        )?;
+        let steps = receipt::steps(receipt, footer, &checked.device.capabilities)?;
         dispatch(&mut session, &steps, journal)?;
         // Failed readback must not turn a completed print into a retry.
         let receipt_number = session.command("0;0?l", TIMEOUT).ok().and_then(|reply| {
@@ -208,8 +200,6 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
 
 struct Checked {
     device: Device,
-    /// `None` for an unknown model or firmware.
-    info_line_width: Option<usize>,
     header: String,
     clock: Timestamp,
     date: Date,
@@ -234,11 +224,9 @@ fn preflight_identity(
     firmware: String,
     pc1: bool,
 ) -> Result<Checked, Error> {
-    let profile = profile::lookup(&model, &firmware);
-    let info_line_width = profile.as_ref().map(|profile| profile.info_line_width);
-    let capabilities = profile
-        .map(|profile| profile.capabilities)
-        .unwrap_or_default();
+    let capabilities = profile::lookup(&model, &firmware);
+    let known = capabilities.is_some();
+    let capabilities = capabilities.unwrap_or_default();
     let mut device = Device {
         vendor: Vendor::Novitus,
         model,
@@ -248,7 +236,7 @@ fn preflight_identity(
         vat: vec![],
         capabilities,
     };
-    if info_line_width.is_none() {
+    if !known {
         device
             .problems
             .push("Nieznany model lub firmware Novitus".into());
@@ -259,7 +247,6 @@ fn preflight_identity(
             .push("Połączenie nie prowadzi do fiskalnego portu PC1".into());
         return Ok(Checked {
             device,
-            info_line_width,
             header: String::new(),
             clock: Timestamp::UNIX_EPOCH,
             date: Date::ZERO,
@@ -311,12 +298,11 @@ fn preflight_identity(
         device.problems.push("Brak aktywnych stawek VAT".into());
     }
     let (clock, date) = clock(session)?;
-    if info_line_width.is_some() {
+    if known {
         read_repertoire(session, &mut device);
     }
     Ok(Checked {
         device,
-        info_line_width,
         header,
         clock,
         date,

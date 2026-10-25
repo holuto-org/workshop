@@ -47,7 +47,7 @@ impl Session {
     pub fn command(
         &mut self,
         command: &'static str,
-        body: &str,
+        fields: &str,
         timeout: Duration,
     ) -> Result<String, Error> {
         if self.poisoned {
@@ -59,7 +59,7 @@ impl Session {
             return Err(frame::corrupt());
         }
         let id = self.next_id;
-        let raw = frame::encode(&id.to_string(), &text::encode_body(body)?)?;
+        let raw = frame::encode(&id.to_string(), &text::encode_body(command, fields)?)?;
         self.next_id += 1;
         self.poisoned = true;
         let timeout = self.timeout(timeout);

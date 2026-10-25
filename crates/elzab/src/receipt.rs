@@ -16,15 +16,16 @@ const END_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug)]
 pub(crate) struct Step {
     pub command: &'static str,
-    pub body: String,
+    /// Everything after the command name and its GS separator.
+    pub fields: String,
     /// Silence beyond this leaves the outcome uncertain; nothing is resent.
     pub timeout: Duration,
 }
 impl Step {
-    pub(crate) const fn new(command: &'static str, body: String, timeout: Duration) -> Self {
+    pub(crate) const fn new(command: &'static str, fields: String, timeout: Duration) -> Self {
         Self {
             command,
-            body,
+            fields,
             timeout,
         }
     }
@@ -82,16 +83,16 @@ pub(crate) fn steps(
 ) -> Result<Vec<Step>, Error> {
     validate(receipt, footer, caps)?;
     // ONLINE line-by-line open variant, never sent to legacy ZETA.
-    let mut result = vec![Step::new("LOR", "LOR\x1dC0".to_owned(), LINE_TIMEOUT)];
+    let mut result = vec![Step::new("LOR", "C0".to_owned(), LINE_TIMEOUT)];
     if let Some(nip) = receipt.buyer_nip() {
-        result.push(Step::new("LNP", format!("LNP\x1dOA{nip}"), LINE_TIMEOUT));
+        result.push(Step::new("LNP", format!("OA{nip}"), LINE_TIMEOUT));
     }
     for line in receipt.lines() {
         let letter = char::from(b'A' + line.vat().get());
         result.push(Step::new(
             "LIT",
             format!(
-                "LIT\x1dGA{}\x1eB{letter}\x1eC{}\x1eD{}\x1eE{}",
+                "GA{}\x1eB{letter}\x1eC{}\x1eD{}\x1eE{}",
                 line.name(),
                 line.quantity().to_string().replace('.', ","),
                 amount(line.price()),
@@ -105,7 +106,7 @@ pub(crate) fn steps(
         result.push(Step::new(
             "LDS",
             format!(
-                "LDS\x1dIAA1\x1fB{}\x1fDZaliczka\x1eC{letter}\x1eD",
+                "IAA1\x1fB{}\x1fDZaliczka\x1eC{letter}\x1eD",
                 amount(advance.amount)
             ),
             LINE_TIMEOUT,
@@ -132,7 +133,7 @@ pub(crate) fn steps(
         result.push(Step::new(
             "LBP",
             format!(
-                "LBP\x1dKA{}\x1eB{name}\x1eC{}\x1eX{kind}",
+                "KA{}\x1eB{name}\x1eC{}\x1eX{kind}",
                 index + 1,
                 amount(payment.amount)
             ),
@@ -141,16 +142,19 @@ pub(crate) fn steps(
     }
     result.push(Step::new(
         "LCL",
-        format!("LCL\x1dRA{}", amount(receipt.fiscal_total())),
+        format!("RA{}", amount(receipt.fiscal_total())),
         END_TIMEOUT,
     ));
     // Acceptance can exercise this order; production needs hardware qualification
     // of post-close LAL before enabling company_footer.
     if let Some(footer) = footer {
-        result.push(Step::new("LAL", format!("LAL\x1dQAA{footer}"), END_TIMEOUT));
+        result.push(Step::new("LAL", format!("QAA{footer}"), END_TIMEOUT));
     }
     for step in &result {
-        drop(frame::encode("999999999", &text::encode_body(&step.body)?)?);
+        drop(frame::encode(
+            "999999999",
+            &text::encode_body(step.command, &step.fields)?,
+        )?);
     }
     Ok(result)
 }

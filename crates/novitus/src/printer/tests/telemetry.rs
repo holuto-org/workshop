@@ -64,9 +64,7 @@ fn refused_step_traces_command_and_code_but_never_fiscal_payloads() {
         sim.fault("$b", Fault::Refuse(1234));
         let driver = printer(&sim);
         let expected = driver.probe().unwrap();
-        let caps = profile::lookup("NOVITUS HD II ONLINE", "1.40")
-            .unwrap()
-            .capabilities;
+        let caps = profile::lookup("NOVITUS HD II ONLINE", "1.40").unwrap();
         let receipt = Receipt::new(
             vec![
                 Line::new(

@@ -11,8 +11,6 @@ use fiscal::{
     receipt::{PaymentForm, Receipt},
 };
 
-use crate::text;
-
 /// Silence beyond twice a step's timeout, with no operator wait in DLE, is uncertain.
 const LINE_TIMEOUT: Duration = Duration::from_secs(10);
 /// `$y` and the closing `$z` print the summary, payments, fiscal logo and cut.
@@ -96,21 +94,10 @@ pub(crate) fn steps(
     receipt: &Receipt,
     footer: Option<&str>,
     caps: &Capabilities,
-    info_line_width: usize,
 ) -> Result<Vec<Step>, Error> {
     validate(receipt, footer, caps)?;
     // The company footer is a `$h` additional line, printed after the fiscal logo.
-    let begin = match footer {
-        Some(footer) => {
-            if text::printable_characters(footer).is_none_or(|length| length > info_line_width) {
-                return Err(Error::Invalid(
-                    "Nazwa firmy nie mieści się w stopce Novitus.".to_owned(),
-                ));
-            }
-            format!("0;1$h{footer}\r")
-        },
-        None => "0$h".to_owned(),
-    };
+    let begin = footer.map_or_else(|| "0$h".to_owned(), |footer| format!("0;1$h{footer}\r"));
     let mut steps = vec![Step::new("$h", begin, LINE_TIMEOUT)];
     if let Some(nip) = receipt.buyer_nip() {
         steps.push(Step::new("$z", format!("100;1$z{nip}\r"), LINE_TIMEOUT));

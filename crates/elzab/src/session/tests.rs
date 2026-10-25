@@ -20,7 +20,7 @@ fn transport_rejection_must_be_single_frame() {
         Fault::Reply(frame::encode("1\x1dSL\x1d2\x1d2", b"").unwrap()),
     );
     assert!(matches!(
-        open(&sim).command("LOR", "LOR\x1dC0", Duration::from_secs(3)),
+        open(&sim).command("LOR", "C0", Duration::from_secs(3)),
         Err(Error::Protocol(_))
     ));
 }
@@ -33,7 +33,7 @@ fn fragmented_and_multipart_responses_are_assembled_without_ack_or_retry() {
     sim.fault("FNR", Fault::Reply(reply));
     assert_eq!(
         open(&sim)
-            .command("FNR", "FNR", Duration::from_secs(3))
+            .command("FNR", "", Duration::from_secs(3))
             .unwrap(),
         "\x1dBABCDEF"
     );
@@ -50,13 +50,9 @@ fn poison_prevents_any_further_send() {
         let sim = Simulator::start();
         sim.fault("XTR", fault);
         let mut session = open(&sim);
-        assert!(
-            session
-                .command("XTR", "XTR", Duration::from_secs(3))
-                .is_err()
-        );
+        assert!(session.command("XTR", "", Duration::from_secs(3)).is_err());
         assert!(matches!(
-            session.command("FNR", "FNR", Duration::from_secs(3)),
+            session.command("FNR", "", Duration::from_secs(3)),
             Err(Error::NotReady(_))
         ));
         assert_eq!(sim.frames().len(), 1);
@@ -70,7 +66,7 @@ fn every_transport_status_is_decoded_without_replay() {
         let sim = Simulator::start();
         sim.fault("LOR", Fault::Transport(status.to_owned()));
         assert!(matches!(
-            open(&sim).command("LOR", "LOR\x1dC0", Duration::from_secs(3)),
+            open(&sim).command("LOR", "C0", Duration::from_secs(3)),
             Err(Error::Device { rejected: true, .. })
         ));
         assert_eq!(sim.frames().len(), 1);
@@ -87,7 +83,7 @@ fn malformed_headers_never_become_transport_rejections() {
         let sim = Simulator::start();
         sim.fault("LOR", Fault::Reply(frame::encode(header, b"").unwrap()));
         assert!(matches!(
-            open(&sim).command("LOR", "LOR\x1dC0", Duration::from_secs(3)),
+            open(&sim).command("LOR", "C0", Duration::from_secs(3)),
             Err(Error::Protocol(_))
         ));
     }
@@ -103,7 +99,7 @@ fn reply_with_default_header_fields_matches_command_one() {
         );
         assert_eq!(
             open(&sim)
-                .command("FNR", "FNR", Duration::from_secs(3))
+                .command("FNR", "", Duration::from_secs(3))
                 .unwrap(),
             "\x1dBABC"
         );
@@ -139,11 +135,11 @@ fn inconsistent_multipart_totals_are_rejected() {
         sim.fault("LCL", Fault::Reply(raw));
         let mut session = open(&sim);
         assert!(matches!(
-            session.command("LCL", "LCL\x1dRA1,00", Duration::from_secs(3)),
+            session.command("LCL", "RA1,00", Duration::from_secs(3)),
             Err(Error::Protocol(_))
         ));
         assert!(matches!(
-            session.command("FNR", "FNR", Duration::from_secs(3)),
+            session.command("FNR", "", Duration::from_secs(3)),
             Err(Error::NotReady(_))
         ));
         assert_eq!(sim.frames().len(), 1);
@@ -158,7 +154,7 @@ fn a_declared_multipart_total_is_preserved_until_its_final_frame() {
     sim.fault("FNR", Fault::Reply(reply));
     assert_eq!(
         open(&sim)
-            .command("FNR", "FNR", Duration::from_secs(3))
+            .command("FNR", "", Duration::from_secs(3))
             .unwrap(),
         "\x1dBABCDEF"
     );
@@ -229,9 +225,7 @@ fn scaled_deadlines_keep_a_scheduling_margin_and_real_links_keep_the_exact_one()
         )
         .unwrap();
         assert_eq!(
-            session
-                .command("FNR", "FNR", Duration::from_secs(3))
-                .unwrap(),
+            session.command("FNR", "", Duration::from_secs(3)).unwrap(),
             "\x1dBABC1234567890"
         );
         assert_eq!(*deadlines.lock().unwrap(), [deadline], "scale {scale}");

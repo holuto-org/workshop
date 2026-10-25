@@ -95,7 +95,7 @@ impl Driver for Printer {
         let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
         let steps = receipt::steps(receipt, footer, &checked.device.capabilities)?;
         // LPC's nested error must be checked, even when outer error is empty.
-        let permission = query(&mut session, "LPC", "LPC\x1dA1")?;
+        let permission = query(&mut session, "LPC", "A1")?;
         let code = field(&permission, 'B')?;
         if !matches!(code, "" | "0") {
             return Err(Error::NotReady(format!(
@@ -126,10 +126,10 @@ impl Driver for Printer {
         let checked = preflight(&mut session, report == Report::Daily)?;
         checked.device.require_ready()?;
         checked.device.require_unique_number(unique_number)?;
-        let (command, body) = match report {
+        let (command, fields) = match report {
             Report::Daily => {
                 let _before = read_number(&mut session, "RNR", 'A')?;
-                ("RRP", "RRP\x1dI1\x1dJ1".to_owned())
+                ("RRP", "I1\x1dJ1".to_owned())
             },
             Report::Monthly { year, month } => {
                 let from = Date::new(year, month, 1).map_err(|e| Error::Invalid(e.to_string()))?;
@@ -142,7 +142,7 @@ impl Driver for Printer {
                 (
                     "RPP",
                     format!(
-                        "RPP\x1dE1\x1dFB{}\x1dS0",
+                        "E1\x1dFB{}\x1dS0",
                         date.get(..4).ok_or_else(frame::corrupt)?
                     ),
                 )
@@ -156,7 +156,7 @@ impl Driver for Printer {
                 (
                     "RPP",
                     format!(
-                        "RPP\x1dE{}\x1dFE{}\x1eF{}\x1dS0",
+                        "E{}\x1dFE{}\x1eF{}\x1dS0",
                         if summary { 3 } else { 1 },
                         date_fields(from)?,
                         date_fields(to)?
@@ -169,7 +169,11 @@ impl Driver for Printer {
         } else {
             REPORT_TIMEOUT
         };
-        dispatch(&mut session, &[Step::new(command, body, timeout)], journal)?;
+        dispatch(
+            &mut session,
+            &[Step::new(command, fields, timeout)],
+            journal,
+        )?;
         if command == "RRP" {
             // The protocol promises acceptance, not completion.
             return Err(uncertain(Error::NotReady(
@@ -211,11 +215,11 @@ struct Checked {
     header: String,
     date: Date,
 }
-fn query(session: &mut Session, command: &'static str, body: &str) -> Result<String, Error> {
-    session.command(command, body, TIMEOUT)
+fn query(session: &mut Session, command: &'static str, fields: &str) -> Result<String, Error> {
+    session.command(command, fields, TIMEOUT)
 }
 fn identity(session: &mut Session) -> Result<(String, String), Error> {
-    let body = query(session, "XTR", "XTR")?;
+    let body = query(session, "XTR", "")?;
     let model = field(&body, 'B')?;
     let firmware = field(&body, 'D')?;
     if model.trim().is_empty() || firmware.trim().is_empty() {
@@ -247,7 +251,7 @@ fn preflight_identity(
     if !known {
         device.problems.push("Nieznany model Elzab ONLINE".into());
     }
-    let unique_number = query(session, "FNR", "FNR")?;
+    let unique_number = query(session, "FNR", "")?;
     let unique_number = field(&unique_number, 'B')?;
     if !(1..=14).contains(&unique_number.len())
         || !unique_number.bytes().all(|b| (0x21..=0x7E).contains(&b))
@@ -255,16 +259,16 @@ fn preflight_identity(
         return Err(frame::corrupt());
     }
     unique_number.clone_into(&mut device.unique_number);
-    let page = query(session, "XHR", "XHR\x1dw")?;
+    let page = query(session, "XHR", "w")?;
     if field(&page, 'w')? != "ACP1250" {
         device
             .problems
             .push("Ustaw stronę kodową drukarki na CP1250".into());
         device.capabilities.allowed_characters.clear();
     }
-    let status = query(session, "ySR", "ySR")?;
+    let status = query(session, "ySR", "")?;
     readiness(&status, &mut device.problems, daily)?;
-    let limits = query(session, "YYR", "YYR\x1dJ")?;
+    let limits = query(session, "YYR", "J")?;
     let lines = subfield(field(&limits, 'J')?, 'A')?
         .parse::<usize>()
         .map_err(|_number| frame::corrupt())?;
@@ -273,21 +277,21 @@ fn preflight_identity(
     }
     let mut header = String::new();
     for index in 1..=lines {
-        let body = query(session, "yHR", &format!("yHR\x1dva{index}"))?;
+        let body = query(session, "yHR", &format!("va{index}"))?;
         let name = subfield(field(&body, 'v')?, 'b')?;
         if !header.is_empty() {
             header.push('\n');
         }
         header.push_str(name);
     }
-    let nip = query(session, "yHR", "yHR\x1dx")?;
+    let nip = query(session, "yHR", "x")?;
     let taxpayer = subfield(field(&nip, 'x')?, 'i')?;
     if header.trim().is_empty() || taxpayer.trim().is_empty() {
         device
             .problems
             .push("Brak zaprogramowanego nagłówka lub NIP".into());
     }
-    let vat = query(session, "FTR", "FTR")?;
+    let vat = query(session, "FTR", "")?;
     let table = field(&vat, 'A')?;
     for slot in 0..7 {
         let value = subfield(table, char::from(b'A' + slot))?;
@@ -453,7 +457,7 @@ const CAUSES: [Cause; 9] = [
 ];
 /// Civil printer time; only the date is needed outside receipt timestamps.
 fn clock(session: &mut Session) -> Result<DateTime, Error> {
-    let body = query(session, "XCR", "XCR")?;
+    let body = query(session, "XCR", "")?;
     let value = field(&body, 'A')?;
     if value.len() != 12 || !value.bytes().all(|b| b.is_ascii_digit()) {
         return Err(frame::corrupt());
@@ -503,7 +507,7 @@ fn date_fields(date: Date) -> Result<String, Error> {
     ))
 }
 fn read_number(session: &mut Session, command: &'static str, tag: char) -> Result<String, Error> {
-    let body = query(session, command, command)?;
+    let body = query(session, command, "")?;
     let value = field(&body, tag)?;
     if value.is_empty() || value.len() > 20 || !value.bytes().all(|b| b.is_ascii_digit()) {
         return Err(frame::corrupt());
@@ -516,7 +520,7 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
             let error = Error::Journal(error);
             return Err(if index == 0 { error } else { uncertain(error) });
         }
-        if let Err(error) = session.command(step.command, &step.body, step.timeout) {
+        if let Err(error) = session.command(step.command, &step.fields, step.timeout) {
             if let Error::Device { code, .. } = &error {
                 tracing::warn!(
                     command = step.command,

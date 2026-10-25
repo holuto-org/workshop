@@ -220,7 +220,7 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    implemented candidate is `LCL` then `LAL`.
    Expected attached label-free text, correct cut and final completion, not
    a detached non-fiscal page. Test different daily company names and widths.
-   **Fills:** `Capabilities.company_footer`, Novitus `Profile.info_line_width`
+   **Fills:** `Capabilities.company_footer`, Novitus `max_company_name`
    (HD II 40, Bono/Deon 42, Point 44), Elzab `max_company_name` 42 and
    `Profile.open` (`LOR GS C0` ONLINE variant). No timing/placement proof means
    footer remains false; do not invent an end-footer command.

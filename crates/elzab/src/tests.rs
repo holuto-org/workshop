@@ -299,7 +299,7 @@ fn reply_with_foreign_command_id_is_ignored() {
     let mut session = Session::open(sim.link().as_ref(), &connection(&sim)).unwrap();
     assert!(
         session
-            .command("XTR", "XTR", Duration::from_secs(3))
+            .command("XTR", "", Duration::from_secs(3))
             .unwrap()
             .contains("ELZAB CUBE online")
     );
@@ -1036,7 +1036,7 @@ fn unqualified_footer_is_refused_and_qualified_profile_emits_lal() {
     let mut qualified = profile::lookup("ELZAB CUBE online").unwrap();
     qualified.company_footer = true;
     let steps = receipt_commands::steps(&receipt(0, true), Some("Inna firma"), &qualified).unwrap();
-    assert_eq!(steps.last().unwrap().body, "LAL\x1dQAAInna firma");
+    assert_eq!(steps.last().unwrap().fields, "QAAInna firma");
     assert_eq!(steps.last().unwrap().command, "LAL");
 }
 
