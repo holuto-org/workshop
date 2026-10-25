@@ -518,6 +518,8 @@ fn request_body(raw: &[u8]) -> Option<String> {
 fn realtime_answer(byte: u8, state: &State) -> Option<Vec<u8>> {
     Some(match byte {
         DLE => vec![state.dle],
+        // ENQ is synchronous: an off-line, paper-out or failed printer leaves it unanswered.
+        ENQ if state.dle & 0b111 != 0b100 => Vec::new(),
         ENQ => vec![state.enq | if state.transaction { 2 } else { 0 }],
         DLE2 => {
             let extended = if state.transaction || state.ending {

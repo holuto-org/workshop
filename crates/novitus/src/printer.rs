@@ -266,22 +266,28 @@ fn preflight_identity(
             .push("Wymagany jest natywny protokół NOVITUS".into());
     }
     let pages = session.command("0;1^c91/92/", TIMEOUT)?;
-    if !matches!(
+    let cp1250 = matches!(
         pages.options.as_slice(),
         [(91, input), (92, output)] if input == "1" && output == "1"
-    ) {
+    );
+    if !cp1250 {
         device
             .problems
             .push("Ustaw wejście i wyjście PC na Windows-1250".into());
     }
     read_readiness(session, &mut device.problems)?;
-    let header = session
-        .command("^u", TIMEOUT)?
-        .body
-        .strip_prefix("1#U")
-        .ok_or_else(frame::corrupt)?
-        .to_owned();
-    if header.trim().is_empty() {
+    // Header text in another code page may hold bytes Windows-1250 cannot decode.
+    let header = if cp1250 {
+        session
+            .command("^u", TIMEOUT)?
+            .body
+            .strip_prefix("1#U")
+            .ok_or_else(frame::corrupt)?
+            .to_owned()
+    } else {
+        String::new()
+    };
+    if cp1250 && header.trim().is_empty() {
         device
             .problems
             .push("Brak zaprogramowanego nagłówka".into());
@@ -361,26 +367,28 @@ fn read_readiness(session: &mut Session, problems: &mut Vec<Problem>) -> Result<
     if fields.clone().count() != 9 {
         return Err(frame::corrupt());
     }
-    if fields.clone().next() != Some("1")
-        && !(cfg!(workshop_acceptance) && fields.clone().next() == Some("0"))
-    {
-        problems.push("Drukarka nie jest w czynnym trybie fiskalnym".into());
+    match fields.clone().next() {
+        Some("1") => {},
+        Some("0") if cfg!(workshop_acceptance) => {},
+        // Read-only still permits resolution, which sends no commands.
+        Some("2") => problems.push(Problem::ReadOnly),
+        _ => problems.push("Drukarka nie jest w czynnym trybie fiskalnym".into()),
     }
     if fields.clone().nth(5) != Some("0") {
         problems.push("Nieobsługiwany typ drukarki fiskalnej".into());
     }
     let dle = DleStatus::decode(session.realtime(DLE)?)?;
-    let enq = EnqStatus::decode(session.realtime(ENQ)?)?;
-    let extended = session.extended_status()?;
-    // Zero flags prove idle without guessing DLE2's byte-label ordering.
-    if !dle.online
-        || dle.paper_or_battery
-        || dle.mechanism_error
-        || (!enq.fiscal && !cfg!(workshop_acceptance))
-        || enq.transaction
-        || extended.flags_wire != [0; 4]
-        || extended.last_error != 0
-    {
+    // ENQ is synchronous: an off-line, paper-out or failed printer may never answer it.
+    let busy = !dle.online || dle.paper_or_battery || dle.mechanism_error || {
+        let enq = EnqStatus::decode(session.realtime(ENQ)?)?;
+        let extended = session.extended_status()?;
+        // Zero flags prove idle without guessing DLE2's byte-label ordering.
+        (!enq.fiscal && !cfg!(workshop_acceptance))
+            || enq.transaction
+            || extended.flags_wire != [0; 4]
+            || extended.last_error != 0
+    };
+    if busy {
         problems.push("Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi".into());
     }
     Ok(())

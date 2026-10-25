@@ -108,6 +108,7 @@ struct State {
     vat: [String; 7],
     clock: Clock,
     timestamp: Option<Timestamp>,
+    fiscalised: Timestamp,
     status: BTreeMap<String, String>,
     transaction_open: bool,
     footer_open: bool,
@@ -244,6 +245,11 @@ impl Simulator {
     /// Freezes printer time independently of the host clock.
     pub fn set_clock(&self, timestamp: Timestamp) {
         self.state().timestamp = Some(timestamp);
+    }
+
+    /// Sets the `fmrecfisc` fiscalisation time; the Unix epoch by default.
+    pub fn set_fiscalised(&self, timestamp: Timestamp) {
+        self.state().fiscalised = timestamp;
     }
 
     /// Overrides a status field in `sdev`, `sprn`, `scomm` or `strns`.
@@ -670,18 +676,10 @@ impl State {
                 .zip(&self.vat)
                 .map(|(key, rate)| ((*key).to_owned(), rate.clone()))
                 .collect(),
-            "rtcget" => {
-                let time = self
-                    .timestamp
-                    .unwrap_or_else(Timestamp::now)
-                    .to_zoned(self.clock.0.clone());
-                vec![
-                    ("da".to_owned(), time.strftime("%Y-%m-%d;%H:%M").to_string()),
-                    (
-                        "tm".to_owned(),
-                        time.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(),
-                    ),
-                ]
+            "rtcget" => self.date_time(self.timestamp.unwrap_or_else(Timestamp::now)),
+            // A non-fiscal (demo) printer has no fiscalisation record (p. 405).
+            "fmrecfisc" if self.status.get("fs").is_none_or(|fs| fs != "0") => {
+                self.date_time(self.fiscalised)
             },
             _ => return None,
         };
@@ -691,6 +689,18 @@ impl State {
             }
         }
         Some(fields)
+    }
+
+    /// `da` civil printer time and ISO8601 `tm` with offset (p. 17).
+    fn date_time(&self, timestamp: Timestamp) -> Vec<(String, String)> {
+        let time = timestamp.to_zoned(self.clock.0.clone());
+        vec![
+            ("da".to_owned(), time.strftime("%Y-%m-%d;%H:%M").to_string()),
+            (
+                "tm".to_owned(),
+                time.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+            ),
+        ]
     }
 
     fn handle(&mut self, command: &str, reply_params: &Reply) -> Result<Vec<(String, String)>, ()> {

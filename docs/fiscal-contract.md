@@ -171,7 +171,10 @@ the printer treats other names as empty (p. 430). A `getrealid` unique number
 written `ABC 1234567890` binds as `ABC1234567890`. A read-only (`scomm.td`)
 printer refuses sales and daily reports but still prints monthly and periodic
 reports, which the specification permits in that mode; monthly reports get the
-periodic report timeout. Certain report refusals are listed in
+periodic report timeout. A monthly or periodic report that starts after the
+printer's `rtcget` date or ends before its `fmrecfisc` fiscalisation date is
+refused before dispatch, because the printer's own refusal of those dates is
+not certain. Certain report refusals are listed in
 [fiscal safety](testing/fiscal-safety.md#recovery-classification).
 
 Buyer NIP and payment forms follow

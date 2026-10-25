@@ -158,27 +158,19 @@ impl Driver for Printer {
             device.require_periodic_reports()?;
         }
         device.require_unique_number(unique_number)?;
+        let today = civil_date(&session.command("rtcget", &[], DEFAULT_TIMEOUT)?)
+            .ok_or_else(|| Error::Protocol("Nie można odczytać daty drukarki.".to_owned()))?;
         let step = match report {
-            Report::Daily => {
-                let clock = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
-                // `da`: `YYYY-MM-DD;HH:MM`; reports take only the date.
-                let day = clock
-                    .get("da")
-                    .and_then(|value| BrokenDownTime::parse_prefix("%Y-%m-%d", value).ok())
-                    .and_then(|(time, _)| time.to_date().ok())
-                    .ok_or_else(|| {
-                        Error::Protocol("Nie można odczytać daty drukarki.".to_owned())
-                    })?;
-                Step {
-                    command: "dailyrep",
-                    params: vec![("da", day.to_string())],
-                    timeout: REPORT_TIMEOUT,
-                }
+            Report::Daily => Step {
+                command: "dailyrep",
+                params: vec![("da", today.to_string())],
+                timeout: REPORT_TIMEOUT,
             },
             Report::Monthly { year, month } => {
                 let first = Date::new(year, month, 1).map_err(|error| {
                     Error::Invalid(format!("Nieprawidłowy miesiąc raportu: {error}."))
                 })?;
+                require_report_dates(&mut session, first, first.last_of_month(), today)?;
                 // A monthly report prints the periodic report for that month (p. 216).
                 Step {
                     command: "monthlyrep",
@@ -186,20 +178,74 @@ impl Driver for Printer {
                     timeout: PERIODIC_REPORT_TIMEOUT,
                 }
             },
-            Report::Periodic { from, to, summary } => Step {
-                command: "periodicrepbydates",
-                params: vec![
-                    ("fd", from.to_string()),
-                    ("td", to.to_string()),
-                    ("su", if summary { "1" } else { "0" }.to_owned()),
-                ],
-                timeout: PERIODIC_REPORT_TIMEOUT,
+            Report::Periodic { from, to, summary } => {
+                require_report_dates(&mut session, from, to, today)?;
+                Step {
+                    command: "periodicrepbydates",
+                    params: vec![
+                        ("fd", from.to_string()),
+                        ("td", to.to_string()),
+                        ("su", if summary { "1" } else { "0" }.to_owned()),
+                    ],
+                    timeout: PERIODIC_REPORT_TIMEOUT,
+                }
             },
         };
         dispatch(&mut session, &[step], journal)?;
         tracing::info!("Report printed");
         Ok(())
     }
+}
+
+/// The printer refuses a range starting after its date or ending before its fiscalisation
+/// before printing (`ERR_REP_PER_DATE_START_GT_CURR`, `ERR_REP_PER_DATE_END_GT_FISK`, p. 441),
+/// but such a refusal is not certain, so the range is checked before dispatch.
+fn require_report_dates(
+    session: &mut Session,
+    from: Date,
+    to: Date,
+    today: Date,
+) -> Result<(), Error> {
+    if from > today {
+        return Err(Error::Invalid(format!(
+            "Raport nie może zaczynać się po dacie drukarki ({}).",
+            today.strftime("%d.%m.%Y")
+        )));
+    }
+    if let Some(fiscalised) = fiscalisation_date(session)?
+        && to < fiscalised
+    {
+        return Err(Error::Invalid(format!(
+            "Raport nie może kończyć się przed fiskalizacją drukarki ({}).",
+            fiscalised.strftime("%d.%m.%Y")
+        )));
+    }
+    Ok(())
+}
+
+/// Demo-mode printers, allowed only in acceptance builds, have no fiscalisation record
+/// (p. 405).
+fn fiscalisation_date(session: &mut Session) -> Result<Option<Date>, Error> {
+    if cfg!(workshop_acceptance)
+        && !boolean(
+            session
+                .command("scomm", &[], DEFAULT_TIMEOUT)?
+                .require("fs")?,
+        )?
+    {
+        return Ok(None);
+    }
+    civil_date(&session.command("fmrecfisc", &[], DEFAULT_TIMEOUT)?)
+        .map(Some)
+        .ok_or_else(|| Error::Protocol("Nie można odczytać daty fiskalizacji drukarki.".to_owned()))
+}
+
+/// `da` is `YYYY-MM-DD;HH:MM` printer civil time; reports take only the date.
+fn civil_date(reply: &Reply) -> Option<Date> {
+    reply
+        .get("da")
+        .and_then(|value| BrokenDownTime::parse_prefix("%Y-%m-%d", value).ok())
+        .and_then(|(time, _)| time.to_date().ok())
 }
 
 /// After dispatch, failures are uncertain unless no fiscal record can have been issued.

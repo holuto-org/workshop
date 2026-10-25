@@ -143,6 +143,32 @@ fn non_fiscal_device_is_not_ready_without_acceptance() {
     assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
 }
 
+#[test]
+fn read_only_printer_refuses_printing_but_allows_resolution() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.set_fiscal_mode(2);
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(!expected.ready());
+    assert_eq!(
+        expected.description(),
+        "Drukarka jest w trybie tylko do odczytu"
+    );
+    let _resolvable = driver.verify("ABC1234567890").unwrap();
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&receipt(vec![]), &expected, &mut log),
+        Err(Error::NotReady(_))
+    ));
+    assert!(matches!(
+        driver.print_report(Report::Daily, "ABC1234567890", &mut log),
+        Err(Error::NotReady(_))
+    ));
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+}
+
 #[cfg(not(workshop_acceptance))]
 #[test]
 fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command() {
@@ -387,6 +413,56 @@ fn preflight_rejects_busy_readonly_missing_header_bad_clock_and_codepage() {
             result.map_or(true, |device| !device.ready()),
             "case {problem}"
         );
+        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn non_cp1250_output_reports_the_code_page_instead_of_a_corrupt_header() {
+    // CP-852 "ł" is 0x88, a byte Windows-1250 leaves unassigned.
+    let header = b"1#UWarsztat Kowalski, ul. G\x88ogowska 1";
+    for discovery in [false, true] {
+        let sim = Simulator::start();
+        supported(&sim);
+        sim.set_config_option(92, "3");
+        let mut reply = frame::encode(header);
+        if !discovery {
+            reply.extend_from_slice(&frame::query(b"0#Z^u"));
+        }
+        sim.fault("^u", Fault::Reply(reply));
+        let device = if discovery {
+            identify(sim.link().as_ref(), &connection(&sim))
+                .unwrap()
+                .unwrap()
+        } else {
+            printer(&sim).probe().unwrap()
+        };
+        assert_eq!(
+            device.description(),
+            "Ustaw wejście i wyjście PC na Windows-1250",
+            "discovery: {discovery}"
+        );
+        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn dle_problem_is_reported_without_waiting_for_an_unanswered_enq() {
+    // Paper out, mechanism error, off-line.
+    for dle in [0x76, 0x75, 0x70] {
+        let sim = Simulator::start();
+        supported(&sim);
+        sim.set_status(dle, 0x6D, "@s0;0;0;00000000;");
+        let device = printer(&sim).probe().unwrap();
+        assert_eq!(
+            device.description(),
+            "Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi",
+            "DLE {dle:#04X}"
+        );
+        let found = identify(sim.link().as_ref(), &connection(&sim))
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.description(), device.description(), "DLE {dle:#04X}");
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }
 }

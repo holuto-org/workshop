@@ -351,7 +351,7 @@ fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(),
             ],
         )
         || (two & 8 != 0 && !cfg!(workshop_acceptance))
-        || ![102, 98, 2].iter().all(|bit| two & (1_u128 << bit) != 0)
+        || ![102, 98].iter().all(|bit| two & (1_u128 << bit) != 0)
         || any(three, &[4, 3, 2, 1, 0])
         || three & (1 << 5) == 0
     {
@@ -360,6 +360,10 @@ fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(),
              lub mechanizm/papier"
                 .into(),
         );
+    }
+    // Read-only still permits resolution, which sends no commands.
+    if two & 4 == 0 {
+        problems.push(Problem::ReadOnly);
     }
     // Reminder-only and overdue-daily bits must not prevent the daily report.
     if !daily && two & (1_u128 << 115) != 0 {

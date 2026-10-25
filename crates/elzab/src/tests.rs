@@ -154,6 +154,40 @@ fn overdue_daily_report_blocks_receipts_but_allows_daily_report() {
     assert!(sim.daily_pending());
 }
 
+#[test]
+fn read_only_printer_refuses_printing_but_allows_resolution() {
+    let sim = Simulator::start();
+    // Fiscal and idle, but package 2 writable bit 2 is clear.
+    sim.set_status(0, (1_u128 << 102) | (1_u128 << 98), 32);
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(!expected.ready());
+    assert_eq!(
+        expected.description(),
+        "Drukarka jest w trybie tylko do odczytu"
+    );
+    let _resolvable = driver.verify("ABC1234567890").unwrap();
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&receipt(0, false), &expected, &mut log),
+        Err(Error::NotReady(_))
+    ));
+    for report in [
+        Report::Daily,
+        Report::Monthly {
+            year: 2026,
+            month: 9,
+        },
+    ] {
+        assert!(matches!(
+            driver.print_report(report, "ABC1234567890", &mut log),
+            Err(Error::NotReady(_))
+        ));
+    }
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal(&sim), Vec::<String>::new());
+}
+
 #[cfg(not(workshop_acceptance))]
 #[test]
 fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command() {

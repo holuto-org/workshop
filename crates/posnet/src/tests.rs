@@ -476,6 +476,90 @@ fn invalid_reports_are_refused_without_sending_a_report() {
 }
 
 #[test]
+fn reports_outside_the_printer_date_and_fiscalisation_are_refused_before_journaling() {
+    // Printer date 2026-07-01 (Warsaw); fiscalised 2026-03-10.
+    for (report, prints) in [
+        (
+            Report::Monthly {
+                year: 2026,
+                month: 8,
+            },
+            false,
+        ),
+        (
+            Report::Periodic {
+                from: date(2026, 7, 2),
+                to: date(2026, 7, 2),
+                summary: false,
+            },
+            false,
+        ),
+        (
+            Report::Monthly {
+                year: 2026,
+                month: 2,
+            },
+            false,
+        ),
+        (
+            Report::Periodic {
+                from: date(2026, 1, 1),
+                to: date(2026, 3, 9),
+                summary: true,
+            },
+            false,
+        ),
+        (
+            Report::Monthly {
+                year: 2026,
+                month: 7,
+            },
+            true,
+        ),
+        (
+            Report::Monthly {
+                year: 2026,
+                month: 3,
+            },
+            true,
+        ),
+        (
+            Report::Periodic {
+                from: date(2026, 7, 1),
+                to: date(2026, 7, 1),
+                summary: false,
+            },
+            true,
+        ),
+        (
+            Report::Periodic {
+                from: date(2026, 1, 1),
+                to: date(2026, 3, 10),
+                summary: true,
+            },
+            true,
+        ),
+    ] {
+        let sim = simulator();
+        sim.set_fiscalised("2026-03-10T08:00:00Z".parse().unwrap());
+        let mut journal = Recorder::default();
+        let result = printer(&sim).print_report(report, UNIQUE_NUMBER, &mut journal);
+        if prints {
+            assert!(result.is_ok(), "{report:?}: {result:?}");
+            assert_eq!(journal.stages.len(), 1, "{report:?}");
+            assert_eq!(sim.reports().len(), 1, "{report:?}");
+        } else {
+            assert!(
+                matches!(&result, Err(Error::Invalid(_))),
+                "{report:?}: {result:?}"
+            );
+            assert_eq!(journal.stages, Vec::<&str>::new(), "{report:?}");
+            assert_eq!(fiscal_commands(&sim), Vec::<String>::new(), "{report:?}");
+        }
+    }
+}
+
+#[test]
 fn unidentified_devices_receive_only_the_identification_command() {
     let sim = simulator();
     sim.set_status("nm", "OTHER");

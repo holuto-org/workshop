@@ -44,3 +44,22 @@ fn demo_mode_keeps_all_other_preflight_gates() {
         assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
     }
 }
+
+#[test]
+fn demo_mode_prints_reports_without_a_fiscalisation_record() {
+    let sim = simulator();
+    sim.set_status("fs", "0");
+    let mut journal = Recorder::default();
+    printer(&sim)
+        .print_report(
+            Report::Monthly {
+                year: 2026,
+                month: 6,
+            },
+            UNIQUE_NUMBER,
+            &mut journal,
+        )
+        .unwrap();
+    assert_eq!(journal.stages, ["monthlyrep"]);
+    assert_eq!(sim.reports().len(), 1);
+}

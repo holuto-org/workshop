@@ -225,6 +225,8 @@ Holuto test queue. Confirm each scenario's full input and expected output.
 6. **Reports.** Daily, completed calendar month, periodic detail and summary;
    record date boundaries, future/current-month refusal and user confirmation.
    Expected Novitus date-guarded `#r`, monthly `#o` kind 6, periodic 0/1;
+   Posnet `rtcget` and `fmrecfisc` date guards before `monthlyrep` and
+   `periodicrepbydates` (a demo printer has no fiscalisation record);
    Elzab monthly/periodic `RPP` with `S0`. Observe Elzab daily `RRP` ACK,
    idle state, `RNR` increment and `RDR` record, then compare fiscal memory
    with complete paper. ACK proves only acceptance; Workshop must remain
