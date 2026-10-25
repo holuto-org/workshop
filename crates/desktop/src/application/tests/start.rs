@@ -11,6 +11,67 @@ fn sign_in_saves_settings_and_stops_cooperatively_while_connecting() -> Result<(
     connect_and_stop(false)
 }
 
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn stop_while_start_is_saving_settings_cancels_the_start() -> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let simulator = Simulator::start();
+    let fake = Holuto::new();
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let app = Rc::new(RefCell::new(Application::new(
+        Arc::clone(&dir),
+        Settings {
+            api_url: fake.url().into(),
+            token: fake.token().into(),
+            port: simulator.address().into(),
+            ..Settings::default()
+        },
+        simulator.link(),
+        Date::constant(2025, 10, 24),
+    )));
+    APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
+    let (started, worker_spawned) = mpsc::channel();
+    app.borrow_mut().settings_writer = Some(preferences::Writer::spawn(dir, move |completion| {
+        let started = started.clone();
+        let _scheduled = slint::invoke_from_event_loop(move || {
+            with_app(move |app| {
+                let start = matches!(completion, Ok(preferences::Outcome::Start(_)));
+                app.settings_saved(completion);
+                if start {
+                    started
+                        .send(app.worker.is_some())
+                        .map_err(|error| error.to_string())?;
+                    app.stop(true)?;
+                }
+                Ok(())
+            });
+        });
+    })?);
+    app.borrow_mut().launch()?;
+    let window = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing window")?
+        .clone_strong();
+    button(&window, "Uruchom")?.invoke_accessible_default_action();
+    assert!(app.borrow().model.saving, "start waits for its settings");
+    // Assistive technology can activate the disabled button.
+    button(&window, "Zatrzymaj")?.invoke_accessible_default_action();
+    slint::run_event_loop_until_quit()?;
+    assert_eq!(
+        worker_spawned.try_recv(),
+        Ok(false),
+        "a Stop before the worker exists cancels the pending start"
+    );
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
+}
+
 #[expect(
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"

@@ -7,7 +7,8 @@ use super::*;
     clippy::panic_in_result_fn,
     reason = "UI assertions propagate fallible fixture and child-process setup"
 )]
-fn login_checkbox_registers_and_persists_without_pairing() -> Result<(), Box<dyn Error>> {
+fn login_checkbox_registers_and_persists_without_pairing_or_unsaved_edits()
+-> Result<(), Box<dyn Error>> {
     const CHILD: &str = "WORKSHOP_AUTOSTART_UI_CHILD";
     if env::var_os(CHILD).is_none() {
         let home = TempDir::new()?;
@@ -20,7 +21,7 @@ fn login_checkbox_registers_and_persists_without_pairing() -> Result<(), Box<dyn
                 "--exact",
                 concat!(
                     "application::tests::autostart::",
-                    "login_checkbox_registers_and_persists_without_pairing"
+                    "login_checkbox_registers_and_persists_without_pairing_or_unsaved_edits"
                 ),
                 "--nocapture",
             ])
@@ -37,6 +38,9 @@ fn login_checkbox_registers_and_persists_without_pairing() -> Result<(), Box<dyn
         return Ok(());
     }
     let (_temporary, app, window) = fixture_with_event_loop()?;
+    // Typed but never saved: only Zapisz, Uruchom or pairing may persist connection edits.
+    window.set_api_url("https://unsaved.example".into());
+    window.set_port("/dev/ttyUNSAVED".into());
     control(
         &window,
         "Uruchamiaj przy logowaniu",
@@ -46,9 +50,13 @@ fn login_checkbox_registers_and_persists_without_pairing() -> Result<(), Box<dyn
     app.borrow_mut().stop(true)?;
     slint::run_event_loop_until_quit()?;
     let saved = Settings::load(&app.borrow().dir)?.ok_or("missing preferences")?;
-    assert!(saved.start_on_launch);
-    assert_eq!(saved.api_url, "");
-    assert_eq!(saved.token.as_str(), "");
+    assert_eq!(
+        saved,
+        Settings {
+            start_on_launch: true,
+            ..Settings::default()
+        }
+    );
     assert!(window.get_start_on_launch());
     let path = PathBuf::from(env::var_os("XDG_CONFIG_HOME").ok_or("missing test config")?)
         .join("autostart/workshop.desktop");

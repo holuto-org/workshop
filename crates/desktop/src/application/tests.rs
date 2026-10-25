@@ -892,6 +892,48 @@ fn keyboard_navigation_selects_rows_and_enter_opens_the_selected_receipt_confirm
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
+fn keys_behind_an_open_confirmation_cannot_change_what_it_submits() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    let template = app
+        .borrow()
+        .model
+        .documents()
+        .first()
+        .ok_or("missing fixture")?
+        .clone();
+    app.borrow_mut().event(Event::Documents {
+        items: (1..=3)
+            .map(|number| Document {
+                order_number: number,
+                order_id: Uuid::from_u128(u128::try_from(number).unwrap_or_default()),
+                ..template.clone()
+            })
+            .collect(),
+        page: 1,
+        has_next: false,
+    });
+    app.borrow().sync();
+    control(&window, "1", AccessibleRole::ListItem)?.invoke_accessible_default_action();
+    for key in [Key::Return, Key::DownArrow, Key::DownArrow, Key::Return] {
+        window
+            .window()
+            .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+    }
+    assert!(window.get_confirming());
+    assert_eq!(
+        window.get_confirm_text(),
+        "Sprzedaż · zlecenie 1 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
+        "the open confirmation keeps the receipt the operator opened"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
 fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
     control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?

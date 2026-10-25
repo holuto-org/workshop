@@ -70,9 +70,11 @@ State directory:
 - `status.json`: processing/connection and fiscal-block flags, last device
   vendor/unique number, update time. Display state; never credentials or
   customer data.
-- `instance.lock`: one instance per state directory.
+- `instance.lock`: one process per state directory: the app or a CLI command.
+- `application.lock`: held only by the running app; `workshop status` and
+  `workshop check` read it, so a CLI command is never reported as the app.
 
-On Unix, opening tightens the directory to **0700** and the lock to **0600**;
+On Unix, opening tightens the directory to **0700** and the locks to **0600**;
 every write replaces a data file with a **0600** copy, and history loading
 tightens its file. Settings, status and journal reads do not repair modes.
 On Windows, profile ACLs protect the directory.

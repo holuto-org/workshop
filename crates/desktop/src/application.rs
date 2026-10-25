@@ -53,6 +53,8 @@ struct Application {
     window: Option<AppWindow>,
     tray: Option<TrayIcon>,
     quitting: bool,
+    /// Start's settings write is pending; Stop or Quit before it lands cancels the start.
+    starting: bool,
     settings_writer: Option<preferences::Writer>,
     writes_pending: VecDeque<WriteKind>,
     status_requested: Option<Snapshot>,
@@ -118,6 +120,7 @@ impl Application {
             window: None,
             tray: None,
             quitting: false,
+            starting: false,
             settings_writer: None,
             writes_pending: VecDeque::new(),
             status_requested: None,
@@ -239,7 +242,7 @@ impl Application {
                 if !app.model.pairing && !app.model.saving && !app.quitting {
                     app.capture();
                     let _submitted = app.write_settings(preferences::Request::Autostart {
-                        settings: app.model.settings.clone(),
+                        telemetry_enabled: app.model.settings.telemetry_enabled,
                         enabled,
                     });
                 }
@@ -271,10 +274,11 @@ impl Application {
             self.model.say(error.to_string(), Tone::Error);
             return;
         }
-        let _submitted = self.write_settings(preferences::Request::Save {
+        let submitted = self.write_settings(preferences::Request::Save {
             settings: self.model.settings.clone(),
             start,
         });
+        self.starting |= start && submitted;
     }
 
     fn write_settings(&mut self, request: preferences::Request) -> bool {
@@ -346,7 +350,8 @@ impl Application {
             .iter()
             .any(|kind| matches!(kind, WriteKind::Settings));
         match completion {
-            Ok(preferences::Outcome::Start(mut settings)) if !self.quitting => {
+            Ok(preferences::Outcome::Start(mut settings)) if self.starting => {
+                self.starting = false;
                 settings.telemetry_enabled = self.model.settings.telemetry_enabled;
                 self.model.settings = settings;
                 self.model.settings_persisted();
@@ -527,6 +532,7 @@ impl Application {
                 Tone::Info,
             );
         } else {
+            self.starting = false;
             self.publish_status();
             self.finish_quit()?;
         }

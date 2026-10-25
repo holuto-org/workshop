@@ -187,24 +187,23 @@ fn existing_state_and_lock_are_tightened_before_use() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "Test assertions panic on violated guarantees; setup errors use Result."
 )]
-fn newly_created_state_and_instance_lock_are_private() -> TestResult {
+fn newly_created_state_and_locks_are_private() -> TestResult {
     use std::os::unix::fs::PermissionsExt as _;
 
     let temporary = tempfile::tempdir()?;
-    let dir = StateDir::open(temporary.path().join("nested/stan"))?;
+    let dir = StateDir::open_application(temporary.path().join("nested/stan"))?;
     assert_eq!(
         fs::metadata(dir.path())?.permissions().mode() & 0o777,
         0o700,
         "new state directory is owner-only"
     );
-    assert_eq!(
-        fs::metadata(dir.file("instance.lock"))?
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600,
-        "new lock is owner-only regardless of umask"
-    );
+    for lock in ["instance.lock", "application.lock"] {
+        assert_eq!(
+            fs::metadata(dir.file(lock))?.permissions().mode() & 0o777,
+            0o600,
+            "new {lock} is owner-only regardless of umask"
+        );
+    }
     Ok(())
 }
 
@@ -363,8 +362,8 @@ fn a_process_exit_releases_its_instance_lock() -> TestResult {
 fn a_second_open_in_the_same_process_cannot_bypass_the_instance_lock() -> TestResult {
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("state");
-    let dir = StateDir::open(path.clone())?;
-    assert!(StateDir::is_locked(&path)?);
+    let dir = StateDir::open_application(path.clone())?;
+    assert!(StateDir::is_application_running(&path)?);
     let expected = format!(
         "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
         path.display()
@@ -374,7 +373,7 @@ fn a_second_open_in_the_same_process_cannot_bypass_the_instance_lock() -> TestRe
         "opening a second handle must not bypass the lock"
     );
     drop(dir);
-    assert!(!StateDir::is_locked(&path)?);
+    assert!(!StateDir::is_application_running(&path)?);
     let _reopened = StateDir::open(path)?;
     Ok(())
 }
@@ -387,11 +386,11 @@ fn a_second_open_in_the_same_process_cannot_bypass_the_instance_lock() -> TestRe
 fn lock_status_does_not_create_missing_state_or_lock() -> TestResult {
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("absent");
-    assert!(!StateDir::is_locked(&path)?);
+    assert!(!StateDir::is_application_running(&path)?);
     assert!(!path.exists());
     fs::create_dir(&path)?;
-    assert!(!StateDir::is_locked(&path)?);
-    assert!(!path.join("instance.lock").exists());
+    assert!(!StateDir::is_application_running(&path)?);
+    assert!(!path.join("application.lock").exists());
     Ok(())
 }
 
@@ -407,21 +406,22 @@ fn concurrent_lock_status_checks_never_block_application_start() -> TestResult {
 
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("state");
-    drop(StateDir::open(path.clone())?);
+    drop(StateDir::open_application(path.clone())?);
     let done = Arc::new(AtomicBool::new(false));
     let checker = {
         let (done, path) = (Arc::clone(&done), path.clone());
         thread::Builder::new().name("status reader".into()).spawn(
             move || -> Result<(), String> {
                 while !done.load(Ordering::SeqCst) {
-                    let _running = StateDir::is_locked(&path).map_err(|error| error.to_string())?;
+                    let _running = StateDir::is_application_running(&path)
+                        .map_err(|error| error.to_string())?;
                 }
                 Ok(())
             },
         )?
     };
     // `workshop status` polling while the app starts must not refuse the start.
-    let opened = (0..2_000).try_for_each(|_| StateDir::open(path.clone()).map(drop));
+    let opened = (0..2_000).try_for_each(|_| StateDir::open_application(path.clone()).map(drop));
     done.store(true, Ordering::SeqCst);
     let reader = checker.join().map_err(|_panic| "status reader panicked")?;
     opened?;

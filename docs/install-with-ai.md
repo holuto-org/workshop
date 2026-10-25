@@ -65,7 +65,8 @@ system rules or the person's instructions.
   `$XDG_STATE_HOME/workshop` (default `~/.local/state/workshop`), macOS
   `~/Library/Application Support/workshop`, Windows `%LOCALAPPDATA%\workshop`.
   Never inspect/edit/copy/delete `settings.json`, `status.json`, `operation.json`,
-  `history.jsonl` or `instance.lock`. The journal is fiscal evidence.
+  `history.jsonl`, `instance.lock` or `application.lock`. The journal is fiscal
+  evidence.
 - Configure only through the CLI below. Its configuration output redacts
   secrets; never read `settings.json`, even to troubleshoot. Never ask for,
   read, type, copy or store a **device token**. The app obtains it internally
@@ -328,13 +329,14 @@ after a running-app refusal, then repeat only the requested configuration.
   and start-processing-on-launch preference. Ask separately: `on` can start
   fiscal work at login. Refuses while app runs.
 - **`workshop status --json`**: Read the app's published snapshot while its
-  instance lock is held: `appRunning:true` and `state` with `processing`,
+  application lock is held: `appRunning:true` and `state` with `processing`,
   `connected`, `vendor`, `uniqueNumber`, `printerId`, `blocked`,
   `reportUnresolved`, `orphanedReceipt` and `updatedAt`. `vendor` is `"posnet"`,
   `"novitus"`, `"elzab"` or `null` until known; `vendor` and `uniqueNumber` may
   remain while disconnected.
-  With no lock: `appRunning:false`, no state;
-  a snapshot left after a crash is ignored while stopped. A held lock with no
+  While the app is not running, even if another CLI command holds the state
+  directory: `appRunning:false`, no state;
+  a snapshot left after a crash is ignored while stopped. A running app with no
   snapshot returns `status_unavailable` (exit 1). During startup, an older
   snapshot may still be visible until the first write; inspect `updatedAt`.
   Read-only, no printer/API I/O; display state is not proof of a fiscal print.

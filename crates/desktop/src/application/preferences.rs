@@ -14,10 +14,19 @@ use fiscal::device::Vendor;
 use crate::autostart;
 
 pub(super) enum Request {
-    Save { settings: Settings, start: bool },
+    Save {
+        settings: Settings,
+        start: bool,
+    },
     Telemetry(bool),
-    Port { port: String, vendor: Vendor },
-    Autostart { settings: Settings, enabled: bool },
+    Port {
+        port: String,
+        vendor: Vendor,
+    },
+    Autostart {
+        telemetry_enabled: bool,
+        enabled: bool,
+    },
     Reload,
     Status(Snapshot),
 }
@@ -91,8 +100,15 @@ fn persist(dir: &StateDir, request: Request) -> Result<Outcome, Error> {
             }
             Ok(Outcome::Port)
         },
-        Request::Autostart { settings, enabled } => {
-            let settings = Settings::load(dir)?.unwrap_or(settings);
+        Request::Autostart {
+            telemetry_enabled,
+            enabled,
+        } => {
+            // Unsaved connection edits stay in the window; diagnostics is already a live choice.
+            let settings = Settings::load(dir)?.unwrap_or_else(|| Settings {
+                telemetry_enabled,
+                ..Settings::default()
+            });
             autostart::configure(dir, settings, enabled)?;
             Ok(Outcome::Autostart(enabled))
         },

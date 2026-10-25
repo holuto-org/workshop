@@ -82,7 +82,7 @@ fn config_show_and_status_report_vendor() -> TestResult {
     use fiscal::device::Vendor;
 
     let temporary = tempfile::tempdir()?;
-    let dir = StateDir::open(temporary.path().join("state"))?;
+    let dir = StateDir::open_application(temporary.path().join("state"))?;
     Settings {
         vendor: Some(Vendor::Elzab),
         ..Settings::default()
@@ -225,7 +225,7 @@ fn configuration_output_redacts_saved_credentials() -> TestResult {
 )]
 fn settings_changes_refuse_the_running_apps_lock_and_preserve_config() -> TestResult {
     let temp = tempfile::tempdir()?;
-    let dir = Arc::new(StateDir::open(temp.path().join("state"))?);
+    let dir = Arc::new(StateDir::open_application(temp.path().join("state"))?);
     let settings = Settings {
         api_url: "https://example.test".into(),
         token: "secret-canary".into(),
@@ -326,7 +326,7 @@ fn changing_the_api_address_forgets_the_token_paired_with_the_previous_one() -> 
 )]
 fn status_exposes_the_running_apps_published_state_without_configuration_secrets() -> TestResult {
     let temp = tempfile::tempdir()?;
-    let dir = StateDir::open(temp.path().join("state"))?;
+    let dir = StateDir::open_application(temp.path().join("state"))?;
     Settings {
         api_url: "https://private.example.test".into(),
         token: "token-canary".into(),
@@ -379,10 +379,40 @@ fn unlocked_status_ignores_even_a_corrupt_snapshot_left_after_a_crash() -> TestR
     clippy::panic_in_result_fn,
     reason = "Assertions prove status; setup propagates I/O"
 )]
+fn a_cli_command_holding_the_state_lock_is_not_a_running_app() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let path = temp.path().join("state");
+    // A crashed GUI session left a processing snapshot behind.
+    Snapshot {
+        processing: true,
+        connected: true,
+        vendor: None,
+        unique_number: Some("DEM0000000001".into()),
+        printer_id: None,
+        blocked: false,
+        report_unresolved: false,
+        orphaned_receipt: false,
+        updated_at: "2026-10-24T12:34:56Z".parse()?,
+    }
+    .save(&StateDir::open(path.clone())?)?;
+    // `pair`, `config set` and `autostart` hold the state lock while they run.
+    let _command = StateDir::open(path.clone())?;
+    let status = execute(Command::Status, &path)?;
+    assert_eq!(status.value, json!({"ok":true,"appRunning":false}));
+    let check = execute(Command::Check, &path)?;
+    assert_eq!(check.value["appRunning"], json!(false));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove status; setup propagates I/O"
+)]
 fn running_app_without_a_published_snapshot_reports_unavailable_instead_of_guessing() -> TestResult
 {
     let temp = tempfile::tempdir()?;
-    let dir = StateDir::open(temp.path().join("state"))?;
+    let dir = StateDir::open_application(temp.path().join("state"))?;
     let error = execute(Command::Status, dir.path()).expect_err("not yet published");
     assert_eq!((error.exit, error.code), (1, "status_unavailable"));
     assert_eq!(

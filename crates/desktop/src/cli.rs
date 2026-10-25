@@ -253,7 +253,7 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
         },
         Command::Check => {
             let settings = Settings::load_at(path)?.unwrap_or_default();
-            let app_running = StateDir::is_locked(path)?;
+            let app_running = StateDir::is_application_running(path)?;
             let errors: Vec<_> = settings
                 .validate()
                 .err()
@@ -317,12 +317,12 @@ fn status(path: &Path) -> Result<Response, Failure> {
         human: "Aplikacja jest zatrzymana.".into(),
         exit: 0,
     };
-    if !StateDir::is_locked(path)? {
+    if !StateDir::is_application_running(path)? {
         return Ok(stopped());
     }
     let snapshot = Snapshot::load_at(path);
     // An app can exit during the read; a leftover snapshot is never live state.
-    if !StateDir::is_locked(path)? {
+    if !StateDir::is_application_running(path)? {
         return Ok(stopped());
     }
     let snapshot = snapshot?.ok_or_else(|| Failure {

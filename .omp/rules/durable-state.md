@@ -25,8 +25,9 @@ interruptMode: never
   0600. Windows state lives in the Local AppData Known Folder, never an
   environment override.
 - One process per state directory (`instance.lock`); CLI mutations refuse while
-  the app holds it. Readers that skip the lock (`Settings::load_at`,
-  `Snapshot::load_at`) must not create state.
+  the app or another command holds it. Only the app also holds
+  `application.lock`, which `status`/`check` report. Readers that skip the lock
+  (`Settings::load_at`, `Snapshot::load_at`) must not create state.
 - Stored formats are contracts. Keep literal fixtures of the stored format
   beside the module; `deny_unknown_fields` makes unknown fields fail closed.
 - The device token lives only in `settings.json`: `Token` redacts `Debug` and

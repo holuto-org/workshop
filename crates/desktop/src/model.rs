@@ -392,6 +392,10 @@ impl Model {
     }
 
     pub(crate) fn request(&mut self, action: Action) {
+        // Keys and assistive actions still reach controls behind the open dialog.
+        if self.pending.is_some() {
+            return;
+        }
         self.pending = match action {
             Action::QueueReceipt => {
                 if self.queue_enabled() {

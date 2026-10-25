@@ -13,6 +13,8 @@ use atomicwrites::{AtomicFile, OverwriteBehavior};
 use crate::Error;
 
 const LOCK: &str = "instance.lock";
+/// Held only by the running application: CLI commands take `LOCK` too.
+const APPLICATION_LOCK: &str = "application.lock";
 /// Status readers hold their shared lock for microseconds; this only bounds a
 /// pathological reader, never a running application.
 const READER_WAIT: Duration = Duration::from_secs(1);
@@ -22,6 +24,8 @@ const READER_WAIT: Duration = Duration::from_secs(1);
 pub struct StateDir {
     path: PathBuf,
     _lock: File,
+    /// `Some` only when opened as the running application.
+    _application: Option<File>,
 }
 
 impl StateDir {
@@ -41,18 +45,20 @@ impl StateDir {
         })
     }
 
+    /// Opens the default directory as the running application.
     pub fn open_default(simulator: bool) -> Result<Self, Error> {
         let path = Self::default_path_for(simulator).ok_or_else(|| {
             Error::Invalid("Nie można ustalić katalogu stanu użytkownika.".to_owned())
         })?;
-        Self::open(path)
+        Self::open_application(path)
     }
 
-    /// Checks an existing lock without creating a directory or lock file.
+    /// Whether the application, not a CLI command, holds the directory.
     ///
-    /// Takes only a shared lock, so `open` can tell a reader from a running application.
-    pub fn is_locked(path: &Path) -> Result<bool, Error> {
-        let lock_path = path.join(LOCK);
+    /// Checks an existing lock without creating a directory or lock file. Takes only a
+    /// shared lock, so a starting application can tell a reader from another instance.
+    pub fn is_application_running(path: &Path) -> Result<bool, Error> {
+        let lock_path = path.join(APPLICATION_LOCK);
         let lock = match File::options().read(true).write(true).open(&lock_path) {
             Ok(lock) => lock,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -76,42 +82,30 @@ impl StateDir {
     }
 
     pub fn open(path: PathBuf) -> Result<Self, Error> {
+        Self::lock(path, false)
+    }
+
+    /// Like `open`, and marks the holder as the application for `is_application_running`.
+    pub fn open_application(path: PathBuf) -> Result<Self, Error> {
+        Self::lock(path, true)
+    }
+
+    fn lock(path: PathBuf, application: bool) -> Result<Self, Error> {
         create_private_dir(&path).map_err(|source| Error::Store {
             action: "Nie można utworzyć katalogu stanu",
             path: path.clone(),
             source,
         })?;
-        let lock_path = path.join(LOCK);
-        // Windows cannot lock an append-only handle.
-        let mut options = File::options();
-        let _options = options.read(true).create(true).append(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            let _options = options.mode(0o600);
-        }
-        let lock = options.open(&lock_path).map_err(|source| Error::Store {
-            action: "Nie można otworzyć blokady katalogu stanu",
-            path: lock_path.clone(),
-            source,
-        })?;
-        make_private(&lock).map_err(|source| Error::Store {
-            action: "Nie można zabezpieczyć blokady katalogu stanu",
-            path: lock_path.clone(),
-            source,
-        })?;
-        match acquire(&lock) {
-            Ok(true) => Ok(Self { path, _lock: lock }),
-            Ok(false) => Err(Error::Blocked(format!(
-                "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
-                path.display()
-            ))),
-            Err(source) => Err(Error::Store {
-                action: "Nie można zablokować katalogu stanu",
-                path: lock_path,
-                source,
-            }),
-        }
+        let lock = exclusive(&path, LOCK)?;
+        // Taken under the instance lock, so only status readers can contend for it.
+        let application = application
+            .then(|| exclusive(&path, APPLICATION_LOCK))
+            .transpose()?;
+        Ok(Self {
+            path,
+            _lock: lock,
+            _application: application,
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -123,11 +117,46 @@ impl StateDir {
     }
 }
 
-/// Takes the exclusive instance lock; `Ok(false)` means another application holds it.
+/// Opens and exclusively locks `directory/name`, refusing while another process holds it.
+fn exclusive(directory: &Path, name: &str) -> Result<File, Error> {
+    let lock_path = directory.join(name);
+    // Windows cannot lock an append-only handle.
+    let mut options = File::options();
+    let _options = options.read(true).create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let _options = options.mode(0o600);
+    }
+    let lock = options.open(&lock_path).map_err(|source| Error::Store {
+        action: "Nie można otworzyć blokady katalogu stanu",
+        path: lock_path.clone(),
+        source,
+    })?;
+    make_private(&lock).map_err(|source| Error::Store {
+        action: "Nie można zabezpieczyć blokady katalogu stanu",
+        path: lock_path.clone(),
+        source,
+    })?;
+    match acquire(&lock) {
+        Ok(true) => Ok(lock),
+        Ok(false) => Err(Error::Blocked(format!(
+            "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
+            directory.display()
+        ))),
+        Err(source) => Err(Error::Store {
+            action: "Nie można zablokować katalogu stanu",
+            path: lock_path,
+            source,
+        }),
+    }
+}
+
+/// Takes an exclusive lock; `Ok(false)` means another process holds it exclusively.
 ///
-/// Exclusive contention is either an application (exclusive) or a status reader
-/// (shared, `is_locked`). Only the latter is waited out, so a starting application
-/// never mistakes `workshop status` for a second instance.
+/// Exclusive contention is either another holder (exclusive) or a status reader
+/// (shared, `is_application_running`). Only the latter is waited out, so a starting
+/// application never mistakes `workshop status` for a second instance.
 fn acquire(lock: &File) -> io::Result<bool> {
     let deadline = Instant::now() + READER_WAIT;
     loop {
