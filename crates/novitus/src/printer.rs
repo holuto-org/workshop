@@ -8,7 +8,7 @@ use std::{
 
 use fiscal::{
     decimal,
-    device::{Capabilities, Device, VatKind, VatRate, Vendor},
+    device::{Capabilities, Device, Problem, VatKind, VatRate, Vendor},
     driver::Driver,
     error::Error,
     journal::{Journal, Printed},
@@ -240,12 +240,12 @@ fn preflight_identity(
     if profile.is_none() {
         device
             .problems
-            .push("Nieznany model lub firmware Novitus".to_owned());
+            .push("Nieznany model lub firmware Novitus".into());
     }
     if !pc1 {
         device
             .problems
-            .push("Połączenie nie prowadzi do fiskalnego portu PC1".to_owned());
+            .push("Połączenie nie prowadzi do fiskalnego portu PC1".into());
         return Ok(Checked {
             device,
             profile,
@@ -258,14 +258,14 @@ fn preflight_identity(
     if !matches!(dialect.options.as_slice(), [(5, value)] if value == "1") {
         device
             .problems
-            .push("Wymagany jest natywny protokół NOVITUS".to_owned());
+            .push("Wymagany jest natywny protokół NOVITUS".into());
     }
     let pages = session.command("0;1^c91/92/", TIMEOUT)?;
     if !matches!(pages.options.as_slice(), [(91, input), (92, output)] if input == "1" && output == "1")
     {
         device
             .problems
-            .push("Ustaw wejście i wyjście PC na Windows-1250".to_owned());
+            .push("Ustaw wejście i wyjście PC na Windows-1250".into());
     }
     read_readiness(session, &mut device.problems)?;
     let header = session
@@ -277,7 +277,7 @@ fn preflight_identity(
     if header.trim().is_empty() {
         device
             .problems
-            .push("Brak zaprogramowanego nagłówka".to_owned());
+            .push("Brak zaprogramowanego nagłówka".into());
     }
     let vat = session.command("23#s", TIMEOUT)?;
     let (rates, serial, idle) = vat_table(&vat.body)?;
@@ -286,10 +286,10 @@ fn preflight_identity(
     if !idle {
         device
             .problems
-            .push("Status fiskalny wskazuje otwartą transakcję lub błąd".to_owned());
+            .push("Status fiskalny wskazuje otwartą transakcję lub błąd".into());
     }
     if !device.vat.iter().any(|rate| rate.active()) {
-        device.problems.push("Brak aktywnych stawek VAT".to_owned());
+        device.problems.push("Brak aktywnych stawek VAT".into());
     }
     let (clock, date) = clock(session)?;
     if let Some(profile) = profile.as_mut() {
@@ -321,7 +321,7 @@ fn read_repertoire(session: &mut Session, profile: &mut Profile, device: &mut De
             if !matches!(error, Error::Device { .. }) {
                 device
                     .problems
-                    .push("Nie można bezpiecznie odczytać możliwości znaków drukarki".to_owned());
+                    .push("Nie można bezpiecznie odczytać możliwości znaków drukarki".into());
             }
         },
     }
@@ -358,7 +358,7 @@ const fn unqualified_capabilities() -> Capabilities {
         company_footer: false,
     }
 }
-fn read_readiness(session: &mut Session, problems: &mut Vec<String>) -> Result<(), Error> {
+fn read_readiness(session: &mut Session, problems: &mut Vec<Problem>) -> Result<(), Error> {
     let mode = session.command("11$i", TIMEOUT)?;
     let fields = mode
         .body
@@ -371,10 +371,10 @@ fn read_readiness(session: &mut Session, problems: &mut Vec<String>) -> Result<(
     if fields.clone().next() != Some("1")
         && !(cfg!(workshop_acceptance) && fields.clone().next() == Some("0"))
     {
-        problems.push("Drukarka nie jest w czynnym trybie fiskalnym".to_owned());
+        problems.push("Drukarka nie jest w czynnym trybie fiskalnym".into());
     }
     if fields.clone().nth(5) != Some("0") {
-        problems.push("Nieobsługiwany typ drukarki fiskalnej".to_owned());
+        problems.push("Nieobsługiwany typ drukarki fiskalnej".into());
     }
     let dle = DleStatus::decode(session.realtime(DLE)?)?;
     let enq = EnqStatus::decode(session.realtime(ENQ)?)?;
@@ -388,7 +388,7 @@ fn read_readiness(session: &mut Session, problems: &mut Vec<String>) -> Result<(
         || extended.flags_wire != [0; 4]
         || extended.last_error != 0
     {
-        problems.push("Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi".to_owned());
+        problems.push("Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi".into());
     }
     Ok(())
 }

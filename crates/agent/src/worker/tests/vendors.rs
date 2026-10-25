@@ -94,6 +94,50 @@ fn each_vendor_prints_a_receipt_end_to_end() {
 }
 
 #[test]
+fn overdue_daily_report_does_not_allow_a_job_claim() {
+    use elzab::simulator::Simulator as ElzabSimulator;
+
+    let sim = ElzabSimulator::start();
+    let holuto = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let (printer, status) = device::detect(
+        sim.link(),
+        Connection {
+            port: sim.address().to_owned(),
+            baud_rate: 9600,
+        },
+        Some(Vendor::Elzab),
+        false,
+    )
+    .unwrap();
+    let api = Api::new(holuto.url(), holuto.token(), &status.serial).unwrap();
+    let waiting = |_problem: Option<&str>| {};
+    let mut agent = Agent::new(printer, api, &dir, &waiting);
+    let _notices = agent.describe(status).unwrap();
+    let _session = agent.session().unwrap();
+    let id = holuto.enqueue(job_json());
+    sim.set_status(
+        0,
+        (1_u128 << 115) | (1_u128 << 102) | (1_u128 << 98) | 4,
+        32,
+    );
+
+    assert_eq!(agent.step().unwrap(), RETRY);
+    let status = agent.status().unwrap();
+    assert!(!status.ready());
+    assert!(status.daily_report_allowed());
+    assert_eq!(holuto.job(id)["state"], "queued");
+    assert!(
+        !holuto
+            .requests()
+            .iter()
+            .any(|request| request.path == "/agent/jobs/take")
+    );
+    assert_eq!(sim.receipts(), 0);
+    assert_eq!(sim.reports(), 0);
+}
+
+#[test]
 fn each_vendor_lost_reply_blocks_across_restart_without_replay() {
     for vendor in VENDORS {
         let sim = Simulator::start(vendor);

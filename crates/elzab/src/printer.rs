@@ -10,7 +10,7 @@ use crate::{
 };
 use fiscal::{
     decimal,
-    device::{Capabilities, Device, VatKind, VatRate, Vendor},
+    device::{Capabilities, Device, Problem, VatKind, VatRate, Vendor},
     driver::Driver,
     error::Error,
     journal::{Journal, Printed},
@@ -231,9 +231,7 @@ fn preflight_identity(
         capabilities,
     };
     if profile.is_none() {
-        device
-            .problems
-            .push("Nieznany model Elzab ONLINE".to_owned());
+        device.problems.push("Nieznany model Elzab ONLINE".into());
     }
     let serial = query(session, "FNR", "FNR")?;
     let serial = field(&serial, 'B')?;
@@ -245,7 +243,7 @@ fn preflight_identity(
     if field(&page, 'w')? != "ACP1250" {
         device
             .problems
-            .push("Ustaw stronę kodową drukarki na CP1250".to_owned());
+            .push("Ustaw stronę kodową drukarki na CP1250".into());
         device.capabilities.allowed_characters.clear();
         if let Some(p) = &mut profile {
             p.capabilities.allowed_characters.clear();
@@ -274,7 +272,7 @@ fn preflight_identity(
     if header.trim().is_empty() || taxpayer.trim().is_empty() {
         device
             .problems
-            .push("Brak zaprogramowanego nagłówka lub NIP".to_owned());
+            .push("Brak zaprogramowanego nagłówka lub NIP".into());
     }
     let vat = query(session, "FTR", "FTR")?;
     let table = field(&vat, 'A')?;
@@ -304,7 +302,7 @@ fn preflight_identity(
         device.vat.push(VatRate { slot, kind });
     }
     if !device.vat.iter().any(|r| r.active()) {
-        device.problems.push("Brak aktywnych stawek VAT".to_owned());
+        device.problems.push("Brak aktywnych stawek VAT".into());
     }
     let (_, date) = clock(session)?;
     Ok(Checked {
@@ -327,7 +325,7 @@ const fn empty_capabilities() -> Capabilities {
         company_footer: false,
     }
 }
-fn readiness(body: &str, problems: &mut Vec<String>, daily: bool) -> Result<(), Error> {
+fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(), Error> {
     let mut packages = [None; 3];
     for field in body.split('\u{1d}').skip(1) {
         let value = field.strip_prefix('S').ok_or_else(frame::corrupt)?;
@@ -369,12 +367,12 @@ fn readiness(body: &str, problems: &mut Vec<String>, daily: bool) -> Result<(), 
         problems.push(
             "Drukarka Elzab niegotowa: tryb, pamięć, zasilanie, otwarty dokument \
              lub mechanizm/papier"
-                .to_owned(),
+                .into(),
         );
     }
     // Reminder-only and overdue-daily bits must not prevent the daily report.
     if !daily && two & (1_u128 << 115) != 0 {
-        problems.push("Wymagany zaległy raport dobowy".to_owned());
+        problems.push(Problem::DailyReportOverdue);
     }
     Ok(())
 }

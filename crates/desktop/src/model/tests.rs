@@ -1,5 +1,6 @@
 use super::*;
 use agent::documents::ReceiptKind;
+use fiscal::device::Problem;
 use posnet::capabilities::capabilities;
 use uuid::Uuid;
 
@@ -58,6 +59,24 @@ fn confirmed_actions_cannot_be_submitted_again_until_worker_completion() {
         model.confirm(true, |command| commands.push(command));
         assert_eq!(commands.len(), 2, "worker completion unlocks the action");
     }
+}
+
+#[test]
+fn daily_report_confirmation_rechecks_new_readiness_problems() {
+    let mut model = ready();
+    let device = model.device.as_mut().unwrap();
+    device.problems.push(Problem::DailyReportOverdue);
+    model.request(Action::DailyReport);
+    assert!(model.pending.is_some());
+    model
+        .device
+        .as_mut()
+        .unwrap()
+        .problems
+        .push("Brak papieru".into());
+    let mut commands = Vec::new();
+    model.confirm(true, |command| commands.push(command));
+    assert_eq!(commands, []);
 }
 
 #[test]

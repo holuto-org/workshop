@@ -118,6 +118,135 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
     Ok(())
 }
 
+#[cfg(feature = "simulator")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "End-to-end tests assert while propagating fixture errors"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Real UI confirmation, worker dispatch and durable uncertainty stay in one scenario"
+)]
+fn overdue_elzab_daily_report_is_available_and_leaves_an_unresolved_block()
+-> Result<(), Box<dyn Error>> {
+    use elzab::{frame, simulator::Simulator as ElzabSimulator};
+
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let simulator = Arc::new(ElzabSimulator::start());
+    simulator.set_status(
+        0,
+        (1_u128 << 115) | (1_u128 << 102) | (1_u128 << 98) | 4,
+        32,
+    );
+    let holuto = Arc::new(Holuto::new());
+    let job_id = holuto.enqueue(testing::job_json());
+    let settings = Settings {
+        api_url: holuto.url().into(),
+        token: holuto.token().into(),
+        port: simulator.address().into(),
+        vendor: Some(Vendor::Elzab),
+        ..Settings::default()
+    };
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
+    let requested = AtomicBool::new(false);
+    let worker = Worker::spawn(Arc::clone(&dir), settings, simulator.link(), move |event| {
+        let request = matches!(&event,
+            Event::Device { status: Some(status), blocked: false, .. } if !status.ready())
+            && !requested.swap(true, Ordering::SeqCst);
+        let complete = matches!(&event, Event::CommandCompleted);
+        Application::worker_event(event);
+        if request || complete {
+            let _scheduled = slint::invoke_from_event_loop(move || {
+                with_app(move |app| {
+                    let window = app.window.as_ref().ok_or("missing window")?.clone_strong();
+                    if request {
+                        window.set_tab(1);
+                        app.capture();
+                        app.sync();
+                        assert_eq!(
+                            button(&window, "Drukuj raport dobowy")
+                                .map_err(|error| error.to_string())?
+                                .accessible_enabled(),
+                            Some(true)
+                        );
+                        for label in ["Drukuj raport miesięczny", "Drukuj raport okresowy"] {
+                            assert_eq!(
+                                button(&window, label)
+                                    .map_err(|error| error.to_string())?
+                                    .accessible_enabled(),
+                                Some(false)
+                            );
+                        }
+                        button(&window, "Drukuj raport dobowy")
+                            .map_err(|error| error.to_string())?
+                            .invoke_accessible_default_action();
+                        with_app(|app| {
+                            let window = app.window.as_ref().ok_or("missing confirmation")?;
+                            assert_eq!(window.get_confirm_title().as_str(), "Raport dobowy");
+                            button(window, "Drukuj")
+                                .map_err(|error| error.to_string())?
+                                .invoke_accessible_default_action();
+                            Ok(())
+                        });
+                    }
+                    if complete {
+                        assert!(app.model.blocked);
+                        assert!(app.model.report_unresolved);
+                        assert_eq!(
+                            button(&window, "Drukuj raport dobowy")
+                                .map_err(|error| error.to_string())?
+                                .accessible_enabled(),
+                            Some(false)
+                        );
+                        app.stop(true)?;
+                    }
+                    Ok(())
+                });
+            });
+        }
+    })?;
+    let mut state = app.borrow_mut();
+    state.worker = Some(worker);
+    state.model.running = true;
+    drop(state);
+    slint::run_event_loop_until_quit()?;
+    assert!(app.borrow().worker.is_none());
+    assert_eq!(simulator.reports(), 0, "daily acceptance is not completion");
+    let commands = simulator
+        .frames()
+        .iter()
+        .map(|raw| frame::decode(raw).map(|(_, body)| body.to_vec()))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|body| body.starts_with(b"RRP"))
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>(),
+        [b"RRP\x1dI1\x1dJ1"]
+    );
+    assert!(simulator.daily_pending());
+    assert_eq!(simulator.receipts(), 0);
+    assert_eq!(holuto.job(job_id)["state"], "queued");
+    assert!(
+        !holuto
+            .requests()
+            .iter()
+            .any(|request| request.path.contains("/take"))
+    );
+    let operation: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.path().join("operation.json"))?)?;
+    assert_eq!(
+        operation["report"]["device"],
+        json!({"dispatching": {"stage": "RRP"}})
+    );
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
+}
+
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn quitting_during_a_held_print_waits_for_print_and_settlement() -> Result<(), Box<dyn Error>> {

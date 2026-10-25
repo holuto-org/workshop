@@ -167,6 +167,7 @@ export component AppWindow inherits Window {
     in property <bool> stopping;
     in property <bool> queue-enabled;
     in property <bool> reports-enabled;
+    in property <bool> daily-report-enabled;
     in property <bool> previous-enabled;
     in property <bool> next-enabled;
     in property <bool> report-unresolved;
@@ -274,7 +275,7 @@ export component AppWindow inherits Window {
                         Card {
                             VerticalLayout {
                                 padding: 24px; spacing: 20px; alignment: start;
-                                HorizontalLayout { spacing: 24px; VerticalLayout { spacing: 8px; Heading { text: "Raport dobowy"; font-size: 16px; } Hint { text: "Zamyka sprzedaż bieżącego dnia w pamięci fiskalnej. Wykonuj po zakończeniu sprzedaży."; } } Button { text: "Drukuj raport dobowy"; enabled: root.reports-enabled; clicked => { root.action(Action.daily-report); } } }
+                                HorizontalLayout { spacing: 24px; VerticalLayout { spacing: 8px; Heading { text: "Raport dobowy"; font-size: 16px; } Hint { text: "Zamyka sprzedaż bieżącego dnia w pamięci fiskalnej. Wykonuj po zakończeniu sprzedaży."; } } Button { text: "Drukuj raport dobowy"; enabled: root.daily-report-enabled; clicked => { root.action(Action.daily-report); } } }
                                 Rectangle { height: 1px; background: #f0f0f0; }
                                 HorizontalLayout { spacing: 24px; VerticalLayout { spacing: 8px; Heading { text: "Raport miesięczny"; font-size: 16px; } Hint { text: "Łączny raport fiskalny za wybrany miesiąc."; } } ComboBox { model: root.months; current-index <=> root.month-index; width: 190px; } Button { text: "Drukuj raport miesięczny"; enabled: root.reports-enabled; clicked => { root.action(Action.monthly-report); } } }
                                 Rectangle { height: 1px; background: #f0f0f0; }

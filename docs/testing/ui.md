@@ -54,6 +54,9 @@ No sleep after clicking and no layout-coordinate search.
 - Report confirmation shows exact dates/summary. With injected `today` in pure
   validation, test leap days, equal endpoints, today, future/reversed dates and
   periodic 1999-12-31 versus 2000-01-01.
+- An overdue daily report alone enables only the daily-report action. Exercise
+  Elzab's real worker path: one RRP acceptance leaves an unresolved durable block,
+  never a claimed receipt or an automatically retried report.
 - A block or stop arriving with a dialog open prevents submission. Ordinary
   unknown receipts have no local bypass; the special
   completed-but-failed/expired conflict exposes only its explicit

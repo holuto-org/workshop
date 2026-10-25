@@ -338,7 +338,10 @@ fn novitus_pc2_is_not_adopted_and_a_non_native_dialect_is_unready() {
     )
     .unwrap();
     assert!(!device.ready());
-    assert_eq!(device.problems, ["Wymagany jest natywny protokół NOVITUS"]);
+    assert_eq!(
+        device.description(),
+        "Wymagany jest natywny protokół NOVITUS"
+    );
     assert_eq!(sim.receipts(), 0);
     assert_eq!(sim.reports(), 0);
 }

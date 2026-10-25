@@ -282,6 +282,7 @@ impl Model {
         window.set_connected(self.connected);
         window.set_queue_enabled(self.queue_enabled() && self.selected.is_some());
         window.set_reports_enabled(self.reports_enabled());
+        window.set_daily_report_enabled(self.daily_report_enabled());
         window.set_previous_enabled(self.connected && self.page > 1);
         window.set_next_enabled(self.connected && self.has_next);
         window.set_report_unresolved(self.resolve_enabled());
@@ -341,6 +342,14 @@ impl Model {
         self.queue_enabled() && self.device.as_ref().is_some_and(Device::ready)
     }
 
+    fn daily_report_enabled(&self) -> bool {
+        self.queue_enabled()
+            && self
+                .device
+                .as_ref()
+                .is_some_and(Device::daily_report_allowed)
+    }
+
     const fn resolve_enabled(&self) -> bool {
         self.accepting() && self.report_unresolved
     }
@@ -368,7 +377,7 @@ impl Model {
                     None
                 }
             },
-            Action::DailyReport => self.reports_enabled().then(|| Confirmation {
+            Action::DailyReport => self.daily_report_enabled().then(|| Confirmation {
                 command: Command::DailyReport,
                 title: "Raport dobowy".into(),
                 text: concat!(
@@ -499,9 +508,10 @@ impl Model {
             // Readiness may have changed while the confirmation was open.
             let allowed = match &pending.command {
                 Command::Queue { .. } => self.queue_enabled(),
-                Command::DailyReport
-                | Command::MonthlyReport { .. }
-                | Command::PeriodicReport { .. } => self.reports_enabled(),
+                Command::DailyReport => self.daily_report_enabled(),
+                Command::MonthlyReport { .. } | Command::PeriodicReport { .. } => {
+                    self.reports_enabled()
+                },
                 Command::ResolveReport => self.resolve_enabled(),
                 Command::AcknowledgeOrphanedReceipt => self.accepting() && self.orphaned_receipt,
                 Command::NextPage | Command::PreviousPage => false,

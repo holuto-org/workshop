@@ -77,6 +77,28 @@ impl Capabilities {
     }
 }
 
+/// Readiness failures shared by drivers, independent of vendor status bits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Problem {
+    Blocking(String),
+    DailyReportOverdue,
+}
+
+impl Problem {
+    fn description(&self) -> &str {
+        match self {
+            Self::Blocking(message) => message,
+            Self::DailyReportOverdue => "Wymagany zaległy raport dobowy",
+        }
+    }
+}
+
+impl From<&str> for Problem {
+    fn from(value: &str) -> Self {
+        Self::Blocking(value.to_owned())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
     pub vendor: Vendor,
@@ -84,7 +106,7 @@ pub struct Device {
     pub firmware: String,
     pub serial: String,
     /// Empty when ready.
-    pub problems: Vec<String>,
+    pub problems: Vec<Problem>,
     pub vat: Vec<VatRate>,
     pub capabilities: Capabilities,
 }
@@ -106,11 +128,25 @@ impl Device {
         self.problems.is_empty()
     }
 
+    /// UI eligibility only; the driver must still run operation-specific preflight.
+    pub fn daily_report_allowed(&self) -> bool {
+        self.problems
+            .iter()
+            .all(|problem| matches!(problem, Problem::DailyReportOverdue))
+    }
+
     pub fn description(&self) -> String {
         if self.ready() {
             "Gotowa do drukowania".to_owned()
         } else {
-            self.problems.join(". ")
+            let mut description = String::new();
+            for problem in &self.problems {
+                if !description.is_empty() {
+                    description.push_str(". ");
+                }
+                description.push_str(problem.description());
+            }
+            description
         }
     }
 

@@ -5,7 +5,7 @@ use std::{
 
 use fiscal::{
     decimal,
-    device::{Device, VatKind, VatRate, Vendor},
+    device::{Device, Problem, VatKind, VatRate, Vendor},
     driver::Driver,
     error::Error,
     journal::{Journal, Printed},
@@ -478,32 +478,32 @@ fn device_from(
         .collect::<Result<Vec<_>, Error>>()?;
     let mut problems = Vec::new();
     if name != TEMO || serial.trim().is_empty() {
-        problems.push("Wybrane urządzenie nie jest drukarką Temo Online".to_owned());
+        problems.push("Wybrane urządzenie nie jest drukarką Temo Online".into());
     }
     if !fiscal && !cfg!(workshop_acceptance) {
-        problems.push("Drukarka nie jest w trybie fiskalnym".to_owned());
+        problems.push("Drukarka nie jest w trybie fiskalnym".into());
     }
     if !header {
-        problems.push("Drukarka nie ma zaprogramowanego nagłówka".to_owned());
+        problems.push("Drukarka nie ma zaprogramowanego nagłówka".into());
     }
     if device.require("ds")? != "0" {
-        problems.push("Drukarka oczekuje na operatora lub jest w menu".to_owned());
+        problems.push("Drukarka oczekuje na operatora lub jest w menu".into());
     }
     if !queue_empty {
-        problems.push("Drukarka ma oczekujące polecenia".to_owned());
+        problems.push("Drukarka ma oczekujące polecenia".into());
     }
-    problems.extend(mechanism_problem(mechanism.require("pr")?));
+    problems.extend(mechanism_problem(mechanism.require("pr")?).map(Problem::Blocking));
     if boolean(common.require("td")?)? {
-        problems.push("Drukarka jest w trybie tylko do odczytu".to_owned());
+        problems.push("Drukarka jest w trybie tylko do odczytu".into());
     }
     if device.require("tl")? != "0" {
-        problems.push("Zasoby transakcji są zajęte przez inny interfejs".to_owned());
+        problems.push("Zasoby transakcji są zajęte przez inny interfejs".into());
     }
     if transaction_open || common.require("ts")? != "0" {
-        problems.push("Otwarta transakcja. Dokończ lub anuluj ją na drukarce".to_owned());
+        problems.push("Otwarta transakcja. Dokończ lub anuluj ją na drukarce".into());
     }
     if !rates.iter().any(|rate| rate.active()) {
-        problems.push("Brak aktywnych stawek VAT".to_owned());
+        problems.push("Brak aktywnych stawek VAT".into());
     }
     Ok(Device {
         vendor: Vendor::Posnet,

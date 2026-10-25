@@ -114,6 +114,47 @@ fn non_fiscal_device_is_not_ready_without_acceptance() {
     assert_eq!(fiscal(&sim), Vec::<String>::new());
 }
 
+#[test]
+fn overdue_daily_report_blocks_receipts_but_allows_daily_report() {
+    let sim = Simulator::start();
+    sim.set_status(
+        0,
+        (1_u128 << 115) | (1_u128 << 102) | (1_u128 << 98) | 4,
+        32,
+    );
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(!expected.ready());
+    assert!(expected.daily_report_allowed());
+    assert_eq!(expected.description(), "Wymagany zaległy raport dobowy");
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&receipt(0, false), &expected, &mut log),
+        Err(Error::NotReady(_))
+    ));
+    assert!(matches!(
+        driver.print_report(
+            Report::Monthly {
+                year: 2025,
+                month: 9
+            },
+            &expected.serial,
+            &mut log
+        ),
+        Err(Error::NotReady(_))
+    ));
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal(&sim), Vec::<String>::new());
+    assert!(matches!(
+        driver.print_report(Report::Daily, &expected.serial, &mut log),
+        Err(Error::Uncertain(_))
+    ));
+    assert_eq!(log.commands, ["RRP"]);
+    assert_eq!(fiscal(&sim), ["RRP\x1dI1\x1dJ1"]);
+    assert_eq!(sim.reports(), 0, "acceptance is not completion");
+    assert!(sim.daily_pending());
+}
+
 #[cfg(not(workshop_acceptance))]
 #[test]
 fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command() {
@@ -331,22 +372,6 @@ fn fresh_identity_vat_status_and_header_are_required() {
         );
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
-}
-
-#[test]
-fn overdue_daily_blocks_sales_but_not_the_daily_report() {
-    let sim = Simulator::start();
-    sim.set_status(
-        0,
-        (1_u128 << 102) | (1_u128 << 98) | (1_u128 << 115) | 4,
-        32,
-    );
-    assert!(!printer(&sim).probe().unwrap().ready());
-    assert!(matches!(
-        printer(&sim).print_report(Report::Daily, "ABC1234567890", &mut Log::default()),
-        Err(Error::Uncertain(_))
-    ));
-    assert_eq!(fiscal(&sim), ["RRP\x1dI1\x1dJ1"]);
 }
 
 #[test]
