@@ -26,6 +26,8 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reply {
     pub body: String,
+    /// Validated configuration option/value pairs, empty for other response schemas.
+    pub options: Vec<(u32, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -290,6 +292,7 @@ impl Session {
                 if expected.is_none() {
                     return Ok(Reply {
                         body: decode_body(payload)?,
+                        options: Vec::new(),
                     });
                 }
             } else if payload.starts_with(b"@s") {
@@ -306,10 +309,18 @@ impl Session {
                 } else {
                     payload
                 })?;
-                if !body.starts_with(prefix) || data.is_some() {
+                if data.is_some() {
                     return Err(frame::corrupt());
                 }
-                data = Some(Reply { body });
+                let options = if command == "^c" {
+                    configuration_options(&body)?
+                } else {
+                    if !body.starts_with(prefix) {
+                        return Err(frame::corrupt());
+                    }
+                    Vec::new()
+                };
+                data = Some(Reply { body, options });
             }
             if expected
                 .as_ref()
@@ -464,9 +475,26 @@ fn response_prefix(body: &str) -> Option<(String, bool, bool)> {
         "#s" if body == "23#s" => Some(("2#X".to_owned(), true, false)),
         "$i" => Some((format!("{}$I", body.split('$').next()?), true, true)),
         "^u" => Some(("1#U".to_owned(), true, true)),
-        "^c" => Some(("1^c".to_owned(), true, true)),
+        "^c" => Some(("^c".to_owned(), true, true)),
         _ => None,
     }
+}
+
+/// Counted option/value pairs, N:L13323-L13347,L15761-L15783.
+fn configuration_options(body: &str) -> Result<Vec<(u32, String)>, Error> {
+    let (count, fields) = body.split_once("^c").ok_or_else(frame::corrupt)?;
+    let count = decimal(Some(count))?;
+    let mut fields = fields.split('\r');
+    let mut options = Vec::new();
+    for _ in 0..count {
+        let option = decimal(fields.next())?;
+        let value = fields.next().ok_or_else(frame::corrupt)?;
+        options.push((option, value.to_owned()));
+    }
+    if fields.next() != Some("") || fields.next().is_some() {
+        return Err(frame::corrupt());
+    }
+    Ok(options)
 }
 pub(crate) fn encode_body(body: &str) -> Result<Vec<u8>, Error> {
     if body

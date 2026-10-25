@@ -208,3 +208,61 @@ fn unscaled_links_keep_the_callers_exact_deadline() {
         Duration::from_millis(1)
     );
 }
+
+#[test]
+fn config_reply_with_several_options_parses_every_pair() {
+    let sim = Simulator::start();
+    sim.set_config_option(92, "3");
+    let reply = open(&sim)
+        .command("0;1^c91/92/", Duration::from_secs(3))
+        .unwrap();
+    assert_eq!(reply.body, "2^c91\r1\r92\r3\r");
+    assert_eq!(
+        reply.options,
+        vec![(91, "1".to_owned()), (92, "3".to_owned())]
+    );
+}
+
+#[test]
+fn config_reply_rejects_malformed_counts_and_pairs() {
+    for body in [
+        "1^c91\r1\r92\r1\r",
+        "3^c91\r1\r92\r1\r",
+        "2^c91\r1\r92\r",
+        "2^c91\r1\r92\r1",
+        "+2^c91\r1\r92\r1\r",
+        "2^c91\r1\rinvalid\r1\r",
+        "0^c91\r1\r",
+        "^c91\r1\r",
+        "1^c91\r1\r\r",
+    ] {
+        let sim = Simulator::start();
+        let mut raw = frame::encode(body.as_bytes());
+        raw.extend_from_slice(b"\x1bP0#Z^c\x1b\\");
+        sim.fault("^c", Fault::Reply(raw));
+        assert!(
+            matches!(
+                open(&sim).command("0;1^c91/92/", Duration::from_secs(3)),
+                Err(Error::Protocol(_))
+            ),
+            "{body:?}"
+        );
+    }
+}
+
+#[test]
+fn full_config_read_returns_all_counted_options() {
+    let sim = Simulator::start();
+    sim.set_dialect("0");
+    let reply = open(&sim).command("^c", Duration::from_secs(3)).unwrap();
+    assert_eq!(
+        reply.options,
+        vec![
+            (5, "0".to_owned()),
+            (91, "1".to_owned()),
+            (92, "1".to_owned()),
+            (93, "1".to_owned()),
+            (94, "1".to_owned()),
+        ]
+    );
+}

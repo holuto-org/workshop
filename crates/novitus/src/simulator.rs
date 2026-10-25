@@ -14,7 +14,8 @@ use fiscal::{
     link::{Candidate, Link, Port},
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    fmt::Write as _,
     io::{self, Read as _, Write as _},
     net::{TcpListener, TcpStream},
     sync::{
@@ -37,7 +38,7 @@ pub enum Fault {
 #[derive(Debug)]
 struct State {
     endpoint: String,
-    dialect: String,
+    options: BTreeMap<u32, String>,
     header: String,
     model: String,
     firmware: String,
@@ -55,7 +56,9 @@ impl Default for State {
     fn default() -> Self {
         Self {
             endpoint: "PC1".to_owned(),
-            dialect: "1".to_owned(),
+            options: [5, 91, 92, 93, 94]
+                .map(|option| (option, "1".to_owned()))
+                .into(),
             header: "Warsztat Łódź".to_owned(),
             model: "NOVITUS HD ONLINE".to_owned(),
             firmware: "1.60".to_owned(),
@@ -138,7 +141,11 @@ impl Simulator {
     }
 
     pub fn set_dialect(&self, dialect: &str) {
-        dialect.clone_into(&mut lock(&self.state).dialect);
+        self.set_config_option(5, dialect);
+    }
+
+    pub fn set_config_option(&self, option: u32, value: &str) {
+        drop(lock(&self.state).options.insert(option, value.to_owned()));
     }
 
     pub fn set_header(&self, header: &str) {
@@ -375,7 +382,12 @@ fn answer(body: &str, command: &str, state: &State) -> Vec<u8> {
             false,
         ),
         "50$i" => (format!("50$I{}\r", state.endpoint), true, true),
-        "0;1^c5/5/" | "^c" => (format!("1^c5\r{}\r", state.dialect), true, true),
+        _ if command == "^c" => {
+            let Some(response) = configuration_reply(body, &state.options) else {
+                return frame::query(b"4#Z^c");
+            };
+            (response, true, true)
+        },
         "#c" => (format!("1#C{}", state.clock), false, false),
         "#n" => ("1#E0".to_owned(), false, false),
         "^u" => (format!("1#U{}", state.header), true, true),
@@ -400,6 +412,26 @@ fn answer(body: &str, command: &str, state: &State) -> Vec<u8> {
         raw.extend_from_slice(&frame::query(format!("0#Z{command}").as_bytes()));
     }
     raw
+}
+
+/// Full and bounded configuration reads, N:L13323-L13347,L15761-L15783.
+fn configuration_reply(body: &str, options: &BTreeMap<u32, String>) -> Option<String> {
+    let (first, last) = if body == "^c" {
+        (0, u32::MAX)
+    } else {
+        let range = body.strip_prefix("0;1^c")?.strip_suffix('/')?;
+        let (first, last) = range.split_once('/')?;
+        (first.parse::<u32>().ok()?, last.parse::<u32>().ok()?)
+    };
+    if first > last {
+        return None;
+    }
+    let options = options.range(first..=last);
+    let mut response = format!("{}^c", options.clone().count());
+    for (option, value) in options {
+        let _written = write!(response, "{option}\r{value}\r");
+    }
+    Some(response)
 }
 
 #[cfg(test)]
