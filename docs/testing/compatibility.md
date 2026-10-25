@@ -59,16 +59,15 @@ contract changes together; use sanitized recorded contract examples and the
 backend's own tests, never probe production with a real token or queue fiscal
 work as a compatibility check.
 
-Deploy the multi-vendor backend before Workshop: session/heartbeat require
-`vendor`, `maxQuantityDecimals`, `capabilities.advanceDeductions` and
-`capabilities.zeroTotalReceipts`. Older agents without these fields are not
-supported. Test backend refusal of unsupported advances, zero-total sales and
-excess quantity precision, plus independent local refusal before any fiscal
-command. Company-footer availability remains a local header check.
+Session/heartbeat require `vendor`, `maxQuantityDecimals`,
+`capabilities.advanceDeductions` and `capabilities.zeroTotalReceipts`. Test
+backend refusal of unsupported advances, zero-total sales and excess quantity
+precision, plus independent local refusal before any fiscal command.
+Company-footer availability remains a local header check.
 
 ## Dependencies and features
 
-Keep Cargo.lock and workspace versions deliberate. `slint`, `slint-build` and
+Keep Cargo.lock and workspace versions deliberate. `slint` and
 `i-slint-backend-testing` move in lockstep; the testing backend is pinned
 exactly (`=1.18.1` for Slint 1.18.1). It is an internal preliminary API without
 patch-level semver guarantees
@@ -78,7 +77,7 @@ mismatched backend.
 
 Exercise default production features as well as all debug/test features. Desktop
 release builds reject `simulator`; agent builds without debug assertions reject
-`testing`. Posnet's standalone simulator has no release guard. A green
+`testing`. The drivers' own `simulator` features have no release guard. A green
 all-features test run does not prove the real serial branch builds. Rebuild and
 verify all five packages for dependency/toolchain upgrades; run advisory/license
 and unused-dependency checks. See [CI](../ci.md).

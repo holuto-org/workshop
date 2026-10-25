@@ -45,11 +45,9 @@ install in your cloud environment.
 The stable URL discovers a released guide, **not `master`**. Each release
 publishes its matching guide, scripts and checksums together. Resolve one tag
 before commands; never mix `latest` downloads that could cross an upgrade. A tag
-alone is not cryptographic immutability: maintainers should enable
-[GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
-Until then, attestations improve provenance, but repository/release compromise
-remains a trust boundary. A missing asset is a stop, not permission to use
-unreleased instructions.
+alone is not cryptographic immutability: attestations improve provenance, but
+repository/release compromise remains a trust boundary. A missing asset is a
+stop, not permission to use unreleased instructions.
 
 ## 0. Safety and capability boundary
 
@@ -390,8 +388,9 @@ requires Windows 11 24H2 and does not solve Windows 10; see
    the person.
 3. If the GUI is running, ask for **Zakończ** after current operations finish.
    Use the configuration command with the chosen URL/port/speed/diagnostics.
-   Read only `config show --json` output to confirm. Pair before `check`:
-   unpaired settings intentionally fail the completeness check with exit 3.
+   Set the URL before pairing: a later URL change forgets the pairing. Read only
+   `config show --json` output to confirm. Pair before `check`: unpaired
+   settings intentionally fail the completeness check with exit 3.
 4. The person generates a one-time pairing code for their printer in **Holuto →
    Ustawienia → Drukarki fiskalne**. They can type it or provide it to the
    agent. Confirm the intended printer/computer and run the pairing command
@@ -477,39 +476,3 @@ code/token); autostart choice; launch outcome; remaining human steps. If
 chat-only, say **manual steps provided, not installed**. Never claim printer
 testing or configuration proves a fiscal operation succeeded.
 
-## Why this delivery format
-
-- [llms.txt](https://llmstxt.org/) is a discovery proposal, not authentication
-  or permission. The root index links Markdown; GitHub does not promise
-  auto-discovery.
-- [Vercel](https://vercel.com/docs/agent-resources) exposes Markdown/copyable
-  context; [Supabase](https://supabase.com/docs/guides/ai-tools) separates
-  static prompts from plugins/MCP;
-  [Sentry](https://docs.sentry.io/ai/agent-plugin/) ships reusable agent
-  installation knowledge. A static guide plus verified native installers needs
-  no extra integration. [Stripe's MCP flows](https://docs.stripe.com/mcp) solve
-  API authorization, not this desktop installation; no new MCP server is
-  necessary.
-- [AGENTS.md](https://agents.md/) is repository work guidance, not end-user
-  install discovery. Never overwrite a person's own agent configuration to
-  install an app.
-- [OpenAI agent safety](https://developers.openai.com/api/docs/guides/agent-builder-safety)
-  and
-  [Anthropic injection guidance](https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails/mitigate-jailbreaks)
-  support isolating fetched data/human approvals. No prompt guarantees injection
-  resistance; verified code and restricted actions matter.
-- [GitHub attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations)
-  add Sigstore-backed provenance to hashes;
-  [CLI verification](https://cli.github.com/manual/gh_attestation_verify) can
-  constrain the signer workflow. They do not replace OS code
-  signing/notarization.
-- [Ubuntu package management](https://documentation.ubuntu.com/server/how-to/software/package-management/),
-  [Apple's macOS 15 change](https://developer.apple.com/news/?id=saqachfa),
-  [Open Anyway procedure](https://support.apple.com/en-us/102445),
-  [Microsoft's Mark-of-the-Web explanation](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/unblock-file)
-  and
-  [WScript.Shell shortcuts](https://learn.microsoft.com/en-us/powershell/scripting/samples/creating-.net-and-com-objects--new-object-)
-  inform the platform steps.
-  [uv](https://docs.astral.sh/uv/getting-started/installation/) demonstrates
-  version-pinned native installer delivery; we intentionally avoid its
-  pipe-to-shell/execution-policy-bypass shortcuts for this fiscal application.

@@ -19,22 +19,13 @@ select its required evidence.
 
 ## Why tests exist
 
-A test earns its place by catching a plausible user-visible failure. Coverage,
-assertion counts and tests per function are not proof.
-
-- Assert behavior at the consumer boundary: printer frames and executed effects,
-  HTTP requests/results, durable files, visible UI and worker events.
-- Fake only outside systems. Use the matching `posnet`, `novitus` or `elzab`
-  simulator and the loopback `agent::testing` Holuto fake through the
-  production HTTP client. Never mock our own agent or replace application
-  callbacks in a test claiming to prove the application.
-- Assert exact values and exact error variants/operator messages; also assert
-  what did **not** change after refusal.
-- Keep setup, one action and literal expected outcomes visible. Helpers build
-  fixtures, not hidden scenarios or assertions. Name tests after their
-  guarantee.
-- No sleeps to establish ordering, retries to hide flakes, test-order dependence
-  or real printer access. A flaky test is a defect to fix.
+A test earns its place by catching a plausible user-visible failure: assert
+behavior at the consumer boundary (printer frames and executed effects, HTTP
+requests/results, durable files, visible UI and worker events), fake only
+outside systems, and never hide ordering with sleeps or flakes with retries.
+Coverage, assertion counts and tests per function are not proof. The
+[writing-tests rule](../../.omp/rules/writing-tests.md) owns harnesses,
+placement and fixtures.
 
 ## Rank what must never break
 

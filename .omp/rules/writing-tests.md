@@ -10,92 +10,81 @@ scope:
   tool:read(crates/*/src/testing.rs), tool:edit(crates/*/src/testing.rs),
   tool:write(crates/*/src/testing.rs), tool:read(crates/*/src/testing/**),
   tool:edit(crates/*/src/testing/**), tool:write(crates/*/src/testing/**),
-  tool:read(crates/posnet/src/simulator*),
-  tool:edit(crates/posnet/src/simulator*),
-  tool:write(crates/posnet/src/simulator*)"
+  tool:read(crates/*/src/simulator*), tool:edit(crates/*/src/simulator*),
+  tool:write(crates/*/src/simulator*), tool:edit(crates/desktop/src/bin_tests/**),
+  tool:write(crates/desktop/src/bin_tests/**)"
 interruptMode: never
 ---
 
 # Writing tests
 
-Choose guarantees and test shape from
-[the checklist](../../docs/testing/checklist.md). This rule is about
-constructing those tests, not test-count or coverage targets.
+Pick the guarantee from [the checklist](../../docs/testing/checklist.md) and the
+boundary from [the testing guide](../../docs/testing/README.md); this rule says
+how to build the test.
 
 ## Placement
 
 - Module unit tests: `foo/tests.rs`, declared from `foo.rs`. Scenarios spanning
-  modules of one crate: `src/tests.rs` and `src/tests/` submodules. No top-level
-  `tests/` directories. The harness-free `macos_quit` target in
-  `src/bin_tests/` is the native AppKit/main-thread exception.
-- One module's fixture helpers stay with it; cross-module helpers belong in the
-  owning crate's `src/testing.rs`. Cross-crate boundaries reuse
-  the brand's simulator and feature-gated `agent::testing`; never copy an HTTP
-  fake into desktop tests.
-- Add each regression at the boundary where its consumer sees the bug; a fixed
-  bug's test fails without the fix.
+  modules of one crate: `src/tests.rs` and `src/tests/`. No top-level `tests/`
+  directories; the harness-free `src/bin_tests/macos_quit.rs` is the only
+  exception (real AppKit on the main thread).
+- One module's fixture helpers stay with it; cross-module helpers live in the
+  crate's `src/testing.rs`. Cross-crate tests reuse the brand's simulator and
+  feature-gated `agent::testing`; never copy an HTTP fake into desktop tests.
+- Put each regression where its consumer sees the bug; it must fail without the
+  fix.
 
-## Harness and fixtures
+## Harnesses
 
-- Printer scenarios use the matching `posnet`, `novitus` or `elzab` simulator,
-  never real hardware/serial devices. Unix serial tests use allocated ptys;
-  Windows only the configured com0com virtual pair.
-- Agent scenarios use `agent::testing::Holuto` loopback HTTP fake through
-  production `Api`/`ureq`, simulator and fresh state directory. The fake models
-  binding/attempts/results and scripts faults; do not restore the removed
-  `Holuto` trait/in-process `FakeApi` or mock our own code.
-- Reuse `job_json` and explicit fixture updates for data; create normal state
-  through public behavior. Raw JSON/file edits are appropriate for old-format,
-  corruption and crash-recovery fixtures, not to bypass the operation being
-  tested.
-- UI scenarios start the real application/callbacks with Slint's exact-version
-  testing backend. Locate controls by accessible label; use its event-loop mode
-  for worker events. No custom replacement backend, callback mock, coordinate
-  scanning or sleeps after clicks. See [UI guide](../../docs/testing/ui.md).
-- Telemetry tests bind a capturing Sentry transport/hub and synthetic canaries,
-  never a live DSN. Inspect errors, breadcrumbs, logs and transactions, not only
-  the top-level event. Native crashes run only in isolated children with
-  synthetic data.
-- Helpers build data, not hidden assertions. Keep setup, one action and literal
-  expected results visible. Assert exact error variants/messages and stored
-  state, not status/count/substrings alone.
+- Printers: the matching `posnet`, `novitus` or `elzab` simulator through the
+  real driver/`Link`. Unix serial tests use allocated ptys; Windows only the
+  configured com0com pair (`com_pair`). Never real hardware.
+- Holuto: `agent::testing::Holuto`, a stateful loopback fake reached through the
+  production `Api`/`ureq` client, plus a fresh `state_dir()`. It models binding,
+  attempts and results and scripts faults. Do not mock our own code or add an
+  in-process API fake.
+- UI: the real application and callbacks on Slint's exact-version testing
+  backend (`init_integration_test_with_mock_time` when worker events flow).
+  Locate controls by accessible label; no replacement callbacks, coordinates or
+  sleeps after clicks. See [UI guide](../../docs/testing/ui.md).
+- Telemetry: a capturing Sentry transport/hub with synthetic canaries; inspect
+  errors, breadcrumbs, logs and transactions. Never a live DSN.
+- Data: reuse `job_json`/fixture helpers and create state through public
+  behavior. Raw file edits only for old-format, corruption and crash fixtures.
+  Helpers build data, never hidden assertions; keep setup, one action and
+  literal expected values visible. Assert exact variants/messages and stored
+  state, plus what did **not** change after a refusal.
 
-## Per-kind conventions
+## Per kind
 
-- **Fiscal faults:** execute-then-lost/corrupt/disconnected reply; inspect
-  simulated effects, wire frames and persisted journal. Hold/reached proves
-  ordering; failed journal writes must prevent the relevant send. Resolution
-  never reissues anything.
-- **Properties:** `proptest`, independent integer/reference oracle or documented
-  relation. Mix range extremes and boundaries; do not copy production
-  arithmetic. Commit `proptest-regressions/` seeds produced by real failures
-  alongside their fixes.
+- **Fiscal faults:** execute-then-lose/corrupt/disconnect; inspect simulator
+  effects, wire frames and the persisted journal. A failed journal write must
+  prevent the send. Resolution never reissues.
+- **Properties:** `proptest` against an independent integer/reference oracle;
+  mix extremes and boundaries; never copy production arithmetic. Commit
+  `proptest-regressions/` seeds from real failures.
 - **Models:** `proptest-state-machine` reference transitions independent of
-  production helpers; check safety/evidence invariants after every step. Keep
-  real restart/HTTP/device scenarios; sequential models do not prove thread
-  races.
-- **Snapshots:** `insta` for binding receipt/report output with fixed
-  clock/text/IDs. Review every diff against protocol and semantics with
-  `cargo insta review`; do not blanket-accept, redact fiscal fields or snapshot
-  arbitrary JSON instead of precise assertions.
-- **Concurrency:** channels and simulator hold/reached order contenders. Prove
-  one effect and final state. Join fixture threads; release holds even after
-  failure. Stress affected worker/race tests with nextest before integration.
-- **Time:** fix simulator printer clock; never fake it in production driver
-  paths. Inject `today` into pure date functions. No wall-clock duration asserts
-  or sleeps to order events. Bounded receives are failure diagnostics; simulator
-  timing acceleration preserves production timeouts.
-- **Platform:** `#[cfg(...)]` on what the test proves. Windows virtual-serial
-  module is `com_pair`, requires `HOLUTO_TEST_COM_PAIR` and fails loudly if
-  absent; default nextest excludes it, CI includes it. Linux `session_bus`
-  uses a self-spawned `dbus-run-session` child and the serial test group. No
-  silent platform skip.
-- **Processes:** environment overrides/locks re-run `std::env::current_exe()`
-  with child marker and command-local environment; never unsafe global
-  `set_var`.
-- **Files:** separate temp directory per test; keep current-format literal fixtures
-  for settings/journal/history. Inject portable failures, not chmod-only assumptions
-  under root. Assert the previous durable record survives.
+  production helpers; invariants after every step. Keep real restart/HTTP
+  scenarios too; sequential models do not prove races.
+- **Snapshots:** `insta` only for binding receipt/report output with fixed
+  clock/text/IDs. Review every diff against the protocol; never blanket-accept or
+  redact fiscal fields.
+- **Concurrency:** order contenders with channels and simulator `hold`/`reached`;
+  prove one effect and the final state; release holds and join threads on
+  failure. Stress worker/race tests before integration
+  ([workflows](../../docs/workflows.md#finishing-a-change)).
+- **Time:** fix the simulator printer clock; freeze the worker poll clock
+  (`ClockScope`) when exact event sequences are asserted; inject `today` into
+  pure date functions. No sleeps or wall-clock assertions. Bounded receives are
+  failure diagnostics only.
+- **Platform:** `#[cfg(...)]` on what the test proves; no silent skips.
+  `com_pair` requires `HOLUTO_TEST_COM_PAIR` and fails loudly without it. Linux
+  `session_bus` tests self-spawn `dbus-run-session`.
+- **Processes:** environment overrides and locks re-run
+  `std::env::current_exe()` with a child marker and child-local environment;
+  never global `set_var`.
+- **Files:** a temp directory per test; current-format literal fixtures for
+  settings/journal/history; inject portable failures (not chmod under root);
+  assert the previous durable record survives.
 
-Use [workflows](../../docs/workflows.md) for mutants, snapshot review, stress
-and coverage; never claim a check ran unless its result was observed.
+Never claim a check ran unless its result was observed.

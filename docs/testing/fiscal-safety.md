@@ -22,18 +22,18 @@ effects, and no replayed fiscal frames.
 
 ## Fault matrix
 
-At first, middle, final and footer commands, exercise: explicit named refusal;
-refusal naming another command; execute then lose reply; execute then corrupt
-reply; execute then close connection. Inspect the simulator's effects separately
-from what the driver received. A simple pre-execution error cannot prove
-post-execution uncertainty.
+At the first, middle, final and footer commands of each driver, exercise: explicit
+named refusal; refusal naming another command; execute then lose reply; execute
+then corrupt reply; execute then close connection. Inspect the simulator's
+effects separately from what the driver received. A simple pre-execution error
+cannot prove post-execution uncertainty.
 
-`Simulator::set_clock` fixes printer time; `set_status` varies documented
-readiness fields; `Fault::LoseReply`, `CorruptReply` and `Disconnect` execute
-first. `Fault::Device` supplies a named device reply. `hold`/`reached` order the
-test while asynchronous `!sprn`/`!sdev` remain answerable. Simulator links carry
-accelerated timing: tests must not change production deadlines or take a real
-ten-minute operator wait. Always release holds on failure paths.
+Each brand's `simulator::Simulator` fixes printer time (`set_clock`), varies
+documented readiness (`set_status`) and injects execute-first faults through its
+`Fault` enum; Posnet's `hold`/`reached` order a test while asynchronous
+`!sprn`/`!sdev` remain answerable. Simulator links accelerate timing: tests must
+not change production deadlines or take a real ten-minute operator wait. Always
+release holds on failure paths.
 
 Prove identity, fiscal mode, header, mechanism, queue, transaction/footer state
 and current VAT before every operation in its execution session. Refusal must
@@ -93,7 +93,7 @@ Use independent published frame/CRC vectors and fixed-clock output snapshots.
 Review every receipt kind: advance, sale, mixed VAT, deductions, split payment,
 credit, fully prepaid and optional footer. Assert exact command order and field
 values in addition to the snapshot. The
-[Posnet protocol referenced by README](../../README.md#fiscal-api-contract) is
+[Posnet protocol](../fiscal-contract.md#posnet) is
 the output oracle; simulator and driver sharing a helper is not an independent
 one.
 

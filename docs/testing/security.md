@@ -30,9 +30,10 @@ fixtures.
 
 Pairing codes are secrets too. Through the production HTTP client prove code
 normalization, single-use/expiry/refusal/throttling behavior and that a failed
-exchange does not replace saved credentials. CLI `config show` redacts
-credentials; every mutating CLI command must refuse the GUI's instance lock.
-Never read state files as an installation shortcut.
+exchange does not replace saved credentials. A token is bound to the API address
+it was paired with: changing the URL (CLI or GUI) forgets it, while the same
+address in another spelling keeps it. CLI `config show` redacts credentials;
+every mutating CLI command must refuse the GUI's instance lock.
 
 ## Local state
 

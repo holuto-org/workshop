@@ -20,7 +20,7 @@
   - **Runner and work**: Checks + reusable Package; version/published-release
     guard; required Sentry configuration and debug upload; publish stable
     filenames/checksums and finalize the Sentry release only for qualifying
-    version increases.
+    version increases. Retry a failed release by rerunning its original run.
 - **Cleanup merged PR branches (`cleanup-merged-pr-branches.yml`)**
   - **Trigger**: Merged pull request.
   - **Runner and work**: `ubuntu-latest`; remove the merged head branch subject

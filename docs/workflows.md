@@ -35,9 +35,9 @@ package/full safety path when reducing tests or changing shared harnesses.
 Additional finish evidence by changed area:
 
 - **Binding receipt/report output**:
-  `cargo insta test --test-runner nextest --review -p posnet --all-features`,
-  read each diff against the protocol, then rerun ordinary nextest.
-  Select the relevant driver (`posnet`, `novitus` or `elzab`).
+  `cargo insta test --test-runner nextest --review -p <driver> --all-features`
+  (`posnet` or `novitus`), read each diff against the protocol, then rerun
+  ordinary nextest.
 - **Worker, race, time or shared state**: The scoped nextest stress command
   below; ten repetitions with no flakes.
 - **Recovery/numeric properties**: Increase `PROPTEST_CASES` for the affected

@@ -1,24 +1,28 @@
 ---
 description:
-  "The desktop never touches the printer or Holuto itself; it talks to the
-  Worker"
+  "Desktop never touches the printer or Holuto itself; it talks to the Worker"
 condition:
   - 'Printer::new|Api::new|\.probe\(|thread::Builder|\.join\(\)|block_on|recv\(\)'
 scope: "tool:edit(crates/desktop/src/**), tool:write(crates/desktop/src/**)"
+interruptMode: never
 ---
 
 # Worker thread
 
-All printer I/O and Holuto requests run on the single `agent::worker::Worker`
-thread. The GUI submits `Command`s and renders `Event`s, which arrive on the
-worker thread and must reach Slint through `slint::invoke_from_event_loop`.
-Never call the printer, the API or a blocking wait on the GUI thread;
-join only after the final `Event::Stopped`, never during an operation. Quitting
-stops the worker and waits for that event before joining, so the current fiscal
-operation finishes. The desktop never uses `Printer` directly.
-
-Pairing and settings persistence must not block Slint either: submit background
-work and deliver completion through the event loop. CLI configuration never
-opens a printer; all mutations acquire the same instance lock and use the
-validated atomic settings store. Autostart is explicit per-user opt-in and never
-bypasses preflight or unresolved journals.
+- All printer I/O and Holuto requests run on the single `agent::worker::Worker`
+  thread. The GUI submits `Command`s and renders `Event`s; events arrive on the
+  worker thread and reach Slint only through `slint::invoke_from_event_loop`.
+- Never call a driver, `Api` or a blocking wait on the GUI thread. Pairing and
+  settings/status persistence run in background work (`Worker::pair`,
+  `preferences::Writer`) and report completion through the event loop.
+- Every event-loop callback that later syncs the model into the window first
+  captures the window (`app.capture()`), so operator input is never overwritten.
+- Closing the window only hides it when a tray host is available (otherwise it
+  stays visible) and never stops the worker. **Zatrzymaj** stops processing;
+  **Zakończ**, tray quit and macOS Dock/⌘Q quit route through `Worker::stop` and
+  join only after the final `Event::Stopped`. On macOS no worker (including
+  pairing) starts unless `macos::install()` succeeds. A failed status write never
+  keeps quit waiting.
+- CLI commands never open a printer; mutations take the same instance lock and
+  the validated atomic settings store. Autostart is explicit per-user opt-in and
+  never bypasses preflight or an unresolved journal.
