@@ -664,112 +664,110 @@ fn an_unsupported_posnet_model_is_reported_by_name_after_only_identification() {
     assert_eq!(commands(&sim), ["getrealid"]);
 }
 
-macro_rules! uncertain_receipt {
-    ($name:ident,$command:literal,$fault:expr,$kind:pat) => {
-        #[test]
-        fn $name() {
+/// Recognizes the transport error a reply fault surfaces as.
+type Surfaced = fn(&Error) -> bool;
+
+/// Faults whose reply failure leaves the executed command's effect uncertain.
+fn reply_faults() -> [(Fault, Surfaced); 3] {
+    [
+        (Fault::LoseReply, |error| matches!(error, Error::Timeout(_))),
+        (Fault::CorruptReply, |error| {
+            matches!(error, Error::Protocol(_))
+        }),
+        (Fault::Disconnect, |error| matches!(error, Error::Io(_))),
+    ]
+}
+
+#[test]
+fn a_lost_corrupt_or_disconnected_receipt_reply_is_uncertain_and_never_resent() {
+    let expected = [
+        "trinit",
+        "trnipset",
+        "trline",
+        "tradvance",
+        "trpayment",
+        "trend",
+        "trftrln",
+        "trftrend",
+    ];
+    for (end, command) in expected.into_iter().enumerate().take(6) {
+        for (fault, surfaced) in reply_faults() {
+            let case = format!("{command} {fault:?}");
             let sim = simulator();
-            sim.fault($command,$fault);
+            sim.fault(command, fault);
             let device = printer(&sim);
             let status = device.probe().unwrap();
             let mut journal = Recorder::default();
             let error = device
-                .print_receipt(&all_steps_receipt(),&status,&mut journal)
+                .print_receipt(&all_steps_receipt(), &status, &mut journal)
                 .unwrap_err();
             assert!(
-                matches!(&error,Error::Uncertain(inner) if matches!(inner.as_ref(),$kind)),
-                "{error:?}"
+                matches!(&error, Error::Uncertain(inner) if surfaced(inner)),
+                "{case}: {error:?}"
             );
-            let expected = [
-                "trinit","trnipset","trline","tradvance",
-                "trpayment","trend","trftrln","trftrend"
-            ];
-            let end = expected.iter().position(|command|*command == $command).unwrap();
             assert_eq!(
-                fiscal_commands(&sim),expected[..=end],
-                "send each command only once and stop at the failure"
+                fiscal_commands(&sim),
+                expected[..=end],
+                "{case}: send each command only once and stop at the failure"
             );
-            assert_eq!(journal.stages,expected[..=end],"journal every send before execution");
             assert_eq!(
-                sim.transaction_open(),end < 5,
-                "the command executed before its reply failed"
+                journal.stages,
+                expected[..=end],
+                "{case}: journal every send before execution"
             );
-            assert_eq!(sim.receipts().len(),usize::from(end >= 5));
+            assert_eq!(
+                sim.transaction_open(),
+                end < 5,
+                "{case}: the command executed before its reply failed"
+            );
+            assert_eq!(sim.receipts().len(), usize::from(end >= 5), "{case}");
         }
-    };
+    }
 }
 
-macro_rules! receipt_faults {
-    ($lost:ident,$corrupt:ident,$closed:ident,$command:literal) => {
-        uncertain_receipt!($lost, $command, Fault::LoseReply, Error::Timeout(_));
-        uncertain_receipt!($corrupt, $command, Fault::CorruptReply, Error::Protocol(_));
-        uncertain_receipt!($closed, $command, Fault::Disconnect, Error::Io(_));
-    };
-}
-
-receipt_faults!(lost_trinit, corrupt_trinit, disconnected_trinit, "trinit");
-receipt_faults!(
-    lost_trnipset,
-    corrupt_trnipset,
-    disconnected_trnipset,
-    "trnipset"
-);
-receipt_faults!(lost_trline, corrupt_trline, disconnected_trline, "trline");
-receipt_faults!(
-    lost_tradvance,
-    corrupt_tradvance,
-    disconnected_tradvance,
-    "tradvance"
-);
-receipt_faults!(
-    lost_trpayment,
-    corrupt_trpayment,
-    disconnected_trpayment,
-    "trpayment"
-);
-receipt_faults!(lost_trend, corrupt_trend, disconnected_trend, "trend");
-
-macro_rules! report_faults {
-    ($name:ident,$command:literal,$report:expr) => {
-        #[test]
-        fn $name() {
-            for fault in [Fault::LoseReply, Fault::CorruptReply, Fault::Disconnect] {
-                let sim = simulator();
-                sim.fault($command, fault);
-                let mut journal = Recorder::default();
-                let error = printer(&sim)
-                    .print_report($report, UNIQUE_NUMBER, &mut journal)
-                    .unwrap_err();
-                assert!(matches!(error, Error::Uncertain(_)), "{error:?}");
-                assert_eq!(fiscal_commands(&sim), [$command], "never resend a report");
-                assert_eq!(journal.stages, [$command]);
-                assert_eq!(
-                    sim.reports()[0].command,
-                    $command,
-                    "report executed before the reply failed"
-                );
-            }
+#[test]
+fn a_lost_corrupt_or_disconnected_report_reply_is_uncertain_and_never_resent() {
+    for (command, report) in [
+        ("dailyrep", Report::Daily),
+        (
+            "monthlyrep",
+            Report::Monthly {
+                year: 2026,
+                month: 6,
+            },
+        ),
+        (
+            "periodicrepbydates",
+            Report::Periodic {
+                from: date(2026, 1, 1),
+                to: date(2026, 6, 30),
+                summary: false,
+            },
+        ),
+    ] {
+        for (fault, _surfaced) in reply_faults() {
+            let case = format!("{command} {fault:?}");
+            let sim = simulator();
+            sim.fault(command, fault);
+            let mut journal = Recorder::default();
+            let error = printer(&sim)
+                .print_report(report, UNIQUE_NUMBER, &mut journal)
+                .unwrap_err();
+            assert!(matches!(error, Error::Uncertain(_)), "{case}: {error:?}");
+            assert_eq!(
+                fiscal_commands(&sim),
+                [command],
+                "{case}: never resend a report"
+            );
+            assert_eq!(journal.stages, [command], "{case}");
+            assert_eq!(
+                sim.reports()[0].command,
+                command,
+                "{case}: report executed before the reply failed"
+            );
         }
-    };
+    }
 }
-report_faults!(daily_report_reply_failures, "dailyrep", Report::Daily);
-report_faults!(
-    monthly_report_reply_failures,
-    "monthlyrep",
-    Report::Monthly {
-        year: 2026,
-        month: 6
-    }
-);
-report_faults!(
-    periodic_report_reply_failures,
-    "periodicrepbydates",
-    Report::Periodic {
-        from: date(2026, 1, 1),
-        to: date(2026, 6, 30),
-        summary: false
-    }
-);
 
 #[test]
 fn a_refused_later_receipt_step_is_uncertain_and_stops_the_stream() {

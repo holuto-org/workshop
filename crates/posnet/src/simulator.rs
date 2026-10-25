@@ -101,6 +101,10 @@ impl Default for Clock {
     }
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent simulated device flags, not states of one machine"
+)]
 #[derive(Debug, Default)]
 struct State {
     header: String,
@@ -121,7 +125,7 @@ struct State {
     frames: Vec<Vec<u8>>,
     faults: HashMap<String, Fault>,
     held: Option<Held>,
-    holding: Option<String>,
+    holding: bool,
     paper_out: bool,
     /// `pccfgget` `cp` per `pi` interface number; WIN1250 (`0`) otherwise.
     code_pages: BTreeMap<String, String>,
@@ -443,7 +447,7 @@ impl Port for SimPort {
     }
 
     fn operator_wait_limit(&self, scaled: Duration) -> Duration {
-        if lock(&self.state).holding.is_some() {
+        if lock(&self.state).holding {
             Duration::from_secs(600)
         } else {
             scaled
@@ -462,7 +466,7 @@ fn serve(listener: &TcpListener, state: &Mutex<State>, stop: &AtomicBool) {
         }
         if let Ok(stream) = stream {
             serve_session(stream, state, stop);
-            lock(state).holding = None;
+            lock(state).holding = false;
         }
     }
 }
@@ -499,7 +503,7 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
                 .unwrap_or_default();
             let held = lock(state).held.take_if(|held| held.command == command);
             if let Some(held) = &held {
-                lock(state).holding = Some(command.clone());
+                lock(state).holding = true;
                 let _sent = held.reached.send(());
             }
             if !command.starts_with('!')
@@ -515,7 +519,7 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
                 match gate.release.try_recv() {
                     Ok(()) | Err(mpsc::TryRecvError::Disconnected) => {
                         *held = None;
-                        lock(state).holding = None;
+                        lock(state).holding = false;
                     },
                     Err(mpsc::TryRecvError::Empty) => break,
                 }
@@ -660,7 +664,7 @@ impl State {
             ]),
             // `!`-prefixed queries run asynchronously (spec pp. 384-385).
             "sdev" | "!sdev" => reply(&[
-                ("ds", if self.holding.is_some() { "2" } else { "0" }),
+                ("ds", if self.holding { "2" } else { "0" }),
                 ("cp", "1"),
                 ("qe", "1"),
                 ("pe", "0"),
