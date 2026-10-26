@@ -117,17 +117,20 @@ component PortInput inherits Rectangle {
     in-out property <string> text;
     in property <[string]> model;
     in property <bool> enabled;
+    // Re-enumerate on every open: printers are plugged in while the app runs in the tray.
+    callback opening();
+    function show-list() { root.opening(); popup.show(); }
     height: 34px;
     horizontal-stretch: 1;
     accessible-role: combobox;
     accessible-label: "Port drukarki";
     accessible-value <=> root.text;
     accessible-expandable: true;
-    accessible-action-expand => { if root.enabled { popup.show(); } }
+    accessible-action-expand => { if root.enabled { root.show-list(); } }
     HorizontalLayout {
         spacing: 6px;
         LineEdit { text <=> root.text; enabled: root.enabled; placeholder-text: "Automatyczne wykrywanie"; }
-        Button { text: "⌄"; width: 34px; enabled: root.enabled; clicked => { popup.show(); } }
+        Button { text: "⌄"; width: 34px; enabled: root.enabled; clicked => { root.show-list(); } }
     }
     popup := PopupWindow {
         x: 0px; y: root.height + 4px;
@@ -208,6 +211,7 @@ export component AppWindow inherits Window {
     callback telemetry-changed(bool);
     in-out property <bool> start-on-launch;
     callback autostart-changed(bool);
+    callback refresh-ports();
     in property <string> confirm-title;
     in property <string> confirm-text;
     in property <string> confirm-action;
@@ -304,7 +308,7 @@ export component AppWindow inherits Window {
                                     spacing: 12px;
                                     HorizontalLayout { spacing: 12px; Text { text: "Adres API"; width: 140px; vertical-alignment: center; } LineEdit { accessible-label: "Adres API"; text <=> root.api-url; placeholder-text: "https://api.example.com"; enabled: root.settings-editable; } }
                                     HorizontalLayout { spacing: 12px; Text { text: "Kod parowania"; width: 140px; vertical-alignment: center; } LineEdit { accessible-label: "Kod parowania"; text <=> root.pairing-code; placeholder-text: "XXXX-XXXX"; enabled: root.settings-editable; } Button { text: "Sparuj"; accessible-label: "Sparuj"; enabled: root.settings-editable; clicked => { root.action(Action.pair); } } }
-                                    HorizontalLayout { spacing: 12px; Text { text: "Port drukarki"; width: 140px; vertical-alignment: center; } PortInput { text <=> root.port; model: root.ports; enabled: root.settings-editable; } }
+                                    HorizontalLayout { spacing: 12px; Text { text: "Port drukarki"; width: 140px; vertical-alignment: center; } PortInput { text <=> root.port; model: root.ports; enabled: root.settings-editable; opening => { root.refresh-ports(); } } }
                                     HorizontalLayout { spacing: 12px; Text { text: "Prędkość transmisji"; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: "Prędkość transmisji"; model: root.baud-rates; current-index <=> root.baud-index; enabled: root.settings-editable; } }
                                 }
                                 CheckBox { text: "Udostępniaj diagnostykę"; accessible-label: "Udostępniaj diagnostykę"; enabled: !root.pairing; checked <=> root.telemetry-enabled; toggled => { root.telemetry-changed(self.checked); } }

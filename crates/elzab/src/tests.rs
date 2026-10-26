@@ -1324,6 +1324,11 @@ fn malformed_preflight_fields_never_reach_a_fiscal_command() {
             "4",
             "\x1dSA1\x1eB0\x1dSA2\x1eB4\x1dSA3\x1eB100000000",
         ),
+        (
+            "ySR",
+            "4",
+            "\x1dSA1\x1eB000000000000000000000000000000000\x1dSA2\x1eB4\x1dSA3\x1eB20",
+        ),
         ("YYR", "5", "\x1dJA0"),
         ("YYR", "5", "\x1dJA257"),
         ("yHR", "6", "\x1dva1\x1ebWarsztat\x1ebDuplicate"),
@@ -1353,6 +1358,11 @@ fn malformed_preflight_fields_never_reach_a_fiscal_command() {
             "\x1dAA23,00\x1eB8,00\x1eC5,00\x1eD0,00\x1eE=\x1eF-\x1eG?",
         ),
         ("XCR", "9", "\x1dA26102412000"),
+        ("XCR", "9", "\x1dA2610241200000"),
+        ("XCR", "9", "\x1dA26102412000:"),
+        ("SER", "11", "\x1dJnot-a-number"),
+        ("SER", "11", "\x1dJ123456789012345678901"),
+        ("RNR", "12", "\x1dAinvalid"),
         ("XCR", "9", "\x1dA500101120000"),
         ("XCR", "9", "\x1dA260229120000"),
         ("XCR", "9", "\x1dA261024240000"),
@@ -1650,5 +1660,108 @@ fn mixed_vat_advances_keep_their_native_slots_and_exact_fiscal_total() {
             "LOR", "LIT", "LIT", "LIT", "LIT", "LIT", "LDS", "LDS", "LDS", "LBP", "LCL"
         ]
     );
+    assert_eq!((sim.receipts(), sim.transaction_open()), (1, false));
+}
+
+#[test]
+fn status_packages_accept_their_full_declared_widths() {
+    for (third, description) in [
+        ("00000020", ""),
+        ("FFFFFFFF", "Drukarka Elzab jeszcze drukuje. Poczekaj na koniec wydruku. \
+            Brak papieru lub podniesiona głowica drukarki Elzab. \
+            Awaria mechanizmu drukującego Elzab"),
+    ] {
+        let sim = Simulator::start();
+        let two = (1_u128 << 102) | (1_u128 << 98) | 4;
+        let body = format!("\x1dSA1\x1eB{:032X}\x1dSA2\x1eB{two:032X}\x1dSA3\x1eB{third}", 0);
+        sim.fault("ySR", Fault::Reply(frame::encode("4", body.as_bytes()).unwrap()));
+        let device = printer(&sim).probe().unwrap();
+        assert_eq!(device.description(), description);
+        assert_eq!(device.ready(), description.is_empty());
+        assert_eq!(fiscal(&sim), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn every_permitted_header_line_is_read_before_opening() {
+    let sim = Simulator::start();
+    let mut header = vec!["Serwis"; 255];
+    header.push("Warsztat");
+    sim.set_header(&header.join("\n"));
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    let printed = driver.print_receipt(&receipt(0, false), &expected, &mut Log::default()).unwrap();
+    assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+    assert_eq!(fiscal(&sim), [
+        "LOR\x1dC0", "LNP\x1dOA1234567890",
+        "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+        "LBP\x1dKA1\x1eBKARTA\x1eC123,46\x1eX2", "LCL\x1dRA123,46",
+    ]);
+    assert_eq!(sim.receipts(), 1);
+}
+
+#[test]
+fn company_and_buyer_nip_widths_are_revalidated_without_truncation() {
+    for (brand_length, nip_length) in [(42, 42), (43, 42), (42, 43)] {
+        let sim = Simulator::start();
+        let brand = "Ł".repeat(brand_length);
+        let nip = "1".repeat(nip_length);
+        sim.set_header(&brand);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let mut permissive = expected.capabilities.clone();
+        permissive.max_company_name = 64;
+        permissive.max_buyer_nip = 64;
+        let line = Line::new("Olej", Quantity::parse("1").unwrap(), Grosze::new(100).unwrap(),
+            VatSlot::new(0).unwrap(), &permissive).unwrap();
+        let receipt = Receipt::new(
+            vec![line], vec![],
+            vec![Payment { form: PaymentForm::Cash, amount: Grosze::new(100).unwrap() }],
+            Some(nip.clone()), &brand, &permissive,
+        ).unwrap();
+        let mut log = Log::default();
+        let result = driver.print_receipt(&receipt, &expected, &mut log);
+        if brand_length == 42 && nip_length == 42 {
+            assert_eq!(result.unwrap().receipt_number.as_deref(), Some("1"));
+            assert_eq!(fiscal(&sim), [
+                "LOR\x1dC0".to_owned(), format!("LNP\x1dOA{nip}"),
+                "LIT\x1dGAOlej\x1eBA\x1eC1\x1eD1,00\x1eE1,00".to_owned(),
+                "LBP\x1dKA1\x1eBGOTÓWKA\x1eC1,00\x1eX1".to_owned(),
+                "LCL\x1dRA1,00".to_owned(),
+            ]);
+            assert_eq!(sim.receipts(), 1);
+        } else {
+            assert!(matches!(result, Err(Error::Invalid(message))
+                if message == "Dane paragonu przekraczają możliwości Elzab."));
+            assert_eq!(log.commands, Vec::<&str>::new());
+            assert_eq!(fiscal(&sim), Vec::<String>::new());
+            assert_eq!((sim.receipts(), sim.transaction_open()), (0, false));
+        }
+    }
+}
+
+#[test]
+fn twenty_digit_printer_counters_are_not_rejected_or_reformatted() {
+    struct Counters<'a>(&'a Simulator);
+    impl Journal for Counters<'_> {
+        fn dispatching(&mut self, command: &'static str) -> io::Result<()> {
+            if command == "LCL" {
+                let frames = self.0.frames();
+                let raw = frames.last().ok_or(io::ErrorKind::InvalidData)?;
+                let (header, _) = frame::decode(raw).map_err(io::Error::other)?;
+                let id = header.parse::<u32>().map_err(io::Error::other)? + 2;
+                self.0.fault("SER", Fault::Reply(frame::encode(&id.to_string(),
+                    b"\x1dJ12345678901234567890").map_err(io::Error::other)?));
+            }
+            Ok(())
+        }
+        fn waiting(&mut self, _: Option<&str>) {}
+    }
+    let sim = Simulator::start();
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    sim.fault("RNR", Fault::Reply(frame::encode("12", b"\x1dA12345678901234567890").unwrap()));
+    let printed = driver.print_receipt(&receipt(0, false), &expected, &mut Counters(&sim)).unwrap();
+    assert_eq!(printed.receipt_number.as_deref(), Some("12345678901234567890"));
     assert_eq!((sim.receipts(), sim.transaction_open()), (1, false));
 }

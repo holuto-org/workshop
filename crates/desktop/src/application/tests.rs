@@ -115,6 +115,7 @@ fn ready(app: &Rc<RefCell<Application>>) {
     app.event(Event::Connected {
         printer_id: "printer-42".into(),
         unique_number: "TST0000000042".into(),
+        vendor: Vendor::Posnet,
         port: "test".into(),
     });
     app.event(Event::Device {
@@ -328,6 +329,7 @@ fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<
     state.event(Event::Connected {
         printer_id: "printer-42".into(),
         unique_number: "TST0000000042".into(),
+        vendor: Vendor::Posnet,
         port: "test".into(),
     });
     state.sync();
@@ -347,6 +349,94 @@ fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<
         Some(false),
         "no stale selection can be queued"
     );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn a_printer_of_another_brand_never_publishes_the_previous_printers_vendor()
+-> Result<(), Box<dyn Error>> {
+    let (_temp, app, _window) = fixture()?;
+    ready(&app);
+    let mut state = app.borrow_mut();
+    state.event(Event::Stopped);
+    // The next session detects a Novitus printer where the Posnet one was.
+    state.event(Event::PortDetected {
+        port: "novitus".into(),
+        vendor: Vendor::Novitus,
+    });
+    state.event(Event::Connected {
+        printer_id: "printer-42".into(),
+        unique_number: "NOV0000000001".into(),
+        vendor: Vendor::Novitus,
+        port: "novitus".into(),
+    });
+    let status = state.model.status(Timestamp::UNIX_EPOCH);
+    assert_eq!(
+        (status.vendor, status.unique_number.as_deref()),
+        (Some(Vendor::Novitus), Some("NOV0000000001")),
+        "a connected status names the connected printer's brand"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(), Box<dyn Error>> {
+    use fiscal::{
+        error::Error as LinkError,
+        link::{Candidate, Port},
+    };
+
+    /// Enumerates like `SerialLink`; nothing in this test may open a port.
+    #[derive(Debug, Default)]
+    struct Hotplug(Mutex<Vec<Candidate>>);
+    impl Link for Hotplug {
+        fn open(&self, port: &str, _baud_rate: u32) -> Result<Box<dyn Port>, LinkError> {
+            Err(LinkError::Invalid(format!("unexpected open of {port}")))
+        }
+
+        fn candidates(&self) -> Vec<Candidate> {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
+    i_slint_backend_testing::init_no_event_loop();
+    let temporary = TempDir::new()?;
+    let link = Arc::new(Hotplug::default());
+    let app = make_app(
+        Arc::new(StateDir::open(temporary.path().to_owned())?),
+        Settings::default(),
+        Arc::<Hotplug>::clone(&link),
+    )?;
+    let window = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing app window")?
+        .clone_strong();
+    link.0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(Candidate {
+            port: "plugged-after-launch".into(),
+            hint: Some(Vendor::Posnet),
+        });
+    button(&window, "⌄")?.invoke_accessible_default_action();
+    assert_eq!(
+        window.get_ports().iter().collect::<Vec<_>>(),
+        ["plugged-after-launch"],
+        "the list offers the printer connected while the app was running"
+    );
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
 
@@ -990,6 +1080,7 @@ fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Err
 )]
 fn missing_native_quit_hook_blocks_worker_start() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
+    assert_eq!(window.get_status().as_str(), NATIVE_QUIT_ERROR);
     app.borrow_mut().spawn_worker();
     app.borrow().sync();
     assert!(
@@ -1233,12 +1324,15 @@ fn production_run_opens_the_window_and_publishes_stopped_state() -> Result<(), B
                     .is_some_and(|window| window.window().is_visible())
             );
             app.stop(true)
-        })
+        });
     })?;
     run(Arc::clone(&dir), Settings::default(), simulator.link())?;
     let status = Snapshot::load_at(dir.path())?.ok_or("missing stopped publication")?;
     assert!(!status.processing && !status.connected);
-    assert!(simulator.frames().is_empty());
+    assert!(
+        simulator.frames().is_empty(),
+        "startup never opens a printer"
+    );
     Ok(())
 }
 

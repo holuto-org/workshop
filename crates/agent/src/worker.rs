@@ -86,9 +86,11 @@ pub enum Event {
         port: String,
         vendor: Vendor,
     },
+    /// The detected printer's identity; the GUI publishes it as one status.
     Connected {
         printer_id: String,
         unique_number: String,
+        vendor: Vendor,
         port: String,
     },
     /// Credentials are durably saved and never included in the event.
@@ -423,6 +425,7 @@ fn run(
     sink(Event::Connected {
         printer_id,
         unique_number: status.unique_number.clone(),
+        vendor: status.vendor,
         port,
     });
     sink(Event::Status {

@@ -745,7 +745,7 @@ fn argument_errors_are_polish_stderr_unless_json_is_requested() -> TestResult {
                 "Nieprawidłowe argumenty. Użyj workshop --help.\n"
             );
         } else {
-            assert!(output.stderr.is_empty());
+            assert!(output.stderr.is_empty(), "{output:?}");
             let stdout = String::from_utf8(output.stdout)?;
             assert_eq!(
                 stdout

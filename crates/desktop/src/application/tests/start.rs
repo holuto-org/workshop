@@ -293,7 +293,7 @@ fn page_callbacks_reject_disabled_actions_and_navigate_next_then_previous()
                     }
                 }
                 Ok(())
-            })
+            });
         });
     })?;
     app.borrow_mut().worker = Some(worker);

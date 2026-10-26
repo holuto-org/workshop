@@ -102,6 +102,7 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
         Event::Connected {
             printer_id: "printer-id".to_owned(),
             unique_number: "device-unique_number".to_owned(),
+            vendor: Vendor::Posnet,
             port: "private-port".to_owned(),
         },
         Event::Paired {
@@ -382,9 +383,9 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
     assert!(received.iter().any(|event| matches!(event,
-        Event::Connected { printer_id, unique_number, port }
+        Event::Connected { printer_id, unique_number, vendor, port }
         if printer_id == &PRINTER_ID.to_string()
-            && unique_number == UNIQUE_NUMBER && port == sim.address()
+            && unique_number == UNIQUE_NUMBER && *vendor == Vendor::Posnet && port == sim.address()
     )));
     assert!(
         !received

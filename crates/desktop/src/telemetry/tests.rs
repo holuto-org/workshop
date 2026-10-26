@@ -486,3 +486,49 @@ fn consent_changes_gate_outgoing_events_and_simulators_never_enable_capture() {
         }
     });
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Reporter detection must work before any client initialization"
+)]
+fn native_reporter_marker_is_recognized_in_an_isolated_child() -> Result<(), Box<dyn Error>> {
+    use std::{env, fs, process::Command};
+    const CHILD: &str = "WORKSHOP_REPORTER_PREDICATE_CHILD";
+    if let Some(mode) = env::var_os(CHILD) {
+        let reporter = is_crash_reporter_process();
+        assert_eq!(reporter, mode == "reporter");
+        fs::write(
+            env::var_os("WORKSHOP_REPORTER_OUTCOME").ok_or("missing outcome path")?,
+            reporter.to_string(),
+        )?;
+        return Ok(());
+    }
+    let temporary = tempfile::tempdir()?;
+    for (mode, expected) in [("app", "false"), ("reporter", "true")] {
+        let outcome = temporary.path().join(mode);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "SDK reporter environment is child-local"
+        )]
+        let mut child = Command::new(env::current_exe()?);
+        let _child = child
+            .args([
+                "--exact",
+                "telemetry::tests::native_reporter_marker_is_recognized_in_an_isolated_child",
+                "--nocapture",
+            ])
+            .env(CHILD, mode)
+            .env("WORKSHOP_REPORTER_OUTCOME", &outcome);
+        // https://github.com/getsentry/sentry-rust/blob/0.49.3/sentry-minidump/src/lib.rs
+        if mode == "reporter" {
+            let _child = child.env("_SENTRY_CRASH_REPORTER_SERVER", "synthetic-marker-only");
+        } else {
+            let _child = child.env_remove("_SENTRY_CRASH_REPORTER_SERVER");
+        }
+        let output = child.output()?;
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(fs::read_to_string(outcome)?, expected);
+    }
+    Ok(())
+}

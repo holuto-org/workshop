@@ -551,6 +551,12 @@ impl Model {
                 }
                 self.in_flight = true;
                 submit(pending.command);
+            } else {
+                // A closed dialog must not read as a printed receipt or report.
+                self.say(
+                    "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.".into(),
+                    Tone::Error,
+                );
             }
         }
     }

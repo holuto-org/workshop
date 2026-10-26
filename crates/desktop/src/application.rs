@@ -13,10 +13,10 @@ use agent::{
     store::StateDir,
     worker::{self, Command, Event, Tone, Worker},
 };
-use fiscal::link::{Link, serial_ports};
+use fiscal::link::Link;
 use jiff::{Zoned, civil::Date};
 use slint::{
-    CloseRequestResponse, ComponentHandle,
+    CloseRequestResponse, ComponentHandle, ModelRc, SharedString,
     winit_030::{WinitWindowAccessor as _, winit::window::Window as NativeWindow},
 };
 
@@ -250,10 +250,17 @@ impl Application {
                 Ok(())
             });
         });
+        window.on_refresh_ports(|| {
+            with_app(|app| {
+                app.capture();
+                if let Some(window) = &app.window {
+                    window.set_ports(app.ports());
+                }
+                Ok(())
+            });
+        });
         window.window().on_close_requested(request_close);
-        window.set_ports(strings(
-            serial_ports().into_iter().map(|candidate| candidate.port),
-        ));
+        window.set_ports(self.ports());
         self.model.initialize(&window, Zoned::now().date());
         window.show()?;
         #[cfg(target_os = "macos")]
@@ -263,6 +270,16 @@ impl Application {
         self.window = Some(window);
         self.sync();
         Ok(())
+    }
+
+    /// The worker probes the same candidates; enumeration never opens a port.
+    fn ports(&self) -> ModelRc<SharedString> {
+        strings(
+            self.link
+                .candidates()
+                .into_iter()
+                .map(|candidate| candidate.port),
+        )
     }
 
     fn save(&mut self, start: bool) {
@@ -590,11 +607,13 @@ impl Application {
             Event::Connected {
                 printer_id,
                 unique_number,
+                vendor,
                 port,
             } => {
                 telemetry::printer(&printer_id, &unique_number);
                 self.model.connected = true;
                 self.model.unique_number = unique_number;
+                self.model.vendor = Some(vendor);
                 self.model.printer_id = Some(printer_id);
                 self.model.settings.port = port;
                 self.model.tab = Tab::Documents;

@@ -51,12 +51,18 @@ fn login_checkbox_registers_and_persists_without_pairing_or_unsaved_edits()
     )?
     .invoke_accessible_default_action();
     assert!(app.borrow().model.saving);
+    let pending = app.borrow().writes_pending.len();
     control(
         &window,
         "Uruchamiaj przy logowaniu",
         AccessibleRole::Checkbox,
     )?
     .invoke_accessible_default_action();
+    assert_eq!(
+        app.borrow().writes_pending.len(),
+        pending,
+        "saving refuses a second registration"
+    );
     app.borrow_mut().stop(true)?;
     slint::run_event_loop_until_quit()?;
     let saved = Settings::load(&app.borrow().dir)?.ok_or("missing preferences")?;

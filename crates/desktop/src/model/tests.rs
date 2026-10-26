@@ -108,6 +108,23 @@ fn daily_report_confirmation_rechecks_new_readiness_problems() {
 }
 
 #[test]
+fn accepting_a_confirmation_the_stopped_printer_can_no_longer_run_says_nothing_was_sent() {
+    let mut model = ready();
+    model.request(Action::DailyReport);
+    assert!(model.pending.is_some());
+    // E.g. Stop from the tray or a 401 while the dialog is open.
+    model.stopped();
+    let mut commands = Vec::new();
+    model.confirm(true, |command| commands.push(command));
+    assert_eq!(commands, []);
+    assert_eq!(
+        model.tone,
+        Tone::Error,
+        "the operator must not take the closed dialog for a printed report"
+    );
+}
+
+#[test]
 fn a_read_only_printer_offers_monthly_and_periodic_reports_but_not_the_daily_report() {
     let mut model = ready();
     model.from = "01.10.2025".into();
