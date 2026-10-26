@@ -1290,6 +1290,20 @@ fn discovery_consumes_its_late_acks_before_closing() {
 }
 
 #[test]
+fn failed_discovery_still_consumes_its_late_ack() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.set_error_mode(3);
+    sim.set_mode_fields("1\r");
+    sim.fault("11$i", Fault::DeferAck);
+    assert!(identify(sim.link().as_ref(), &connection(&sim)).is_err());
+    sim.set_mode_fields("1\r2020-01-01 12:00:00\r1234567890\rREG1\rMEM1\r0\r0\r0\r");
+    let device = printer(&sim).probe().unwrap();
+    assert!(device.ready(), "{}", device.description());
+    assert_eq!(sim.receipts(), 0);
+}
+
+#[test]
 fn discovery_refusal_in_power_on_mode_gets_no_reply_and_is_not_ready() {
     let sim = Simulator::start();
     supported(&sim);

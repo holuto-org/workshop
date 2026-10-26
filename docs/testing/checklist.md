@@ -48,8 +48,8 @@ regression that fails without it.
   - Required guarantee: Each paper/cover/lever/temperature/power/key state;
     asynchronous status during hold; continuation once; wait expiry/no
     reason/corrupt answer fail safely
-  - Test shape: Fast simulator timing + controlled hold/reached, never a real
-    ten-minute wait
+  - Test shape: Fast simulator timing + a controlled wait (Posnet
+    hold/reached, Novitus `Wait` faults), never a real ten-minute wait
 - **Receipt faults**
   - Required guarantee: Execute then lose/corrupt reply or disconnect at
     first/middle/final stage leaves uncertainty and no retry; any footer
@@ -233,7 +233,7 @@ drivers, using that brand's simulator through the real driver.
 - **GUI responsiveness**
   - Required guarantee: UI can process a marker/action while command held; no
     API/printer work on UI; no join before final event
-  - Test shape: Controlled hold + event acknowledgement, not elapsed-time
+  - Test shape: Controlled Posnet hold + event acknowledgement, not elapsed-time
     assertion
 - **Close/reopen/tray**
   - Required guarantee: Close hides only while a host shows this app's icon;

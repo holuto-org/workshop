@@ -49,6 +49,9 @@ pub enum Error {
     /// Requires human resolution before fiscal operations can continue.
     #[error("{0}")]
     Blocked(String),
+    /// Another `workshop` command holds the state directory; retry once it finishes.
+    #[error("{0}")]
+    Busy(String),
 }
 
 impl fmt::Debug for Error {
@@ -62,6 +65,7 @@ impl fmt::Debug for Error {
                 .finish_non_exhaustive(),
             Self::Invalid(_) => f.write_str("Invalid([REDACTED])"),
             Self::Blocked(_) => f.write_str("Blocked([REDACTED])"),
+            Self::Busy(_) => f.write_str("Busy([REDACTED])"),
         }
     }
 }

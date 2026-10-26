@@ -2,6 +2,7 @@ use std::{
     error::Error as StdError,
     io::{Read, Write},
     net::TcpStream,
+    panic::catch_unwind,
 };
 
 use serde_json::{Value, json};
@@ -34,6 +35,53 @@ fn document(order: Uuid, allocation: Option<Uuid>, occurred_at: &str) -> Value {
         "latestAt": occurred_at,
         "isOverdue": false
     })
+}
+
+#[test]
+fn fake_request_contract_violations_fail_the_owning_test() {
+    let outcome = catch_unwind(|| {
+        let server = Holuto::new();
+        let mut api = Api::new(server.url(), server.token(), "DEM0000000001").unwrap();
+        let mut invalid = telemetry();
+        invalid.model.clear();
+        let _response = api.session(&invalid);
+        drop(server);
+    });
+    assert!(
+        outcome.is_err(),
+        "the HTTP fake must propagate its contract panic"
+    );
+}
+
+#[test]
+fn fake_response_contract_violations_fail_the_owning_test() {
+    let outcome = catch_unwind(|| {
+        let server = Holuto::new();
+        server.page(None, json!({"items": []}));
+        let api = api(&server).unwrap();
+        let _response = api.documents(None);
+        drop(server);
+    });
+    assert!(
+        outcome.is_err(),
+        "the HTTP fake must propagate its contract panic"
+    );
+}
+
+#[test]
+fn fake_contract_panic_during_test_unwind_does_not_abort_the_process() {
+    let outcome = catch_unwind(|| {
+        let server = Holuto::new();
+        let mut api = Api::new(server.url(), server.token(), "DEM0000000001").unwrap();
+        let mut invalid = telemetry();
+        invalid.model.clear();
+        let _response = api.session(&invalid);
+        panic!("owning test is already unwinding");
+    });
+    assert_eq!(
+        outcome.unwrap_err().downcast_ref::<&str>(),
+        Some(&"owning test is already unwinding")
+    );
 }
 
 #[test]
@@ -93,8 +141,11 @@ fn queue_refuses_unsupported_capabilities_and_quantity_precision_without_creatin
             serde_json::from_value(document(ORDER_ID, None, "2026-10-16T10:00:00Z"))?;
         let result = api.queue(&queue_form(&document, None)?);
         assert!(
-            matches!(&result,
-                Err(ApiError::Status { status: 409, detail: Some(detail) }) if detail == expected_detail),
+            matches!(
+                &result,
+                Err(ApiError::Status { status: 409, detail: Some(detail) })
+                    if detail == expected_detail
+            ),
             "{result:?}"
         );
         assert!(matches!(api.job(Uuid::from_u128(100)),

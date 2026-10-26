@@ -92,9 +92,10 @@ unresolved evidence needs human reconciliation.
 One binary: `workshop` opens the GUI; a subcommand runs in the terminal without
 opening a printer port. Every command accepts `--json`. `config show` reports
 pairing as `paired`, never a token. Configuration, pairing and autostart
-changes refuse while the app holds the instance lock. `ports` lists names only;
-`check` and `status` never prove printer readiness. Commands, JSON fields, exit
-codes and examples live in the
+changes refuse while the app or another command holds the instance lock.
+`ports` prints names only (its `--json` adds a USB `hint`); `check` and
+`status` never prove printer readiness. Commands, JSON fields, exit codes and
+examples live in the
 [installation guide](docs/install-with-ai.md#4-configure-through-the-cli-not-files).
 
 Never put pairing codes or credentials in reports or logs.
@@ -158,8 +159,9 @@ within each group. USB hints are not verified printer identities. Other USB
 devices and Bluetooth are excluded; macOS uses `/dev/cu.*` rather than duplicate
 `/dev/tty.*` nodes. Linux drops native UARTs whose sysfs `type` is zero, retaining
 ports with unreadable metadata. Windows retains non-USB COM ports, including
-virtual/Bluetooth ports reported as `Unknown`. An unlisted port can still be
-entered manually. Listing never opens a port.
+PCI cards and virtual/Bluetooth ports, which Windows enumeration reports as
+`Unknown`; macOS retains non-USB, non-Bluetooth ports. An unlisted port can
+still be entered manually. Listing never opens a port.
 
 If the saved port fails, discovery identifies other serial candidates read-only
 and verifies the first supported device before using and saving its port/vendor.
@@ -202,7 +204,9 @@ desktop's tray started after the app.
 **Zatrzymaj** stops processing; **Zakończ**, the tray's quit, the macOS Dock/⌘Q
 quit, macOS logout, restart or shutdown (macOS waits instead of being cancelled)
 and, on Linux and macOS, SIGTERM, SIGHUP or SIGINT (Linux logout or shutdown,
-Ctrl+C) exit. All of them finish the current operation first.
+Ctrl+C) exit. All of them finish the current operation first. Windows logout
+or shutdown ends the app without that wait; an operation it interrupts may be
+left uncertain, which blocks printing until a person resolves it.
 
 Prices are gross; API quantities and amounts are decimal strings. The schema
 allows unit prices with up to eight decimal places, but this driver requires
@@ -225,8 +229,10 @@ truncated.
   ownership. Novitus/Elzab expose no equivalent ownership readout: dedication
   to Workshop is mandatory; no open document is adopted or cancelled.
 - Journal claimed jobs in `operation.json` before their preflight; journal every
-  fiscal command **before sending it**. Startup/discovery uses read-only commands
-  without creating fiscal intent. Never retry a device command or reprint a receipt.
+  fiscal command **before sending it**. Startup/discovery creates no fiscal
+  intent and sends only read-only commands, apart from the Novitus session's
+  `3#e` response-mode selection. Never retry a device command or reprint a
+  receipt.
 - Paper or operator waits never cause a resend. If the printer stops answering
   and completion cannot be established, the outcome is **unknown**. See
   [per-brand wait limits](docs/fiscal-contract.md#silence-and-operator-waits).

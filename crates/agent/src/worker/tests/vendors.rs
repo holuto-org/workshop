@@ -416,7 +416,18 @@ fn unsupported_model_reports_not_ready_without_rejected_telemetry_or_stop() {
             "an unsupported profile must wait for the operator, not stop"
         );
         let stopped = stop(worker, &events);
-        assert!(matches!(stopped.as_slice(), [Event::Stopped]));
+        assert!(matches!(
+            stopped.as_slice(),
+            [
+                Event::Device {
+                    status: None,
+                    blocked: false,
+                    report_unresolved: false,
+                    ..
+                },
+                Event::Stopped
+            ]
+        ));
         assert_eq!(sim.receipts(), 0);
         assert_eq!(sim.reports(), 0);
     }

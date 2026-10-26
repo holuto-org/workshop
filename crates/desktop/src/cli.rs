@@ -75,6 +75,7 @@ impl From<Error> for Failure {
         let (exit, code) = match &value {
             Error::Invalid(_) => (3, "configuration"),
             Error::Blocked(_) => (4, "app_running"),
+            Error::Busy(_) => (4, "state_busy"),
             Error::Api(ApiError::Unauthorized) => (6, "unauthorized"),
             Error::Api(ApiError::Status { status: 429, .. }) => (7, "rate_limited"),
             Error::Api(_) => (5, "holuto"),

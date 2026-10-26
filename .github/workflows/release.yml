@@ -118,8 +118,35 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
+  # npm install scripts must never share the provenance signer's OIDC permission.
+  sentry-release:
     needs: [version, checksums]
+    if: github.event_name == 'push' && needs.version.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install Sentry CLI
+        run: npm install --global @sentry/cli@3.8.2
+      - name: Finalize Sentry release with commits
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: ${{ vars.SENTRY_URL }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          release="workshop@${TAG#v}"
+          sentry-cli releases new "$release"
+          sentry-cli releases set-commits "$release" --auto
+          sentry-cli releases finalize "$release"
+
+  publish:
+    needs: [version, checksums, sentry-release]
     if: github.event_name == 'push' && needs.version.outputs.new == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -139,25 +166,6 @@ jobs:
       - name: Verify checksums
         working-directory: release
         run: sha256sum -c SHA256SUMS.txt
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-          path: source
-      - name: Finalize Sentry release with commits
-        working-directory: source
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-          SENTRY_URL: ${{ vars.SENTRY_URL }}
-          TAG: ${{ needs.version.outputs.tag }}
-        run: |
-          npm install --global @sentry/cli@3.8.2
-          release="workshop@${TAG#v}"
-          sentry-cli releases new "$release"
-          sentry-cli releases set-commits "$release" --auto
-          sentry-cli releases finalize "$release"
       - name: Attest release assets
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:

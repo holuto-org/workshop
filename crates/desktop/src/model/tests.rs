@@ -254,6 +254,22 @@ fn cancelled_or_newly_blocked_confirmation_sends_nothing() {
 }
 
 #[test]
+fn a_receipt_that_left_the_pending_list_while_confirming_is_not_queued() {
+    let mut model = ready();
+    model.request(Action::QueueReceipt);
+    model.set_documents(vec![], 1, false);
+    assert_eq!(model.confirm(true), None);
+    assert_eq!(
+        (model.message.as_str(), model.tone),
+        (
+            "Nie wysłano: dokument nie czeka już na paragon.",
+            Tone::Error
+        )
+    );
+    assert!(!model.in_flight);
+}
+
+#[test]
 fn the_receipt_carries_the_buyer_nip_it_showed_and_an_invalid_nip_sends_nothing() {
     let mut model = ready();
     model.nip = "526104082".into();
@@ -448,7 +464,7 @@ fn window_sync_shows_connection_state_and_readiness_with_error_precedence() {
     let window = AppWindow::new().unwrap();
     let mut model = Model::new(Settings::default(), today());
     for (running, connected, problem, blocked, text, tone) in [
-        (false, false, false, false, "Niepołączono", 0),
+        (false, false, false, false, "Nie połączono", 0),
         (true, false, false, false, "Łączenie…", 0),
         (true, true, false, false, "Połączono · SERIAL42", 0),
         (

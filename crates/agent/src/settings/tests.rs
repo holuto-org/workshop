@@ -305,7 +305,11 @@ fn corrupt_settings_never_echo_credentials_from_values_or_unknown_keys() -> Test
                     "the retained source must also be sanitized"
                 );
             },
-            other @ (Error::Printer(_) | Error::Api(_) | Error::Invalid(_) | Error::Blocked(_)) => {
+            other @ (Error::Printer(_)
+            | Error::Api(_)
+            | Error::Invalid(_)
+            | Error::Blocked(_)
+            | Error::Busy(_)) => {
                 return Err(format!("unexpected settings error: {other:?}").into());
             },
         }

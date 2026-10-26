@@ -559,6 +559,8 @@ fn header_formatting_and_case_choose_only_the_needed_full_company_footer() {
         ("Auto", true),
         ("Auto && Motocykl", false),
         ("Auto && Mot", true),
+        ("Auto &&\nMoto", false),
+        ("&cAuto&c\n&c&&  Moto&c", false),
     ] {
         let sim = simulator();
         sim.set_header(header);

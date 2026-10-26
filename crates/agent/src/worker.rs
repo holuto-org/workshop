@@ -1,8 +1,9 @@
 //! Sole thread for printer I/O and Holuto requests.
 //!
 //! Due polls run between commands; receipts and reports never interleave.
-//! Shutdown finishes the current operation. Event diagnostics omit operator text
-//! and receipt contents.
+//! Shutdown finishes the current operation and publishes durable journal blocking
+//! before `Stopped`, including on errors and panics. Event diagnostics omit operator
+//! text and receipt contents.
 
 use std::{
     collections::VecDeque,
@@ -274,6 +275,15 @@ impl Worker {
                             }
                         },
                     }
+                    if !pairing {
+                        let block = journal_block(&dir);
+                        sink(Event::Device {
+                            status: None,
+                            blocked: block.blocked,
+                            report_unresolved: block.report_unresolved,
+                            orphaned_receipt: None,
+                        });
+                    }
                     sink(Event::Stopped);
                 });
             })
@@ -328,7 +338,7 @@ fn pairing_failed(error: &Error) -> Event {
         Error::Invalid(_) | Error::Api(ApiError::Status { status: 400, .. }) => {
             PairingFailure::Invalid
         },
-        Error::Store { .. } => PairingFailure::Storage,
+        Error::Store { .. } | Error::Busy(_) => PairingFailure::Storage,
         Error::Api(ApiError::Status { .. } | ApiError::Transport(_) | ApiError::Response(_))
         | Error::Printer(_)
         | Error::Blocked(_) => PairingFailure::Communication,
@@ -337,11 +347,13 @@ fn pairing_failed(error: &Error) -> Event {
         message: match failure {
             PairingFailure::Invalid => match error {
                 Error::Invalid(message) => message.clone(),
-                Error::Api(_) | Error::Store { .. } | Error::Printer(_) | Error::Blocked(_) => {
-                    "Nieprawidłowy, wykorzystany lub wygasły kod parowania. \
+                Error::Api(_)
+                | Error::Store { .. }
+                | Error::Printer(_)
+                | Error::Blocked(_)
+                | Error::Busy(_) => "Nieprawidłowy, wykorzystany lub wygasły kod parowania. \
                      Wygeneruj nowy kod w Holuto."
-                        .to_owned()
-                },
+                    .to_owned(),
             },
             PairingFailure::Throttled => "Zbyt wiele prób parowania. Spróbuj później.".to_owned(),
             PairingFailure::Communication
@@ -600,7 +612,8 @@ fn trace_failure(error: &Error) {
         },
         Error::Api(ApiError::Unauthorized | ApiError::Status { .. } | ApiError::Transport(_))
         | Error::Printer(_)
-        | Error::Invalid(_) => tracing::warn!("Worker operation failed"),
+        | Error::Invalid(_)
+        | Error::Busy(_) => tracing::warn!("Worker operation failed"),
     }
 }
 

@@ -14,10 +14,10 @@ interruptMode: never
 This repository is public. Committed text describes this project only.
 
 - Never reference gitignored paths (see `.gitignore`), except build output
-  under `target/` named in commands, local-agent material (plans, specs, chat
-  or review transcripts) or private sources (files and line numbers of the
-  backend repository, vendor documents not linked publicly). Cite public URLs
-  or describe the behavior.
+  (`target/`, `release/`, `packaging/build/`) named in commands, local-agent
+  material (plans, specs, chat or review transcripts) or private sources (files
+  and line numbers of the backend repository, vendor documents not linked
+  publicly). Cite public URLs or describe the behavior.
 - Each fact has one home ([AGENTS.md](../../AGENTS.md#where-guidance-lives)).
   Link to it instead of restating; when a change makes text untrue, fix its home
   in the same change. After removing or renaming an item, search its name in

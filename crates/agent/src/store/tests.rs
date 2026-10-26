@@ -60,12 +60,13 @@ fn another_process_cannot_open_state_until_the_holder_releases_it() -> TestResul
     if let Some(path) = env::var_os(PATH) {
         let path = PathBuf::from(path);
         if env::var_os(BLOCKED).is_some() {
+            // The holder is another command, not the application.
             let expected = format!(
-                "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
+                "Inne polecenie workshop używa katalogu {}. Spróbuj ponownie, gdy się zakończy.",
                 path.display()
             );
             assert!(
-                matches!(StateDir::open(path), Err(Error::Blocked(message)) if message == expected),
+                matches!(StateDir::open(path), Err(Error::Busy(message)) if message == expected),
                 "a competing process must receive the exact lock refusal"
             );
         } else {
@@ -364,7 +365,7 @@ fn a_process_exit_releases_its_instance_lock() -> TestResult {
         "the holder must exit abruptly, without dropping StateDir normally"
     );
     assert!(
-        matches!(blocked, Err(Error::Blocked(_))),
+        matches!(blocked, Err(Error::Busy(_))),
         "a lock held by another process must exclude this process"
     );
     let _recovered = StateDir::open(path)?;

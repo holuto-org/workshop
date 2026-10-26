@@ -8,8 +8,9 @@ serialized mock session does not prove the production worker obeys this rule.
 
 1. Start the real worker with a loopback Holuto fake, simulator and fresh state
    directory.
-2. Hold a meaningful simulator command and wait for `reached`; inspect
-   `operation.json` while held to prove intent precedes dispatch.
+2. Hold a meaningful Posnet simulator command (`hold`, then wait for
+   `reached`; the other simulators have no hold) and inspect `operation.json`
+   while held to prove intent precedes dispatch.
 3. Submit the contender (report, repeated confirmation, stop or quit).
 4. Wait for an observable acknowledgement/event-loop marker, not a sleep or
    `is_finished` timing guess.

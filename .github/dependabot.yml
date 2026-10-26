@@ -11,6 +11,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Keep compatibility holds in Cargo.toml; review their upgrades separately.
+    ignore:
+      - dependency-name: schemars
+        versions: ['>=0.9']
+      - dependency-name: zbus
+        update-types: [version-update:semver-major]
     groups:
+      # The unstable testing backend must move with Slint, including patch bumps.
+      slint:
+        patterns: ['slint', 'i-slint-*']
       rust:
         patterns: ['*']

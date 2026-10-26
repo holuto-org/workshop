@@ -51,6 +51,7 @@ impl PaymentForm {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Payment {
     pub form: PaymentForm,
     pub amount: Grosze,

@@ -80,6 +80,19 @@ function Assert-HolutoNotRunning {
     if ($running.Count -ne 0) { throw 'Holuto Workshop is running. Quit it from its tray menu, then run the installer again. No process was stopped.' }
 }
 
+function Assert-HolutoLegacyJournalResolved {
+    param([string]$LocalAppData)
+    # The previous HuggingCar Fiscal app (v0.1.x) journals fiscal intent in Qt's GenericStateLocation.
+    # The new app never reads it, so an unresolved or unreadable record must be resolved in that app first.
+    $journal = Join-Path (Join-Path (Join-Path $LocalAppData 'State') 'huggingcar-fiscal') 'operation.json'
+    if (-not (Test-Path -LiteralPath $journal)) { return }
+    $state = $null
+    try { $state = ([IO.File]::ReadAllText($journal) | ConvertFrom-Json -ErrorAction Stop).state } catch { $state = $null }
+    if ($state -cnotin @('completed', 'acknowledged')) {
+        throw "The previous HuggingCar Fiscal app has an unresolved fiscal operation in $journal. Check the printer and its printout, resolve the operation in that app, then run this installer again; nothing was installed."
+    }
+}
+
 function Get-HolutoPathWithDirectory {
     param([string]$Path, [string]$Directory)
     foreach ($entry in ($Path -split ';')) {
@@ -197,6 +210,7 @@ function Invoke-HolutoInstall {
             return
         }
         Assert-HolutoNotRunning
+        Assert-HolutoLegacyJournalResolved -LocalAppData $platform.LocalAppData
         if (Test-Path -LiteralPath $target -PathType Leaf) {
             Assert-HolutoNotDowngrade -InstalledVersion (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -Release $Release
         }

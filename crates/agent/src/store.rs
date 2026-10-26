@@ -140,6 +140,15 @@ fn exclusive(directory: &Path, name: &str) -> Result<File, Error> {
     })?;
     match acquire(&lock) {
         Ok(true) => Ok(lock),
+        // CLI commands take the instance lock too; name the holder the operator must wait for.
+        Ok(false)
+            if name == LOCK && !StateDir::is_application_running(directory).unwrap_or(true) =>
+        {
+            Err(Error::Busy(format!(
+                "Inne polecenie workshop używa katalogu {}. Spróbuj ponownie, gdy się zakończy.",
+                directory.display()
+            )))
+        },
         Ok(false) => Err(Error::Blocked(format!(
             "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
             directory.display()

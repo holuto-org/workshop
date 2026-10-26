@@ -78,6 +78,58 @@ const RECEIPT_COMMANDS: [&str; 8] = [
     "trftrend",
 ];
 #[test]
+fn invalid_printer_description_never_reaches_the_session_endpoint() {
+    for field in ["model", "firmware"] {
+        for invalid in [
+            String::new(),
+            "x".repeat(65),
+            "wersja\n".to_owned(),
+            "\u{85}".to_owned(),
+        ] {
+            let sim = Simulator::start();
+            let server = Holuto::new();
+            let (_temporary, dir) = state_dir();
+            let api = Api::new(server.url(), server.token(), UNIQUE_NUMBER).unwrap();
+            let mut agent = Agent::new(sim.driver(), api, &dir, &waiting);
+            let mut status = agent.printer.probe().unwrap();
+            if field == "model" {
+                status.model = invalid;
+            } else {
+                status.firmware = invalid;
+            }
+            let _notices = agent.describe(status).unwrap();
+            let result = agent.session();
+            let requests = server.requests();
+            assert!(matches!(
+                result,
+                Err(Error::Invalid(message))
+                    if message == "Nieprawidłowy model lub firmware drukarki: \
+                        wymagane od 1 do 64 znaków bez znaków sterujących."
+            ));
+            assert!(requests.is_empty(), "{field}: invalid telemetry was sent");
+            assert_eq!(sim.receipts(), []);
+            assert_eq!(sim.reports(), []);
+        }
+    }
+}
+
+#[test]
+fn printer_description_code_limit_counts_unicode_characters_not_bytes() {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let api = Api::new(server.url(), server.token(), UNIQUE_NUMBER).unwrap();
+    let mut agent = Agent::new(sim.driver(), api, &dir, &waiting);
+    let mut status = agent.printer.probe().unwrap();
+    status.model = "Ą".repeat(64);
+    status.firmware = "1".to_owned();
+    let _notices = agent.describe(status).unwrap();
+    assert!(agent.session().unwrap());
+    assert_eq!(server.requests().len(), 1);
+    assert_eq!(server.requests()[0].body["model"], "Ą".repeat(64));
+}
+
+#[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"

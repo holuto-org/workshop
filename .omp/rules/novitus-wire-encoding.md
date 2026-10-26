@@ -16,5 +16,7 @@ pass the profile's `Capabilities::allows`, which admits no CR or other control.
 UTF-8 or Latin-1 changes Polish wire text and its XOR checksum. The five
 unassigned code-page bytes stay a decode error, never replacement text. ASCII
 protocol identifiers and hex digits are not text fields. The driver verifies
-both PC input/output code pages; discovery and fiscal operations never change
-printer settings. Settings and journal JSON remain UTF-8.
+both PC input/output code pages and never changes them, the dialect or other
+printer settings. Discovery sends no configuration command; the only setting
+probe and fiscal sessions send is `3#e` (response mode 3). Settings and journal
+JSON remain UTF-8.

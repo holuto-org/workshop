@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
-# Run by verify.sh under xvfb-run with fresh state, no configured printer and no Start action: never touches a serial device.
+# Runs under xvfb-run; always owns fresh unpaired state, even when called directly.
 set -euo pipefail
 binary=$1
-state=$2
+state=$(mktemp -d "$2/smoke.XXXXXX")
+mkdir -p "$state/home" "$state/state" "$state/config"
+export HOME="$state/home" XDG_STATE_HOME="$state/state" XDG_CONFIG_HOME="$state/config"
 export WINIT_UNIX_BACKEND=x11
 unset WAYLAND_DISPLAY
-"$binary" >"$state/app.log" 2>&1 &
-pid=$!
 cleanup() {
-  if kill -0 "$pid" 2>/dev/null; then
+  if [[ -n ${pid:-} ]] && kill -0 "$pid" 2>/dev/null; then
     kill -TERM "$pid"
     wait "$pid" || [[ $? == 143 ]]
   fi
+  rm -rf -- "$state"
 }
 trap cleanup EXIT
+# Production packages embed a live DSN: opt out before any GUI initialization.
+"$binary" config set --diagnostics off
+"$binary" >"$state/app.log" 2>&1 &
+pid=$!
 if ! window=$(timeout 20 xdotool search --all --sync --onlyvisible --pid "$pid" --name '^Holuto Workshop$'); then
   cat "$state/app.log" >&2
   echo 'Main application window did not appear' >&2

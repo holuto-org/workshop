@@ -11,8 +11,8 @@ unless the user opts into autostart. Hard requirements are in
 
 Each fact has one home: the first item that fits. When a change makes guidance
 untrue, update its home in the same change. This repository is public: never
-commit references to gitignored paths (see `.gitignore`), local-agent plans or
-private backend source files.
+commit references to local-agent plans, private backend source files or
+gitignored paths (see `.gitignore`) other than build output.
 
 - **A machine can decide it**: lints, tests, `deny.toml`, `.config/nextest.toml`
   and CI. Do not restate checkable rules as prose.

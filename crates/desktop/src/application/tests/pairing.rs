@@ -1,3 +1,5 @@
+use std::{io, path::Path, sync::atomic::AtomicBool};
+
 use agent::testing::{Fault, Holuto};
 use i_slint_backend_testing::ElementQuery;
 
@@ -212,18 +214,55 @@ fn malformed_pairing_code_is_rejected_locally_and_remains_editable() -> Result<(
     Ok(())
 }
 
-#[cfg(unix)]
+/// Runs `step` once `ready` holds and no settings or status write is pending, re-queued on
+/// the event loop behind the writer's completions instead of waiting on the wall clock.
+fn when<R, F>(ready: R, step: F)
+where
+    R: Fn(&Application) -> bool + Send + 'static,
+    F: FnOnce(&mut Application) -> Result<(), slint::PlatformError> + Send + 'static,
+{
+    let _closed = slint::invoke_from_event_loop(move || {
+        with_app(move |app| {
+            if app.model.saving || !app.writes_pending.is_empty() || !ready(app) {
+                when(ready, step);
+                return Ok(());
+            }
+            step(app)
+        });
+    });
+}
+
+/// A directory in place of `settings.json` fails the reload on every platform and user.
+fn break_settings(file: &Path, aside: &Path) -> io::Result<()> {
+    fs::rename(file, aside)?;
+    fs::create_dir(file)
+}
+
+fn restore_settings(file: &Path, aside: &Path) -> io::Result<()> {
+    fs::remove_dir(file)?;
+    fs::rename(aside, file)
+}
+
+fn assert_reload_failed(app: &Application) {
+    assert_eq!(app.model.tone, Tone::Error, "{}", app.model.message);
+    assert!(
+        app.model.message.starts_with(RELOAD_FAILED),
+        "{}",
+        app.model.message
+    );
+}
+
+const RELOAD_FAILED: &str = "Nie można odczytać ustawień (";
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "UI assertions propagate fallible fixture setup"
 )]
 fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<(), Box<dyn Error>> {
-    use std::os::unix::fs::PermissionsExt as _;
-
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let dir = Arc::new(StateDir::open(temporary.path().join("state"))?);
     let unpaired = Settings {
         api_url: "https://paired.example.test".into(),
         ..Settings::default()
@@ -239,34 +278,23 @@ fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<()
         ..unpaired
     };
     paired.save(&dir)?;
-    let file = temporary.path().join("settings.json");
-    fs::set_permissions(&file, fs::Permissions::from_mode(0o000))?;
+    let file = temporary.path().join("state").join("settings.json");
+    let aside = temporary.path().join("settings.aside");
+    break_settings(&file, &aside)?;
     app.borrow_mut().event(Event::Paired {
         printer_id: "printer-42".into(),
     });
-    let (done, finished) = mpsc::channel::<()>();
-    let poller = thread::Builder::new()
-        .name("reload observer".into())
-        .spawn(move || {
-            while finished.recv_timeout(Duration::from_millis(20)).is_err() {
-                let file = file.clone();
-                let _closed = slint::invoke_from_event_loop(move || {
-                    with_app(move |app| {
-                        if app.quitting || app.model.saving || !app.writes_pending.is_empty() {
-                            return Ok(());
-                        }
-                        fs::set_permissions(&file, fs::Permissions::from_mode(0o600))
-                            .map_err(|error| error.to_string())?;
-                        app.capture();
-                        app.action(Action::Save)?;
-                        app.stop(true)
-                    });
-                });
-            }
-        })?;
+    when(
+        |_app| true,
+        move |app| {
+            assert_reload_failed(app);
+            restore_settings(&file, &aside).map_err(|error| error.to_string())?;
+            app.capture();
+            app.action(Action::Save)?;
+            app.stop(true)
+        },
+    );
     slint::run_event_loop_until_quit()?;
-    done.send(())?;
-    poller.join().map_err(|_panic| "reload observer panicked")?;
     let saved = Settings::load(&dir)?.ok_or("missing settings")?;
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     assert_eq!(
@@ -276,7 +304,6 @@ fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<()
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -284,13 +311,11 @@ fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<()
 )]
 fn start_after_a_failed_reload_connects_with_the_credentials_pairing_saved()
 -> Result<(), Box<dyn Error>> {
-    use std::{os::unix::fs::PermissionsExt as _, sync::atomic::AtomicBool};
-
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
     let simulator = Simulator::start();
     let holuto = Holuto::new();
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let dir = Arc::new(StateDir::open(temporary.path().join("state"))?);
     let unpaired = Settings {
         api_url: holuto.url().into(),
         port: simulator.address().into(),
@@ -303,52 +328,33 @@ fn start_after_a_failed_reload_connects_with_the_credentials_pairing_saved()
         ..unpaired
     }
     .save(&dir)?;
-    let file = temporary.path().join("settings.json");
-    fs::set_permissions(&file, fs::Permissions::from_mode(0o000))?;
+    let file = temporary.path().join("state").join("settings.json");
+    let aside = temporary.path().join("settings.aside");
+    break_settings(&file, &aside)?;
     app.borrow_mut().event(Event::Paired {
         printer_id: "printer-42".into(),
     });
-    let started = Arc::new(AtomicBool::new(false));
     let connected = Arc::new(AtomicBool::new(false));
-    let (done, finished) = mpsc::channel::<()>();
-    let poller = thread::Builder::new()
-        .name("reload observer".into())
-        .spawn({
-            let started = Arc::clone(&started);
-            let connected = Arc::clone(&connected);
-            move || {
-                while finished.recv_timeout(Duration::from_millis(20)).is_err() {
-                    let file = file.clone();
-                    let started = Arc::clone(&started);
-                    let connected = Arc::clone(&connected);
-                    let _closed = slint::invoke_from_event_loop(move || {
-                        with_app(move |app| {
-                            if app.quitting || app.model.saving || !app.writes_pending.is_empty() {
-                                return Ok(());
-                            }
-                            if !started.swap(true, Ordering::SeqCst) {
-                                fs::set_permissions(&file, fs::Permissions::from_mode(0o600))
-                                    .map_err(|error| error.to_string())?;
-                                app.capture();
-                                return app.action(Action::Start);
-                            }
-                            if app.model.connected {
-                                connected.store(true, Ordering::SeqCst);
-                                return app.stop(true);
-                            }
-                            if app.worker.is_none() {
-                                // Start was refused or the worker ended; nothing will connect.
-                                return app.stop(true);
-                            }
-                            Ok(())
-                        });
-                    });
-                }
-            }
-        })?;
+    let observed = Arc::clone(&connected);
+    when(
+        |_app| true,
+        move |app| {
+            assert_reload_failed(app);
+            restore_settings(&file, &aside).map_err(|error| error.to_string())?;
+            app.capture();
+            app.action(Action::Start)?;
+            // Stop once connected, or once a refused Start or ended worker leaves none.
+            when(
+                |app| app.model.connected || app.worker.is_none(),
+                move |app| {
+                    observed.store(app.model.connected, Ordering::SeqCst);
+                    app.stop(true)
+                },
+            );
+            Ok(())
+        },
+    );
     slint::run_event_loop_until_quit()?;
-    done.send(())?;
-    poller.join().map_err(|_panic| "reload observer panicked")?;
     let message = app.borrow().model.message.clone();
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     assert!(

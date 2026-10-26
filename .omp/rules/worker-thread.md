@@ -19,10 +19,12 @@ interruptMode: never
   captures the window (`app.capture()`), so operator input is never overwritten.
 - Closing the window only hides it when a tray host shows this app's icon
   (otherwise it stays visible) and never stops the worker. **Zatrzymaj** stops
-  processing; **Zakończ**, tray quit, macOS Dock/⌘Q quit, logout, restart and
-  shutdown, and Unix SIGTERM/SIGHUP/SIGINT route through `Worker::stop` and
-  join only after the final `Event::Stopped`. macOS termination is held
-  (`TerminateLater`), never
+  processing; **Zakończ**, tray quit, macOS Dock/⌘Q quit, macOS logout,
+  restart and shutdown, and Unix SIGTERM/SIGHUP/SIGINT route through
+  `Worker::stop` and join only after the final `Event::Stopped`. Windows
+  session end has no cooperative path (winit does not handle
+  `WM_QUERYENDSESSION`); the journal blocks on an operation it interrupts.
+  macOS termination is held (`TerminateLater`), never
   refused: a refusal would cancel the logout. On macOS no worker (including
   pairing) starts unless `macos::install()` succeeds. A failed status write
   never keeps quit waiting.

@@ -182,13 +182,18 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
     if !model.starts_with("NOVITUS ") {
         return Ok(None);
     }
-    let endpoint = session.command("50$i", TIMEOUT)?;
-    let device = if endpoint.body == "50$IPC1\r" {
-        Some(preflight_identity(&mut session, model, firmware, true)?.device)
-    } else {
-        None
-    };
-    session.settle_discovery()?;
+    let checked = session.command("50$i", TIMEOUT).and_then(|endpoint| {
+        if endpoint.body == "50$IPC1\r" {
+            preflight_identity(&mut session, model, firmware, true)
+                .map(|checked| Some(checked.device))
+        } else {
+            Ok(None)
+        }
+    });
+    // Settle on failure too: a malformed reply may leave its ACK for the next session.
+    let settled = session.settle_discovery();
+    let device = checked?;
+    settled?;
     Ok(device)
 }
 

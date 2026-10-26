@@ -58,6 +58,8 @@ struct State {
     enq: u8,
     extended: String,
     fiscal_mode: u8,
+    /// Replaces the generated `11$I` fields, for firmware that answers another layout.
+    mode_fields: Option<String>,
     capabilities_attr1: u32,
     transaction: bool,
     ending: bool,
@@ -93,6 +95,7 @@ impl Default for State {
             enq: 0x6D,
             extended: "@s0;0;0;00000000;".to_owned(),
             fiscal_mode: 1,
+            mode_fields: None,
             capabilities_attr1: 0x0200,
             transaction: false,
             ending: false,
@@ -258,6 +261,10 @@ impl Simulator {
 
     pub fn set_fiscal_mode(&self, mode: u8) {
         lock(&self.state).fiscal_mode = mode;
+    }
+
+    pub fn set_mode_fields(&self, fields: &str) {
+        lock(&self.state).mode_fields = Some(fields.to_owned());
     }
 
     pub fn set_full_cp1250(&self, enabled: bool) {
@@ -542,9 +549,14 @@ fn answer(body: &str, command: &str, state: &mut State) -> Vec<u8> {
         ),
         "50$i" => (format!("50$I{}\r", state.endpoint), true, true),
         "11$i" => (
-            format!(
-                "11$I{}\r2020-01-01 12:00:00\r1234567890\rREG1\rMEM1\r0\r0\r0\r",
-                state.fiscal_mode
+            state.mode_fields.as_ref().map_or_else(
+                || {
+                    format!(
+                        "11$I{}\r2020-01-01 12:00:00\r1234567890\rREG1\rMEM1\r0\r0\r0\r",
+                        state.fiscal_mode
+                    )
+                },
+                |fields| format!("11$I{fields}"),
             ),
             true,
             true,

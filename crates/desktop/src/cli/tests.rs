@@ -1,4 +1,10 @@
-use std::{error::Error, ffi::OsString, fmt, fs, path::Path, sync::Arc};
+use std::{
+    error::Error,
+    ffi::OsString,
+    fmt, fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use agent::{Error as AgentError, settings::Settings, status::Snapshot, store::StateDir};
 use fiscal::device::Vendor;
@@ -195,24 +201,31 @@ fn configuration_output_redacts_saved_credentials() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "Assertions prove behavior; setup propagates I/O"
 )]
-fn settings_changes_refuse_the_running_apps_lock_and_preserve_config() -> TestResult {
-    let temp = tempfile::tempdir()?;
-    let dir = Arc::new(StateDir::open_application(temp.path().join("state"))?);
-    let settings = Settings {
-        api_url: "https://example.test".into(),
-        token: "secret-canary".into(),
-        ..Settings::default()
-    };
-    settings.save(&dir)?;
-    for args in [
-        vec!["config", "set", "--speed", "19200"],
-        vec!["pair", "ABCD1234"],
-        vec!["autostart", "on"],
-    ] {
-        let parsed = parse(args.into_iter().map(OsString::from))?;
-        let error = execute(parsed.command, dir.path()).expect_err("app lock held");
-        assert_eq!((error.exit, error.code), (4, "app_running"));
-        assert_eq!(Settings::load(&dir)?, Some(settings.clone()));
+fn settings_changes_refuse_a_held_lock_naming_the_holder_and_preserve_config() -> TestResult {
+    type Open = fn(PathBuf) -> Result<StateDir, AgentError>;
+    let holders: [(Open, &str); 2] = [
+        (StateDir::open_application, "app_running"),
+        (StateDir::open, "state_busy"),
+    ];
+    for (open, code) in holders {
+        let temp = tempfile::tempdir()?;
+        let dir = Arc::new(open(temp.path().join("state"))?);
+        let settings = Settings {
+            api_url: "https://example.test".into(),
+            token: "secret-canary".into(),
+            ..Settings::default()
+        };
+        settings.save(&dir)?;
+        for args in [
+            vec!["config", "set", "--speed", "19200"],
+            vec!["pair", "ABCD1234"],
+            vec!["autostart", "on"],
+        ] {
+            let parsed = parse(args.into_iter().map(OsString::from))?;
+            let error = execute(parsed.command, dir.path()).expect_err("lock held");
+            assert_eq!((error.exit, error.code), (4, code));
+            assert_eq!(Settings::load(&dir)?, Some(settings.clone()));
+        }
     }
     Ok(())
 }

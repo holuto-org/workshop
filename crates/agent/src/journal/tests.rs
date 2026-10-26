@@ -442,6 +442,10 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
         receipt.replace("    \"vendor\": \"posnet\",\n", ""),
         receipt.replace("\"receipt\": {", "\"receipt\": {\"extra\": true,"),
         receipt.replace("\"summary\": {", "\"summary\": {\"extra\": true,"),
+        receipt.replace(
+            "\"form\": \"card\",",
+            "\"form\": \"card\", \"extra\": true,",
+        ),
         receipt.replace("\"dispatching\": {", "\"dispatching\": {\"extra\": true,"),
         receipt.replace(
             "    \"settled\": null\n",

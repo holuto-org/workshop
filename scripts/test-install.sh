@@ -207,6 +207,28 @@ if ((EUID != 0)); then
   contains 'is running'
   ! grep -F 'curl ' "$FIXTURE_LOG" >/dev/null || fail 'downloaded while an app was running'
   FIXTURE_RUNNING=none
+  # The released HuggingCar Fiscal app journals fiscal intent here (Qt GenericStateLocation).
+  legacy="$HOME/Library/Preferences/State/huggingcar-fiscal/operation.json"
+  mkdir -p "${legacy%/*}"
+  # Pending, a nested-only state, a contradictory record and torn JSON (also after an
+  # accepted state line) all block.
+  for record in '{\n  "state": "pending",\n  "stage": "trend"\n}' \
+    '{\n  "items": [{\n    "state": "completed"\n  }]\n}' \
+    '{\n  "state": "completed",\n  "state": "pending"\n}' '{' \
+    '{\n  "state": "completed",\n' '{\n  "state": "completed"\n}x'; do
+    printf '%b\n' "$record" > "$legacy"
+    run --release v1.2.3
+    [[ $status != 0 ]] || fail "accepted an unresolved legacy journal: $record"
+    contains 'unresolved fiscal operation'
+    ! grep -F 'curl ' "$FIXTURE_LOG" >/dev/null || fail 'downloaded despite an unresolved legacy journal'
+  done
+  for state in completed acknowledged; do
+    printf '{\n  "state": "%s",\n  "stage": "trend"\n}\n' "$state" > "$legacy"
+    run --release v1.2.3
+    ! grep -F 'unresolved fiscal operation' "$work/output" >/dev/null ||
+      fail "refused a resolved legacy journal: $state"
+  done
+  rm -r "$HOME/Library/Preferences"
   mkdir -p "$HOME/.local/bin"
   printf 'unrelated command\n' > "$HOME/.local/bin/workshop"
   run --release v1.2.3

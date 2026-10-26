@@ -115,14 +115,23 @@ Release builds use fat LTO: give containers enough memory instead of weakening
 the release profile.
 
 Run on the host target, without configured printer credentials; never launch a
-package against the user's saved state. The verifier uses isolated home/state
-and proves `workshop --help`, `workshop check --json` and the **Holuto Workshop
-main window** work: a process that merely survives a timeout could be stuck in
-an error dialog. Check `.deb` dependencies/desktop entry
+package against the user's saved state. On Unix, `verify.sh` uses temporary
+home/state directories; the standalone Linux smoke script creates its own fresh
+state too. On Windows, the verifier requires a clean disposable user profile
+and refuses existing Workshop state rather than overriding Known Folders.
+Every GUI smoke launch saves diagnostics opt-out before starting the app.
+The verifier proves `workshop --help`, `workshop check --json` and the
+**Holuto Workshop main window** work: a process that merely survives a timeout
+could be stuck in an error dialog. Check `.deb` dependencies/desktop entry
 and installed executable (only CI, `CI=true`, installs the `.deb` system-wide;
 elsewhere the extracted tree is launched); `.dmg` mounting and `.app`
 Info.plist/executable; Windows PE subsystem and version/icon resources. Keep
 symbol/debug artifacts for Sentry separate from stripped distribution packages.
+
+On Linux, `python3 packaging/test-smoke.py target/release/workshop` exercises
+standalone smoke isolation and diagnostics opt-out through the real CLI, with a
+launch probe instead of a GUI. It never starts a printer worker; run it after
+building the executable.
 
 Headless launch is not proof of physical printer access, real tray integration
 on every desktop shell, Wayland layout, SmartScreen/Gatekeeper reputation or

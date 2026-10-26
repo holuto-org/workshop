@@ -2,6 +2,7 @@
 //!
 //! Customer fixtures are synthetic; request logs never retain authorization values.
 //! `tiny_http` rejects non-ASCII headers before routing; non-UTF-8 header errors are not modeled.
+//! Contract violations panic on the server thread and are propagated to its owner on drop.
 
 #[cfg(test)]
 pub(crate) mod printers;
@@ -29,6 +30,7 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt,
     io::{self, Write},
+    panic::resume_unwind,
     sync::{
         Arc, Mutex, MutexGuard,
         mpsc::{Receiver, Sender},
@@ -314,8 +316,12 @@ impl Holuto {
 impl Drop for Holuto {
     fn drop(&mut self) {
         self.server.unblock();
-        if let Some(thread) = self.thread.take() {
-            let _result = thread.join();
+        if let Some(thread) = self.thread.take()
+            && let Err(payload) = thread.join()
+            && !thread::panicking()
+        {
+            // Contract failures on the server thread must fail its owning test.
+            resume_unwind(payload);
         }
     }
 }

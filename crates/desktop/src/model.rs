@@ -385,7 +385,7 @@ impl Model {
         } else if self.running {
             "Łączenie…".into()
         } else {
-            "Niepołączono".into()
+            "Nie połączono".into()
         }
     }
 
@@ -529,6 +529,19 @@ impl Model {
 
     pub(crate) fn confirm(&mut self, accepted: bool) -> Option<Command> {
         let pending = self.pending.take().filter(|_| accepted)?;
+        // The document list may have been refreshed while the confirmation was open.
+        if let Command::Queue { document, .. } = &pending.command
+            && !self
+                .documents()
+                .iter()
+                .any(|listed| listed.same_document(document))
+        {
+            self.say(
+                "Nie wysłano: dokument nie czeka już na paragon.".into(),
+                Tone::Error,
+            );
+            return None;
+        }
         // Readiness may have changed while the confirmation was open.
         let allowed = match &pending.command {
             Command::Queue { .. } => self.queue_enabled(),

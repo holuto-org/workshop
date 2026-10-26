@@ -12,8 +12,8 @@
   - **Trigger**: Reused by Checks and Release.
   - **Runner and work**: Build and verify Windows x64 `.exe`, Linux x64/ARM64
     `.deb`, macOS ARM64/x64 `.dmg`; isolated installed-package CLI checks and
-    main-window launch without a configured printer; retain matching debug
-    artifacts.
+    main-window launch without a configured printer; production-only upload of
+    matching debug files/source context to Sentry.
 - **Release (`release.yml`)**
   - **Trigger**: Push to `master` changing `Cargo.toml`; manual artifact build.
     Publishing additionally requires a qualifying workspace-version increase.
@@ -78,13 +78,16 @@ files/source context with pinned `@sentry/cli` 3.8.2
 association/finalization and symbol upload must use that same identity. Never
 put the auth token in a binary or package; the public DSN is not that token.
 Fork PRs must remain buildable without release secrets.
+Debug files are staged separately from stripped packages and uploaded to Sentry
+in production mode; they are not retained as GitHub Actions artifacts.
 
 Every Release-workflow package, including manual artifact-only runs, uses
 Package's production mode: Sentry configuration/credentials are required and
 symbols are uploaded. PR packages use non-production mode without telemetry
 credentials. Release creation, commit association and finalization happen only
-in the publish job for an actual version-bump push, not a manual artifact-only
-run.
+in the read-only `sentry-release` job for an actual version-bump push, not a
+manual artifact-only run. The separate `publish` job alone holds OIDC and
+attestation write permissions; it never installs npm packages.
 
 A successful upload is not proof of symbolication: inspect a synthetic, approved
 release event against that exact binary as described in

@@ -132,12 +132,24 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
             let _scheduled = slint::invoke_from_event_loop(move || {
                 with_app(move |app| {
                     assert!(app.model.running, "held connection keeps worker alive");
+                    // Tray Quit and signals stop without a window callback capturing first.
+                    let window = app.window.as_ref().ok_or("missing window")?.clone_strong();
+                    window.set_nip("5261040828".into());
                     app.stop(true)?;
                     assert!(
                         app.worker.is_some(),
                         "stop waits instead of joining an active connection"
                     );
-                    release.send(()).map_err(|error| error.to_string())?;
+                    with_app(move |app| {
+                        let window = app.window.as_ref().ok_or("missing window")?;
+                        assert_eq!(
+                            window.get_nip().as_str(),
+                            "5261040828",
+                            "quitting keeps text the operator typed"
+                        );
+                        release.send(()).map_err(|error| error.to_string())?;
+                        Ok(())
+                    });
                     Ok(())
                 });
             });

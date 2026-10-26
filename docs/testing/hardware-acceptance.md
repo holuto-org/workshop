@@ -52,7 +52,7 @@ CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
   cargo nextest run --workspace --all-features
 # REQUIRED negative check: must fail with the explicit compile_error below.
 CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
-  cargo build --release
+  cargo build --release -p fiscal
 ```
 
 Expected release diagnostic:
@@ -294,6 +294,11 @@ behavior and specification examples cannot close a hardware question.
 - **Elzab receipt capacity:** measure item and adjustment-line consumption for
   each model/firmware. The [advertised ceiling](../fiscal-contract.md#device-capabilities)
   is a host policy, not a measured printer buffer.
+- **Novitus `$y` separators:** the native protocol's `$y` table lists
+  cash-register, cashier and system-number fields, each ending in `<CR>`, but
+  says the system number "does not occur" when its flag is 0. The driver sends
+  all three separators (`$y\r\r\r`) with the flag at 0. Capture whether the
+  printer accepts that or expects two.
 
 [report-dates]: ../fiscal-contract.md#report-dates-and-printer-clock
 

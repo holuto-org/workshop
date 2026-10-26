@@ -52,6 +52,11 @@ jobs:
         run: test -n "$SENTRY_DSN"
       - name: Build native package
         run: bash packaging/build.sh
+      - name: Check standalone smoke isolation and diagnostics opt-out
+        if: runner.os == 'Linux'
+        run: |
+          target_dir=$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.target_directory')
+          python3 packaging/test-smoke.py "$target_dir/release/workshop"
       - name: Verify package and launch main window
         run: bash packaging/verify.sh
       - name: Prove simulator cannot enter a release build
@@ -65,20 +70,16 @@ jobs:
           cat "$log"
           grep -F 'The simulator feature is restricted to local debug builds.' "$log"
           rm "$log"
+      - name: Install Sentry CLI
+        if: inputs.production
+        run: npm install --global @sentry/cli@3.8.2
       - name: Upload native debug information and source context
         if: inputs.production
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-          SENTRY_URL: ${{ vars.SENTRY_URL }}
         run: |
           test -n "$SENTRY_AUTH_TOKEN"
-          test -n "$SENTRY_ORG"
-          test -n "$SENTRY_PROJECT"
-          test -n "$SENTRY_URL"
-          npm install --global @sentry/cli@3.8.2
-          sentry-cli debug-files upload --include-sources --wait packaging/build/symbols
+          sentry-cli --org holuto --project workshop debug-files upload --include-sources --wait packaging/build/symbols
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: package-${{ matrix.name }}

@@ -21,6 +21,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         .and_then(Value::as_object)
         .ok_or("missing components.schemas")?
         .clone();
+    // Endpoints return Versioned_Job; the client ignores only its server-side etag.
+    let mut versioned_job = schemas
+        .get("Versioned_Job")
+        .ok_or("missing Versioned_Job")?
+        .clone();
+    let _etag = versioned_job
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .ok_or("missing versioned job properties")?
+        .remove("etag")
+        .ok_or("missing versioned job etag")?;
+    versioned_job
+        .get_mut("required")
+        .and_then(Value::as_array_mut)
+        .ok_or("missing required versioned job fields")?
+        .retain(|field| field != "etag");
+    if schemas.get("Job") != Some(&versioned_job) {
+        return Err("Versioned_Job no longer matches Job apart from etag".into());
+    }
     let mut settings = TypeSpaceSettings::default();
     let _settings = settings
         .with_derive("PartialEq".into())

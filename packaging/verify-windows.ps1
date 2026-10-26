@@ -51,6 +51,9 @@ try {
     $check = Start-Process $exe -ArgumentList 'check', '--json' -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $installed 'check.json')
     $result = Get-Content -Raw (Join-Path $installed 'check.json') | ConvertFrom-Json
     if ($check.ExitCode -ne 3 -or $result.ok -ne $false -or $result.configured -ne $false -or $result.appRunning -ne $false -or $result.errors.Count -eq 0) { throw 'Fresh configuration CLI check failed' }
+    # CLI dispatch precedes telemetry initialization, including in production packages.
+    $optOut = Start-Process $exe -ArgumentList 'config', 'set', '--diagnostics', 'off' -Wait -PassThru -NoNewWindow
+    if ($optOut.ExitCode -ne 0) { throw 'Diagnostics opt-out failed' }
     $process = Start-Process $exe -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
     do {

@@ -1,6 +1,6 @@
-#[cfg(not(windows))]
-use std::fs;
 use std::{error::Error, path::Path};
+#[cfg(not(windows))]
+use std::{fs, io};
 
 #[cfg(not(windows))]
 use super::set_at;
@@ -71,8 +71,16 @@ fn desktop_exec_launches_paths_with_field_codes_and_shell_metacharacters() -> Te
     }
     let before = fs::read(&artifact)?;
     let error = set_at(&artifact, Path::new("/tmp/work\tshop"), true).unwrap_err();
-    assert!(matches!(error, agent::Error::Invalid(message)
-        if message == "Ścieżka aplikacji nie nadaje się do autostartu."));
+    assert!(
+        matches!(&error, agent::Error::Store { source, .. }
+            if source.kind() == io::ErrorKind::InvalidInput),
+        "an unusable executable path is a local failure: {error}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "Nie można zmienić autostartu (/tmp/work\tshop): \
+         Ścieżka aplikacji nie nadaje się do autostartu."
+    );
     assert_eq!(
         fs::read(&artifact)?,
         before,

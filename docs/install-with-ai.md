@@ -195,11 +195,15 @@ that a program is harmless.
 
 Replace `vMAJOR.MINOR.PATCH` with the recorded tag. Run from the download
 directory as the ordinary user. Scripts never launch the app, connect a printer,
-change groups, configure autostart or access state. Re-running upgrades program
-files in place; existing data remains untouched. Dry-run validates the platform
-and prints the plan without artifact downloads/install writes. An explicit
-release makes it network-free; omitting it resolves the latest tag with a
-metadata request first.
+change groups, configure autostart or write state. Re-running upgrades program
+files in place; existing data remains untouched. Before downloading, they parse
+the previous HuggingCar Fiscal app's fiscal journal, if any, and stop when it
+holds an unresolved or unreadable operation: the person checks the printout
+and resolves it in that app first; never delete the file. `install.sh` parses
+with `python3` or, on macOS, `osascript`; without either, an existing journal
+blocks. Dry-run validates the platform and prints the plan without artifact
+downloads/install writes. An explicit release makes it network-free; omitting
+it resolves the latest tag with a metadata request first.
 
 ### Linux: Ubuntu / Debian
 
@@ -300,8 +304,10 @@ only normal GUI processing communicates with the printer.
 This CLI contract is shared by the app help and this guide. Every command
 supports `--json`; human output is Polish. CLI commands never open a printer
 port. Nonzero means stop the sequence and explain the structured error; do not
-retry mutating commands automatically. Ask the person to quit cooperatively
-after a running-app refusal, then repeat only the requested configuration.
+retry mutating commands automatically. Exit 4 means the state directory is
+held: after `app_running`, ask the person to quit the app cooperatively; after
+`state_busy`, wait for the other `workshop` command to finish. Then repeat only
+the requested configuration.
 
 - **`workshop config show --json`**: Display `config` with `apiUrl`, `paired`,
   `port`, `baudRate`, `vendor`, `telemetryEnabled` and `startOnLaunch`, never a
@@ -319,17 +325,19 @@ after a running-app refusal, then repeat only the requested configuration.
   `--api-url <URL>`, `--port auto|<PORT>`, `--speed 9600` and
   `--diagnostics on|off`; at least one flag is required, with no duplicates.
   Choose one actual value; `|` means alternatives. Refuses while app runs.
+  Success is `{"ok":true}`.
   A different API address forgets the saved pairing; pair again afterwards.
 - **`workshop pair <CODE> --json`**: Exchange a short-lived single-use code for
   internally stored credentials. Ask before linking the intended
   computer/printer. Refuses while app runs. Never reveal the token or retry
-  automatically.
+  automatically. Success is `{"ok":true,"printerId":"…"}`.
 - **`workshop check --json`**: Validate saved configuration and report whether
   app is running. No network/serial I/O; not proof of printer readiness.
   Incomplete configuration exits 3.
 - **`workshop autostart on|off --json`**: Register/remove per-user login item
   and start-processing-on-launch preference. Ask separately: `on` can start
-  fiscal work at login. Refuses while app runs.
+  fiscal work at login. Refuses while app runs. Success is
+  `{"ok":true,"autostart":true,"startOnLaunch":true}` (both `false` for `off`).
 - **`workshop status --json`**: Read the app's published snapshot while its
   application lock is held: `appRunning:true` and `state` with `processing`,
   `connected`, `vendor`, `uniqueNumber`, `printerId`, `blocked`,
@@ -361,7 +369,10 @@ after a running-app refusal, then repeat only the requested configuration.
 | 7    | Pairing throttled (HTTP 429)                             |
 
 JSON errors use
-`{"ok":false,"error":{"code":"...","message":"Polish safe text"}}`.
+`{"ok":false,"error":{"code":"...","message":"Polish safe text"}}`. Each
+`code` has one exit code: `local` and `status_unavailable` 1, `arguments` 2,
+`configuration` and `pairing_invalid` 3, `app_running` and `state_busy` 4,
+`holuto` 5, `unauthorized` 6, `rate_limited` 7.
 Configuration validation by `check` reports `ok`, `configured`, `appRunning`
 and an `errors` array; local read failures use the error envelope above.
 Never infer a successful print from any CLI result.

@@ -271,4 +271,22 @@ foreach ($name in @('workshop', 'workshop-win-x64')) {
 $script:processes = @([pscustomobject]@{ ProcessName = 'unrelated' })
 Assert-HolutoNotRunning
 
+# An unresolved, nested-only or torn (also after an accepted state) journal blocks; a resolved one does not.
+$legacyRoot = Join-Path ([IO.Path]::GetTempPath()) ('holuto-legacy-test-' + [Guid]::NewGuid().ToString('N'))
+$legacyJournal = Join-Path $legacyRoot 'State\huggingcar-fiscal\operation.json'
+try {
+    Assert-HolutoLegacyJournalResolved -LocalAppData $legacyRoot
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($legacyJournal))
+    foreach ($record in @('{"state": "pending", "stage": "trend"}', '{"items": [{"state": "completed"}]}', '{', '{"state": "completed",', '{"state": "completed"}x')) {
+        [IO.File]::WriteAllText($legacyJournal, $record)
+        Assert-Throws { Assert-HolutoLegacyJournalResolved -LocalAppData $legacyRoot } 'unresolved fiscal operation'
+    }
+    foreach ($state in @('completed', 'acknowledged')) {
+        [IO.File]::WriteAllText($legacyJournal, "{""state"": ""$state"", ""stage"": ""trend""}")
+        Assert-HolutoLegacyJournalResolved -LocalAppData $legacyRoot
+    }
+} finally {
+    Remove-Item -LiteralPath $legacyRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Output 'PowerShell installer tests passed (no application run, network, or install writes).'

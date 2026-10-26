@@ -526,7 +526,10 @@ impl Application {
         }
     }
 
+    /// Tray Quit, signals and macOS termination reach this without a window callback, so
+    /// it captures the window before the following sync redraws it.
     fn stop(&mut self, quit: bool) -> Result<(), slint::PlatformError> {
+        self.capture();
         self.quitting |= quit;
         if let Some(worker) = &self.worker {
             worker.stop();

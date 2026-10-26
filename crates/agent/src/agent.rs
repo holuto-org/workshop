@@ -138,6 +138,19 @@ impl<'dir> Agent<'dir> {
         if !self.describable() {
             return Ok(false);
         }
+        // `Code` constraints belong to the API, not the vendor's identity protocol.
+        if [&self.telemetry.model, &self.telemetry.firmware]
+            .iter()
+            .any(|value| {
+                !(1..=64).contains(&value.chars().count()) || value.chars().any(char::is_control)
+            })
+        {
+            return Err(Error::Invalid(
+                "Nieprawidłowy model lub firmware drukarki: \
+                 wymagane od 1 do 64 znaków bez znaków sterujących."
+                    .to_owned(),
+            ));
+        }
         self.api.session(&self.telemetry)?;
         self.telemetry_changed = false;
         Ok(true)

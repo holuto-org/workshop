@@ -26,6 +26,8 @@ check_cli() {
   "$binary" check --json > "$tmp/check.json" || status=$?
   [[ $status == 3 ]]
   jq -e '.ok == false and .configured == false and .appRunning == false and (.errors | length > 0)' "$tmp/check.json"
+  # A production package has a live DSN; CLI dispatch precedes telemetry init.
+  "$binary" config set --diagnostics off
 }
 
 case "$(uname -s)" in

@@ -44,7 +44,8 @@ how to build the test.
   real driver/`Link`. Unix serial tests use allocated ptys; Windows only the
   configured com0com pair (`com_pair`). Never real hardware.
 - Holuto: `agent::testing::Holuto`, a stateful loopback fake reached through the
-  production `Api`/`ureq` client, plus a fresh `state_dir()`. It models binding,
+  production `Api`/`ureq` client, plus a fresh state directory (`state_dir()`
+  inside `agent`; a `TempDir`-backed `StateDir` elsewhere). It models binding,
   attempts and results and scripts faults. Do not mock our own code or add an
   in-process API fake.
 - UI: the real application and callbacks on Slint's exact-version testing
@@ -75,7 +76,8 @@ how to build the test.
   clock/text/IDs. Review every diff against the protocol; never blanket-accept or
   redact fiscal fields. Use the crate-scoped review procedure in
   [workflows](../../docs/workflows.md#finishing-a-change).
-- **Concurrency:** order contenders with channels and simulator `hold`/`reached`;
+- **Concurrency:** order contenders with channels and the Posnet simulator's
+  `hold`/`reached` (Novitus and Elzab have no equivalent);
   prove one effect and the final state; release holds and join threads on
   failure. Stress worker/race tests before integration
   ([workflows](../../docs/workflows.md#finishing-a-change)).

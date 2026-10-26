@@ -42,6 +42,38 @@ check_launcher() {
     fail "The launcher $launcher already exists and is not this installer's symbolic link."
   fi
 }
+# The previous HuggingCar Fiscal desktop app (v0.1.x) journals fiscal intent in Qt's
+# GenericStateLocation. The new app never reads it, so a record that is not a complete
+# JSON object whose top-level state is completed/acknowledged must be resolved in that
+# app first. A full JSON parser decides; without one, an existing journal blocks.
+legacy_state() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json, sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+print(record.get("state", "") if isinstance(record, dict) else "")' "$1" 2>/dev/null
+  elif [[ $os == Darwin ]]; then
+    osascript -l JavaScript -e 'function run(argv) {
+  const text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], 4, null);
+  const record = JSON.parse(text.js);
+  return record && typeof record === "object" && !Array.isArray(record) ? String(record.state) : "";
+}' "$1" 2>/dev/null
+  else
+    return 1
+  fi
+}
+check_legacy_journal() {
+  local journal state
+  case $os in
+    Linux) journal="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}" ;;
+    *) journal="$HOME/Library/Preferences/State" ;;
+  esac
+  [[ $journal == /* ]] || journal="${HOME:?HOME is required}/.local/state"
+  journal="$journal/huggingcar-fiscal/operation.json"
+  [[ -e $journal || -L $journal ]] || return 0
+  state=$(legacy_state "$journal") || state=
+  [[ $state == completed || $state == acknowledged ]] ||
+    fail "The previous HuggingCar Fiscal app has an unresolved fiscal operation in $journal. Check the printer and its printout, resolve the operation in that app, then run this installer again; nothing was installed."
+}
 cleanup() {
   local status=$?
   trap - EXIT
@@ -175,6 +207,7 @@ fi
 require curl
 require pgrep
 check_not_running
+check_legacy_journal
 if [[ $os == Linux ]]; then
   require sudo
 else

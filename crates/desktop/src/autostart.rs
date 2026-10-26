@@ -47,11 +47,10 @@ pub(crate) fn set_enabled(enabled: bool) -> Result<(), Error> {
     };
     #[cfg(windows)]
     {
-        registry(
-            "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-            &executable,
-            enabled,
-        )
+        registry(RUN, &executable, enabled)?;
+        // Task Manager's "Disable" is a separate StartupApproved entry that outranks Run;
+        // removing it lets Windows apply its default (enabled) to the value just written.
+        registry(STARTUP_APPROVED, &executable, false)
     }
     #[cfg(not(windows))]
     {
@@ -59,13 +58,23 @@ pub(crate) fn set_enabled(enabled: bool) -> Result<(), Error> {
     }
 }
 
+#[cfg(windows)]
+const RUN: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+#[cfg(windows)]
+const STARTUP_APPROVED: &str =
+    "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+
 #[cfg(not(windows))]
 fn artifact_path() -> Result<PathBuf, Error> {
     let home = || {
         env::home_dir()
             .filter(|path| path.is_absolute())
             .ok_or_else(|| {
-                Error::Invalid("Nie można ustalić katalogu domowego dla autostartu.".into())
+                local_error(
+                    Path::new("~"),
+                    io::ErrorKind::NotFound,
+                    "Nie można ustalić katalogu domowego dla autostartu.",
+                )
             })
     };
     #[cfg(target_os = "macos")]
@@ -91,6 +100,11 @@ fn store_error(path: &Path, source: io::Error) -> Error {
     }
 }
 
+/// The environment, not the saved configuration, prevents registration.
+fn local_error(path: &Path, kind: io::ErrorKind, reason: &str) -> Error {
+    store_error(path, io::Error::new(kind, reason))
+}
+
 #[cfg(not(windows))]
 fn set_at(artifact: &Path, executable: &Path, enabled: bool) -> Result<(), Error> {
     if !enabled {
@@ -104,7 +118,13 @@ fn set_at(artifact: &Path, executable: &Path, enabled: bool) -> Result<(), Error
         .to_str()
         // Desktop-entry strings and plist XML both forbid raw control characters.
         .filter(|text| !text.chars().any(char::is_control))
-        .ok_or_else(|| Error::Invalid("Ścieżka aplikacji nie nadaje się do autostartu.".into()))?;
+        .ok_or_else(|| {
+            local_error(
+                executable,
+                io::ErrorKind::InvalidInput,
+                "Ścieżka aplikacji nie nadaje się do autostartu.",
+            )
+        })?;
     // `/proc/self/exe` marks a binary a package upgrade renamed over the running one;
     // the installed path is the one to launch at the next login.
     #[cfg(target_os = "linux")]
@@ -208,13 +228,16 @@ fn registry(key: &str, executable: &Path, enabled: bool) -> Result<(), Error> {
         if quoted.len() > 261 {
             // SAFETY: successful open returned this owned handle, closed exactly once.
             let _closed = unsafe { RegCloseKey(handle) };
-            return Err(Error::Invalid(
-                "Ścieżka autostartu przekracza limit 260 znaków Windows.".into(),
+            return Err(local_error(
+                executable,
+                io::ErrorKind::InvalidInput,
+                "Ścieżka autostartu przekracza limit 260 znaków Windows.",
             ));
         }
         let bytes: Vec<_> = quoted.into_iter().flat_map(u16::to_le_bytes).collect();
-        let count =
-            u32::try_from(bytes.len()).map_err(|error| Error::Invalid(error.to_string()))?;
+        let count = u32::try_from(bytes.len()).map_err(|error| {
+            local_error(executable, io::ErrorKind::InvalidInput, &error.to_string())
+        })?;
         // SAFETY: live byte buffer includes the UTF-16 NUL; byte length is checked.
         unsafe { RegSetValueExW(handle, name.as_ptr(), 0, REG_SZ, bytes.as_ptr(), count) }
     } else {

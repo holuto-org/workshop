@@ -119,8 +119,8 @@ impl Driver for Printer {
             ));
         }
         let header = session.command("hdrget", &[], DEFAULT_TIMEOUT)?;
-        let header = text::header_text(header.get("tx").unwrap_or_default()).to_lowercase();
-        let footer = (!header.contains(&receipt.brand().to_lowercase())).then_some(receipt.brand());
+        let header = text::header_text(header.get("tx").unwrap_or_default());
+        let footer = (!receipt.brand_in_header(&header)).then_some(receipt.brand());
         let issued_at = clock(&mut session)?;
         let steps = receipt::steps(receipt, footer);
         dispatch(&mut session, &steps.fiscal, journal)?;

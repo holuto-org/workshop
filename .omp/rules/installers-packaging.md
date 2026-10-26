@@ -31,9 +31,10 @@ Use [platform procedures](../../docs/testing/platforms.md) and
   weaken the release profile to fit a small container.
 - SELinux Rust cache mounts: use `--security-opt label=disable`, never `:Z`.
 - Keep intentional protections: exact manifest SHA-256 and workflow/branch-bound
-  attestation; downgrade and running-app refusal; macOS previous-app recovery;
-  existing required-command checks; ELF dependency-to-Debian-package mapping;
-  Windows PE import walk rejecting dynamic VC runtime dependencies.
+  attestation; downgrade, running-app and unresolved HuggingCar Fiscal journal
+  refusal; macOS previous-app recovery; existing required-command checks; ELF
+  dependency-to-Debian-package mapping; Windows PE import walk rejecting dynamic
+  VC runtime dependencies.
 - Keep one package `gh attestation verify` after download/hash verification,
   without auth/version preflights. Failure stops installation; only absent
   `gh` permits checksum-only installation with an explicit warning.

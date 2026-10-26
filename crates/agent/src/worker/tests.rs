@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::BTreeMap,
     fmt, fs,
-    io::ErrorKind,
+    io::{self, ErrorKind},
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver, Sender},
@@ -200,6 +200,85 @@ impl Link for PanicLink {
     }
 }
 
+#[derive(Debug)]
+struct PanicFiscalLink(Arc<dyn Link>);
+
+struct PanicFiscalPort(Box<dyn Port>);
+
+impl Link for PanicFiscalLink {
+    fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, PrinterError> {
+        Ok(Box::new(PanicFiscalPort(self.0.open(port, baud_rate)?)))
+    }
+
+    fn candidates(&self) -> Vec<Candidate> {
+        self.0.candidates()
+    }
+
+    fn time_scale(&self) -> u32 {
+        self.0.time_scale()
+    }
+}
+
+impl Port for PanicFiscalPort {
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "exercise an unwinding fiscal operation"
+    )]
+    fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
+        assert!(
+            !bytes.windows(6).any(|part| part == b"trinit"),
+            "fiscal panic"
+        );
+        self.0.write_all(bytes, timeout)
+    }
+
+    fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
+        self.0.read(buffer, timeout)
+    }
+}
+
+#[test]
+fn a_panic_at_fiscal_dispatch_publishes_the_journal_block_before_stopping() {
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    let id = holuto.enqueue(job_json());
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let (send, events) = mpsc::channel();
+    sim.set_clock("2026-10-16T10:34:00Z".parse().unwrap());
+    let worker = Worker::spawn(
+        Arc::clone(&dir),
+        settings(&holuto, &sim),
+        Arc::new(PanicFiscalLink(sim.link())),
+        move |event| send.send(event).unwrap(),
+    )
+    .unwrap();
+    let received = receive_until(&events, |event| matches!(event, Event::Stopped));
+    worker.join();
+    let Some(Operation::Receipt(operation)) = Journal::new(&dir).load().unwrap() else {
+        panic!("dispatch intent must survive panic");
+    };
+    assert!(matches!(operation.device, Device::Dispatching { .. }));
+    assert_eq!(holuto.job(id)["state"], "taken");
+    assert_eq!(sim.receipts(), []);
+    assert!(
+        matches!(
+            received.as_slice(),
+            [
+                ..,
+                Event::Device {
+                    status: None,
+                    blocked: true,
+                    report_unresolved: false,
+                    ..
+                },
+                Event::Stopped
+            ]
+        ),
+        "{received:?}"
+    );
+}
+
 fn receive_until(
     events: &Receiver<Event>,
     mut predicate: impl FnMut(&Event) -> bool,
@@ -248,6 +327,7 @@ fn a_panicking_worker_reports_a_redacted_error_then_stopped() {
             Event::Status { tone: Tone::Info, .. },
             Event::HistoryChanged(entries),
             Event::Status { tone: Tone::Error, text },
+            Event::Device { status: None, blocked: false, report_unresolved: false, .. },
             Event::Stopped
         ] if entries.is_empty()
             && text == "Wątek drukarki został przerwany. Sprawdź wydruk przed \
@@ -415,7 +495,18 @@ fn startup_transient_http_failures_wait_for_retry_and_can_be_stopped() {
             |event| matches!(event, Event::Status { text, tone: Tone::Error } if text == &expected),
         );
         let stopped = stop(worker, &events);
-        assert!(matches!(stopped.as_slice(), [Event::Stopped]));
+        assert!(matches!(
+            stopped.as_slice(),
+            [
+                Event::Device {
+                    status: None,
+                    blocked: false,
+                    report_unresolved: false,
+                    ..
+                },
+                Event::Stopped
+            ]
+        ));
         assert_eq!(
             holuto
                 .requests()
@@ -464,6 +555,7 @@ fn startup_contract_failures_stop_without_retry_or_fiscal_effects() {
                 Event::Status { tone: Tone::Info, .. },
                 Event::HistoryChanged(entries),
                 Event::Status { tone: Tone::Error, text },
+                Event::Device { status: None, blocked: false, report_unresolved: false, .. },
                 Event::Stopped
             ] if entries.is_empty() && text == expected
         ));
@@ -576,7 +668,18 @@ fn slow_startup_detection_still_waits_the_full_retry_interval() {
     worker.submit(Command::NextPage);
     let stopped = stop(worker, &events);
     assert!(
-        matches!(stopped.as_slice(), [Event::Stopped]),
+        matches!(
+            stopped.as_slice(),
+            [
+                Event::Device {
+                    status: None,
+                    blocked: false,
+                    report_unresolved: false,
+                    ..
+                },
+                Event::Stopped
+            ]
+        ),
         "{stopped:?}"
     );
     assert_eq!(*link.opened.lock().unwrap(), 1);
@@ -648,6 +751,7 @@ fn startup_unauthorized_stops_instead_of_retrying() {
             Event::Status { tone: Tone::Info, .. },
             Event::HistoryChanged(entries),
             Event::Status { tone: Tone::Error, text },
+            Event::Device { status: None, blocked: false, report_unresolved: false, .. },
             Event::Stopped
         ] if entries.is_empty()
             && text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
@@ -1063,6 +1167,39 @@ fn command_unauthorized_releases_the_submission_guard_then_stops() {
         "submission guard is released before shutdown"
     );
     assert_eq!(sim.receipts(), []);
+}
+
+#[test]
+fn poll_unauthorized_after_printing_publishes_the_unsettled_journal_before_stopping() {
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    let id = holuto.enqueue(job_json());
+    holuto.fault("POST", &format!("/agent/jobs/{id}/result"), problem(401));
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let received = receive_until(&events, |event| matches!(event, Event::Stopped));
+    worker.join();
+    assert_eq!(sim.receipts().len(), 1);
+    assert_eq!(holuto.job(id)["state"], "taken");
+    let Some(Operation::Receipt(operation)) = Journal::new(&dir).load().unwrap() else {
+        panic!("unsettled receipt evidence must survive shutdown");
+    };
+    assert!(matches!(operation.device, Device::Completed { .. }));
+    assert!(
+        matches!(
+            received
+                .iter()
+                .rev()
+                .find(|event| matches!(event, Event::Device { .. })),
+            Some(Event::Device {
+                blocked: true,
+                report_unresolved: false,
+                ..
+            })
+        ),
+        "{received:?}"
+    );
 }
 
 #[test]

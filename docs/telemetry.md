@@ -19,6 +19,8 @@ and envelopes; already submitted requests cannot be recalled. Restart to disable
 the native crash reporter. Turning it on after a disabled startup also needs a
 restart to initialize the client. This affects diagnostics, not Holuto requests
 required to print. Tests use capturing transports, not production ingestion.
+Package smoke checks save diagnostics opt-out through the CLI before launching
+the GUI, including when the executable embeds the production DSN.
 
 Normal CLI commands return before diagnostics initialization. A native reporter
 child bypasses CLI dispatch and enters initialization even if consent changed
@@ -36,9 +38,11 @@ Structured diagnostics use an allowlist:
   reviewed fixed messages survive; other text becomes
   `Fiscal application diagnostic`. Arbitrary fields, including attempts and
   device error codes, are removed.
-- **Fiscal traces**: Only `fiscal.receipt` / `fiscal.report` roots are sampled.
-  Transactions are named `fiscal.operation`; timings/status and span operations
-  remain, but descriptions, span data/tags and transaction extras are cleared.
+- **Fiscal traces**: Only `fiscal.receipt` / `fiscal.report` roots are sampled,
+  at rate 1.0 while diagnostics are on; every other root at 0. Nested spans use
+  `device.receipt` / `device.report` and `http.client`. Transactions are named
+  `fiscal.operation`; timings/status and span operations remain, but
+  descriptions, span data/tags and transaction extras are cleared.
 - **HTTP trace propagation**: The API records method/route-template/status
   locally; structured transport removes their span data. SDK-provided headers
   still link requests to Holuto. SDK 0.49.3 emits `sentry-trace`, not `baggage`;
@@ -129,8 +133,8 @@ Structured capture/transport tests do not verify native minidump delivery.
 The [CI release identity and environment](ci.md#release-telemetry-artifacts)
 must match client events. Non-CI release builds use `SENTRY_ENVIRONMENT`,
 defaulting to `production` only when unset. Debug builds use `development`.
-CI retains matching symbols before distribution stripping and uploads source
-context with them.
+CI separates matching symbols before distribution stripping and uploads them
+with source context to Sentry; it does not retain debug files as CI artifacts.
 Source uploads contain application source code, not runtime settings or fiscal
 documents. Release records/commits and client events must agree on identity;
 Linux ELF/DWARF, macOS dSYM and Windows PDB files must match their packaged
