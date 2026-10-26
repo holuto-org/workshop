@@ -2,17 +2,17 @@
 
 ## Finishing a change
 
-Run once on the integrated change, from the repository root. Never run the app
-against a real printer as verification.
+Run [the Verify commands](../AGENTS.md#verify) on the integrated change, then
+the mutation step below. Never run the app against a real printer as
+verification.
 
 ```sh
-cargo +nightly-2026-10-06 fmt
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo nextest run --workspace --all-features
-# Include staged, unstaged and committed product changes against the PR base:
-git diff origin/master > /tmp/workshop-changes.diff
-cargo mutants --all-features --in-diff /tmp/workshop-changes.diff \
-  -p <changed-package>
+# Diff the working tree against the branch point (committed, staged and
+# unstaged); regenerate it right before each run.
+git diff "$(git merge-base origin/master HEAD)" > /tmp/workshop-changes.diff
+TMPDIR=<disk-backed scratch> cargo mutants --all-features \
+  --in-diff /tmp/workshop-changes.diff -p <changed-package> \
+  --output <scratch directory>
 ```
 
 Use `fiscal`, `posnet`, `novitus`, `elzab`, `agent` or `workshop` as the changed
@@ -20,8 +20,11 @@ package; repeat mutation runs for each changed product package.
 `.cargo/mutants.toml` selects nextest and
 workspace tests so dependent-crate scenarios can kill driver/agent mutants; its
 `mutants` profile excludes unavailable COM-pair tests. It excludes
-simulator/testing fixtures, not fiscal production behavior. If `/tmp` is
-RAM-backed, set `TMPDIR` to a disk-backed scratch directory.
+simulator/testing fixtures, not fiscal production behavior. Set `TMPDIR` per
+command (never export it into a shell you keep using) when `/tmp` is
+RAM-backed. In a shared checkout the diff also holds other sessions' edits:
+restrict the run to your files with `-f <file>` (and `-F <regex>` for one
+function), and keep `--output` out of the repository.
 
 No observable mutant of changed product code may survive. Add the missing
 boundary assertion, delete code with no observable effect, or document a
@@ -30,7 +33,9 @@ Do not exclude a hard-to-test safety path to make the run green. Inspect
 timed-out, unviable and baseline failures separately.
 [cargo-mutants' diff documentation](https://mutants.rs/in-diff.html) warns that
 changing/removing only tests selects no mutants: widen to the affected
-package/full safety path when reducing tests or changing shared harnesses.
+package/full safety path when reducing tests or changing shared harnesses. The
+same scoped `-f` run shows whether a new test over existing code bites, and
+whether existing tests guard a safety check: an audit by test names does not.
 
 Additional finish evidence by changed area:
 
@@ -57,13 +62,15 @@ Additional finish evidence by changed area:
     --document-private-items
   ```
 
-- **Markdown links**: `lychee --offline AGENTS.md README.md docs .omp llms.txt`;
-  online/fragment checks when available.
-- **Driver profiles/acceptance**: Run ordinary all-feature tests first to prove
-  production gates, then the separate cfg-gated suite and release rejection
-  from [hardware acceptance](testing/hardware-acceptance.md). CI runs that
-  simulator-only acceptance suite in its own job. Never use acceptance flags
-  for packaging or substitute automated checks for supervised hardware evidence.
+- **Markdown**: `npx -y markdownlint-cli2 <changed files>` and
+  `lychee --offline AGENTS.md README.md docs .omp llms.txt`; online/fragment
+  checks when available.
+- **Driver profiles, preflight or acceptance gates**: Ordinary all-feature
+  tests prove production gates; then run the simulator-only acceptance suite
+  and release rejection from
+  [hardware acceptance](testing/hardware-acceptance.md) in their own target
+  directory. CI runs that suite in its own job. Never use acceptance flags for
+  packaging or substitute automated checks for supervised hardware evidence.
 
 Worker stress command:
 
@@ -78,8 +85,9 @@ permission to tolerate flakes. Linux watcher tests launch their own private bus
 and require `dbus-run-session`; Windows COM tests require the `ci` profile and
 a configured virtual pair. See [platform procedures](testing/platforms.md).
 
-For snapshots, `cargo insta review` reviews pending changes; never
-blanket-accept unseen fiscal output. The
+For snapshots, `cargo insta review -p <driver>` reviews pending changes for
+that crate only; `--workspace` or blanket accept also takes other sessions'
+pending output, so never use them for fiscal snapshots. The
 [`cargo insta test` command](https://insta.rs/docs/cli/) can force snapshots to
 pass to collect changes, so it is **not** the final verification run. Commit
 accepted snapshots, not pending `.snap.new` files. Fixed inputs should remove
@@ -120,17 +128,22 @@ explains symbol/source artifacts; [telemetry](telemetry.md) states what is sent.
 
 ## Parallel agent work
 
+This section covers one integrator and its slice agents. Independent sessions
+sharing the checkout follow [shared checkout](../AGENTS.md#shared-checkout).
+
 One integrator owns the shared contract, dependency versions/lockfile and final
 reconciliation. Assign every file to one slice; agree simulator/fake/worker
-event APIs before callers change. Each agent reads a shared brief with
-ownership, invariants and acceptance evidence; it asks the owner for cross-slice
-edits, never writes around them. Shared-tree agents preserve other agents' and
-the user's edits; separate worktrees exchange deliberate patches, not
-destructive resets.
+event APIs and add new dependencies before callers change. Each agent reads a
+shared brief with ownership, invariants and acceptance evidence; it asks the
+owner for cross-slice edits, never writes around them. Shared-tree agents
+preserve other agents' and the user's edits; separate worktrees exchange
+deliberate patches, not destructive resets.
 
 Slice agents do not run workspace builds/tests/formatters while siblings are
-mid-edit. If an assignment explicitly requests a slice check, use a distinct
-`CARGO_TARGET_DIR=target/slice-<name>` and only its assigned crate/files. The
+mid-edit. A separate target directory does not isolate source files: if an
+assignment explicitly requests a slice check, run it only when no sibling edits
+the same crate (otherwise in a separate worktree), with a distinct
+`CARGO_TARGET_DIR=target/slice-<name>`, on the assigned crate/files only. The
 integrator runs integrated verification once after changes land, including
 default production features, platform-specific checks and packages. No agent may
 touch a real printer. Hand-off lists files, regressions, public API changes,

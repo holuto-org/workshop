@@ -896,18 +896,40 @@ fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
 }
 
 #[test]
-fn ambiguous_or_impossible_warsaw_time_never_prints() {
-    for clock in [
-        "26;10;25;2;30;0",
-        "26;3;29;2;30;0",
-        "26;2;30;12;0;0",
-        "50;1;1;12;0;0",
-    ] {
+fn invalid_printer_clock_blocks_every_operation() {
+    for clock in ["26;2;30;12;0;0", "50;1;1;12;0;0"] {
         let sim = Simulator::start();
         supported(&sim);
         sim.set_clock(clock);
         assert!(matches!(printer(&sim).probe(), Err(Error::Protocol(_))));
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn dst_fold_or_gap_clock_blocks_only_receipt_timestamps() {
+    for clock in ["26;10;25;2;30;0", "26;3;29;2;30;0"] {
+        let sim = Simulator::start();
+        supported(&sim);
+        sim.set_clock(clock);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        assert!(expected.ready(), "{clock}: {}", expected.description());
+        driver.verify("ABC1234567890").unwrap();
+        driver
+            .print_report(
+                periodic("2026-09-01", "2026-09-30"),
+                "ABC1234567890",
+                &mut Log::default(),
+            )
+            .unwrap();
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_receipt(&receipt(vec![]), &expected, &mut log),
+            Err(Error::Protocol(_))
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal_bodies(&sim), ["26;9;1;26;9;30;0#o"]);
     }
 }
 

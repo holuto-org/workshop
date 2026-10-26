@@ -75,18 +75,31 @@ Backend expiry distinguishes queued jobs (expired) from taken attempts
 identically. Result notes are trimmed and NFC-canonicalized to the backend's
 form before journaling and sending; replay preserves that canonical note.
 
-A device error naming `trinit` is a certain refusal: without `trend`, no receipt
-can have been issued. Reports are themselves fiscal records: only an `ERR`
-frame rejection naming `dailyrep`, `monthlyrep` or `periodicrepbydates` is
-certain, plus Posnet code 382 naming `dailyrep` (a second consecutive zero daily
-report, refused before printing). Novitus `$h` refusals are certain; for reports
-only codes 36 and 37 naming `#r` (zero daily report already recorded, keyboard
-cancel) and 4 naming `#o` (invalid range or no fiscal records in it) are. Any
-other execution-error reply, lost reply or wrong-command reply for a report
-remains uncertain, as does a later receipt-command refusal up to and including
-`trend`. A successful Posnet `trend` completes the fiscal record (`strns.fe`,
+A post-send refusal is **certain** only with a vendor statement that it rejects
+the operation before any print or fiscal-memory effect. An error-code name or
+table alone is insufficient. Simulator `Refused` faults skip execution: they
+test classification, never prove that the device has no effects. Default to
+**uncertain**; admit no additional code without that vendor evidence.
+
+The complete certain-refusal list (only at the initial dispatch stage, with a
+valid reply matched to the sent command) is:
+
+- **Posnet:** `trinit` refusal; `ERR` frame rejection naming `dailyrep`,
+  `monthlyrep` or `periodicrepbydates`; code 382 naming `dailyrep` (second
+  consecutive zero daily report, refused before printing).
+- **Novitus:** `$h` refusal; codes 36 and 37 naming `#r` (zero daily report
+  already recorded, or keyboard cancellation before printing); code 4 naming
+  `#o` (invalid range or no fiscal records in it).
+- **Elzab:** transport rejection of the initial single-frame `LOR` only.
+
+All other execution errors, lost replies and wrong-command replies remain
+uncertain, including Posnet report date-error codes 2042/2043/2045/2046/2050
+and later receipt refusals through fiscal close. No refusal permits resending.
+A successful Posnet `trend` completes the fiscal record (`strns.fe`,
 POT-I-DEV-37 p. 377), so a failing `trftrln`/`trftrend` footer still returns the
-printed receipt; the unfinished footer keeps preflight not ready.
+printed receipt; the unfinished footer keeps preflight not ready. An accepted
+Elzab daily `RRP` remains uncertain even if counters advance. Sources are in the
+[fiscal contract](../fiscal-contract.md#specification-sources).
 
 Table-test each state/command pair, then use `proptest-state-machine` to
 generate claim/dispatch/complete/report/restart/reconcile/acknowledge sequences.

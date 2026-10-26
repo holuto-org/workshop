@@ -311,7 +311,7 @@ pub struct JournalBlock {
 /// only as `blocked`.
 pub fn journal_block(dir: &StateDir) -> JournalBlock {
     let blocking = Journal::new(dir)
-        .read()
+        .load()
         .map(|operation| operation.filter(Operation::blocks));
     JournalBlock {
         blocked: !matches!(blocking, Ok(None)),

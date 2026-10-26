@@ -622,11 +622,7 @@ fn invalid_physical_serial_is_refused_without_sending() -> TestResult {
 }
 
 #[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
-fn cleartext_or_credentialed_remote_api_urls_are_refused_before_any_request() -> TestResult {
+fn cleartext_or_credentialed_remote_api_urls_are_refused_before_any_request() {
     let server = Holuto::new();
     let refused = "Adres API wymaga https (http tylko dla localhost), bez danych logowania, \
                    zapytania i fragmentu.";
@@ -651,8 +647,7 @@ fn cleartext_or_credentialed_remote_api_urls_are_refused_before_any_request() ->
             "{url}"
         );
     }
-    assert!(server.requests().is_empty());
-    Ok(())
+    assert_eq!(server.requests().len(), 0);
 }
 
 #[test]
@@ -861,7 +856,8 @@ fn a_malformed_pairing_code_is_refused_without_spending_a_backend_attempt() -> T
 fn pairing_accepts_only_well_formed_credentials_and_never_echoes_rejected_ones() -> TestResult {
     let server = Holuto::new();
     // An unpadded base64url 32-byte token: 43 characters whose last one carries 2 bits.
-    let valid = format!("private_-{}w", "x".repeat(33));
+    let stem = format!("private_-{}", "x".repeat(33));
+    let valid = format!("{stem}w");
     let pair = |body: &serde_json::Value| -> Result<_, Box<dyn StdError>> {
         server.fault(
             "POST",
@@ -878,8 +874,8 @@ fn pairing_accepts_only_well_formed_credentials_and_never_echoes_rejected_ones()
     assert_eq!(paired.printer_id, PRINTER_ID);
     for body in [
         json!({"token": "private secret", "printerId": PRINTER_ID}),
-        json!({"token": &valid[..42], "printerId": PRINTER_ID}),
-        json!({"token": format!("{}x", &valid[..42]), "printerId": PRINTER_ID}),
+        json!({"token": stem, "printerId": PRINTER_ID}),
+        json!({"token": format!("{stem}x"), "printerId": PRINTER_ID}),
         json!({"token": valid.replace('_', "+"), "printerId": PRINTER_ID}),
         json!({"token": valid, "printerId": Uuid::nil()}),
         json!({"token": valid, "printerId": "private-not-a-uuid"}),

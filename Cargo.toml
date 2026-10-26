@@ -130,12 +130,14 @@ posnet = { path = "crates/posnet" }
 
 # Durable replace: directory fsync on Unix, MoveFileExW(MOVEFILE_WRITE_THROUGH) on Windows.
 atomicwrites = "0.4.4"
+# Europe/Warsaw civil time and DST folds for printer clocks, reports and history.
 jiff = { version = "0.2.38", features = ["serde"] }
 # Resolve Windows state paths with SHGetKnownFolderPath, not overridable LOCALAPPDATA.
 known-folders = "1.4.2"
+# deny_unknown_fields, tagged enums and try_from keep stored formats fail closed.
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-# sysfs enumeration avoids a libudev dependency.
+# sysfs enumeration avoids a libudev dependency; a native port layer would need unsafe Win32.
 serialport = { version = "4.10.1", default-features = false }
 # Desktop telemetry. The transport reuses our ureq agent (OS trust roots); no reqwest or tokio.
 sentry = { version = "0.49.3", default-features = false, features = [
@@ -157,6 +159,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "registry"] }
 # Use OS trust roots, including corporate CAs.
 ureq = { version = "3.5.0", default-features = false, features = ["json", "platform-verifier", "rustls"] }
+# Parses the API URL for the scheme, loopback and credential checks guarding the token.
 url = "2.5.8"
 uuid = { version = "1.29.0", features = ["serde"] }
 

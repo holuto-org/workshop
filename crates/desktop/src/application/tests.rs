@@ -236,70 +236,65 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
 -> Result<(), Box<dyn Error>> {
     // An event loop lets launch install its session-end handler, as in production.
     i_slint_backend_testing::init_integration_test_with_mock_time();
-    // Crash fixtures: a periodic report whose command may have reached the printer, in the
-    // current format and with the legacy key only the worker may migrate.
-    for identity_key in ["device_unique_number", "device_serial"] {
-        let temp = TempDir::new()?;
-        let dir = Arc::new(StateDir::open(temp.path().to_owned())?);
-        let interrupted = format!(
-            r#"{{
-  "report": {{
-    "report": {{"kind": "periodic", "from": "2026-09-01", "to": "2026-09-30", "summary": false}},
+    // Crash fixture: a periodic report whose command may have reached the printer.
+    let temp = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temp.path().to_owned())?);
+    let interrupted = r#"{
+  "report": {
+    "report": {"kind": "periodic", "from": "2026-09-01", "to": "2026-09-30", "summary": false},
     "vendor": "posnet",
-    "{identity_key}": "POS0000123456",
+    "device_unique_number": "POS0000123456",
     "started_at": "2026-10-16T10:00:00Z",
-    "device": {{"dispatching": {{"stage": "periodicrepbydates"}}}},
+    "device": {"dispatching": {"stage": "periodicrepbydates"}},
     "acknowledged_at": null
-  }}
-}}"#
+  }
+}"#;
+    fs::write(temp.path().join("operation.json"), interrupted)?;
+    let simulator = Simulator::start();
+    let app = make_app(dir, Settings::default(), simulator.link())?;
+    let published = app
+        .borrow()
+        .status_requested
+        .clone()
+        .ok_or("launch published no status")?;
+    assert_eq!(
+        (
+            published.processing,
+            published.blocked,
+            published.report_unresolved,
+            published.orphaned_receipt
+        ),
+        (false, true, true, false),
+        "`workshop status` must not report an unresolved report as unblocked"
+    );
+    assert_eq!(
+        fs::read_to_string(temp.path().join("operation.json"))?,
+        interrupted,
+        "launch never rewrites the fiscal journal"
+    );
+    // On macOS the unavailable quit hook's error replaces this explanation in tests.
+    if cfg!(not(target_os = "macos")) {
+        // Save feedback stays hidden while blocked, so launch must explain the block itself.
+        let explanation = (
+            "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
+             wyjaśnić."
+                .to_owned(),
+            Tone::Error,
         );
-        fs::write(temp.path().join("operation.json"), &interrupted)?;
-        let simulator = Simulator::start();
-        let app = make_app(dir, Settings::default(), simulator.link())?;
-        let published = app
-            .borrow()
-            .status_requested
-            .clone()
-            .ok_or("launch published no status")?;
         assert_eq!(
-            (
-                published.processing,
-                published.blocked,
-                published.report_unresolved,
-                published.orphaned_receipt
-            ),
-            (false, true, true, false),
-            "`workshop status` must not report an unresolved report as unblocked ({identity_key})"
+            (app.borrow().model.message.clone(), app.borrow().model.tone),
+            explanation,
+            "launch explains the block instead of the pairing prompt"
         );
+        app.borrow_mut()
+            .settings_saved(Ok(preferences::Outcome::Saved));
         assert_eq!(
-            fs::read_to_string(temp.path().join("operation.json"))?,
-            interrupted,
-            "launch never rewrites the fiscal journal ({identity_key})"
+            (app.borrow().model.message.clone(), app.borrow().model.tone),
+            explanation,
+            "a later save keeps the block explanation visible"
         );
-        // On macOS the unavailable quit hook's error replaces this explanation in tests.
-        if cfg!(not(target_os = "macos")) {
-            // Save feedback stays hidden while blocked, so launch must explain the block itself.
-            let explanation = (
-                "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
-                 wyjaśnić."
-                    .to_owned(),
-                Tone::Error,
-            );
-            assert_eq!(
-                (app.borrow().model.message.clone(), app.borrow().model.tone),
-                explanation,
-                "launch explains the block instead of the pairing prompt ({identity_key})"
-            );
-            app.borrow_mut()
-                .settings_saved(Ok(preferences::Outcome::Saved));
-            assert_eq!(
-                (app.borrow().model.message.clone(), app.borrow().model.tone),
-                explanation,
-                "a later save keeps the block explanation visible ({identity_key})"
-            );
-        }
-        APPLICATION.with(|slot| *slot.borrow_mut() = None);
     }
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
 

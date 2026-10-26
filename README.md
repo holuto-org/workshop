@@ -224,16 +224,9 @@ truncated.
 - Journal claimed jobs in `operation.json` before their preflight; journal every
   fiscal command **before sending it**. Startup/discovery uses read-only commands
   without creating fiscal intent. Never retry a device command or reprint a receipt.
-- **Posnet:** after a silent timeout, asynchronous `!sprn`/`!sdev` queries
-  observe operator waits (paper, cover, lever, temperature, power or a key).
-  Wait at most ten minutes from the first wait, without resending.
-  **Novitus:** real-time DLE/ENQ/DLE2 observe waits without resending;
-  undocumented DLE2 byte order is never guessed. **Elzab:** no concurrent
-  status polling is assumed, so silence is not an operator wait: after 10 s on
-  an item or payment, 30 s at close or on a daily report, or ten minutes on a
-  periodic report, the outcome is **unknown**. Paper-out auto-cancellation also
-  leaves an uncertain outcome. Unexplained silence or unreadable status is
-  **unknown**.
+- Paper or operator waits never cause a resend. If the printer stops answering
+  and completion cannot be established, the outcome is **unknown**. See
+  [per-brand wait limits](docs/fiscal-contract.md#silence-and-operator-waits).
 - Uncertain outcomes, including process death during dispatch, are **unknown**
   and block receipts and reports across restarts. Inspect the printout and
   printer, then resolve the job in the **web app**. Resolution unblocks, never
@@ -245,27 +238,21 @@ truncated.
   reports `failed` without blocking. If Holuto already marked that job `unknown`
   (it expired while the app was down), the app keeps blocking and tells staff
   that nothing was printed, so they can resolve it as failed in the web app.
-- Certain post-send refusals are brand-specific: Posnet initial `trinit`
-  errors and report `ERR` frame rejections; Novitus initial `$h` refusal and
-  daily-report keyboard cancellation (37); Elzab transport rejection of the
-  initial `LOR` only. Later receipt errors remain **unknown**, including Elzab
-  zero-close error 1008, except a Posnet footer error after a successful
-  `trend`: that receipt is printed and reported as such, and the printer stays
-  not ready until its open footer is cleared. No refusal permits resending.
-  An accepted Elzab `RRP` daily report is always **unknown**, even if counters
-  advance.
+- Only [documented certain refusals][certain-refusals] can be reported failed
+  after dispatch. Other failures remain **unknown**; no refusal permits
+  resending. A Posnet footer failure after a completed receipt does not undo
+  the print; the printer stays not ready until its open footer is cleared.
+  An accepted Elzab daily report needs human resolution even if counters advance.
 - Interrupted reports also block. After inspecting the printout, use **Wyjaśnij
   raport** with the same printer connected and ready; an overdue daily report
   or read-only mode does not prevent resolution. Resolution prints nothing.
 - Persist the job, attempt and execution-start timestamp before dispatch;
-  persist the result before sending it. A `done` result uses the printer clock
-  (`rtcget` on Posnet, `#c` on Novitus, `XCR` on Elzab), interpreted in Polish
-  time, not the PC clock. Unreadable clocks fail before fiscal commands.
-  Novitus and Elzab also reject ambiguous or nonexistent Warsaw local times.
-  Posnet prefers offset-bearing `tm`; legacy offset-free `da` selects the
-  earlier instant in Warsaw's repeated autumn hour. Resending a saved API
-  result preserves its attempt and issue time; it is not reprinting. Recovery
-  reconciles durable evidence with server state without replaying commands.
+  persist the result before sending it. A `done` result uses the printer clock,
+  not the PC clock. Unreadable receipt clocks fail before fiscal commands;
+  [Warsaw clock rules](docs/fiscal-contract.md#report-dates-and-printer-clock)
+  differ by brand and operation. Resending a saved API result preserves its
+  attempt and issue time; it is not reprinting. Recovery reconciles durable
+  evidence with server state without replaying commands.
 - Terminal server resolutions are authoritative, except against completed-print
   evidence: if the receipt printed but Holuto already marked the job `failed` or
   `expired`, the app keeps the journal, blocks and names the job and receipt
@@ -276,6 +263,8 @@ truncated.
 - History is a display cache that the worker publishes to the window; the window
   never reads it while processing. Report its read/write errors separately; they
   must not prevent settling a server-accepted result.
+
+[certain-refusals]: docs/testing/fiscal-safety.md#recovery-classification
 
 ## Fiscal API contract
 

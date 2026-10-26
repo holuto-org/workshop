@@ -57,10 +57,11 @@ regression that fails without it.
     leaves preflight not ready until the footer ends
   - Test shape: Fault matrix; assert effects and exact command sequence
 - **Daily/monthly/periodic reports**
-  - Required guarantee: Exact dates/summary parameters; readiness (read-only
-    still allows monthly/periodic) and same serial; report `ERR` frame
-    rejection naming the command is certain; execution-error/silent/
-    wrong-command failures uncertain
+  - Required guarantee: Exact dates/summary parameters and brand-specific
+    [report date rules](../fiscal-contract.md#report-dates-and-printer-clock);
+    readiness (read-only still allows monthly/periodic) and same serial;
+    [refusal classification](fiscal-safety.md#recovery-classification);
+    silent/wrong-command failures uncertain
   - Test shape: Fixed-clock snapshot + scenario per classification
 
 ## Shared fiscal values and native drivers
@@ -221,7 +222,9 @@ drivers, using that brand's simulator through the real driver.
   - Test shape: Real application + fake request log + simulator
 - **Report confirmation**
   - Required guarantee: Daily/monthly/periodic wording and parameters; valid
-    leap dates; from ≤ to ≤ today; periodic lower bound 2000-01-01
+    leap dates; ordered periodic dates and lower bound 2000-01-01; UI date
+    validation is not the driver's
+    [brand-specific date guard](../fiscal-contract.md#report-dates-and-printer-clock)
   - Test shape: Injected-today table + accessible dialog scenario
 - **Worker event bridge**
   - Required guarantee: `Connected`, `Device`, notices, `HistoryChanged` and

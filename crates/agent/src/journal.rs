@@ -1,7 +1,7 @@
 //! Persisted before each printer command and retained until settlement.
 //! An unreadable journal blocks printing.
 //!
-//! Nullable keys are required: every journal version has written them explicitly.
+//! Nullable keys are required: the journal always writes them explicitly.
 //! API text is canonicalized without replacing the raw completed-device evidence.
 
 #[cfg(test)]
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{borrow::Cow, fmt, io, marker::PhantomData, path::PathBuf};
 
 use fiscal::{
-    device::{Vendor, valid_unique_number},
+    device::Vendor,
     money::Grosze,
     receipt::{Payment, Receipt},
     report::Report,
@@ -79,7 +79,6 @@ pub(crate) struct ReceiptOperation {
     /// The server rejects future timestamps.
     pub(crate) issued_at: Timestamp,
     pub(crate) vendor: Vendor,
-    #[serde(alias = "device_serial")]
     pub(crate) device_unique_number: String,
     pub(crate) device: Device,
     #[serde(deserialize_with = "Option::deserialize")]
@@ -189,7 +188,6 @@ pub(crate) struct Settlement {
 pub(crate) struct ReportOperation {
     pub(crate) report: Report,
     pub(crate) vendor: Vendor,
-    #[serde(alias = "device_serial")]
     pub(crate) device_unique_number: String,
     pub(crate) started_at: Timestamp,
     pub(crate) device: Device,
@@ -201,13 +199,10 @@ pub(crate) struct ReportOperation {
 impl ReceiptOperation {
     pub(crate) fn result_form(&self) -> Option<ResultForm> {
         let result = self.result.as_ref()?;
-        // Never downgrade a legacy stored Done: rejected evidence goes to staff resolution.
         let (receipt_number, issued_at, reason) = match result {
-            JobResult::Done { receipt_number } => (
-                Some(receipt_code(receipt_number).unwrap_or_else(|| receipt_number.clone())),
-                Some(self.issued_at),
-                None,
-            ),
+            JobResult::Done { receipt_number } => {
+                (Some(receipt_number.clone()), Some(self.issued_at), None)
+            },
             JobResult::Failed { reason } | JobResult::Unknown { reason } => {
                 (None, None, Some(reason.clone()))
             },
@@ -255,24 +250,8 @@ impl<'dir> Journal<'dir> {
         }
     }
 
-    /// Migrates a legacy journal in place; see `read` for a query that never writes.
+    /// Never writes; an unreadable or invalid journal blocks.
     pub(crate) fn load(&self) -> Result<Option<Operation>, Error> {
-        let Some((operation, legacy)) = self.decode()? else {
-            return Ok(None);
-        };
-        if legacy {
-            self.save(&operation)?;
-        }
-        Ok(Some(operation))
-    }
-
-    /// Display queries leave a legacy journal for the worker's first `load` to migrate.
-    pub(crate) fn read(&self) -> Result<Option<Operation>, Error> {
-        Ok(self.decode()?.map(|(operation, _legacy)| operation))
-    }
-
-    /// `true` marks the legacy `device_serial` key.
-    fn decode(&self) -> Result<Option<(Operation, bool)>, Error> {
         let bytes = store::read_optional(&self.path).map_err(|source| Error::Store {
             action: "Nie można odczytać rejestru operacji. Drukowanie zablokowane",
             path: self.path.clone(),
@@ -281,28 +260,13 @@ impl<'dir> Journal<'dir> {
         let Some(bytes) = bytes else {
             return Ok(None);
         };
-        let invalid = || {
+        serde_json::from_slice(&bytes).map(Some).map_err(|_invalid_json| {
             Error::Blocked(
                 "Uszkodzony rejestr operacji lub nieobsługiwany format. \
              Drukowanie zablokowane; nie usuwaj pliku."
                     .to_owned(),
             )
-        };
-        let operation: Operation =
-            serde_json::from_slice(&bytes).map_err(|_invalid_json| invalid())?;
-        let legacy = bytes
-            .windows(b"\"device_serial\"".len())
-            .any(|key| key == b"\"device_serial\"");
-        if legacy {
-            let identity = match &operation {
-                Operation::Receipt(receipt) => &receipt.device_unique_number,
-                Operation::Report(report) => &report.device_unique_number,
-            };
-            if !valid_unique_number(identity) {
-                return Err(invalid());
-            }
-        }
-        Ok(Some((operation, legacy)))
+        })
     }
 
     pub(crate) fn save(&self, operation: &Operation) -> Result<(), Error> {

@@ -10,8 +10,10 @@ interruptMode: never
 # Posnet wire encoding
 
 Frame payloads are Windows-1250: encode and decode them only through
-`fiscal::cp1250::{encode, decode}`, as `frame::encode`,
-`frame::decode` and the simulator's replies do. UTF-8 bytes or a Latin-1 mapping
-change the intended Polish wire text and its CRC; the five unassigned code-page
-bytes stay a decode error (a corrupt frame), never replacement text. Settings
-and journal JSON stay UTF-8; this rule concerns only bytes on the serial line.
+`fiscal::cp1250::{encode, decode}`, as `frame::encode`, `frame::decode` and the
+simulator's replies do. The whole payload, command and parameter keys
+included, passes through `cp1250::encode` once; never hand-build ASCII bytes.
+UTF-8 bytes or a Latin-1 mapping change the intended Polish wire text and its
+CRC; the five unassigned code-page bytes stay a decode error (a corrupt frame),
+never replacement text. Settings and journal JSON stay UTF-8; this rule
+concerns only bytes on the serial line.

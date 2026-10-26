@@ -19,12 +19,12 @@ interruptMode: never
   captures the window (`app.capture()`), so operator input is never overwritten.
 - Closing the window only hides it when a tray host shows this app's icon
   (otherwise it stays visible) and never stops the worker. **Zatrzymaj** stops
-  processing; **Zakończ**, tray quit, macOS Dock/⌘Q quit and Unix
-  SIGTERM/SIGHUP/SIGINT route through `Worker::stop` and join only after the
-  final `Event::Stopped`.
-  On macOS no worker (including
-  pairing) starts unless `macos::install()` succeeds. A failed status write never
-  keeps quit waiting.
+  processing; **Zakończ**, tray quit, macOS Dock/⌘Q quit, logout, restart and
+  shutdown, and Unix SIGTERM/SIGHUP/SIGINT route through `Worker::stop` and
+  join only after the final `Event::Stopped`. macOS termination is held
+  (`TerminateLater`), never refused: a refusal would cancel the logout. On
+  macOS no worker (including pairing) starts unless `macos::install()`
+  succeeds. A failed status write never keeps quit waiting.
 - CLI commands never open a printer; mutations take the same instance lock and
   the validated atomic settings store. Autostart is explicit per-user opt-in and
   never bypasses preflight or an unresolved journal.

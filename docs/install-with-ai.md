@@ -184,9 +184,10 @@ shasum -a 256 ./install.sh
 ```
 
 Compare against the **exact filename** in `SHA256SUMS.txt`. Scripts repeat
-package hash verification and require its attestation whenever `gh` exists; a
-`gh` not signed in to github.com stops them before any download. No
-package is executed before verification. Missing assets do not support this
+package hash verification after downloading the package and manifest. When `gh`
+exists, they then check the package's attestation; failure stops installation.
+When `gh` is absent, they warn and use checksum-only verification. No package
+is executed before verification. Missing assets do not support this
 flow. Attestation proves release-workflow provenance, not OS notarization or
 that a program is harmless.
 

@@ -2,8 +2,8 @@
 description:
   "Privacy and signal policy for tracing, error capture and Sentry lifecycle"
 condition:
-  - "tracing|sentry|before_send|before_breadcrumb|instrument|println!|eprintln!|log::"
-scope: "tool:edit(crates/**), tool:write(crates/**)"
+  - "tracing|sentry|before_send|before_breadcrumb|instrument|log::"
+scope: "tool:edit(crates/*/src/**), tool:write(crates/*/src/**)"
 interruptMode: never
 ---
 

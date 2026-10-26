@@ -1,9 +1,9 @@
 # Supervised printer hardware acceptance
 
-**A person executes this procedure, never an AI agent or CI.** Receipts and
-reports on fiscalized printers are irreversible legal records. Installation,
-pairing and running simulator tests are not authorization to print. Obtain the
-owner's approval for each exact unit, scenario, amount and report date range.
+**Physical qualification is human-only, never AI- or CI-executed.** Receipts
+and reports on fiscalized printers are irreversible legal records. Installation,
+pairing and simulator checks are not authorization to print. Obtain the owner's
+approval for each exact unit, scenario, amount and report date range.
 Disconnect production printers during automated verification.
 
 ## Scope and evidence record
@@ -33,18 +33,25 @@ capability gates it qualifies (`crates/novitus/src/profile.rs`,
 
 ## Build and automated checks (no hardware)
 
+The simulator-only acceptance suite below is agent-runnable and runs in CI.
+Driver, preflight or profile changes must run it; only physical qualification
+requires a supervising person.
+
 Ordinary `--all-features` must continue to prove production behavior. Acceptance
 is **not a Cargo feature**. Its only switch is `cfg(workshop_acceptance)` via
 `RUSTFLAGS`; the workspace declares this cfg for `unexpected_cfgs` checking.
 
 ```sh
 cargo nextest run --workspace --all-features
-RUSTFLAGS='--cfg workshop_acceptance' cargo build -p workshop
-RUSTFLAGS='--cfg workshop_acceptance' cargo clippy \
-  --workspace --all-targets --all-features -- -D warnings
-RUSTFLAGS='--cfg workshop_acceptance' cargo nextest run --workspace --all-features
+CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
+  cargo build -p workshop
+CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
+  cargo clippy --workspace --all-targets --all-features -- -D warnings
+CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
+  cargo nextest run --workspace --all-features
 # REQUIRED negative check: must fail with the explicit compile_error below.
-RUSTFLAGS='--cfg workshop_acceptance' cargo build --release
+CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
+  cargo build --release
 ```
 
 Expected release diagnostic:
@@ -154,11 +161,11 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
 8. **Printer clock.** Capture `rtcget` / `#c` / `XCR` and compare with the
    operator-observed local date/time in Europe/Warsaw. Record precision, YY
    epoch, supported years and DST ambiguity behavior/vendor statement. Expected:
-   no PC-clock substitution. Novitus/Elzab reject repeated or skipped Warsaw
-   local times; Posnet prefers offset-bearing `tm`, but legacy offset-free
-   `da` chooses the earlier instant in the repeated autumn hour. Novitus/Elzab
-   currently accept 2000–2049; do not widen from a guess. **Fills:**
-   `Printed.issued_at` and clock-parser qualification, no profile clock field.
+   no PC-clock substitution; qualify receipts and read-only/report operations
+   separately against the
+   [per-brand clock rules](../fiscal-contract.md#report-dates-and-printer-clock).
+   **Fills:** `Printed.issued_at` and clock-parser qualification, no profile
+   clock field.
 9. **Frames and response ordering.** Capture Novitus mode-3 switch ACK,
    data+ACK exceptions, checksum, multi-digit error and raw DLE2 byte order
    under known states; zero flags alone cannot establish byte order. For Elzab,
@@ -225,7 +232,10 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    `Profile.open` (`LOR GS C0` ONLINE variant). No timing/placement proof means
    footer remains false; do not invent an end-footer command.
 6. **Reports.** Daily, completed calendar month, periodic detail and summary;
-   record date boundaries, future/current-month refusal and user confirmation.
+   record future-date guards and current-month behavior **per brand**, not a
+   universal refusal. Use the
+   [Posnet versus Novitus/Elzab date rules][report-dates] as the expected result.
+   Record user confirmation.
    Expected Novitus date-guarded `#r`, monthly `#o` kind 6, periodic 0/1;
    Posnet `rtcget` and `fmrecfisc` date guards before `monthlyrep` and
    `periodicrepbydates` (a demo printer has no fiscalisation record);
@@ -262,6 +272,28 @@ cancel/resume, Elzab `LCL RB`/`LCP`/`OPC`, `RRP` kind 14 or protected-memory
 reprints. Missing evidence for deduplication, error persistence (Elzab last
 error must be read immediately), concurrent `ySR` or counter atomicity stays
 explicitly open and does not relax Workshop's stronger safety policy.
+
+## Open hardware questions
+
+Until supervised evidence exists, leave code depending on these questions
+as-is and report findings as **suspected**, not confirmed defects. Simulator
+behavior and specification examples cannot close a hardware question.
+
+- **Posnet unique-number spelling:** capture literal `getrealid.nu` on Temo
+  Online and confirm the session binding. Spaced-number parsing is currently
+  based on specification examples, not a hardware observation.
+- **Posnet same-name/different-VAT behavior:** establish how the device treats
+  names equivalent under POT-I-DEV-37 p. 430 when VAT differs, including across
+  receipts. Name-comparison examples alone do not justify a new host-side lock.
+- **Posnet periodic-report deadline:** measure full and summary print times
+  over approved large date ranges, including monthly reports. The
+  [current deadline](../fiscal-contract.md#silence-and-operator-waits) is not a
+  measured worst-case print time; do not change it from simulator timing.
+- **Elzab receipt capacity:** measure item and adjustment-line consumption for
+  each model/firmware. The [advertised ceiling](../fiscal-contract.md#device-capabilities)
+  is a host policy, not a measured printer buffer.
+
+[report-dates]: ../fiscal-contract.md#report-dates-and-printer-clock
 
 ## Qualification decision and production cutover
 

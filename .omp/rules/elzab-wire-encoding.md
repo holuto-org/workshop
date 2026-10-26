@@ -1,7 +1,7 @@
 ---
 description: "Native ElzabSTX framing, configured code page and fiscal completion"
 condition: ".*"
-scope: "tool:read(crates/elzab/**), tool:edit(crates/elzab/**), tool:write(crates/elzab/**)"
+scope: "tool:edit(crates/elzab/**), tool:write(crates/elzab/**)"
 interruptMode: never
 ---
 
@@ -28,13 +28,14 @@ semantics.
 - Read XTR/FNR, online lowercase ySR packages (128/128/32 bits), complete company
   header, VAT and clock in the same connection before operations; inspect LPC's
   nested error before LOR. No setters or configuration changes are permitted.
-- Journal every fiscal command before sending. Only a valid matched transport
-  rejection of the first single-frame LOR is certain; all later failures are
-  uncertain. Paper-out may auto-cancel an ONLINE receipt: never cancel, resume,
-  replay or reprint automatically. Human resolution never sends commands.
+- Journal every fiscal command before sending. Which failures are certain is
+  owned by
+  [recovery classification](../../docs/testing/fiscal-safety.md#recovery-classification);
+  never widen it. Paper-out may auto-cancel an ONLINE receipt: never cancel,
+  resume, replay or reprint automatically. Human resolution never sends
+  commands.
 - Advances use ONLINE LDS with final bare RS D. Zero-total receipts stay blocked
   before LOR. Never substitute 0.01 or a negative sale. Company LAL remains
   disabled until native ordering/completion is qualified in the profile.
 - Daily RRP success is acceptance only: always uncertain. Monthly/periodic RPP
   uses S0 (synchronous). Never infer daily completion from idle/counter changes.
-- Exercise only the feature-gated offline simulator, never real fiscal hardware.

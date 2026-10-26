@@ -17,9 +17,11 @@ that an unreadable journal can be discarded.
   and staff-entered numbers; torn lines do not swallow the next valid entry.
 
 A round trip proves only today's writer agrees with today's reader; literal
-fixtures make future format changes deliberate. Never treat an unreadable
-journal as permission to print. File replacement/locking behavior must pass on
-each OS; Linux rename does not prove Windows write-through.
+fixtures make future format changes deliberate. Until the first Workshop
+release a format change is a clean cutover that updates the fixtures (see
+[external surfaces](../../AGENTS.md#external-surfaces)). Never treat an
+unreadable journal as permission to print. File replacement/locking behavior
+must pass on each OS; Linux rename does not prove Windows write-through.
 
 ## `/agent` and the backend
 
@@ -81,11 +83,3 @@ and unused-dependency checks. See [CI](../ci.md).
 `--all-features` must retain production fiscal-mode and unqualified-capability
 gates. Acceptance uses a separate debug-only cfg, not a feature; run its
 [isolated suite and release-rejection check](hardware-acceptance.md).
-
-The operation journal losslessly migrates the legacy `device_serial` key to
-`device_unique_number` only when the unchanged identity already has the canonical
-fiscal-memory format. The migrated record is durably saved before recovery continues.
-Ambiguous, malformed or noncanonical old identities block and retain the original
-evidence; never delete a journal to unblock printing. Display-only old `status.json`
-caches may be discarded; settings/token format is unchanged. Heartbeats are bodyless,
-return 204 and carry the unique-number header.

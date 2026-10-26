@@ -70,8 +70,8 @@ execution, restart, and resolution without replay. For an API call, prove
 headers/body and each failure through the production client. For a refusal,
 prove unchanged journal, device effects and server state as appropriate. For a
 UI change, prove the real callback wiring as well as its displayed state. Format
-changes must read previous fixtures; platform changes need the platform that
-implements them.
+changes update the literal fixtures (after the first release they also read the
+previous ones); platform changes need the platform that implements them.
 
 ## Choosing the test
 

@@ -21,6 +21,16 @@ deployment configuration, not OS-compatibility promises;
 [GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 describes the available architectures.
 
+## Code for another OS
+
+A Linux host cannot build the Windows or macOS targets: `ring`'s build script
+needs that target's C toolchain, and stub compilers or extra rustup targets do
+not produce trustworthy results. Change `cfg(windows)` and
+`cfg(target_os = "macos")` code only when its correctness is clear from
+reading, keep tests for it minimal (no new unsafe/FFI scaffolding), and report
+it as not compiled or run. The [CI](../ci.md) native matrix is the check; never
+claim a platform behavior that only Linux exercised.
+
 ## Ordinary local run
 
 ```sh
@@ -85,11 +95,9 @@ Disabling removes this registration and clears the preference. See the
 ## Process environment and filesystem
 
 For XDG/HOME/timezone/proxy overrides, Windows Known Folder behavior and process
-locks, re-run the test binary (`std::env::current_exe()`) as a child with an
-environment marker. Override the child's environment, not the running suite's
-globals. Never use unsafe `set_var`. Give each child an isolated state directory
-and synthetic credentials. Assert the child's exact outcome and stored state,
-not text such as `1 passed`.
+locks, re-run the test binary as a child with an isolated state directory and
+synthetic credentials, as the
+[writing-tests rule](../../.omp/rules/writing-tests.md) describes.
 
 ## Package checks
 
@@ -97,6 +105,12 @@ not text such as `1 passed`.
 bash packaging/build.sh
 bash packaging/verify.sh
 ```
+
+On Linux the build also needs `binutils` and `dpkg-deb`, and the verifier
+needs Xvfb, `xauth`, D-Bus, `xdotool`, `x11-utils`, `desktop-file-utils` and
+desktop fonts; the Package workflow's install step is the authoritative list.
+Release builds use fat LTO: give containers enough memory instead of weakening
+the release profile.
 
 Run on the host target, without configured printer credentials; never launch a
 package against the user's saved state. The verifier uses isolated home/state
