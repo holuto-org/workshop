@@ -1,8 +1,6 @@
 //! One exclusive native connection.
 //!
 //! Mode 3 is sent once without waiting for its undocumented initialization ACK.
-//! Correlates ACKs (including four-digit errors) and parses raw status alongside
-//! fragmented frames.
 
 use crate::frame;
 use fiscal::{
@@ -77,7 +75,6 @@ impl ExtendedStatus {
             .ok_or_else(frame::corrupt)?
             .split(';');
         let last_error = decimal(fields.next())?;
-        // Last printout and receipt numbers: validated, unused.
         let _last_print = decimal(fields.next())?;
         let _last_receipt = decimal(fields.next())?;
         let flags_wire = fields
@@ -502,7 +499,6 @@ fn response_prefix(body: &str) -> Option<(String, bool, bool)> {
     }
 }
 
-/// Counted option/value pairs.
 fn configuration_options(body: &str) -> Result<Vec<(u32, String)>, Error> {
     let (count, fields) = body.split_once("^c").ok_or_else(frame::corrupt)?;
     let count = decimal(Some(count))?;

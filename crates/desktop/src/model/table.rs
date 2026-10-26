@@ -86,7 +86,6 @@ impl<T: Row> Table<T> {
         mem::replace(&mut self.items, items)
     }
 
-    /// Stable sort; return the selected row's new index.
     pub(crate) fn sort(&mut self, sort: Sort, selected: Option<usize>) -> Option<usize> {
         self.sort = Some(sort);
         let mut tagged: Vec<_> = mem::take(&mut self.items).into_iter().enumerate().collect();
@@ -211,7 +210,6 @@ fn option_order(a: Option<&str>, b: Option<&str>, order: fn(&str, &str) -> Order
     }
 }
 
-/// Sort printer counters numerically before manually entered text.
 fn receipt_order(a: &str, b: &str) -> Ordering {
     match (a.parse::<u64>(), b.parse::<u64>()) {
         (Ok(x), Ok(y)) => x.cmp(&y).then_with(|| a.cmp(b)),

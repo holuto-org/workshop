@@ -23,9 +23,8 @@ use super::{APPLICATION, Application, Arc, Rc, RefCell, macos, with_app};
 /// Printed inside `AppKit`'s nested run loop while it holds the termination.
 pub(crate) const HELD: &[u8] = b"native quit held until the worker stopped\n";
 
-/// Never returns on success: `AppKit` ends the process after the held termination's reply.
-///
-/// The caller proves from `state` that exit followed `Event::Stopped`.
+/// Success exits through `AppKit`'s held termination; the caller verifies from `state`
+/// that exit followed `Event::Stopped`.
 #[expect(
     clippy::panic_in_result_fn,
     reason = "One native process scenario asserts AppKit dispatch and fiscal shutdown ordering"
@@ -112,7 +111,6 @@ pub(crate) fn run(state: &Path) -> Result<(), Box<dyn Error>> {
         "production Worker must reach the held final receipt command"
     );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
-    // Returning means AppKit refused the termination instead of holding it.
     Err("AppKit termination was refused; the event loop ended instead of AppKit exiting".into())
 }
 
@@ -128,7 +126,10 @@ struct DispatchQueue {
     _opaque: [u8; 0],
 }
 
-#[expect(unsafe_code, reason = "libdispatch has no binding among the dependencies")]
+#[expect(
+    unsafe_code,
+    reason = "libdispatch has no binding among the dependencies"
+)]
 unsafe extern "C" {
     static _dispatch_main_q: DispatchQueue;
     fn dispatch_async_f(
@@ -138,10 +139,8 @@ unsafe extern "C" {
     );
 }
 
-/// Requests `terminate:` from a main-queue callback, outside winit's event handler.
-///
-/// A nested `AppKit` run loop entered inside a Slint event could never deliver Slint
-/// events, because winit keeps its handler borrowed for that event.
+/// Dispatch outside winit's handler: it stays borrowed during Slint events,
+/// preventing the nested `AppKit` run loop from delivering further Slint events.
 fn request_native_quit(quit: Box<HeldQuit>) {
     #[expect(
         unsafe_code,
@@ -163,7 +162,10 @@ fn request_native_quit(quit: Box<HeldQuit>) {
     reason = "A native dispatch failure must fail this standalone scenario"
 )]
 extern "C" fn terminate_on_main(context: *mut c_void) {
-    #[expect(unsafe_code, reason = "Reclaims the context leaked by request_native_quit")]
+    #[expect(
+        unsafe_code,
+        reason = "Reclaims the context leaked by request_native_quit"
+    )]
     // SAFETY: `request_native_quit` passed a `Box<HeldQuit>` and libdispatch calls this once.
     let quit = unsafe { Box::from_raw(context.cast::<HeldQuit>()) };
     let main_thread = MainThreadMarker::new().expect("main queue runs on the main thread");

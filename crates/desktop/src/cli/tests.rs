@@ -367,7 +367,6 @@ fn unlocked_status_ignores_even_a_corrupt_snapshot_left_after_a_crash() -> TestR
 fn a_cli_command_holding_the_state_lock_is_not_a_running_app() -> TestResult {
     let temp = tempfile::tempdir()?;
     let path = temp.path().join("state");
-    // A crashed GUI session left a processing snapshot behind.
     Snapshot {
         processing: true,
         connected: true,

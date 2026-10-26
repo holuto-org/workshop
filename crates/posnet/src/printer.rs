@@ -199,11 +199,8 @@ impl Driver for Printer {
     }
 }
 
-/// Refuses report dates the printer would refuse with an uncertain outcome.
-///
-/// The printer refuses a range starting after its date or ending before its fiscalisation
-/// before printing (`ERR_REP_PER_DATE_START_GT_CURR`, `ERR_REP_PER_DATE_END_GT_FISK`,
-/// p. 441), but that refusal is not certain.
+/// Validate dates before dispatch: these pre-print refusals leave an uncertain outcome
+/// (`ERR_REP_PER_DATE_START_GT_CURR`, `ERR_REP_PER_DATE_END_GT_FISK`, p. 441).
 fn require_report_dates(
     session: &mut Session,
     fiscal: bool,

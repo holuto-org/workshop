@@ -218,7 +218,6 @@ fn read_only_printer_refuses_printing_but_allows_resolution() {
 #[cfg(not(workshop_acceptance))]
 #[test]
 fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command() {
-    // LDS advances are qualified; only zero-total and footer need acceptance.
     for (advance, footer, message) in [
         (
             12346,
@@ -239,7 +238,6 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
 }
-/// Names the fix: the printer header must contain the Holuto company name.
 #[cfg(not(workshop_acceptance))]
 const FOOTER_REFUSAL: &str = "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka \
                               nie drukuje jej w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem \
@@ -715,7 +713,6 @@ fn monthly_report_of_the_printer_month_never_dispatches() {
     let sim = Simulator::start();
     let driver = printer(&sim);
     let monthly = |month| Report::Monthly { year: 2026, month };
-    // Printer dates 2026-10-24 and 2026-10-31: October has not ended on the printer.
     for clock in ["261024120000", "261031235959"] {
         sim.set_clock(clock);
         for month in [10, 11] {
@@ -748,7 +745,6 @@ fn accepted_daily_report_stays_pending_until_a_later_connection_has_seen_it() {
         driver.print_report(Report::Daily, "ABC1234567890", &mut Log::default()),
         Err(Error::NotReady(_))
     ));
-    // The printout finished; the operator can now resolve the interrupted report.
     let _resolvable = driver.verify("ABC1234567890").unwrap();
     assert!(!sim.daily_pending());
     assert_eq!(fiscal(&sim), ["RRP\x1dI1\x1dJ1"]);
@@ -1141,7 +1137,6 @@ fn inconsistent_multipart_close_is_uncertain_despite_the_completed_effect() {
 }
 /// Command, write budget and the first read budget after it.
 type Budgets = Arc<Mutex<Vec<(String, Duration, Option<Duration>)>>>;
-/// Real-time link: records each command's write budget and the read budget that follows it.
 #[derive(Debug)]
 struct Deadlines {
     inner: Arc<dyn Link>,

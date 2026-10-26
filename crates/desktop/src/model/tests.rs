@@ -119,7 +119,6 @@ fn accepting_a_confirmation_the_stopped_printer_can_no_longer_run_says_nothing_w
     let mut model = ready();
     model.request(Action::DailyReport);
     assert!(model.pending.is_some());
-    // E.g. Stop from the tray or a 401 while the dialog is open.
     model.stopped();
     let mut commands = Vec::new();
     commands.extend(model.confirm(true));
@@ -296,7 +295,6 @@ fn a_stop_requested_while_a_confirmation_is_open_sends_nothing() {
         model.orphaned_receipt = Some("Zlecenie 42 · paragon 41".into());
         model.request(action);
         assert!(model.pending.is_some(), "{action:?} opens a confirmation");
-        // Zatrzymaj or Zakończ: the worker is still connected and finishing its operation.
         model.stopping = true;
         let mut commands = Vec::new();
         commands.extend(model.confirm(true));
@@ -342,7 +340,6 @@ fn sorted_refresh_retains_document_identity_not_row_index() {
         Some(1),
         "sort follows the selected document"
     );
-    // A new row before the selection moves the old index onto a different document.
     let mut inserted = document();
     inserted.order_id = Uuid::from_u128(10);
     inserted.order_number = 10;

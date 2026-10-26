@@ -28,7 +28,6 @@ fn stop_while_start_is_saving_settings_cancels_the_start() -> Result<(), Box<dyn
         port: simulator.address().into(),
         ..Settings::default()
     };
-    // The application loads its pairing from disk, as `main` does.
     settings.save(&dir)?;
     let app = Rc::new(RefCell::new(Application::new(
         Arc::clone(&dir),

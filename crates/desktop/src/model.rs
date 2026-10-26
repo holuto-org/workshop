@@ -147,7 +147,6 @@ impl Model {
         self.tone = tone;
     }
 
-    /// Call after `settings` were written to or reloaded from disk.
     pub(crate) fn settings_persisted(&mut self) {
         self.saved_api_url.clone_from(&self.settings.api_url);
         self.saved_token.clone_from(&self.settings.token);
@@ -157,7 +156,6 @@ impl Model {
         self.documents.items()
     }
 
-    /// Preserve selection by document identity, not row index.
     pub(crate) fn set_documents(&mut self, documents: Vec<Document>, page: usize, has_next: bool) {
         let previous = self.documents.set(documents);
         self.selected = self
@@ -529,7 +527,6 @@ impl Model {
         })
     }
 
-    /// The command to submit, if the operator accepted and the action is still allowed.
     pub(crate) fn confirm(&mut self, accepted: bool) -> Option<Command> {
         let pending = self.pending.take().filter(|_| accepted)?;
         // Readiness may have changed while the confirmation was open.

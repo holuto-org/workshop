@@ -3,7 +3,6 @@ use i_slint_backend_testing::ElementQuery;
 
 use super::*;
 
-/// Whether any element's accessible label, value or description shows `text`.
 fn rendered(window: &AppWindow, text: &str) -> bool {
     ElementQuery::from_root(window)
         .match_descendants()
@@ -235,7 +234,6 @@ fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<()
         unpaired.clone(),
         Simulator::start().link(),
     )?;
-    // What the pairing worker saves before it emits `Paired`.
     let paired = Settings {
         token: "synthetic-paired-token".into(),
         ..unpaired
@@ -257,7 +255,6 @@ fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<()
                         if app.quitting || app.model.saving || !app.writes_pending.is_empty() {
                             return Ok(());
                         }
-                        // The failed read is over; the operator saves an unrelated change.
                         fs::set_permissions(&file, fs::Permissions::from_mode(0o600))
                             .map_err(|error| error.to_string())?;
                         app.capture();
@@ -301,7 +298,6 @@ fn start_after_a_failed_reload_connects_with_the_credentials_pairing_saved()
     };
     unpaired.save(&dir)?;
     let app = make_app(Arc::clone(&dir), unpaired.clone(), simulator.link())?;
-    // What the pairing worker saves before it emits `Paired`.
     Settings {
         token: holuto.token().into(),
         ..unpaired
@@ -331,7 +327,6 @@ fn start_after_a_failed_reload_connects_with_the_credentials_pairing_saved()
                                 return Ok(());
                             }
                             if !started.swap(true, Ordering::SeqCst) {
-                                // The failed read is over; the operator starts processing.
                                 fs::set_permissions(&file, fs::Permissions::from_mode(0o600))
                                     .map_err(|error| error.to_string())?;
                                 app.capture();

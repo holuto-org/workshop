@@ -12,7 +12,6 @@ pub fn lookup(model: &str) -> Option<Capabilities> {
         _ => return None,
     }
     Some(Capabilities {
-        // Current ONLINE model manuals.
         max_item_name: 64,
         // Host ceiling, not a verified device limit; a refusal is never replayed.
         max_lines: 255,

@@ -262,7 +262,6 @@ fn an_enabled_posnet_interface_without_windows_1250_refuses_before_journaling() 
             report.unwrap();
         }
     }
-    // Each interface's own reply decides: neither can hide the other.
     for (pc1, pc2) in [("0", "2"), ("1", "0")] {
         let sim = simulator();
         sim.set_code_page("1", pc1);
@@ -908,10 +907,8 @@ fn an_unsupported_posnet_model_is_reported_by_name_after_only_identification() {
     assert_eq!(commands(&sim), ["getrealid"]);
 }
 
-/// Recognizes the transport error a reply fault surfaces as.
 type Surfaced = fn(&Error) -> bool;
 
-/// Faults whose reply failure leaves the executed command's effect uncertain.
 fn reply_faults() -> [(Fault, Surfaced); 3] {
     [
         (Fault::LoseReply, |error| matches!(error, Error::Timeout(_))),
@@ -1060,7 +1057,6 @@ fn a_refused_later_receipt_step_is_uncertain_and_stops_the_stream() {
 
 #[test]
 fn a_footer_failure_after_trend_returns_the_printed_receipt_without_a_second_send() {
-    // `trend` completes the fiscal record (`strns.fe`, p. 377); the footer cannot undo it.
     let expected = [
         "trinit",
         "trnipset",

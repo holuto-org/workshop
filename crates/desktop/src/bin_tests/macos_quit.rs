@@ -82,7 +82,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     if let Some(state) = env::var_os(CHILD) {
-        // Success never returns: AppKit exits once the held termination is answered.
         return application::native_quit_test::run(Path::new(&state));
     }
     let state = tempfile::tempdir()?;

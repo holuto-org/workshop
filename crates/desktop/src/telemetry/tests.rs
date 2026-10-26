@@ -605,7 +605,6 @@ fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(
         let state = PathBuf::from(env::var_os(STATE).ok_or("missing state path")?);
         let outcome = PathBuf::from(env::var_os(OUTCOME).ok_or("missing outcome path")?);
         let integration = minidump(&state).before_capture(move |_scope, dump| {
-            // Runs in the reporter process while the dump exists on disk.
             let written = dump.is_file().then(|| dump.display().to_string());
             let _written = fs::write(&outcome, written.unwrap_or_default());
         });

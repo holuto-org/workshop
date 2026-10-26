@@ -42,7 +42,6 @@ fn linux_login_entry_launches_only_the_exact_executable_and_is_removable() -> Te
 fn linux_login_entry_after_a_package_upgrade_launches_the_installed_executable() -> TestResult {
     let temp = tempfile::tempdir()?;
     let artifact = temp.path().join("autostart/workshop.desktop");
-    // `/proc/self/exe` once dpkg has renamed a new binary over the running one.
     set_at(&artifact, Path::new("/usr/bin/workshop (deleted)"), true)?;
     assert_eq!(
         fs::read_to_string(&artifact)?,
@@ -163,7 +162,6 @@ fn macos_login_agent_launched_through_the_cli_symlink_names_the_bundle_executabl
     }
     let home = tempfile::tempdir()?;
     let executable = fs::canonicalize(env::current_exe()?)?;
-    // Like the installer's `~/.local/bin/workshop` link into the app bundle.
     let launcher = home.path().join(".local/bin/workshop");
     fs::create_dir_all(launcher.parent().ok_or("missing launcher directory")?)?;
     symlink(&executable, &launcher)?;
@@ -211,10 +209,8 @@ fn windows_login_value_contains_only_the_quoted_executable_and_is_removable() ->
             RegGetValueW, RegOpenKeyExW,
         },
     };
-    /// Removes this test's key and, when no other run uses it, the shared parent.
     struct Cleanup(Vec<u16>);
     impl Cleanup {
-        /// Returns the leaf and parent deletion results.
         fn remove(&self) -> (WIN32_ERROR, WIN32_ERROR) {
             let parent: Vec<_> = "Software\\HolutoWorkshopTests"
                 .encode_utf16()

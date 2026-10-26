@@ -224,7 +224,6 @@ fn silence_without_a_wait_reason_and_unanswered_queries_remain_timeouts() {
     }
 }
 
-/// Sends the fiscal reply only after both status queries, followed by `then`.
 struct LateReply {
     reads: VecDeque<Vec<u8>>,
     then: Vec<u8>,

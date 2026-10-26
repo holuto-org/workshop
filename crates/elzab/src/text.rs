@@ -1,7 +1,6 @@
 //! Configured CP1250 only, never replacement or escaping.
 use fiscal::{cp1250, error::Error};
 
-/// `command`, then GS and `fields` when there are any.
 pub(crate) fn encode_body(command: &str, fields: &str) -> Result<Vec<u8>, Error> {
     let body = if fields.is_empty() {
         command.to_owned()

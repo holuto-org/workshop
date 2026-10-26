@@ -19,7 +19,6 @@ pub struct Session {
     port: Box<dyn Port>,
     /// Bytes beyond the last frame, retained for the next reply.
     pending: Vec<u8>,
-    /// Simulator time scaling; always 1 for serial links.
     time_scale: u32,
 }
 
@@ -80,7 +79,6 @@ impl Session {
         self.receive(command, deadline)
     }
 
-    /// A late reply to another command is an error, not this command's success.
     pub(crate) fn receive(
         &mut self,
         command: &'static str,
@@ -121,7 +119,7 @@ impl Session {
         Ok(deadline)
     }
 
-    /// Retains error codes and query tokens for correlation; `command` labels timeout errors.
+    /// Retains error codes and query tokens for correlation.
     pub(crate) fn next_frame(
         &mut self,
         command: &'static str,
@@ -131,7 +129,7 @@ impl Session {
         loop {
             if let Some(end) = self.pending.iter().position(|byte| *byte == ETX) {
                 let raw: Vec<u8> = self.pending.drain(..=end).collect();
-                // Discard line noise before the last STX; CRC validates the frame.
+                // CRC validates the frame despite preceding line noise.
                 let Some(start) = raw.iter().rposition(|byte| *byte == STX) else {
                     continue;
                 };

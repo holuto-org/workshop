@@ -546,7 +546,6 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
                 result = Err(error);
                 break;
             },
-            // Announce only changes: a persisting problem was already shown.
             Ok(problem) if problem != shown => {
                 if problem.is_some() {
                     tracing::warn!(

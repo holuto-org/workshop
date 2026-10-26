@@ -638,7 +638,6 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
         [
             (false, false, false, false, false, None),
             (true, false, false, false, false, None),
-            // Connected publishes the detected brand with the printer's identity.
             (true, true, false, false, false, Some(Vendor::Posnet)),
             (true, true, true, true, false, Some(Vendor::Posnet)),
             (false, false, true, true, false, Some(Vendor::Posnet)),

@@ -174,7 +174,6 @@ fn read_only_printer_refuses_printing_but_allows_resolution() {
         expected.description(),
         "Drukarka jest w trybie tylko do odczytu"
     );
-    // The driver refuses monthly/periodic reports below, so the UI must not offer them.
     assert!(!expected.periodic_reports_allowed());
     let _resolvable = driver.verify("ABC1234567890").unwrap();
     let mut log = Log::default();
@@ -244,7 +243,6 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
 }
 #[cfg(not(workshop_acceptance))]
 const ADVANCE_REFUSAL: &str = "Drukarka nie obsługuje rozliczenia zaliczek.";
-/// Names the fix: the printer header must contain the Holuto company name.
 #[cfg(not(workshop_acceptance))]
 const FOOTER_REFUSAL: &str = "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka \
                               nie drukuje jej w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem \
@@ -676,7 +674,6 @@ fn operator_wait_resumes_without_resending() {
     assert_eq!(fiscal_bodies(&sim), ["1;26;10;24#r"]);
     assert_eq!(sim.reports(), 1);
 
-    // Paper runs out on the first item: the receipt must finish without resending it.
     let sim = Simulator::start();
     supported(&sim);
     let driver = printer(&sim);
@@ -775,7 +772,6 @@ fn monthly_report_of_the_printer_month_never_dispatches() {
     supported(&sim);
     let driver = printer(&sim);
     let monthly = |month| Report::Monthly { year: 2026, month };
-    // Printer dates 2026-10-24 and 2026-10-31: October has not ended on the printer.
     for clock in ["26;10;24;12;0;0", "26;10;31;23;59;59"] {
         sim.set_clock(clock);
         for month in [10, 11] {
@@ -1271,7 +1267,6 @@ fn persisting_operator_wait_is_announced_once() {
 
 #[test]
 fn discovery_consumes_its_late_acks_before_closing() {
-    // PC1 ends after `52$i`; PC2 returns early after `50$i`.
     for (endpoint, query) in [("PC1", "52$i"), ("PC2", "50$i")] {
         let sim = Simulator::start();
         supported(&sim);

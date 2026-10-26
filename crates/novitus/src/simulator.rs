@@ -117,7 +117,6 @@ impl State {
         self.dle = 0x74;
     }
 
-    /// Starts an operator wait or defers the ACK, as `fault` describes.
     fn apply(&mut self, fault: Option<&Fault>, command: &str, response: &mut Vec<u8>) {
         match fault {
             Some(Fault::Wait) => {
@@ -140,7 +139,6 @@ impl State {
         }
     }
 
-    /// A `WaitPolls` operator fixes the printer once enough DLE polls reported it.
     const fn polled(&mut self, byte: u8) {
         if byte == DLE
             && let Some(polls) = self.resume_after
@@ -477,7 +475,6 @@ fn serve_session(mut stream: TcpStream, state: &Mutex<State>, stop: &AtomicBool)
     }
 }
 
-/// Writes owed output, then `response`; this reply's own deferral becomes owed afterwards.
 fn send(stream: &mut TcpStream, state: &Mutex<State>, response: Vec<u8>, fragment: usize) -> bool {
     let response = [mem::take(&mut lock(state).carry), response].concat();
     if response
@@ -492,7 +489,6 @@ fn send(stream: &mut TcpStream, state: &Mutex<State>, response: Vec<u8>, fragmen
     true
 }
 
-/// Record foreign STX discovery frames without executing them.
 fn ignore_foreign(pending: &mut Vec<u8>, state: &Mutex<State>) -> bool {
     let Some(end) = pending.iter().position(|byte| *byte == 0x03) else {
         return false;

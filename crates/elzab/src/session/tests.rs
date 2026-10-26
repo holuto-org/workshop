@@ -174,7 +174,6 @@ fn inconsistent_multipart_totals_are_rejected() {
     }
 }
 
-/// The real simulator behind a chosen time scale, recording each write's deadline.
 #[derive(Debug)]
 struct Recording {
     inner: Arc<dyn Link>,

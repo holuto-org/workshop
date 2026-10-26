@@ -120,7 +120,6 @@ impl Session {
                 },
                 Some(_) | None => {},
             }
-            // Unknown total is 0 until the final numbered frame.
             if result.len() + data.len() > 65_536 {
                 return Err(frame::corrupt());
             }

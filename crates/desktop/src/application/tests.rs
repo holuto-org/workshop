@@ -243,7 +243,6 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
 -> Result<(), Box<dyn Error>> {
     // An event loop lets launch install its session-end handler, as in production.
     i_slint_backend_testing::init_integration_test_with_mock_time();
-    // Crash fixture: a periodic report whose command may have reached the printer.
     let temp = TempDir::new()?;
     let dir = Arc::new(StateDir::open(temp.path().to_owned())?);
     let interrupted = r#"{
@@ -323,7 +322,6 @@ fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<
         has_next: true,
     });
     state.event(Event::Stopped);
-    // A new worker's pager starts at the first page.
     state.event(Event::Connected {
         printer_id: "printer-42".into(),
         unique_number: "TST0000000042".into(),
@@ -361,7 +359,6 @@ fn a_printer_of_another_brand_never_publishes_the_previous_printers_vendor()
     ready(&app);
     let mut state = app.borrow_mut();
     state.event(Event::Stopped);
-    // The next session detects a Novitus printer where the Posnet one was.
     state.event(Event::PortDetected {
         port: "novitus".into(),
         vendor: Vendor::Novitus,
@@ -447,7 +444,6 @@ fn stopped_worker_replaces_progress_text_but_keeps_errors() -> Result<(), Box<dy
     let (_temp, app, window) = fixture()?;
     ready(&app);
     let mut state = app.borrow_mut();
-    // State left by `stop` while the worker finishes its operation.
     state.model.running = true;
     state.model.stopping = true;
     state.model.say(
@@ -461,7 +457,6 @@ fn stopped_worker_replaces_progress_text_but_keeps_errors() -> Result<(), Box<dy
         "Zatrzymano.",
         "a requested stop reports completion"
     );
-    // A requested stop whose worker then fails must keep the failure.
     state.model.running = true;
     state.model.stopping = true;
     state.event(Event::Status {
@@ -743,7 +738,6 @@ fn quit_before_deadline() -> Result<bool, Box<dyn Error>> {
     let deadline = thread::Builder::new()
         .name("quit deadline".into())
         .spawn(move || {
-            // Bound a failed test instead of hanging the suite.
             let hung = quit.recv_timeout(Duration::from_secs(5)).is_err();
             if hung {
                 let _scheduled = slint::invoke_from_event_loop(|| {
@@ -817,7 +811,6 @@ fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(
         )
     );
     button(&window, "Anuluj")?.invoke_accessible_default_action();
-    // A submitted acknowledgement would mark a command in flight and hide the button.
     assert!(
         !window.get_confirming() && window.get_orphaned_receipt(),
         "cancelling closes the dialog without acknowledging"
@@ -1203,7 +1196,6 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
-    // A directory in place of status.json makes every status write fail.
     fs::create_dir(temporary.path().join("status.json"))?;
     let simulator = Simulator::start();
     let app = Rc::new(RefCell::new(Application::new(

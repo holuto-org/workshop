@@ -26,7 +26,6 @@ fn settings() -> Settings {
     }
 }
 
-/// Pairing owns the credential; Save keeps the stored one.
 fn paired(temporary: &TempDir) -> Result<Arc<StateDir>, Box<dyn Error>> {
     let dir = StateDir::open(temporary.path().to_owned())?;
     let stored = settings();

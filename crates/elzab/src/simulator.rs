@@ -24,8 +24,7 @@ pub enum Fault {
     Transport(String),
     Reply(Vec<u8>),
 }
-/// An accepted daily report prints until the printer has reported it in progress and the
-/// host reconnects; acceptance alone never completes it.
+/// Daily reports finish only after reporting in progress and a subsequent host reconnect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Daily {
     Idle,

@@ -51,11 +51,8 @@ pub(crate) fn init() -> Option<ClientInitGuard> {
     Some(guard)
 }
 
-/// Keeps native dumps in the per-user private state directory.
-///
-/// A dump is process memory that can hold the token, NIP or receipts. The reporter writes it
-/// before uploading and keeps it if killed mid-upload, so it never belongs in the default
-/// shared temporary directory (`/tmp` on Linux).
+/// Dumps can contain credentials, NIP or receipts and survive interrupted uploads.
+/// Keep them in the private state directory, never the SDK's shared temporary directory.
 fn minidump(state: &Path) -> MinidumpIntegration {
     MinidumpIntegration::new()
         .flush_timeout(FLUSH_TIMEOUT)

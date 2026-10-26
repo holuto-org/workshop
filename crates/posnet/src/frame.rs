@@ -124,7 +124,6 @@ pub(crate) fn encode(command: &str, params: &[(&str, String)]) -> Result<Vec<u8>
 }
 
 #[cfg(any(test, feature = "simulator"))]
-/// Error codes yield [`Error::Device`]; `ERR` without a code is a protocol error.
 pub(crate) fn decode(frame: &[u8]) -> Result<(String, Reply), Error> {
     let (command, reply) = decode_response(frame)?;
     reply.into_result(&command).map(|reply| (command, reply))

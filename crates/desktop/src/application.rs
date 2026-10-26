@@ -288,7 +288,6 @@ impl Application {
             self.model.say(error.to_string(), Tone::Error);
             return;
         }
-        // Only a submitted Start can complete with `Outcome::Start`, the flag's sole reader.
         self.starting |= start;
         let _submitted = self.write_settings(preferences::Request::Save {
             settings: self.model.settings.clone(),
@@ -364,7 +363,6 @@ impl Application {
         match completion {
             Ok(preferences::Outcome::Start(settings)) => {
                 self.adopt_settings(settings);
-                // Stop or Quit before the write landed cancelled this start.
                 if mem::take(&mut self.starting) {
                     self.spawn_worker();
                 }
@@ -410,7 +408,6 @@ impl Application {
         }
     }
 
-    /// Takes settings as written to or read from disk, including the stored credential.
     fn adopt_settings(&mut self, mut settings: Settings) {
         // A diagnostics choice made after the request was queued is written after it.
         settings.telemetry_enabled = self.model.settings.telemetry_enabled;

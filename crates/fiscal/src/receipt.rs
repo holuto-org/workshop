@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{decimal, device::Capabilities, error::Error, money::Grosze};
 
-/// VAT slots A–G.
 pub const VAT_SLOTS: u8 = 7;
 const QUANTITY_SCALE: usize = 8;
 const QUANTITY_UNIT: u64 = 100_000_000;

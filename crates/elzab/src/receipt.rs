@@ -16,7 +16,6 @@ const END_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug)]
 pub(crate) struct Step {
     pub command: &'static str,
-    /// Everything after the command name and its GS separator.
     pub fields: String,
     /// Silence beyond this leaves the outcome uncertain; nothing is resent.
     pub timeout: Duration,

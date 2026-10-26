@@ -34,8 +34,6 @@ impl Watcher {
     }
 }
 
-/// Creates the application's icon the way `application::run` does.
-///
 /// Slint registers it with the watcher from its change handlers; running them here
 /// makes the attempt synchronous.
 fn show_icon() -> Result<TrayIcon, slint::PlatformError> {

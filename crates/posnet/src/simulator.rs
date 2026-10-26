@@ -157,7 +157,6 @@ pub struct Simulator {
 }
 
 impl Simulator {
-    /// Panics if local sockets, threads or the zone database are unavailable.
     #[expect(
         clippy::expect_used,
         reason = "test infrastructure: no socket means no test"
@@ -195,7 +194,6 @@ impl Simulator {
         &self.address
     }
 
-    /// Uses the production driver with optional test-only capability overrides.
     pub fn driver(&self) -> Box<dyn Driver> {
         Box::new(SimDriver {
             printer: Printer::new(
@@ -209,7 +207,6 @@ impl Simulator {
         })
     }
 
-    /// Overrides simulated capabilities, not production qualification.
     pub fn set_capabilities(&self, capabilities: Capabilities) {
         self.state().capabilities = Some(capabilities);
     }
@@ -276,7 +273,7 @@ impl Simulator {
         self.state().paper_out = !present;
     }
 
-    /// Sets `pccfgget` `cp` for PC interface `"1"` or `"2"` only.
+    /// `pccfgget` `cp` for PC interface `"1"` or `"2"`.
     pub fn set_code_page(&self, interface: &str, code_page: &str) {
         drop(
             self.state()

@@ -173,9 +173,6 @@ impl Driver for Printer {
 }
 
 /// XTR model-name matching only; reused legacy numeric IDs never qualify ONLINE.
-///
-/// An unlisted model named ELZAB is reported by name instead of as an absent printer;
-/// other names are not Elzab. Either way no further command is sent.
 pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
     let mut session = Session::open(link, connection)?;
     let (model, firmware) = identity(&mut session)?;
@@ -362,12 +359,9 @@ fn readiness(body: &str, problems: &mut Vec<Problem>) -> Result<(), Error> {
     }
     Ok(())
 }
-/// Operator-facing `ySR` blocker, as (package index, bit) pairs.
 struct Cause {
     message: &'static str,
-    /// Any of these set blocks.
     set: &'static [(usize, u32)],
-    /// Any of these cleared blocks.
     cleared: &'static [(usize, u32)],
 }
 /// Bit meanings from the `<status_package_ONLINE>` table of the `ElzabSTX` protocol for
