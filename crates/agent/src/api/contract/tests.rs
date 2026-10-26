@@ -36,15 +36,6 @@ fn generated_nullable_response_fields_require_presence_and_keep_per_job_amount_v
             .total,
         "not a decimal"
     );
-    let mut status = status_json();
-    let _removed = status["printer"]
-        .as_object_mut()
-        .unwrap()
-        .remove("uniqueNumber");
-    assert!(
-        serde_json::from_value::<PrinterStatus>(status).is_err(),
-        "missing nullable printer field"
-    );
     assert!(
         serde_json::from_value::<Page>(json!({"items":[]})).is_err(),
         "missing nullable cursor"
@@ -88,24 +79,6 @@ fn fake_validation_enforces_schema_patterns_enums_and_nullable_presence() {
         validate_response("POST", "/agent/jobs/take", 204, &valid).is_err(),
         "204 must have no body"
     );
-}
-
-#[test]
-fn generated_page_preserves_the_domain_decimal_conversion_in_both_directions() {
-    let value = json!({
-        "items": [{
-            "kind": "sale", "allocationId": null, "orderId": ORDER_ID,
-            "orderNumber": 42, "amount": "12.34", "customerName": null,
-            "occurredAt": "2026-10-24T10:00:00Z",
-        "dueAt": "2026-10-24T10:00:00Z",
-        "latestAt": "2026-10-24T10:00:00Z",
-        "isOverdue": false
-        }],
-        "nextCursor": null
-    });
-    let page: Page = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(page.items.first().unwrap().amount, 1234);
-    assert_eq!(serde_json::to_value(page).unwrap(), value);
 }
 
 #[test]

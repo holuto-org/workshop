@@ -581,3 +581,82 @@ fn native_reporter_marker_is_recognized_in_an_isolated_child() -> Result<(), Box
     }
     Ok(())
 }
+
+/// Runs the real native reporter in a crashing child.
+///
+/// The SDK re-executes the child as the reporter, which acknowledges the crash only after
+/// `before_capture` has run, so the crashing child exits after the outcome is written.
+#[cfg(target_os = "linux")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(), Box<dyn Error>> {
+    use std::{
+        env, fs,
+        os::unix::fs::PermissionsExt as _,
+        path::PathBuf,
+        process::{self, Command},
+    };
+    const CHILD: &str = "WORKSHOP_CRASH_DUMP_CHILD";
+    const STATE: &str = "WORKSHOP_CRASH_DUMP_STATE";
+    const OUTCOME: &str = "WORKSHOP_CRASH_DUMP_OUTCOME";
+    if env::var_os(CHILD).is_some() {
+        let state = PathBuf::from(env::var_os(STATE).ok_or("missing state path")?);
+        let outcome = PathBuf::from(env::var_os(OUTCOME).ok_or("missing outcome path")?);
+        let integration = minidump(&state).before_capture(move |_scope, dump| {
+            // Runs in the reporter process while the dump exists on disk.
+            let written = dump.is_file().then(|| dump.display().to_string());
+            let _written = fs::write(&outcome, written.unwrap_or_default());
+        });
+        // In the re-executed reporter, `init` serves the crash and exits the process.
+        let _guard = sentry::init(
+            options()
+                .dsn("https://public@example.invalid/1")
+                .transport(Arc::new(Capture::default()))
+                .add_integration(integration),
+        );
+        process::abort();
+    }
+    let temporary = tempfile::tempdir()?;
+    let state = StateDir::open(temporary.path().join("state"))?;
+    let shared = temporary.path().join("shared-tmp");
+    fs::create_dir(&shared)?;
+    let outcome = temporary.path().join("outcome");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "Reporter and temporary-directory environment is child-local"
+    )]
+    let mut child = Command::new(env::current_exe()?);
+    let output = child
+        .args([
+            "--exact",
+            "telemetry::tests::native_crash_dump_is_written_inside_the_private_state_directory",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env(STATE, state.path())
+        .env(OUTCOME, &outcome)
+        // The SDK default would put the dump in `$TMPDIR/Crashes`.
+        .env("TMPDIR", &shared)
+        .env_remove("_SENTRY_CRASH_REPORTER_SERVER")
+        .output()?;
+    assert!(!output.status.success(), "the child must crash: {output:?}");
+    let dump = PathBuf::from(fs::read_to_string(&outcome)?);
+    assert_eq!(
+        dump.parent(),
+        Some(state.path().join("crashes").as_path()),
+        "dump written outside the state directory"
+    );
+    assert!(
+        !shared.join("Crashes").exists(),
+        "dump written to the shared temporary directory"
+    );
+    assert_eq!(
+        fs::metadata(state.path())?.permissions().mode() & 0o777,
+        0o700,
+        "only the user can reach the dump"
+    );
+    Ok(())
+}

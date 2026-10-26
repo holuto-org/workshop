@@ -458,9 +458,7 @@ fn start_session(
 ) -> Result<bool, Error> {
     loop {
         let session = agent.session();
-        let cadence = Cadence {
-            due: Cadence::now() + RETRY,
-        };
+        let due = now() + RETRY;
         let refresh = match session {
             Ok(true) => return Ok(true),
             Ok(false) => {
@@ -483,7 +481,7 @@ fn start_session(
             },
             Err(error) => return Err(error),
         };
-        if !wait(&cadence, inbox, queue) {
+        if !wait(due, inbox, queue) {
             return Ok(false);
         }
         if refresh {
@@ -537,24 +535,22 @@ fn detect_printer(
             };
         // Counted from the failure, before announcing it: scanning silent ports can outlast
         // the interval.
-        let cadence = Cadence {
-            due: Cadence::now() + RETRY,
-        };
+        let due = now() + RETRY;
         tracing::warn!("Printer unavailable at start; retrying in 15 seconds");
         sink(Event::Status {
             text: format!("Drukarka niedostępna: {error}. Ponowna próba za 15 sekund."),
             tone: Tone::Error,
         });
-        if !wait(&cadence, inbox, queue) {
+        if !wait(due, inbox, queue) {
             return Ok(None);
         }
     }
 }
 
 /// Queues commands until the retry is due; `false` means stop.
-fn wait(cadence: &Cadence, inbox: &Receiver<Message>, queue: &mut VecDeque<Command>) -> bool {
+fn wait(due: Instant, inbox: &Receiver<Message>, queue: &mut VecDeque<Command>) -> bool {
     loop {
-        match inbox.recv_timeout(cadence.remaining(Cadence::now())) {
+        match inbox.recv_timeout(until(due)) {
             Ok(Message::Command(command)) => queue.push_back(command),
             Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => return false,
             Err(RecvTimeoutError::Timeout) => return true,
@@ -608,30 +604,20 @@ fn trace_failure(error: &Error) {
     }
 }
 
-/// Inbox activity must not postpone background polling.
-struct Cadence {
-    due: Instant,
+/// The worker clock; tests freeze it so background polls cannot interleave assertions.
+fn now() -> Instant {
+    #[cfg(test)]
+    {
+        tests::now()
+    }
+    #[cfg(not(test))]
+    {
+        Instant::now()
+    }
 }
 
-impl Cadence {
-    fn now() -> Instant {
-        #[cfg(test)]
-        {
-            tests::now()
-        }
-        #[cfg(not(test))]
-        {
-            Instant::now()
-        }
-    }
-
-    fn schedule(&mut self, now: Instant, delay: Duration) {
-        self.due = now + delay;
-    }
-
-    fn remaining(&self, now: Instant) -> Duration {
-        self.due.saturating_duration_since(now)
-    }
+fn until(due: Instant) -> Duration {
+    due.saturating_duration_since(now())
 }
 
 struct Session<'a> {
@@ -643,9 +629,8 @@ struct Session<'a> {
 
 impl Session<'_> {
     fn run(mut self, inbox: &Receiver<Message>) -> Result<(), Error> {
-        let mut cadence = Cadence {
-            due: Cadence::now(),
-        };
+        // Inbox activity must not postpone background polling.
+        let mut due = now();
         loop {
             if self.drain(inbox) {
                 return Ok(());
@@ -665,16 +650,16 @@ impl Session<'_> {
                 }
                 if !navigation {
                     (self.sink)(Event::CommandCompleted);
-                    cadence.schedule(Cadence::now(), Duration::ZERO);
+                    due = now();
                 }
                 if self.drain(inbox) {
                     return Ok(());
                 }
-                if cadence.remaining(Cadence::now()).is_zero() {
+                if until(due).is_zero() {
                     break;
                 }
             }
-            if cadence.remaining(Cadence::now()).is_zero() {
+            if until(due).is_zero() {
                 let delay = match self.poll(inbox) {
                     Ok(Some(delay)) => delay,
                     Ok(None) => return Ok(()),
@@ -684,12 +669,12 @@ impl Session<'_> {
                         RETRY
                     },
                 };
-                cadence.schedule(Cadence::now(), delay);
+                due = now() + delay;
             }
             if !self.queue.is_empty() {
                 continue;
             }
-            match inbox.recv_timeout(cadence.remaining(Cadence::now())) {
+            match inbox.recv_timeout(until(due)) {
                 Ok(Message::Command(command)) => self.queue.push_back(command),
                 Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
                 Err(RecvTimeoutError::Timeout) => {},
