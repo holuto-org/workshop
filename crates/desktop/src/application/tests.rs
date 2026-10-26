@@ -293,8 +293,9 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
             explanation,
             "launch explains the block instead of the pairing prompt"
         );
+        let settings = app.borrow().model.settings.clone();
         app.borrow_mut()
-            .settings_saved(Ok(preferences::Outcome::Saved));
+            .settings_saved(Ok(preferences::Outcome::Saved(settings)));
         assert_eq!(
             (app.borrow().model.message.clone(), app.borrow().model.tone),
             explanation,

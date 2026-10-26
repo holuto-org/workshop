@@ -33,7 +33,7 @@ pub(super) enum Request {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Outcome {
-    Saved,
+    Saved(Settings),
     Start(Settings),
     Telemetry,
     Port,
@@ -80,12 +80,22 @@ impl Writer {
 
 fn persist(dir: &StateDir, request: Request) -> Result<Outcome, Error> {
     match request {
-        Request::Save { settings, start } => {
+        Request::Save {
+            mut settings,
+            start,
+        } => {
+            // The window's token can predate pairing (a failed reload); the stored one decides.
+            let mut stored = Settings::load(dir)?.unwrap_or_default();
+            stored.set_api_url(&settings.api_url);
+            settings.token = stored.token;
+            if start {
+                settings.validate()?;
+            }
             settings.save(dir)?;
             Ok(if start {
                 Outcome::Start(settings)
             } else {
-                Outcome::Saved
+                Outcome::Saved(settings)
             })
         },
         Request::Telemetry(enabled) => {

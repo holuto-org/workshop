@@ -212,3 +212,153 @@ fn malformed_pairing_code_is_rejected_locally_and_remains_editable() -> Result<(
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
+
+#[cfg(unix)]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "UI assertions propagate fallible fixture setup"
+)]
+fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let unpaired = Settings {
+        api_url: "https://paired.example.test".into(),
+        ..Settings::default()
+    };
+    unpaired.save(&dir)?;
+    let app = make_app(
+        Arc::clone(&dir),
+        unpaired.clone(),
+        Simulator::start().link(),
+    )?;
+    // What the pairing worker saves before it emits `Paired`.
+    let paired = Settings {
+        token: "synthetic-paired-token".into(),
+        ..unpaired
+    };
+    paired.save(&dir)?;
+    let file = temporary.path().join("settings.json");
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o000))?;
+    app.borrow_mut().event(Event::Paired {
+        printer_id: "printer-42".into(),
+    });
+    let (done, finished) = mpsc::channel::<()>();
+    let poller = thread::Builder::new()
+        .name("reload observer".into())
+        .spawn(move || {
+            while finished.recv_timeout(Duration::from_millis(20)).is_err() {
+                let file = file.clone();
+                let _closed = slint::invoke_from_event_loop(move || {
+                    with_app(move |app| {
+                        if app.quitting || app.model.saving || !app.writes_pending.is_empty() {
+                            return Ok(());
+                        }
+                        // The failed read is over; the operator saves an unrelated change.
+                        fs::set_permissions(&file, fs::Permissions::from_mode(0o600))
+                            .map_err(|error| error.to_string())?;
+                        app.capture();
+                        app.action(Action::Save)?;
+                        app.stop(true)
+                    });
+                });
+            }
+        })?;
+    slint::run_event_loop_until_quit()?;
+    done.send(())?;
+    poller.join().map_err(|_panic| "reload observer panicked")?;
+    let saved = Settings::load(&dir)?.ok_or("missing settings")?;
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    assert_eq!(
+        saved.token, paired.token,
+        "a failed reload must not let Save erase the credentials pairing saved"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "UI assertions propagate fallible fixture setup"
+)]
+fn start_after_a_failed_reload_connects_with_the_credentials_pairing_saved()
+-> Result<(), Box<dyn Error>> {
+    use std::{os::unix::fs::PermissionsExt as _, sync::atomic::AtomicBool};
+
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let simulator = Simulator::start();
+    let holuto = Holuto::new();
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let unpaired = Settings {
+        api_url: holuto.url().into(),
+        port: simulator.address().into(),
+        ..Settings::default()
+    };
+    unpaired.save(&dir)?;
+    let app = make_app(Arc::clone(&dir), unpaired.clone(), simulator.link())?;
+    // What the pairing worker saves before it emits `Paired`.
+    Settings {
+        token: holuto.token().into(),
+        ..unpaired
+    }
+    .save(&dir)?;
+    let file = temporary.path().join("settings.json");
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o000))?;
+    app.borrow_mut().event(Event::Paired {
+        printer_id: "printer-42".into(),
+    });
+    let started = Arc::new(AtomicBool::new(false));
+    let connected = Arc::new(AtomicBool::new(false));
+    let (done, finished) = mpsc::channel::<()>();
+    let poller = thread::Builder::new()
+        .name("reload observer".into())
+        .spawn({
+            let started = Arc::clone(&started);
+            let connected = Arc::clone(&connected);
+            move || {
+                while finished.recv_timeout(Duration::from_millis(20)).is_err() {
+                    let file = file.clone();
+                    let started = Arc::clone(&started);
+                    let connected = Arc::clone(&connected);
+                    let _closed = slint::invoke_from_event_loop(move || {
+                        with_app(move |app| {
+                            if app.quitting || app.model.saving || !app.writes_pending.is_empty() {
+                                return Ok(());
+                            }
+                            if !started.swap(true, Ordering::SeqCst) {
+                                // The failed read is over; the operator starts processing.
+                                fs::set_permissions(&file, fs::Permissions::from_mode(0o600))
+                                    .map_err(|error| error.to_string())?;
+                                app.capture();
+                                return app.action(Action::Start);
+                            }
+                            if app.model.connected {
+                                connected.store(true, Ordering::SeqCst);
+                                return app.stop(true);
+                            }
+                            if app.worker.is_none() {
+                                // Start was refused or the worker ended; nothing will connect.
+                                return app.stop(true);
+                            }
+                            Ok(())
+                        });
+                    });
+                }
+            }
+        })?;
+    slint::run_event_loop_until_quit()?;
+    done.send(())?;
+    poller.join().map_err(|_panic| "reload observer panicked")?;
+    let message = app.borrow().model.message.clone();
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    assert!(
+        connected.load(Ordering::SeqCst),
+        "Start must use the stored pairing after a failed reload; last status: {message}"
+    );
+    Ok(())
+}

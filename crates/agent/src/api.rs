@@ -375,9 +375,6 @@ impl Api {
         let limit = DOCUMENTS_LIMIT.to_string();
         let mut query = vec![("limit", limit.as_str())];
         if let Some(cursor) = cursor {
-            if cursor.is_empty() {
-                return Err(ApiError::Response("pusty kursor strony".to_owned()));
-            }
             query.push(("cursor", cursor));
         }
         let page: Page = self.get("documents", &query)?.ok_or_else(empty)?;

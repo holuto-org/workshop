@@ -26,6 +26,53 @@ fn settings() -> Settings {
     }
 }
 
+/// Pairing owns the credential; Save keeps the stored one.
+fn paired(temporary: &TempDir) -> Result<Arc<StateDir>, Box<dyn Error>> {
+    let dir = StateDir::open(temporary.path().to_owned())?;
+    let stored = settings();
+    Settings {
+        api_url: stored.api_url,
+        token: stored.token,
+        ..Settings::default()
+    }
+    .save(&dir)?;
+    Ok(Arc::new(dir))
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn start_without_a_stored_pairing_is_refused_before_writing() -> Result<(), Box<dyn Error>> {
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let unpaired = Settings {
+        api_url: settings().api_url,
+        ..Settings::default()
+    };
+    unpaired.save(&dir)?;
+    let (completed, completions) = mpsc::channel();
+    let writer = Writer::spawn(Arc::clone(&dir), move |completion| {
+        let _sent = completed.send(completion);
+    })?;
+    // The window still holds a credential the store no longer has.
+    writer.submit(Request::Save {
+        settings: settings(),
+        start: true,
+    })?;
+    assert_eq!(
+        completions.recv_timeout(WAIT)?,
+        Err("Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned())
+    );
+    assert_eq!(
+        Settings::load(&dir)?,
+        Some(unpaired),
+        "a refused start writes nothing"
+    );
+    Ok(())
+}
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -33,7 +80,7 @@ fn settings() -> Settings {
 )]
 fn queued_save_port_and_opt_out_preserve_every_connection_field() -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let dir = paired(&temporary)?;
     let observed_dir = Arc::clone(&dir);
     let (completed, completions) = mpsc::channel();
     let writer = Writer::spawn(Arc::clone(&dir), move |completion| {
@@ -52,7 +99,11 @@ fn queued_save_port_and_opt_out_preserve_every_connection_field() -> Result<(), 
     writer.submit(Request::Telemetry(false))?;
 
     let (completion, stored) = completions.recv_timeout(WAIT)?;
-    assert_eq!(completion, Ok(Outcome::Saved), "save is acknowledged first");
+    assert_eq!(
+        completion,
+        Ok(Outcome::Saved(supplied.clone())),
+        "save is acknowledged first"
+    );
     assert_eq!(
         stored?,
         Some(supplied.clone()),
@@ -103,7 +154,7 @@ fn queued_save_port_and_opt_out_preserve_every_connection_field() -> Result<(), 
 fn start_continuation_observes_its_exact_configuration_already_persisted()
 -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let dir = paired(&temporary)?;
     let observed_dir = Arc::clone(&dir);
     let (completed, completions) = mpsc::channel();
     let writer = Writer::spawn(Arc::clone(&dir), move |completion| {
@@ -140,7 +191,7 @@ fn start_continuation_observes_its_exact_configuration_already_persisted()
 )]
 fn held_completion_does_not_block_submitting_the_next_preferences() -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let dir = paired(&temporary)?;
     let (completed, completions) = mpsc::channel();
     let (reached, held) = mpsc::channel();
     let (release, released) = mpsc::channel();
@@ -213,7 +264,8 @@ fn held_completion_does_not_block_submitting_the_next_preferences() -> Result<()
 )]
 fn status_and_preferences_share_one_durable_fifo() -> Result<(), Box<dyn Error>> {
     let temporary = TempDir::new()?;
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let dir = paired(&temporary)?;
+    let before_save = Settings::load(&dir)?;
     let observed_dir = Arc::clone(&dir);
     let (completed, completions) = mpsc::channel();
     let writer = Writer::spawn(Arc::clone(&dir), move |completion| {
@@ -253,11 +305,11 @@ fn status_and_preferences_share_one_durable_fifo() -> Result<(), Box<dyn Error>>
     assert_eq!(outcome, Ok(Outcome::Status(connected.clone())));
     assert_eq!(status?, Some(connected.clone()));
     assert_eq!(
-        stored_settings?, None,
+        stored_settings?, before_save,
         "later preferences cannot overtake status"
     );
     let (outcome, status, stored_settings) = completions.recv_timeout(WAIT)?;
-    assert_eq!(outcome, Ok(Outcome::Saved));
+    assert_eq!(outcome, Ok(Outcome::Saved(settings())));
     assert_eq!(status?, Some(connected));
     assert_eq!(stored_settings?, Some(settings()));
     let (outcome, status, stored_settings) = completions.recv_timeout(WAIT)?;

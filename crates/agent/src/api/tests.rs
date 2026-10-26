@@ -657,7 +657,7 @@ fn mismatched_job_id_and_result_attempt_are_not_acknowledged() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn opaque_cursor_is_encoded_once_and_an_empty_cursor_is_never_sent() -> TestResult {
+fn opaque_cursor_is_encoded_once() -> TestResult {
     let server = Holuto::new();
     let cursor = "a+/=?ąć%";
     server.page(Some(cursor), json!({"items":[],"nextCursor":null}));
@@ -668,12 +668,6 @@ fn opaque_cursor_is_encoded_once_and_an_empty_cursor_is_never_sent() -> TestResu
         server.requests().last().ok_or("no request")?.path,
         "/agent/documents?limit=100&cursor=a%2B%2F%3D%3F%C4%85%C4%87%25"
     );
-    let count = server.requests().len();
-    assert!(
-        matches!(api.documents(Some("")), Err(ApiError::Response(_))),
-        "empty cursor is a local contract error"
-    );
-    assert_eq!(server.requests().len(), count);
     Ok(())
 }
 

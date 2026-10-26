@@ -4,7 +4,7 @@ pub(crate) mod macos;
 #[path = "application/preferences.rs"]
 mod preferences;
 
-use std::{cell::RefCell, collections::VecDeque, fmt::Display, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::VecDeque, fmt::Display, mem, rc::Rc, sync::Arc};
 
 use agent::{
     history,
@@ -288,12 +288,8 @@ impl Application {
     }
 
     fn save(&mut self, start: bool) {
-        let validation = if start {
-            self.model.settings.validate()
-        } else {
-            self.model.settings.validate_configuration()
-        };
-        if let Err(error) = validation {
+        // Start's pairing check needs the stored credential, so the writer validates it.
+        if let Err(error) = self.model.settings.validate_configuration() {
             self.model.say(error.to_string(), Tone::Error);
             return;
         }
@@ -374,16 +370,15 @@ impl Application {
             .iter()
             .any(|kind| matches!(kind, WriteKind::Settings));
         match completion {
-            Ok(preferences::Outcome::Start(mut settings)) if self.starting => {
-                self.starting = false;
-                settings.telemetry_enabled = self.model.settings.telemetry_enabled;
-                self.model.settings = settings;
-                self.model.settings_persisted();
-                self.spawn_worker();
+            Ok(preferences::Outcome::Start(settings)) => {
+                self.adopt_settings(settings);
+                // Stop or Quit before the write landed cancelled this start.
+                if mem::take(&mut self.starting) {
+                    self.spawn_worker();
+                }
             },
-            Ok(preferences::Outcome::Saved) => {
-                // Inputs stay locked while saving, so the model still holds what was written.
-                self.model.settings_persisted();
+            Ok(preferences::Outcome::Saved(settings)) => {
+                self.adopt_settings(settings);
                 if !self.model.blocked {
                     self.model.say("Zapisano ustawienia.".into(), Tone::Success);
                 }
@@ -399,12 +394,7 @@ impl Application {
                         .say("Zapisano ustawienia uruchamiania.".into(), Tone::Success);
                 }
             },
-            Ok(preferences::Outcome::Reload(mut settings)) => {
-                // A diagnostics choice made after the reload was read is written after it.
-                settings.telemetry_enabled = self.model.settings.telemetry_enabled;
-                self.model.settings = settings;
-                self.model.settings_persisted();
-            },
+            Ok(preferences::Outcome::Reload(settings)) => self.adopt_settings(settings),
             Ok(preferences::Outcome::Status(snapshot))
                 if self.status_requested.as_ref() == Some(&snapshot) =>
             {
@@ -412,7 +402,6 @@ impl Application {
             },
             Ok(
                 preferences::Outcome::Port
-                | preferences::Outcome::Start(_)
                 | preferences::Outcome::Telemetry
                 | preferences::Outcome::Status(_),
             ) => {},
@@ -433,6 +422,14 @@ impl Application {
         if let Err(error) = self.finish_quit() {
             self.model.say(error.to_string(), Tone::Error);
         }
+    }
+
+    /// Takes settings as written to or read from disk, including the stored credential.
+    fn adopt_settings(&mut self, mut settings: Settings) {
+        // A diagnostics choice made after the request was queued is written after it.
+        settings.telemetry_enabled = self.model.settings.telemetry_enabled;
+        self.model.settings = settings;
+        self.model.settings_persisted();
     }
 
     fn action(&mut self, action: Action) -> Result<(), slint::PlatformError> {

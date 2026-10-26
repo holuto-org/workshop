@@ -22,14 +22,17 @@ fn stop_while_start_is_saving_settings_cancels_the_start() -> Result<(), Box<dyn
     let simulator = Simulator::start();
     let fake = Holuto::new();
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let settings = Settings {
+        api_url: fake.url().into(),
+        token: fake.token().into(),
+        port: simulator.address().into(),
+        ..Settings::default()
+    };
+    // The application loads its pairing from disk, as `main` does.
+    settings.save(&dir)?;
     let app = Rc::new(RefCell::new(Application::new(
         Arc::clone(&dir),
-        Settings {
-            api_url: fake.url().into(),
-            token: fake.token().into(),
-            port: simulator.address().into(),
-            ..Settings::default()
-        },
+        settings,
         simulator.link(),
         || Date::constant(2025, 10, 24),
     )));
@@ -99,6 +102,12 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
         ..Settings::default()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    // The application loads its pairing from disk, as `main` does; Start saves the port.
+    Settings {
+        port: String::new(),
+        ..settings.clone()
+    }
+    .save(&dir)?;
     let app = make_app(dir, settings.clone(), simulator.link())?;
     let window = app
         .borrow()
