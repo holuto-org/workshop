@@ -79,12 +79,9 @@ fn make_app(
     settings: Settings,
     link: Arc<dyn Link>,
 ) -> Result<Rc<RefCell<Application>>, slint::PlatformError> {
-    let app = Rc::new(RefCell::new(Application::new(
-        dir,
-        settings,
-        link,
-        Date::constant(2025, 10, 24),
-    )));
+    let app = Rc::new(RefCell::new(Application::new(dir, settings, link, || {
+        Date::constant(2025, 10, 24)
+    })));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     app.borrow_mut().launch()?;
     Ok(app)
@@ -692,7 +689,7 @@ fn quit_completes_when_the_final_status_cannot_be_submitted() -> Result<(), Box<
         Arc::new(StateDir::open(temp.path().to_owned())?),
         Settings::default(),
         simulator.link(),
-        Date::constant(2025, 10, 24),
+        || Date::constant(2025, 10, 24),
     )));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     app.borrow_mut().settings_writer = Some(preferences::Writer::closed());
@@ -1106,7 +1103,7 @@ fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement(
         Arc::clone(&dir),
         Settings::default(),
         simulator.link(),
-        Date::constant(2025, 10, 24),
+        || Date::constant(2025, 10, 24),
     )));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     let acknowledgements = Arc::new(AtomicUsize::new(0));
@@ -1159,7 +1156,7 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
         Arc::clone(&dir),
         Settings::default(),
         simulator.link(),
-        Date::constant(2025, 10, 24),
+        || Date::constant(2025, 10, 24),
     )));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     let failures = Arc::new(AtomicUsize::new(0));

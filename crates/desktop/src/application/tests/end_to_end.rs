@@ -494,7 +494,7 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
         Arc::clone(&dir),
         settings.clone(),
         simulator.link(),
-        Date::constant(2025, 10, 24),
+        || Date::constant(2025, 10, 24),
     )));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     let snapshots = Arc::new(Mutex::new(Vec::new()));

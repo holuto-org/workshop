@@ -58,7 +58,7 @@ pub(crate) fn run(state: &Path) -> Result<(), Box<dyn Error>> {
         dir,
         settings,
         simulator.link(),
-        Date::constant(2025, 10, 24),
+        || Date::constant(2025, 10, 24),
     )));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     app.borrow_mut().open()?;

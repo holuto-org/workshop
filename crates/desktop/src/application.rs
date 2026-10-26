@@ -60,6 +60,8 @@ struct Application {
     status_requested: Option<Snapshot>,
     /// Latest settled status, including failed writes so they cannot prevent quitting.
     status_settled: Option<Snapshot>,
+    /// The local date for month lists and report ranges; fixed in tests.
+    today: fn() -> Date,
 }
 
 pub(crate) fn run(
@@ -67,12 +69,9 @@ pub(crate) fn run(
     settings: Settings,
     link: Arc<dyn Link>,
 ) -> Result<(), slint::PlatformError> {
-    let app = Rc::new(RefCell::new(Application::new(
-        dir,
-        settings,
-        link,
-        Zoned::now().date(),
-    )));
+    let app = Rc::new(RefCell::new(Application::new(dir, settings, link, || {
+        Zoned::now().date()
+    })));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     let tray = TrayIcon::new()?;
     tray.on_open(|| with_app(Application::open));
@@ -112,9 +111,14 @@ where
 }
 
 impl Application {
-    fn new(dir: Arc<StateDir>, settings: Settings, link: Arc<dyn Link>, today: Date) -> Self {
+    fn new(
+        dir: Arc<StateDir>,
+        settings: Settings,
+        link: Arc<dyn Link>,
+        today: fn() -> Date,
+    ) -> Self {
         Self {
-            model: Model::new(settings, today),
+            model: Model::new(settings, today()),
             dir,
             link,
             worker: None,
@@ -126,6 +130,7 @@ impl Application {
             writes_pending: VecDeque::new(),
             status_requested: None,
             status_settled: None,
+            today,
         }
     }
 
@@ -168,7 +173,7 @@ impl Application {
 
     fn capture(&mut self) {
         if let Some(window) = &self.window {
-            self.model.capture(window, Zoned::now().date());
+            self.model.capture(window, (self.today)());
         }
     }
 
@@ -261,7 +266,7 @@ impl Application {
         });
         window.window().on_close_requested(request_close);
         window.set_ports(self.ports());
-        self.model.initialize(&window, Zoned::now().date());
+        self.model.initialize(&window, (self.today)());
         window.show()?;
         #[cfg(target_os = "macos")]
         if !macos::install() {

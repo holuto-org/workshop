@@ -31,7 +31,7 @@ fn stop_while_start_is_saving_settings_cancels_the_start() -> Result<(), Box<dyn
             ..Settings::default()
         },
         simulator.link(),
-        Date::constant(2025, 10, 24),
+        || Date::constant(2025, 10, 24),
     )));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     let (started, worker_spawned) = mpsc::channel();
