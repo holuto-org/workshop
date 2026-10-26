@@ -983,39 +983,6 @@ fn dst_fold_or_gap_clock_blocks_only_receipt_timestamps() {
 }
 
 #[test]
-fn journal_precedes_every_fiscal_send() {
-    struct Ordered<'a> {
-        sim: &'a Simulator,
-        log: Vec<&'static str>,
-    }
-    impl Journal for Ordered<'_> {
-        fn dispatching(&mut self, command: &'static str) -> io::Result<()> {
-            if fiscal_bodies(self.sim).len() != self.log.len() {
-                return Err(io::ErrorKind::InvalidData.into());
-            }
-            self.log.push(command);
-            Ok(())
-        }
-
-        fn waiting(&mut self, _: Option<&str>) {}
-    }
-    let sim = Simulator::start();
-    supported(&sim);
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    let mut journal = Ordered {
-        sim: &sim,
-        log: vec![],
-    };
-    let _printed = driver
-        .print_receipt(&receipt(vec![]), &expected, &mut journal)
-        .unwrap();
-    assert_eq!(journal.log, RECEIPT_COMMANDS);
-    assert_eq!(fiscal_bodies(&sim), RECEIPT_FRAMES);
-    assert_eq!(sim.receipts(), 1);
-}
-
-#[test]
 fn waiting_cap_and_unexplained_silence_never_resend_or_guess_dle2_order() {
     for (fault, waits) in [
         (

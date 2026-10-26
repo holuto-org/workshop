@@ -7,13 +7,9 @@ use std::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::{ALLOCATION_ID, Holuto, JOB_ID, ORDER_ID, PRINTER_ID, job_json, with};
+use super::{ALLOCATION_ID, Holuto, JOB_ID, ORDER_ID, PRINTER_ID, job_json, telemetry, with};
 use crate::{
-    api::{
-        Api, ApiError,
-        model::{Job, Telemetry},
-        queue_form,
-    },
+    api::{Api, ApiError, model::Job, queue_form},
     documents::Document,
 };
 
@@ -27,10 +23,6 @@ fn api(server: &Holuto) -> Result<Api, Box<dyn StdError>> {
     let mut api = Api::new(server.url(), server.token(), "DEM0000000001")?;
     api.session(&telemetry())?;
     Ok(api)
-}
-
-fn telemetry() -> Telemetry {
-    super::telemetry("DEM0000000001")
 }
 
 fn document(order: Uuid, allocation: Option<Uuid>, occurred_at: &str) -> Value {

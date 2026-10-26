@@ -58,13 +58,6 @@ impl Driver for Printer {
         Ok(preflight(&mut self.session()?)?.device)
     }
 
-    fn verify(&self, unique_number: &str) -> Result<Device, Error> {
-        let device = self.probe()?;
-        device.require_resolvable()?;
-        device.require_unique_number(unique_number)?;
-        Ok(device)
-    }
-
     #[tracing::instrument(skip_all, fields(sentry.op = "device.receipt"))]
     fn print_receipt(
         &self,

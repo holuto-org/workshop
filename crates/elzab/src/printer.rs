@@ -53,14 +53,7 @@ impl Driver for Printer {
     }
 
     fn probe(&self) -> Result<Device, Error> {
-        Ok(preflight(&mut self.session()?, false)?.device)
-    }
-
-    fn verify(&self, unique_number: &str) -> Result<Device, Error> {
-        let device = self.probe()?;
-        device.require_resolvable()?;
-        device.require_unique_number(unique_number)?;
-        Ok(device)
+        Ok(preflight(&mut self.session()?)?.device)
     }
 
     #[tracing::instrument(skip_all, fields(sentry.op = "device.receipt"))]
@@ -71,7 +64,7 @@ impl Driver for Printer {
         journal: &mut dyn Journal,
     ) -> Result<Printed, Error> {
         let mut session = self.session()?;
-        let checked = preflight(&mut session, false)?;
+        let checked = preflight(&mut session)?;
         checked.device.require_ready()?;
         checked
             .device
@@ -123,8 +116,12 @@ impl Driver for Printer {
         journal: &mut dyn Journal,
     ) -> Result<(), Error> {
         let mut session = self.session()?;
-        let checked = preflight(&mut session, report == Report::Daily)?;
-        checked.device.require_ready()?;
+        let checked = preflight(&mut session)?;
+        if report == Report::Daily {
+            checked.device.require_daily_report()?;
+        } else {
+            checked.device.require_ready()?;
+        }
         checked.device.require_unique_number(unique_number)?;
         let step = match report {
             Report::Daily => {
@@ -195,7 +192,7 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
         )));
     }
     Ok(Some(
-        preflight_identity(&mut session, model, firmware, false)?.device,
+        preflight_identity(&mut session, model, firmware)?.device,
     ))
 }
 struct Checked {
@@ -215,15 +212,14 @@ fn identity(session: &mut Session) -> Result<(String, String), Error> {
     }
     Ok((model.to_owned(), firmware.to_owned()))
 }
-fn preflight(session: &mut Session, daily: bool) -> Result<Checked, Error> {
+fn preflight(session: &mut Session) -> Result<Checked, Error> {
     let (model, firmware) = identity(session)?;
-    preflight_identity(session, model, firmware, daily)
+    preflight_identity(session, model, firmware)
 }
 fn preflight_identity(
     session: &mut Session,
     model: String,
     firmware: String,
-    daily: bool,
 ) -> Result<Checked, Error> {
     let capabilities = profile::lookup(&model);
     let known = capabilities.is_some();
@@ -255,7 +251,7 @@ fn preflight_identity(
         device.capabilities.allowed_characters.clear();
     }
     let status = query(session, "ySR", "")?;
-    readiness(&status, &mut device.problems, daily)?;
+    readiness(&status, &mut device.problems)?;
     let limits = query(session, "YYR", "J")?;
     let lines = subfield(field(&limits, 'J')?, 'A')?
         .parse::<usize>()
@@ -316,7 +312,7 @@ fn preflight_identity(
         date,
     })
 }
-fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(), Error> {
+fn readiness(body: &str, problems: &mut Vec<Problem>) -> Result<(), Error> {
     let mut packages = [None; 3];
     for field in body.split('\u{1d}').skip(1) {
         let value = field.strip_prefix('S').ok_or_else(frame::corrupt)?;
@@ -360,8 +356,8 @@ fn readiness(body: &str, problems: &mut Vec<Problem>, daily: bool) -> Result<(),
             periodic_reports: false,
         });
     }
-    // Reminder-only and overdue-daily bits must not prevent the daily report.
-    if !daily && two & (1_u128 << 115) != 0 {
+    // Reminder-only bits never block; the daily report tolerates its own overdue bit.
+    if two & (1_u128 << 115) != 0 {
         problems.push(Problem::DailyReportOverdue);
     }
     Ok(())

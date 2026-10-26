@@ -204,6 +204,15 @@ impl Device {
         }
     }
 
+    /// Refuses a daily report unless an overdue daily report is the only problem.
+    pub fn require_daily_report(&self) -> Result<(), Error> {
+        if self.daily_report_allowed() {
+            Ok(())
+        } else {
+            Err(Error::NotReady(self.description()))
+        }
+    }
+
     /// Refuses monthly and periodic reports unless read-only mode that permits them is the
     /// only problem.
     pub fn require_periodic_reports(&self) -> Result<(), Error> {

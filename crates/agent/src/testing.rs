@@ -49,7 +49,8 @@ pub const ALLOCATION_ID: Uuid = Uuid::from_u128(12);
 const TOKEN: &str = "synthetic-device-token";
 
 #[cfg(test)]
-pub(crate) fn telemetry(unique_number: &str) -> Telemetry {
+pub(crate) fn telemetry() -> Telemetry {
+    let unique_number = "DEM0000000001";
     let mut telemetry = Telemetry::new(unique_number, Vendor::Posnet);
     let _skipped = telemetry.describe(&Device {
         vendor: Vendor::Posnet,
@@ -92,7 +93,6 @@ pub struct RequestLog {
     pub unique_number: Option<String>,
     pub app_version: Option<String>,
     pub language: Option<String>,
-    pub sentry_trace: Option<String>,
     pub trace_headers: Vec<(String, String)>,
 }
 
@@ -350,7 +350,6 @@ fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
         unique_number: header(&request, "X-Device-Unique-Number"),
         app_version: header(&request, "App-Version"),
         language: header(&request, "Accept-Language"),
-        sentry_trace: header(&request, "sentry-trace"),
         trace_headers: request
             .headers()
             .iter()

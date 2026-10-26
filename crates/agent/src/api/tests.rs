@@ -22,21 +22,18 @@ use uuid::Uuid;
 
 use super::{
     Api, ApiError,
-    model::{Outcome, ResultForm, Telemetry},
+    model::{Outcome, ResultForm},
 };
 use crate::{
     Error,
     documents::{BuyerNip, Document, ReceiptKind},
     testing::{
-        ATTEMPT, Fault, Holuto, JOB_ID, ORDER_ID, PRINTER_ID, job_json, status_json,
-        telemetry as telemetry_for, with,
+        ATTEMPT, Fault, Holuto, JOB_ID, ORDER_ID, PRINTER_ID, job_json, status_json, telemetry,
+        with,
     },
 };
 
 type TestResult = Result<(), Box<dyn StdError>>;
-fn telemetry() -> Telemetry {
-    telemetry_for("DEM0000000001")
-}
 fn api(server: &Holuto) -> Result<Api, Error> {
     Api::new(server.url(), server.token(), "DEM0000000001")
 }
@@ -844,9 +841,10 @@ fn sdk_trace_headers_are_forwarded_exactly_without_inventing_baggage() -> TestRe
     for request in requests {
         assert!(
             request
-                .sentry_trace
-                .as_deref()
-                .is_some_and(|trace| trace.starts_with("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-")),
+                .trace_headers
+                .iter()
+                .any(|(name, trace)| name == "sentry-trace"
+                    && trace.starts_with("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-")),
             "HTTP request remains in the upstream trace"
         );
         let mut actual = request.trace_headers.clone();

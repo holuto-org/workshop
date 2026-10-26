@@ -159,6 +159,27 @@ fn overdue_daily_report_blocks_receipts_but_allows_daily_report() {
 }
 
 #[test]
+fn refused_daily_report_lists_the_overdue_report_with_other_blockers() {
+    let sim = Simulator::start();
+    // Overdue daily report on a read-only printer: package 2 writable bit 2 is clear.
+    sim.set_status(0, (1_u128 << 115) | (1_u128 << 102) | (1_u128 << 98), 32);
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    assert!(!expected.daily_report_allowed());
+    let mut log = Log::default();
+    let error = driver
+        .print_report(Report::Daily, &expected.unique_number, &mut log)
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::NotReady(text) if *text == expected.description()
+            && text.contains("Wymagany zaległy raport dobowy")),
+        "{error:?}"
+    );
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(fiscal(&sim), Vec::<String>::new());
+}
+
+#[test]
 fn read_only_printer_refuses_printing_but_allows_resolution() {
     let sim = Simulator::start();
     // Fiscal and idle, but package 2 writable bit 2 is clear.

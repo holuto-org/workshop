@@ -333,12 +333,6 @@ impl Driver for SimDriver {
         self.printer.probe().map(|device| self.describe(device))
     }
 
-    fn verify(&self, unique_number: &str) -> Result<Device, Error> {
-        self.printer
-            .verify(unique_number)
-            .map(|device| self.describe(device))
-    }
-
     fn print_receipt(
         &self,
         receipt: &Receipt,
