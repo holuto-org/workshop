@@ -56,7 +56,8 @@ fn polish_names_sort_in_the_operator_alphabet() {
     let mut table = Table::new();
     let _previous = table.set(
         [
-            "Żak", "Źrebak", "Zenon", "Łukasz", "Lz", "ącki", "adam", "Ćma", "Czajka",
+            "Żak", "Źrebak", "Zenon", "Łukasz", "Lz", "ącki", "adam", "Ćma", "Czajka", "Nina",
+            "Ńam", "Ola",
         ]
         .map(|name| Document {
             customer_name: Some(name.into()),
@@ -78,7 +79,8 @@ fn polish_names_sort_in_the_operator_alphabet() {
             .map(|row| row.customer_name.as_deref())
             .collect::<Vec<_>>(),
         [
-            "adam", "ącki", "Czajka", "Ćma", "Lz", "Łukasz", "Zenon", "Źrebak", "Żak"
+            "adam", "ącki", "Czajka", "Ćma", "Lz", "Łukasz", "Nina", "Ńam", "Ola", "Zenon",
+            "Źrebak", "Żak"
         ]
         .map(Some)
     );

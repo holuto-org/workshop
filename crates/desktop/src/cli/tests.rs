@@ -81,6 +81,22 @@ fn manual_credentials_and_unknown_arguments_are_rejected_without_echoing_them() 
         vec!["config", "set", "--token", "secret-canary"],
         vec!["pair"],
         vec!["-psn_0_1234567", "status"],
+        vec![
+            "config",
+            "set",
+            "--api-url",
+            "https://first.example",
+            "--api-url",
+            "https://second.example",
+        ],
+        vec![
+            "config",
+            "set",
+            "--diagnostics",
+            "on",
+            "--diagnostics",
+            "off",
+        ],
     ] {
         let error = parse(args.into_iter().map(OsString::from)).expect_err("invalid command");
         assert_eq!(error.code, "arguments");
@@ -686,6 +702,62 @@ fn json_dispatch_round_trips_configuration_and_reports_exact_errors() -> TestRes
             [expected],
             "{arguments:?}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Real CLI dispatch selects its public output stream"
+)]
+fn argument_errors_are_polish_stderr_unless_json_is_requested() -> TestResult {
+    use std::{
+        env,
+        process::{Command as Process, ExitCode},
+    };
+    const CHILD: &str = "WORKSHOP_CLI_STREAM_CHILD";
+    if let Some(mode) = env::var_os(CHILD) {
+        let mut arguments = vec![OsString::from("--unknown")];
+        if mode == "json" {
+            arguments.push("--json".into());
+        }
+        assert_eq!(super::run(arguments), Some(ExitCode::from(2)));
+        return Ok(());
+    }
+    for mode in ["human", "json"] {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "Capture actual CLI streams in a child"
+        )]
+        let output = Process::new(env::current_exe()?)
+            .args([
+                "--exact",
+                "cli::tests::argument_errors_are_polish_stderr_unless_json_is_requested",
+                "--nocapture",
+            ])
+            .env(CHILD, mode)
+            .output()?;
+        assert!(output.status.success(), "{output:?}");
+        if mode == "human" {
+            assert_eq!(
+                String::from_utf8(output.stderr)?,
+                "Nieprawidłowe argumenty. Użyj workshop --help.\n"
+            );
+        } else {
+            assert!(output.stderr.is_empty());
+            let stdout = String::from_utf8(output.stdout)?;
+            assert_eq!(
+                stdout
+                    .lines()
+                    .filter(|line| line.starts_with('{'))
+                    .collect::<Vec<_>>(),
+                [concat!(
+                    r#"{"error":{"code":"arguments","message":"#,
+                    r#""Nieprawidłowe argumenty. Użyj workshop --help."},"ok":false}"#
+                )]
+            );
+        }
     }
     Ok(())
 }

@@ -185,8 +185,12 @@ impl<'dir> Agent<'dir> {
     }
 
     /// Retains qualified telemetry after a failed probe; unavailable limits stay local.
+    /// Probe notices are kept at once: a later failure or block must not drop the one-time
+    /// VAT warning.
     pub(crate) fn step(&mut self) -> Result<Duration, Error> {
-        let probe = self.refresh();
+        let probe = self
+            .refresh()
+            .map(|notices| self.news.notices.extend(notices));
         if !self.describable() {
             self.news.notices.push(self.not_ready_notice());
             return Ok(RETRY);
@@ -207,7 +211,7 @@ impl<'dir> Agent<'dir> {
             self.news.notices.push(notice.to_owned());
             return Ok(RETRY);
         }
-        self.news.notices.extend(probe?);
+        probe?;
         if self.status.as_ref().is_some_and(|status| !status.ready()) {
             self.news.notices.push(self.not_ready_notice());
             return Ok(RETRY);

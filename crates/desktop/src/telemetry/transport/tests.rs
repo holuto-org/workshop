@@ -402,3 +402,28 @@ fn envelopes_follow_the_environment_proxy() -> Result<(), Box<dyn Error>> {
     );
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "The detached owner must call shutdown and retain refusal"
+)]
+fn underlying_shutdown_failure_is_observed_instead_of_optimistic_success()
+-> Result<(), Box<dyn Error>> {
+    struct Refusing(mpsc::Sender<Duration>);
+    impl Transport for Refusing {
+        fn send_envelope(&self, _envelope: Envelope) {}
+
+        fn shutdown(&self, timeout: Duration) -> bool {
+            let _observed = self.0.send(timeout);
+            false
+        }
+    }
+    let (sender, observed) = mpsc::channel();
+    let transport = DetachedTransport::spawn(move || Refusing(sender), 1);
+    assert!(!transport.shutdown(WAIT));
+    let timeout = observed.recv_timeout(WAIT)?;
+    assert!(!timeout.is_zero() && timeout <= WAIT);
+    assert!(observed.try_recv().is_err());
+    Ok(())
+}

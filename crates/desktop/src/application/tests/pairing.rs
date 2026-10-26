@@ -96,6 +96,7 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
         .map_err(|_panic| "pairing observer panicked")??;
     let saved = Settings::load(&app.borrow().dir)?.ok_or("missing paired settings")?;
     assert_eq!(saved.token.as_str(), format!("{:0>42}A", 1));
+    window.invoke_sort_documents(0, false);
     assert_eq!(app.borrow().model.settings.token, saved.token);
     assert_eq!(saved.port, "invalid-port-that-must-not-be-opened");
     assert_eq!(window.get_pairing_code().as_str(), "");

@@ -426,3 +426,63 @@ fn event_allowlist_removes_nested_host_customer_request_and_scope_data()
     }
     Ok(())
 }
+
+#[test]
+fn safe_transport_shutdown_preserves_the_underlying_outcome_and_deadline() {
+    struct Shutdown {
+        result: bool,
+        calls: Mutex<Vec<Duration>>,
+    }
+    impl Transport for Shutdown {
+        fn send_envelope(&self, _envelope: Envelope) {}
+
+        fn shutdown(&self, timeout: Duration) -> bool {
+            self.calls.lock().unwrap().push(timeout);
+            self.result
+        }
+    }
+    for result in [false, true] {
+        let capture = Arc::new(Shutdown {
+            result,
+            calls: Mutex::new(Vec::new()),
+        });
+        let captured = Arc::clone(&capture);
+        let transport = SafeTransport(captured);
+        assert_eq!(transport.shutdown(Duration::from_millis(37)), result);
+        assert_eq!(*capture.calls.lock().unwrap(), [Duration::from_millis(37)]);
+    }
+}
+
+#[test]
+fn consent_changes_gate_outgoing_events_and_simulators_never_enable_capture() {
+    let capture = Arc::new(Capture::default());
+    let client = Arc::new(Client::from(
+        options()
+            .dsn("https://public@example.invalid/1")
+            .transport(Arc::clone(&capture)),
+    ));
+    Hub::run(Arc::new(Hub::new(Some(client), Arc::default())), || {
+        set_enabled(false);
+        let _event = sentry::capture_message("Worker operation failed", sentry::Level::Error);
+        assert!(capture.0.lock().unwrap().is_empty());
+        set_enabled(true);
+        let _event = sentry::capture_message("Worker operation failed", sentry::Level::Error);
+        let envelopes = capture.0.lock().unwrap();
+        let messages = envelopes
+            .iter()
+            .flat_map(Envelope::items)
+            .filter_map(|item| {
+                if let EnvelopeItem::Event(event) = item {
+                    event.message.as_deref()
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if cfg!(feature = "simulator") {
+            assert_eq!(messages, Vec::<&str>::new());
+        } else {
+            assert_eq!(messages, ["Worker operation failed"]);
+        }
+    });
+}

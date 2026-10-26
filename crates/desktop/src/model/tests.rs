@@ -180,6 +180,16 @@ fn periodic_dates_require_padded_day_month_and_year_at_least_2000() {
             "Data początkowa musi mieć postać dd.mm.rrrr.",
         ),
         (
+            " 1.01.2025",
+            "24.10.2025",
+            "Data początkowa musi mieć postać dd.mm.rrrr.",
+        ),
+        (
+            "01. 1.2025",
+            "24.10.2025",
+            "Data początkowa musi mieć postać dd.mm.rrrr.",
+        ),
+        (
             "01.01.2025",
             "25.10.2025",
             "Data końcowa nie może być późniejsza niż dzisiejsza.",
@@ -326,5 +336,127 @@ fn each_public_status_change_invalidates_the_previous_publication() {
             !model.status_matches(&published),
             "changed state needs a new publication"
         );
+    }
+}
+
+#[test]
+fn capture_rejects_assistive_connection_edits_while_running_saving_or_pairing() {
+    i_slint_backend_testing::init_no_event_loop();
+    for locked in 0..3 {
+        let settings = Settings {
+            api_url: "https://paired.example.test".into(),
+            token: "synthetic-paired-token".into(),
+            port: "saved-port".into(),
+            ..Settings::default()
+        };
+        let mut model = Model::new(settings.clone(), today());
+        let window = AppWindow::new().unwrap();
+        model.initialize(&window, today());
+        model.running = locked == 0;
+        model.saving = locked == 1;
+        model.pairing = locked == 2;
+        window.set_api_url("https://untrusted.example.test".into());
+        window.set_port("unsaved-port".into());
+        window.set_baud_index(0);
+        window.set_pairing_code("ABCD1234".into());
+        model.capture(&window, today());
+        model.sync(&window);
+        assert_eq!(model.settings, settings);
+        assert_eq!(window.get_api_url(), "https://paired.example.test");
+        assert_eq!(window.get_port(), "saved-port");
+        assert_eq!(window.get_pairing_code(), "");
+    }
+}
+
+#[test]
+fn window_sync_shows_connection_state_and_readiness_with_error_precedence() {
+    i_slint_backend_testing::init_no_event_loop();
+    let window = AppWindow::new().unwrap();
+    let mut model = Model::new(Settings::default(), today());
+    for (running, connected, problem, blocked, text, tone) in [
+        (false, false, false, false, "Niepołączono", 0),
+        (true, false, false, false, "Łączenie…", 0),
+        (true, true, false, false, "Połączono · SERIAL42", 0),
+        (
+            true,
+            true,
+            true,
+            false,
+            "Drukarka niegotowa: Brak papieru",
+            2,
+        ),
+        (
+            true,
+            true,
+            true,
+            true,
+            "Zablokowane: wymaga rozstrzygnięcia",
+            2,
+        ),
+    ] {
+        model.running = running;
+        model.connected = connected;
+        model.blocked = blocked;
+        model.unique_number = "SERIAL42".into();
+        model.device = connected.then(|| ready().device.unwrap());
+        if problem {
+            model
+                .device
+                .as_mut()
+                .unwrap()
+                .problems
+                .push("Brak papieru".into());
+        }
+        model.sync(&window);
+        assert_eq!(window.get_connection_text(), text);
+        assert_eq!(window.get_connection_tone(), tone);
+    }
+}
+
+#[test]
+fn window_initialization_lists_every_polish_month_and_tab_capture_round_trips() {
+    use slint::Model as _;
+    i_slint_backend_testing::init_no_event_loop();
+    let window = AppWindow::new().unwrap();
+    let mut model = Model::new(Settings::default(), Date::constant(2026, 1, 1));
+    model.initialize(&window, Date::constant(2026, 1, 1));
+    assert_eq!(
+        window
+            .get_months()
+            .iter()
+            .map(|month| month.to_string())
+            .collect::<Vec<_>>(),
+        [
+            "grudzień 2025",
+            "listopad 2025",
+            "październik 2025",
+            "wrzesień 2025",
+            "sierpień 2025",
+            "lipiec 2025",
+            "czerwiec 2025",
+            "maj 2025",
+            "kwiecień 2025",
+            "marzec 2025",
+            "luty 2025",
+            "styczeń 2025",
+            "grudzień 2024",
+            "listopad 2024",
+            "październik 2024",
+            "wrzesień 2024",
+            "sierpień 2024",
+            "lipiec 2024",
+            "czerwiec 2024",
+            "maj 2024",
+            "kwiecień 2024",
+            "marzec 2024",
+            "luty 2024",
+            "styczeń 2024",
+        ]
+    );
+    for index in [0, 1, 2, 3] {
+        window.set_tab(index);
+        model.capture(&window, Date::constant(2026, 1, 1));
+        model.sync(&window);
+        assert_eq!(window.get_tab(), index);
     }
 }

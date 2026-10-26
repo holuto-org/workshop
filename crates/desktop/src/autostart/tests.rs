@@ -347,3 +347,22 @@ fn failed_preference_save_restores_registration_and_relative_xdg_uses_home() -> 
     }
     Ok(())
 }
+
+#[cfg(not(windows))]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Only a missing registration is an idempotent removal"
+)]
+fn removing_a_registration_directory_reports_the_store_error_without_removing_it() -> TestResult {
+    use agent::Error as AgentError;
+    let temporary = tempfile::tempdir()?;
+    let artifact = temporary.path().join("workshop.desktop");
+    fs::create_dir(&artifact)?;
+    let error = set_at(&artifact, Path::new("/unused"), false).unwrap_err();
+    assert!(matches!(error, AgentError::Store {
+        action: "Nie można zmienić autostartu", path, ..
+    } if path == artifact));
+    assert!(artifact.is_dir());
+    Ok(())
+}

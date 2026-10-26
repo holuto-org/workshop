@@ -978,6 +978,7 @@ fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Err
         saved.api_url.is_empty(),
         "changing diagnostics must not invent connection settings"
     );
+    assert_eq!(window.get_status(), "Zapisano ustawienia diagnostyki.");
     Ok(())
 }
 
@@ -1149,5 +1150,152 @@ fn report_confirmations_show_exact_kind_dates_and_summary_and_cancel_sends_nothi
     );
     button(&window, "Anuluj")?.invoke_accessible_default_action();
     assert!(!app.borrow().dir.path().join("operation.json").exists());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Invalid assistive row selections must clear selection"
+)]
+fn selecting_the_end_index_never_enables_a_nonexistent_receipt() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture()?;
+    ready(&app);
+    window.invoke_selected_document(1);
+    assert_eq!(window.get_selected(), -1);
+    assert_eq!(
+        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
+        Some(false)
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "A host without our icon cannot make hiding safe"
+)]
+fn close_with_a_host_but_without_an_application_icon_stays_visible() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture()?;
+    app.borrow_mut().close_after_probe(true);
+    app.borrow().sync();
+    assert!(window.window().is_visible());
+    assert!(app.borrow().window.is_some());
+    assert_eq!(
+        window.get_status(),
+        "Zasobnik systemowy jest niedostępny. Aby zakończyć aplikację, kliknij Zakończ."
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Blocked telemetry saves must not conceal fiscal evidence"
+)]
+fn diagnostics_completion_preserves_the_unresolved_operation_notice() -> Result<(), Box<dyn Error>>
+{
+    let (_temporary, app, window) = fixture_with_event_loop()?;
+    app.borrow_mut().event(Event::Device {
+        status: None,
+        blocked: true,
+        report_unresolved: true,
+        orphaned_receipt: None,
+    });
+    app.borrow_mut()
+        .model
+        .say("Nierozstrzygnięty raport".into(), Tone::Error);
+    app.borrow().sync();
+    control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
+        .invoke_accessible_default_action();
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    assert_eq!(window.get_status(), "Nierozstrzygnięty raport");
+    assert_eq!(window.get_status_tone(), 2);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "The actual top-level startup must construct and stop the app"
+)]
+fn production_run_opens_the_window_and_publishes_stopped_state() -> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let simulator = Simulator::start();
+    slint::invoke_from_event_loop(|| {
+        with_app(|app| {
+            assert!(
+                app.window
+                    .as_ref()
+                    .is_some_and(|window| window.window().is_visible())
+            );
+            app.stop(true)
+        })
+    })?;
+    run(Arc::clone(&dir), Settings::default(), simulator.link())?;
+    let status = Snapshot::load_at(dir.path())?.ok_or("missing stopped publication")?;
+    assert!(!status.processing && !status.connected);
+    assert!(simulator.frames().is_empty());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "A native close request must keep an iconless app reachable"
+)]
+fn native_close_request_keeps_the_window_until_the_tray_probe_finishes()
+-> Result<(), Box<dyn Error>> {
+    let (_temporary, _app, window) = fixture()?;
+    window.window().dispatch_event(WindowEvent::CloseRequested);
+    assert!(window.window().is_visible());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Startup reloads the previous session's display cache"
+)]
+fn startup_history_can_be_sorted_through_the_accessible_header() -> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_no_event_loop();
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    fs::write(
+        dir.path().join("history.jsonl"),
+        concat!(
+            "{\"jobId\":\"00000000-0000-0000-0000-000000000001\",",
+            "\"printedAt\":\"2025-10-24T10:00:00Z\",\"receiptNumber\":\"10\",",
+            "\"total\":100,\"payments\":[],\"items\":[\"Usługa\"]}\n",
+            "{\"jobId\":\"00000000-0000-0000-0000-000000000002\",",
+            "\"printedAt\":\"2025-10-24T10:00:00Z\",\"receiptNumber\":\"2\",",
+            "\"total\":100,\"payments\":[],\"items\":[\"Olej\"]}\n"
+        ),
+    )?;
+    let app = make_app(dir, Settings::default(), Simulator::start().link())?;
+    let window = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing window")?
+        .clone_strong();
+    window.set_tab(2);
+    for expected in [["2", "10"], ["10", "2"]] {
+        button(&window, "Nr paragonu")?.invoke_accessible_default_action();
+        assert_eq!(window.get_tab(), 2);
+        let numbers = window
+            .get_history()
+            .iter()
+            .map(|row| {
+                row.row_data(2)
+                    .ok_or("missing receipt number")
+                    .map(|cell| cell.text.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(numbers, expected);
+    }
     Ok(())
 }

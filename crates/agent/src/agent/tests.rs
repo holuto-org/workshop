@@ -1962,3 +1962,38 @@ fn an_uncertain_outbox_replays_after_http_failure_without_resending_the_print() 
     assert_eq!(sent(&sim, &RECEIPT_COMMANDS), frames);
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_changed_vat_warning_survives_a_failed_poll() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, &server)?;
+    sim.set_vat(["23,00", "8,00", "5,00", "0,00", "100,00", "7,00", "101,00"]);
+    server.fault(
+        "POST",
+        "/agent/heartbeat",
+        Fault::Problem {
+            status: 503,
+            code: "unavailable".to_owned(),
+            detail: "temporary".to_owned(),
+        },
+    );
+    assert!(matches!(
+        agent.step(),
+        Err(Error::Api(ApiError::Status { status: 503, .. }))
+    ));
+    let _delay = agent.step()?;
+    let mut notices = agent.take_news().notices;
+    notices.retain(|notice| notice.starts_with("Pomijam"));
+    assert_eq!(
+        notices,
+        ["Pomijam nieobsługiwaną stawkę VAT w slocie F · 7%"],
+        "the warning for a changed VAT table is shown once, even when that poll fails"
+    );
+    Ok(())
+}

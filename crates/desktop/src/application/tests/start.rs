@@ -153,3 +153,166 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "A held real worker protects connection settings against assistive actions"
+)]
+fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration()
+-> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let simulator = Simulator::start();
+    let holuto = Holuto::new();
+    let (reached, held) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    holuto.fault(
+        "POST",
+        "/agent/session",
+        Fault::Hold {
+            reached,
+            release: resume,
+        },
+    );
+    let settings = Settings {
+        api_url: holuto.url().into(),
+        token: holuto.token().into(),
+        port: simulator.address().into(),
+        ..Settings::default()
+    };
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    settings.save(&dir)?;
+    let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
+    let worker = Worker::spawn(
+        dir,
+        settings.clone(),
+        simulator.link(),
+        Application::worker_event,
+    )?;
+    app.borrow_mut().worker = Some(worker);
+    app.borrow_mut().model.running = true;
+    app.borrow().sync();
+    held.recv_timeout(Duration::from_secs(10))?;
+    let window = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing window")?
+        .clone_strong();
+    control(&window, "Adres API", AccessibleRole::TextInput)?
+        .set_accessible_value("https://unsaved.example.test");
+    for label in ["Zapisz", "Uruchom", "Sparuj"] {
+        button(&window, label)?.invoke_accessible_default_action();
+        assert!(
+            !app.borrow().model.saving,
+            "{label} cannot submit a settings write"
+        );
+        assert!(
+            !app.borrow().model.pairing,
+            "{label} cannot replace the active worker"
+        );
+        assert_eq!(app.borrow().model.settings, settings);
+    }
+    assert_eq!(Settings::load(&app.borrow().dir)?, Some(settings));
+    app.borrow_mut().stop(true)?;
+    release.send(())?;
+    slint::run_event_loop_until_quit()?;
+    assert!(app.borrow().worker.is_none());
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Real paging callbacks send only navigation allowed by the page"
+)]
+fn page_callbacks_reject_disabled_actions_and_navigate_next_then_previous()
+-> Result<(), Box<dyn Error>> {
+    use serde_json::json;
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let simulator = Simulator::start();
+    let holuto = Arc::new(Holuto::new());
+    let document = |number: u32| {
+        json!({
+            "kind":"sale", "orderId":Uuid::from_u128(u128::from(number)), "orderNumber":number,
+            "allocationId":null, "amount":"1.00", "customerName":null,
+            "occurredAt":"2025-10-24T10:00:00Z", "dueAt":"2025-10-24T10:00:00Z",
+            "latestAt":"2025-10-24T10:00:00Z", "isOverdue":false
+        })
+    };
+    holuto.page(
+        None,
+        json!({"items":[document(10)],"nextCursor":"second-page"}),
+    );
+    holuto.page(
+        Some("second-page"),
+        json!({"items":[document(11)],"nextCursor":null}),
+    );
+    let settings = Settings {
+        api_url: holuto.url().into(),
+        token: holuto.token().into(),
+        port: simulator.address().into(),
+        ..Settings::default()
+    };
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
+    let pages = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&pages);
+    let worker = Worker::spawn(dir, settings, simulator.link(), move |event| {
+        let step = matches!(event, Event::Documents { .. })
+            .then(|| observed.fetch_add(1, Ordering::SeqCst));
+        let _scheduled = slint::invoke_from_event_loop(move || {
+            with_app(move |app| {
+                app.event(event);
+                app.sync();
+                let window = app.window.as_ref().ok_or("missing window")?;
+                if let Some(step) = step {
+                    assert_eq!(app.model.page, if step == 1 { 2 } else { 1 });
+                    match step {
+                        0 => {
+                            button(window, "Poprzednia strona")
+                                .map_err(|error| error.to_string())?
+                                .invoke_accessible_default_action();
+                            button(window, "Następna strona")
+                                .map_err(|error| error.to_string())?
+                                .invoke_accessible_default_action();
+                        },
+                        1 => {
+                            button(window, "Następna strona")
+                                .map_err(|error| error.to_string())?
+                                .invoke_accessible_default_action();
+                            button(window, "Poprzednia strona")
+                                .map_err(|error| error.to_string())?
+                                .invoke_accessible_default_action();
+                        },
+                        2 => app.stop(true)?,
+                        _ => panic!("unexpected page refresh"),
+                    }
+                }
+                Ok(())
+            })
+        });
+    })?;
+    app.borrow_mut().worker = Some(worker);
+    app.borrow_mut().model.running = true;
+    slint::run_event_loop_until_quit()?;
+    assert_eq!(pages.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        holuto
+            .requests()
+            .into_iter()
+            .filter(|request| request.path.starts_with("/agent/documents"))
+            .map(|request| request.path)
+            .collect::<Vec<_>>(),
+        [
+            "/agent/documents?limit=100",
+            "/agent/documents?limit=100&cursor=second-page",
+            "/agent/documents?limit=100"
+        ]
+    );
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
+}
