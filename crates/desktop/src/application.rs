@@ -274,11 +274,12 @@ impl Application {
             self.model.say(error.to_string(), Tone::Error);
             return;
         }
-        let submitted = self.write_settings(preferences::Request::Save {
+        // Only a submitted Start can complete with `Outcome::Start`, the flag's sole reader.
+        self.starting |= start;
+        let _submitted = self.write_settings(preferences::Request::Save {
             settings: self.model.settings.clone(),
             start,
         });
-        self.starting |= start && submitted;
     }
 
     fn write_settings(&mut self, request: preferences::Request) -> bool {

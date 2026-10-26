@@ -3,6 +3,8 @@
 mod autostart;
 #[path = "tests/end_to_end.rs"]
 mod end_to_end;
+// Unit tests never run on AppKit's main thread, so the macOS quit hook fails closed.
+#[cfg(not(target_os = "macos"))]
 #[path = "tests/pairing.rs"]
 mod pairing;
 #[cfg(unix)]
@@ -274,25 +276,28 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
             interrupted,
             "launch never rewrites the fiscal journal ({identity_key})"
         );
-        // Save feedback stays hidden while blocked, so launch must explain the block itself.
-        let explanation = (
-            "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
-             wyjaśnić."
-                .to_owned(),
-            Tone::Error,
-        );
-        assert_eq!(
-            (app.borrow().model.message.clone(), app.borrow().model.tone),
-            explanation,
-            "launch explains the block instead of the pairing prompt ({identity_key})"
-        );
-        app.borrow_mut()
-            .settings_saved(Ok(preferences::Outcome::Saved));
-        assert_eq!(
-            (app.borrow().model.message.clone(), app.borrow().model.tone),
-            explanation,
-            "a later save keeps the block explanation visible ({identity_key})"
-        );
+        // On macOS the unavailable quit hook's error replaces this explanation in tests.
+        if cfg!(not(target_os = "macos")) {
+            // Save feedback stays hidden while blocked, so launch must explain the block itself.
+            let explanation = (
+                "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
+                 wyjaśnić."
+                    .to_owned(),
+                Tone::Error,
+            );
+            assert_eq!(
+                (app.borrow().model.message.clone(), app.borrow().model.tone),
+                explanation,
+                "launch explains the block instead of the pairing prompt ({identity_key})"
+            );
+            app.borrow_mut()
+                .settings_saved(Ok(preferences::Outcome::Saved));
+            assert_eq!(
+                (app.borrow().model.message.clone(), app.borrow().model.tone),
+                explanation,
+                "a later save keeps the block explanation visible ({identity_key})"
+            );
+        }
         APPLICATION.with(|slot| *slot.borrow_mut() = None);
     }
     Ok(())
@@ -364,7 +369,9 @@ fn stopped_worker_replaces_progress_text_but_keeps_errors() -> Result<(), Box<dy
         "Zatrzymano.",
         "a requested stop reports completion"
     );
+    // A requested stop whose worker then fails must keep the failure.
     state.model.running = true;
+    state.model.stopping = true;
     state.event(Event::Status {
         text: "Błąd: brak połączenia".into(),
         tone: Tone::Error,
@@ -1066,11 +1073,17 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
         failures.load(Ordering::SeqCst) >= 1,
         "the write really failed"
     );
-    assert_eq!(
-        app.borrow().model.tone,
-        Tone::Error,
-        "the failure was shown"
+    let state = app.borrow();
+    assert!(
+        state
+            .model
+            .message
+            .starts_with("Nie można zapisać stanu aplikacji")
+            && state.model.tone == Tone::Error,
+        "the failure was shown: {}",
+        state.model.message
     );
+    drop(state);
     assert!(app.borrow().writes_pending.is_empty());
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())

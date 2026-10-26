@@ -1,6 +1,28 @@
 use agent::testing::{Fault, Holuto};
+use i_slint_backend_testing::ElementQuery;
 
 use super::*;
+
+/// Whether any element's accessible label, value or description shows `text`.
+fn rendered(window: &AppWindow, text: &str) -> bool {
+    ElementQuery::from_root(window)
+        .match_descendants()
+        .match_predicate({
+            let text = text.to_owned();
+            move |element| {
+                [
+                    element.accessible_label(),
+                    element.accessible_value(),
+                    element.accessible_description(),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|shown| shown.contains(text.as_str()))
+            }
+        })
+        .find_first()
+        .is_some()
+}
 
 #[test]
 #[expect(
@@ -41,10 +63,10 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    assert!(rendered(&window, fake.url()), "the scan sees field values");
     assert!(
-        ElementHandle::find_by_accessible_label(&window, "Token parowania")
-            .next()
-            .is_none()
+        !rendered(&window, "previous-secret-never-rendered"),
+        "a stored token is never shown"
     );
     control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("abcd-1234");
     button(&window, "Sparuj")?.invoke_accessible_default_action();

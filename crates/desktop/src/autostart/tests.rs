@@ -154,9 +154,37 @@ fn macos_login_agent_uses_exact_executable_and_is_removable() -> TestResult {
 fn windows_login_value_contains_only_the_quoted_executable_and_is_removable() -> TestResult {
     use std::ptr;
     use windows_sys::Win32::{
-        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
-        System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegDeleteKeyW, RegGetValueW},
+        Foundation::{ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR},
+        System::Registry::{
+            HKEY_CURRENT_USER, KEY_READ, RRF_RT_REG_SZ, RegCloseKey, RegDeleteKeyW, RegDeleteTreeW,
+            RegGetValueW, RegOpenKeyExW,
+        },
     };
+    /// Removes this test's key and, when no other run uses it, the shared parent.
+    struct Cleanup(Vec<u16>);
+    impl Cleanup {
+        /// Returns the leaf and parent deletion results.
+        fn remove(&self) -> (WIN32_ERROR, WIN32_ERROR) {
+            let parent: Vec<_> = "Software\\HolutoWorkshopTests"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
+            // SAFETY: live NUL-terminated names below this test's own HKCU subtree;
+            // deleting a parent that still has subkeys fails and leaves it intact.
+            unsafe {
+                (
+                    RegDeleteTreeW(HKEY_CURRENT_USER, self.0.as_ptr()),
+                    RegDeleteKeyW(HKEY_CURRENT_USER, parent.as_ptr()),
+                )
+            }
+        }
+    }
+    impl Drop for Cleanup {
+        // Best effort after a failed assertion; the normal path checks `remove` itself.
+        fn drop(&mut self) {
+            let _results = self.remove();
+        }
+    }
     let temp = tempfile::tempdir()?;
     let key = format!(
         "Software\\HolutoWorkshopTests\\{}",
@@ -166,8 +194,9 @@ fn windows_login_value_contains_only_the_quoted_executable_and_is_removable() ->
             .to_string_lossy()
     );
     let executable = Path::new("C:\\Users\\Operator\\Holuto Workshop\\workshop.exe");
-    super::registry(&key, executable, true)?;
     let key_wide: Vec<_> = key.encode_utf16().chain(Some(0)).collect();
+    let cleanup = Cleanup(key_wide.clone());
+    super::registry(&key, executable, true)?;
     let name: Vec<_> = "Holuto Workshop".encode_utf16().chain(Some(0)).collect();
     let expected: Vec<_> = "\"C:\\Users\\Operator\\Holuto Workshop\\workshop.exe\""
         .encode_utf16()
@@ -203,9 +232,32 @@ fn windows_login_value_contains_only_the_quoted_executable_and_is_removable() ->
             &raw mut size,
         )
     };
-    // SAFETY: removes only the empty key created by this test.
-    let removed = unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, key_wide.as_ptr()) };
     assert_eq!(absent, ERROR_FILE_NOT_FOUND);
-    assert_eq!(removed, ERROR_SUCCESS);
+    let (leaf, parent) = cleanup.remove();
+    assert_eq!(leaf, ERROR_SUCCESS, "this test's key is deleted");
+    assert!(
+        // Another run's key keeps the parent (access denied) or already removed it.
+        matches!(
+            parent,
+            ERROR_SUCCESS | ERROR_ACCESS_DENIED | ERROR_FILE_NOT_FOUND
+        ),
+        "unexpected parent deletion result {parent}"
+    );
+    let mut handle = ptr::null_mut();
+    // SAFETY: live NUL-terminated name; output is a local HKEY slot closed if opened.
+    let reopened = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            key_wide.as_ptr(),
+            0,
+            KEY_READ,
+            &raw mut handle,
+        )
+    };
+    if reopened == ERROR_SUCCESS {
+        // SAFETY: successful open returned this owned handle, closed exactly once.
+        let _closed = unsafe { RegCloseKey(handle) };
+    }
+    assert_eq!(reopened, ERROR_FILE_NOT_FOUND, "no disposable key remains");
     Ok(())
 }

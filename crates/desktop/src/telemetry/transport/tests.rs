@@ -386,6 +386,9 @@ fn envelopes_follow_the_environment_proxy() -> Result<(), Box<dyn Error>> {
             "--nocapture",
         ])
         .env(CHILD, "1")
+        // ureq prefers ALL_PROXY over HTTPS_PROXY.
+        .env_remove("ALL_PROXY")
+        .env_remove("all_proxy")
         .env("HTTPS_PROXY", &address)
         .env("https_proxy", &address)
         .env("NO_PROXY", "")

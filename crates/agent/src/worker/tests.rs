@@ -33,6 +33,7 @@ use crate::{
     Error,
     agent::POLL,
     api::{ApiError, TransportFailure},
+    documents::BuyerNip,
     history,
     journal::{Device, JobResult, Journal, Operation, ReceiptOperation},
     settings::Settings,
@@ -878,6 +879,36 @@ fn an_emptied_later_page_returns_to_the_first_page() {
 }
 
 #[test]
+fn a_queued_buyer_nip_reaches_holuto_and_the_printed_receipt() {
+    const NIP: &str = "5261040828";
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    worker.submit(Command::Queue {
+        document: serde_json::from_value(document(1)).unwrap(),
+        buyer_nip: Some(BuyerNip::parse(NIP).unwrap()),
+    });
+    let _printed = receive_until(
+        &events,
+        |event| matches!(event, Event::HistoryChanged(entries) if !entries.is_empty()),
+    );
+    let _stopped = stop(worker, &events);
+    let queued: Vec<_> = holuto
+        .requests()
+        .into_iter()
+        .filter(|request| request.method == "POST" && request.path == "/agent/jobs")
+        .collect();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].body["buyerNip"], NIP);
+    let receipts = sim.receipts();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].buyer_nip.as_deref(), Some(NIP));
+}
+
+#[test]
 fn a_failed_queue_command_does_not_delay_the_following_report() {
     let sim = Simulator::start();
     let holuto = Holuto::new();
@@ -1588,6 +1619,31 @@ fn unreadable_startup_history_is_a_notice_not_a_connection_failure_or_fake_empty
     );
     assert_eq!(history_rows(&received), None);
     assert_eq!(sim.receipts(), []);
+}
+
+#[test]
+fn a_corrupt_journal_stops_startup_before_any_printer_or_holuto_traffic() {
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    fs::write(dir.file("operation.json"), b"broken").unwrap();
+    let dir = Arc::new(dir);
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let received = receive_until(&events, |event| matches!(event, Event::Stopped));
+    worker.join();
+    assert!(received.iter().any(
+        |event| matches!(event, Event::Status { text, tone: Tone::Error }
+        if text == "Błąd: Uszkodzony rejestr operacji lub nieobsługiwany format. \
+                    Drukowanie zablokowane; nie usuwaj pliku.")
+    ));
+    assert!(
+        !received
+            .iter()
+            .any(|event| matches!(event, Event::Connected { .. } | Event::PortDetected { .. }))
+    );
+    assert_eq!(sim.frames(), Vec::<Vec<u8>>::new(), "no port is probed");
+    assert!(holuto.requests().is_empty(), "no session is opened");
+    assert_eq!(fs::read(dir.file("operation.json")).unwrap(), b"broken");
 }
 
 const FISCAL_COMMANDS: [&str; 8] = [

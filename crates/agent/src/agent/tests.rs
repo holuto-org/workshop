@@ -411,6 +411,17 @@ fn terminal_failed_or_expired_print_needs_same_device_local_acknowledgement() ->
                     && notice.contains(&JOB_ID.to_string())),
             "operator gets job, order and physical receipt evidence"
         );
+        sim.set_paper(false);
+        assert!(
+            matches!(agent.acknowledge_orphaned_receipt(), Err(Error::Printer(_))),
+            "an unready printer cannot confirm the evidence"
+        );
+        assert_eq!(
+            stored(&dir)?.settled,
+            None,
+            "a refused acknowledgement keeps the receipt blocking"
+        );
+        sim.set_paper(true);
         let requests_before = server.requests().len();
         agent.acknowledge_orphaned_receipt()?;
         assert!(
@@ -684,6 +695,18 @@ fn invalid_money_vat_or_text_fails_before_fiscal_commands() -> TestResult {
             "name": "Pozycja", "quantity": "1", "unitPrice": "250.00",
             "total": "250.00", "vatRate": "8", "vatLetter": "A"
         }]}),
+        // Each line must equal rounded quantity × price even when the job total still matches.
+        json!({"lines": [
+            {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100.00",
+             "total": "199.99", "vatRate": "23", "vatLetter": "A"},
+            {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
+             "total": "50.01", "vatRate": "8", "vatLetter": "B"}
+        ]}),
+        // A deducted advance must match the printer's rate in its slot, like every line.
+        json!({
+            "advances": [{"vatLetter": "A", "vatRate": "8", "amount": "100.00"}],
+            "payments": [{"form": "card", "amount": "150.00"}]
+        }),
         json!({"companyName":"Firma 🛠"}),
     ] {
         let sim = Simulator::start();
@@ -1606,5 +1629,97 @@ fn changed_vat_profile_uploads_once_and_illegal_letters_stay_local() -> TestResu
             .all(|request| request.body.is_null())
     );
     assert_eq!(sim.receipts(), []);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_printer_swapped_mid_session_claims_no_job_and_prints_nothing() -> TestResult {
+    const PAIRED: &str = "DEM0000000002";
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let api = Api::new(server.url(), server.token(), PAIRED)?;
+    let mut agent = Agent::new(sim.driver(), api, &dir, &waiting);
+    // The session started on the paired printer; another one now answers on its port.
+    let mut paired = agent.printer.probe()?;
+    PAIRED.clone_into(&mut paired.unique_number);
+    let _notices = agent.describe(paired)?;
+    assert!(agent.session()?);
+    let id = server.enqueue(job_json());
+    assert!(matches!(
+        agent.step(),
+        Err(Error::Blocked(message))
+            if message.contains(UNIQUE_NUMBER) && message.contains(PAIRED)
+    ));
+    assert!(
+        server
+            .requests()
+            .iter()
+            .all(|request| request.path != "/agent/jobs/take"),
+        "no job is claimed for the paired printer"
+    );
+    assert_eq!(server.job(id)["state"], "queued");
+    assert!(Journal::new(&dir).load()?.is_none());
+    assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_claim_for_another_printer_or_without_an_attempt_is_never_printed() -> TestResult {
+    for (changes, problem) in [
+        (
+            json!({"printerId": "00000000-0000-0000-0000-000000000099"}),
+            "zadanie innej drukarki",
+        ),
+        (
+            json!({"state": "queued"}),
+            "zadanie nie zostało pobrane do wykonania",
+        ),
+        (
+            json!({"attempt": null}),
+            "zadanie nie zostało pobrane do wykonania",
+        ),
+    ] {
+        let sim = Simulator::start();
+        let server = Holuto::new();
+        server.fault(
+            "POST",
+            "/agent/jobs/take",
+            Fault::Body {
+                status: 200,
+                body: serde_json::to_vec(&with(job_json(), &changes))?,
+            },
+        );
+        let (_temporary, dir) = state_dir();
+        let mut agent = agent(&sim, &dir, &server)?;
+        assert!(
+            matches!(agent.step(), Err(Error::Blocked(message))
+            if message == format!(
+                "Nieprawidłowe zadanie {JOB_ID} z Holuto: {problem}. Nie drukuję go."
+            )),
+            "{changes}"
+        );
+        assert!(Journal::new(&dir).load()?.is_none(), "{changes}");
+        assert!(
+            server
+                .requests()
+                .iter()
+                .all(|request| !request.path.ends_with("/result")),
+            "a refused claim reports nothing for a job this printer does not own: {changes}"
+        );
+        assert_eq!(
+            sent(&sim, &RECEIPT_COMMANDS),
+            Vec::<Vec<u8>>::new(),
+            "{changes}"
+        );
+    }
     Ok(())
 }

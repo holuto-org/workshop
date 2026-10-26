@@ -495,3 +495,43 @@ fn legacy_identity_keys_migrate_without_losing_journal_evidence() -> TestResult 
     }
     Ok(())
 }
+
+/// The golden files hold one settlement state and payment form; journals written by any
+/// release may hold the others, whose names come from generated or shared types.
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+)]
+fn every_stored_settlement_state_and_payment_form_keeps_its_name() -> TestResult {
+    for (state, name) in [
+        (JobState::Done, "done"),
+        (JobState::Failed, "failed"),
+        (JobState::Expired, "expired"),
+        (JobState::Voided, "voided"),
+    ] {
+        let stored = serde_json::json!({"at": "2026-10-16T10:01:00Z", "state": name});
+        let settlement = Settlement {
+            at: "2026-10-16T10:01:00Z".parse()?,
+            state,
+        };
+        assert_eq!(serde_json::to_value(&settlement)?, stored);
+        assert_eq!(serde_json::from_value::<Settlement>(stored)?, settlement);
+    }
+    for (form, name) in [
+        (PaymentForm::Cash, "cash"),
+        (PaymentForm::Card, "card"),
+        (PaymentForm::Transfer, "transfer"),
+        (PaymentForm::Mobile, "mobile"),
+        (PaymentForm::Credit, "credit"),
+    ] {
+        let stored = serde_json::json!({"form": name, "amount": 100});
+        let payment = Payment {
+            form,
+            amount: Grosze::new(100)?,
+        };
+        assert_eq!(serde_json::to_value(&payment)?, stored);
+        assert_eq!(serde_json::from_value::<Payment>(stored)?, payment);
+    }
+    Ok(())
+}

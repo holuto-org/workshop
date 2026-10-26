@@ -141,11 +141,14 @@ fn document_deadlines_sort_independently_and_overdue_is_explicit() {
     };
     let earlier = document.clone();
     document.latest_at = "2026-10-24T10:00:00Z".parse().unwrap();
+    // Deadlines show the operator's local date; no single instant has one date in every zone.
+    let local = document.latest_at.to_zoned(TimeZone::system());
+    let date = format!("{:02}.{:02}.{}", local.day(), local.month(), local.year());
     assert_eq!(document.compare(&earlier, 4), Ordering::Greater);
     // A bank-settled advance before its statutory limit is still due now.
     assert!(document.cells()[4].starts_with("Niezwłocznie · najpóźniej "));
-    assert!(document.cells()[4].contains("24.10.2026"));
+    assert!(document.cells()[4].contains(&date));
     document.is_overdue = true;
     assert!(document.cells()[4].starts_with("PO TERMINIE · "));
-    assert!(document.cells()[4].contains("24.10.2026"));
+    assert!(document.cells()[4].contains(&date));
 }

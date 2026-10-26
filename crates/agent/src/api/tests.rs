@@ -149,6 +149,38 @@ fn a_result_reply_that_does_not_echo_the_report_is_not_accepted() -> TestResult 
             "{changes}"
         );
     }
+    // Without a receipt number, only the echoed state shows whether the outcome was recorded.
+    let unknown = ResultForm {
+        issued_at: None,
+        receipt_number: None,
+        result: Some("Sprawdź wydruk.".to_owned()),
+        state: Outcome::Unknown,
+        ..form
+    };
+    for (state, accepted) in [("unknown", true), ("taken", false)] {
+        let reply = with(
+            server.job(JOB_ID),
+            &json!({"state": state, "receiptNumber": null, "result": "Sprawdź wydruk."}),
+        );
+        server.fault(
+            "POST",
+            &path,
+            Fault::Body {
+                status: 200,
+                body: serde_json::to_vec(&reply)?,
+            },
+        );
+        let reported = api.report(job.id, &unknown);
+        if accepted {
+            reported?;
+        } else {
+            assert!(
+                matches!(reported, Err(ApiError::Response(message))
+                    if message == "wynik zadania nie został zapisany zgodnie z raportem"),
+                "an unchanged {state} job did not record the outcome"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -594,6 +626,40 @@ fn invalid_physical_serial_is_refused_without_sending() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
+fn cleartext_or_credentialed_remote_api_urls_are_refused_before_any_request() -> TestResult {
+    let server = Holuto::new();
+    let refused = "Adres API wymaga https (http tylko dla localhost), bez danych logowania, \
+                   zapytania i fragmentu.";
+    // `.invalid` never resolves, so a missing guard fails without leaving the machine.
+    for url in [
+        "http://holuto.invalid",
+        "https://user:secret@holuto.invalid",
+        "https://holuto.invalid?next=1",
+    ] {
+        assert!(
+            matches!(
+                Api::new(url, server.token(), "DEM0000000001"),
+                Err(Error::Invalid(message)) if message == refused
+            ),
+            "{url}"
+        );
+        assert!(
+            matches!(
+                Api::pair(url, "ABCD1234"),
+                Err(Error::Invalid(message)) if message == refused
+            ),
+            "{url}"
+        );
+    }
+    assert!(server.requests().is_empty());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
 fn loopback_api_never_sends_its_token_to_an_environment_proxy() -> TestResult {
     const CHILD: &str = "HOLUTO_AGENT_PROXY_CHILD";
     if env::var_os(CHILD).is_some() {
@@ -792,24 +858,38 @@ fn a_malformed_pairing_code_is_refused_without_spending_a_backend_attempt() -> T
     clippy::panic_in_result_fn,
     reason = "boundary assertions panic while setup uses Result"
 )]
-fn pairing_rejects_malformed_credentials_without_exposing_them() -> TestResult {
+fn pairing_accepts_only_well_formed_credentials_and_never_echoes_rejected_ones() -> TestResult {
     let server = Holuto::new();
-    for body in [
-        json!({"token":"private secret","printerId":PRINTER_ID}),
-        json!({"token":"private-secret","printerId":"not-a-uuid"}),
-    ] {
+    // An unpadded base64url 32-byte token: 43 characters whose last one carries 2 bits.
+    let valid = format!("private_-{}w", "x".repeat(33));
+    let pair = |body: &serde_json::Value| -> Result<_, Box<dyn StdError>> {
         server.fault(
             "POST",
             "/agent/pair",
             Fault::Body {
                 status: 200,
-                body: serde_json::to_vec(&body)?,
+                body: serde_json::to_vec(body)?,
             },
         );
-        let error = Api::pair(server.url(), "ABCD1234")
-            .err()
-            .ok_or("missing refusal")?;
-        assert!(matches!(error, Error::Api(ApiError::Response(_))));
+        Ok(Api::pair(server.url(), "ABCD1234"))
+    };
+    let paired = pair(&json!({"token": valid, "printerId": PRINTER_ID}))??;
+    assert_eq!(paired.token.as_str(), valid);
+    assert_eq!(paired.printer_id, PRINTER_ID);
+    for body in [
+        json!({"token": "private secret", "printerId": PRINTER_ID}),
+        json!({"token": &valid[..42], "printerId": PRINTER_ID}),
+        json!({"token": format!("{}x", &valid[..42]), "printerId": PRINTER_ID}),
+        json!({"token": valid.replace('_', "+"), "printerId": PRINTER_ID}),
+        json!({"token": valid, "printerId": Uuid::nil()}),
+        json!({"token": valid, "printerId": "private-not-a-uuid"}),
+    ] {
+        let error = pair(&body)?.err().ok_or("malformed credential accepted")?;
+        assert_eq!(
+            error.to_string(),
+            "Nieprawidłowa odpowiedź Holuto (nieprawidłowe dane parowania).",
+            "{body}"
+        );
         assert!(!format!("{error:?} {error}").contains("private"));
     }
     Ok(())
