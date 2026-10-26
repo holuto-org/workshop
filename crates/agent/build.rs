@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let _settings = settings.with_replacement(name, "uuid::Uuid", iter::empty());
     }
     for (name, rust) in [
-        ("PrinterLimit", "u32"), // Preserve nullable limits' zero/domain checks.
+        ("PrinterLimit", "usize"), // Native capability limits; PrinterInfo::check rejects zero.
         ("QuantityDecimals", "u8"),
         ("FiscalVendor", "fiscal::device::Vendor"),
         ("FiscalReceiptKind", "crate::documents::ReceiptKind"),
@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "jiff::Timestamp",
         iter::empty(),
     );
-    // Preserve borrowed versions and native printer limits in outbound fields.
+    // Preserve borrowed versions in outbound fields.
     let telemetry = schemas.get_mut("Telemetry").ok_or("missing Telemetry")?;
     replace_reference(
         telemetry
@@ -93,31 +93,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         "Code",
         "AgentAppVersion",
     )?;
-    for field in [
-        "maxItemNameLength",
-        "maxLinesPerReceipt",
-        "maxCompanyNameLength",
-    ] {
-        replace_reference(
-            schemas
-                .get_mut("PrinterCapabilities")
-                .ok_or("missing capabilities")?
-                .pointer_mut(&format!("/properties/{field}"))
-                .ok_or("missing telemetry limit")?,
-            "PrinterLimit",
-            "AgentTelemetryLimit",
-        )?;
-    }
     let _previous = schemas.insert(
         "AgentAppVersion".into(),
         schemas.get("Code").ok_or("missing Code")?.clone(),
-    );
-    let _previous = schemas.insert(
-        "AgentTelemetryLimit".into(),
-        schemas
-            .get("PrinterLimit")
-            .ok_or("missing PrinterLimit")?
-            .clone(),
     );
     let _settings =
         settings.with_replacement("AgentAppVersion", "super::AppVersion", iter::empty());
@@ -125,7 +103,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         "Telemetry",
         TypeSpacePatch::default().with_attr("#[serde(bound(deserialize = \"'de: 'static\"))]"),
     );
-    let _settings = settings.with_replacement("AgentTelemetryLimit", "usize", iter::empty());
     // Reuse AgentDocument's domain conversion for the identical inline page item.
     let document_schema = schemas
         .get("AgentDocument")

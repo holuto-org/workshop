@@ -219,12 +219,9 @@ impl Application {
         window.on_confirm(|accepted| {
             with_app(move |app| {
                 app.capture();
-                let worker = app.worker.as_ref();
-                app.model.confirm(accepted, |command| {
-                    if let Some(worker) = worker {
-                        worker.submit(command);
-                    }
-                });
+                if let Some(command) = app.model.confirm(accepted) {
+                    app.submit(command);
+                }
                 Ok(())
             });
         });

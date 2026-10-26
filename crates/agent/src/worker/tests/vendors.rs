@@ -106,32 +106,12 @@ fn each_vendor_prints_a_receipt_end_to_end() {
 
 #[test]
 fn overdue_daily_report_does_not_allow_a_job_claim() {
-    use elzab::simulator::Simulator as ElzabSimulator;
-
-    let sim = ElzabSimulator::start();
+    let sim = ElzabPeer::start();
     let holuto = Holuto::new();
     let (_temporary, dir) = state_dir();
-    let (printer, status) = device::detect(
-        sim.link(),
-        Connection {
-            port: sim.address().to_owned(),
-            baud_rate: 9600,
-        },
-        Some(Vendor::Elzab),
-        false,
-    )
-    .unwrap();
-    let api = Api::new(holuto.url(), holuto.token(), &status.unique_number).unwrap();
-    let waiting = |_problem: Option<&str>| {};
-    let mut agent = Agent::new(printer, api, &dir, &waiting);
-    let _notices = agent.describe(status).unwrap();
-    let _session = agent.session().unwrap();
+    let mut agent = elzab_agent(&sim, &holuto, &dir);
     let id = holuto.enqueue(job_json());
-    sim.set_status(
-        0,
-        (1_u128 << 115) | (1_u128 << 102) | (1_u128 << 98) | 4,
-        32,
-    );
+    sim.set_status(0, OVERDUE, 32);
 
     assert_eq!(agent.step().unwrap(), RETRY);
     let status = agent.status().unwrap();

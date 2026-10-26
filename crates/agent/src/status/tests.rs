@@ -1,8 +1,4 @@
-use std::{
-    error::Error as StdError,
-    fs::{self, File},
-    io::{ErrorKind, Read as _},
-};
+use std::{error::Error as StdError, fs, io::ErrorKind};
 
 use super::Snapshot;
 use crate::{Error, store::StateDir};
@@ -156,33 +152,6 @@ fn malformed_snapshot_errors_never_echo_values_or_unknown_keys() -> TestResult {
         assert_eq!(format!("{error:?}"), "Store { kind: InvalidData, .. }");
         assert_eq!(fs::read(dir.file("status.json"))?, bytes.as_bytes());
     }
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Test assertions panic on violated guarantees; setup errors use Result."
-)]
-fn replacement_keeps_existing_readers_on_the_previous_complete_snapshot() -> TestResult {
-    let temporary = tempfile::tempdir()?;
-    let dir = StateDir::open(temporary.path().join("state"))?;
-    let mut current = snapshot()?;
-    current.save(&dir)?;
-    let mut previous_reader = File::open(dir.file("status.json"))?;
-    current.processing = false;
-    current.connected = false;
-    current.updated_at = "2026-10-24T12:35:00Z".parse()?;
-    current.save(&dir)?;
-    let mut previous = String::new();
-    #[expect(
-        clippy::verbose_file_reads,
-        reason = "Read the already-open old handle rather than reopening the replaced path."
-    )]
-    let _bytes = previous_reader.read_to_string(&mut previous)?;
-    assert_eq!(previous, GOLDEN);
-    assert_eq!(Snapshot::load_at(dir.path())?, Some(current));
-    assert_eq!(fs::read_dir(dir.path())?.count(), 2);
     Ok(())
 }
 

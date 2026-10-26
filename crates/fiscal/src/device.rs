@@ -134,18 +134,17 @@ pub struct Device {
 }
 
 impl Device {
-    /// `None` when the driver cannot truthfully advertise the backend's required limits.
+    /// False when the driver cannot truthfully advertise the backend's required limits.
     /// Readiness problems remain independent: paper-out devices may still be describable.
-    pub fn describable_capabilities(&self) -> Option<&Capabilities> {
+    pub fn describable(&self) -> bool {
         let capabilities = &self.capabilities;
-        (valid_unique_number(&self.unique_number)
+        valid_unique_number(&self.unique_number)
             && self.vat.iter().all(|r| r.legal_letter())
             && capabilities.max_item_name > 0
             && capabilities.max_lines > 0
             && capabilities.max_company_name > 0
             && capabilities.max_quantity_decimals <= 8
-            && !capabilities.allowed_characters.is_empty())
-        .then_some(capabilities)
+            && !capabilities.allowed_characters.is_empty()
     }
 
     pub fn ready(&self) -> bool {

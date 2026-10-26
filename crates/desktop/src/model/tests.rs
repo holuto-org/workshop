@@ -77,9 +77,9 @@ fn confirmed_actions_cannot_be_submitted_again_until_worker_completion() {
         model.orphaned_receipt = Some("Zlecenie 42 · paragon 41".into());
         let mut commands = Vec::new();
         model.request(action);
-        model.confirm(true, |command| commands.push(command));
+        commands.extend(model.confirm(true));
         model.request(action);
-        model.confirm(true, |command| commands.push(command));
+        commands.extend(model.confirm(true));
         assert_eq!(
             commands.as_slice(),
             slice::from_ref(&expected),
@@ -87,7 +87,7 @@ fn confirmed_actions_cannot_be_submitted_again_until_worker_completion() {
         );
         model.command_completed();
         model.request(action);
-        model.confirm(true, |command| commands.push(command));
+        commands.extend(model.confirm(true));
         assert_eq!(
             commands.iter().collect::<Vec<_>>(),
             [&expected, &expected],
@@ -110,7 +110,7 @@ fn daily_report_confirmation_rechecks_new_readiness_problems() {
         .problems
         .push("Brak papieru".into());
     let mut commands = Vec::new();
-    model.confirm(true, |command| commands.push(command));
+    commands.extend(model.confirm(true));
     assert_eq!(commands, []);
 }
 
@@ -122,7 +122,7 @@ fn accepting_a_confirmation_the_stopped_printer_can_no_longer_run_says_nothing_w
     // E.g. Stop from the tray or a 401 while the dialog is open.
     model.stopped();
     let mut commands = Vec::new();
-    model.confirm(true, |command| commands.push(command));
+    commands.extend(model.confirm(true));
     assert_eq!(commands, []);
     assert_eq!(
         model.tone,
@@ -151,7 +151,7 @@ fn a_read_only_printer_offers_monthly_and_periodic_reports_but_not_the_daily_rep
         Action::PeriodicReport,
     ] {
         model.request(action);
-        model.confirm(true, |command| commands.push(command));
+        commands.extend(model.confirm(true));
         model.command_completed();
     }
     assert_eq!(
@@ -224,9 +224,7 @@ fn periodic_dates_require_padded_day_month_and_year_at_least_2000() {
             "Data początkowa musi mieć postać dd.mm.rrrr.",
         ),
     ] {
-        let error = report_range(from, to, today())
-            .err()
-            .map(|error| error.to_string());
+        let error = report_range(from, to, today()).err();
         assert_eq!(error.as_deref(), Some(message), "range {from} – {to}");
     }
     assert_eq!(
@@ -248,7 +246,7 @@ fn cancelled_or_newly_blocked_confirmation_sends_nothing() {
         model.request(Action::QueueReceipt);
         model.blocked = accepted;
         let mut commands = Vec::new();
-        model.confirm(accepted, |command| commands.push(command));
+        commands.extend(model.confirm(accepted));
         assert!(
             commands.is_empty(),
             "cancelled or blocked receipt must not be sent"
@@ -272,7 +270,7 @@ fn the_receipt_carries_the_buyer_nip_it_showed_and_an_invalid_nip_sends_nothing(
     model.nip = " 5261040828 ".into();
     let mut commands = Vec::new();
     model.request(Action::QueueReceipt);
-    model.confirm(true, |command| commands.push(command));
+    commands.extend(model.confirm(true));
     assert_eq!(
         commands,
         [Command::Queue {
@@ -301,7 +299,7 @@ fn a_stop_requested_while_a_confirmation_is_open_sends_nothing() {
         // Zatrzymaj or Zakończ: the worker is still connected and finishing its operation.
         model.stopping = true;
         let mut commands = Vec::new();
-        model.confirm(true, |command| commands.push(command));
+        commands.extend(model.confirm(true));
         assert_eq!(commands, [], "{action:?} must not reach a stopping worker");
         assert_eq!(
             model.tone,
@@ -351,7 +349,7 @@ fn sorted_refresh_retains_document_identity_not_row_index() {
     model.set_documents(vec![other, document(), inserted], 2, false);
     model.request(Action::QueueReceipt);
     let mut commands = Vec::new();
-    model.confirm(true, |command| commands.push(command));
+    commands.extend(model.confirm(true));
     assert_eq!(
         commands,
         [Command::Queue {

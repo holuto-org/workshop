@@ -181,7 +181,7 @@ fn invalid_identity_blocks_every_operation_even_when_problems_are_tolerated() {
         assert!(!device.ready(), "{identity:?}");
         assert!(!device.daily_report_allowed(), "{identity:?}");
         assert!(!device.periodic_reports_allowed(), "{identity:?}");
-        assert!(device.describable_capabilities().is_none(), "{identity:?}");
+        assert!(!device.describable(), "{identity:?}");
         for result in [
             device.require_ready(),
             device.require_periodic_reports(),
@@ -202,7 +202,7 @@ fn invalid_identity_blocks_every_operation_even_when_problems_are_tolerated() {
             ..device()
         };
         assert!(device.require_ready().is_ok());
-        assert!(device.describable_capabilities().is_some());
+        assert!(device.describable());
     }
 }
 
@@ -237,11 +237,7 @@ fn vat_assignments_gate_readiness_reports_resolution_and_telemetry() {
         assert_eq!(device.ready(), legal, "{label}");
         assert_eq!(device.daily_report_allowed(), legal, "{label}");
         assert_eq!(device.periodic_reports_allowed(), legal, "{label}");
-        assert_eq!(
-            device.describable_capabilities().is_some(),
-            legal,
-            "{label}"
-        );
+        assert_eq!(device.describable(), legal, "{label}");
         for result in [
             device.require_ready(),
             device.require_periodic_reports(),
@@ -261,15 +257,12 @@ fn vat_assignments_gate_readiness_reports_resolution_and_telemetry() {
 #[test]
 fn unknown_capabilities_are_not_advertised_but_readiness_problems_can_be() {
     let known = device();
-    assert_eq!(known.describable_capabilities(), Some(&known.capabilities));
+    assert!(known.describable());
     let paper_out = Device {
         problems: vec!["Brak papieru".into()],
         ..device()
     };
-    assert_eq!(
-        paper_out.describable_capabilities(),
-        Some(&paper_out.capabilities)
-    );
+    assert!(paper_out.describable());
     for caps in [
         Capabilities {
             max_item_name: 0,
@@ -296,19 +289,12 @@ fn unknown_capabilities_are_not_advertised_but_readiness_problems_can_be() {
             capabilities: caps,
             ..device()
         };
-        assert!(
-            device.describable_capabilities().is_none(),
-            "{:?}",
-            device.capabilities
-        );
+        assert!(!device.describable(), "{:?}", device.capabilities);
     }
     for decimals in [0, 8] {
         let mut device = device();
         device.capabilities.max_quantity_decimals = decimals;
-        assert_eq!(
-            device.describable_capabilities(),
-            Some(&device.capabilities)
-        );
+        assert!(device.describable(), "{decimals}");
     }
 }
 

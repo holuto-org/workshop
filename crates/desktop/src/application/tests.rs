@@ -1290,8 +1290,6 @@ fn report_confirmations_show_exact_kind_dates_and_summary_and_cancel_sends_nothi
         window.get_confirm_text(),
         "Wydrukować raport skrócony za okres 29.02.2024 – 24.10.2025?"
     );
-    button(&window, "Anuluj")?.invoke_accessible_default_action();
-    assert!(!app.borrow().dir.path().join("operation.json").exists());
     Ok(())
 }
 

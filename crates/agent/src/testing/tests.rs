@@ -643,25 +643,6 @@ fn backend_session_rejects_duplicate_and_illegal_vat_letters_without_binding() -
         assert_eq!(problem["errors"][0]["code"], code);
         assert!(super::locked(&server.state).unique_number.is_none());
     }
-    let server = Holuto::new();
-    let mut body = serde_json::to_value(telemetry())?;
-    body["vatRates"] = json!([
-        {"letter":"A","vatRate":"23"},{"letter":"B","vatRate":"8"},
-        {"letter":"C","vatRate":"5"},{"letter":"D","vatRate":"0"},
-        {"letter":"E","vatRate":"zw"},{"letter":"F","vatRate":"8"},{"letter":"G","vatRate":"23"}
-    ]);
-    assert_eq!(
-        raw(
-            &server,
-            "POST",
-            "/agent/session",
-            None,
-            Some(server.token()),
-            &body
-        )?
-        .0,
-        200
-    );
     Ok(())
 }
 

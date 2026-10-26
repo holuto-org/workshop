@@ -19,7 +19,6 @@ novitus = { workspace = true, optional = true }
 posnet.workspace = true
 jiff.workspace = true
 slint = { workspace = true, features = ["unstable-winit-030"] }
-thiserror.workspace = true
 sentry.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

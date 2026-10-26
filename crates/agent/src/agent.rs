@@ -124,7 +124,7 @@ impl<'dir> Agent<'dir> {
                 || prior.capabilities != device.capabilities
         });
         self.telemetry_changed |= changed;
-        let skipped = if device.describable_capabilities().is_some() {
+        let skipped = if device.describable() {
             self.telemetry.describe(&device)
         } else {
             Vec::new()
@@ -149,10 +149,7 @@ impl<'dir> Agent<'dir> {
     }
 
     fn describable(&self) -> bool {
-        self.status
-            .as_ref()
-            .and_then(PrinterDevice::describable_capabilities)
-            .is_some()
+        self.status.as_ref().is_some_and(PrinterDevice::describable)
     }
 
     pub(crate) fn not_ready_notice(&self) -> String {

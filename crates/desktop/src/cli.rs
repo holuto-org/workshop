@@ -244,7 +244,7 @@ fn execute(command: Command, path: &Path) -> Result<Response, Failure> {
                     "startOnLaunch":settings.start_on_launch
                 }
             });
-            let human = serde_json::to_string_pretty(&value).map_err(|_error| arguments())?;
+            let human = format!("{value:#}");
             Ok(Response {
                 value,
                 human,

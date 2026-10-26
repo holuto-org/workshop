@@ -7295,7 +7295,6 @@ dependencies = [
  "serde_json",
  "slint",
  "tempfile",
- "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
  "ureq",

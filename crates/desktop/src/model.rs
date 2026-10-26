@@ -504,7 +504,7 @@ impl Model {
         let (from, to) = match report_range(&self.from, &self.to, self.today) {
             Ok(range) => range,
             Err(error) => {
-                self.say(error.to_string(), Tone::Error);
+                self.say(error, Tone::Error);
                 return None;
             },
         };
@@ -529,52 +529,38 @@ impl Model {
         })
     }
 
-    pub(crate) fn confirm<F: FnMut(Command)>(&mut self, accepted: bool, mut submit: F) {
-        if let Some(pending) = self.pending.take()
-            && accepted
-        {
-            // Readiness may have changed while the confirmation was open.
-            let allowed = match &pending.command {
-                Command::Queue { .. } => self.queue_enabled(),
-                Command::DailyReport => self.daily_report_enabled(),
-                Command::MonthlyReport { .. } | Command::PeriodicReport { .. } => {
-                    self.reports_enabled()
-                },
-                Command::ResolveReport => self.resolve_enabled(),
-                Command::AcknowledgeOrphanedReceipt => self.acknowledge_enabled(),
-                Command::NextPage | Command::PreviousPage => false,
-            };
-            if allowed {
-                if matches!(pending.command, Command::Queue { .. }) {
-                    // The buyer NIP belongs to this receipt only.
-                    self.nip.clear();
-                }
-                self.in_flight = true;
-                submit(pending.command);
-            } else {
-                // A closed dialog must not read as a printed receipt or report.
-                self.say(
-                    "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.".into(),
-                    Tone::Error,
-                );
-            }
+    /// The command to submit, if the operator accepted and the action is still allowed.
+    pub(crate) fn confirm(&mut self, accepted: bool) -> Option<Command> {
+        let pending = self.pending.take().filter(|_| accepted)?;
+        // Readiness may have changed while the confirmation was open.
+        let allowed = match &pending.command {
+            Command::Queue { .. } => self.queue_enabled(),
+            Command::DailyReport => self.daily_report_enabled(),
+            Command::MonthlyReport { .. } | Command::PeriodicReport { .. } => {
+                self.reports_enabled()
+            },
+            Command::ResolveReport => self.resolve_enabled(),
+            Command::AcknowledgeOrphanedReceipt => self.acknowledge_enabled(),
+            Command::NextPage | Command::PreviousPage => false,
+        };
+        if !allowed {
+            // A closed dialog must not read as a printed receipt or report.
+            self.say(
+                "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.".into(),
+                Tone::Error,
+            );
+            return None;
         }
+        if matches!(pending.command, Command::Queue { .. }) {
+            // The buyer NIP belongs to this receipt only.
+            self.nip.clear();
+        }
+        self.in_flight = true;
+        Some(pending.command)
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-enum RangeError {
-    #[error("Data {which} musi mieć postać dd.mm.rrrr.")]
-    Format { which: &'static str },
-    #[error("Data {which} nie może być późniejsza niż dzisiejsza.")]
-    Future { which: &'static str },
-    #[error("Data {which} nie może być wcześniejsza niż 01.01.2000.")]
-    TooEarly { which: &'static str },
-    #[error("Data początkowa nie może być późniejsza niż końcowa.")]
-    Reversed,
-}
-
-fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), RangeError> {
+fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), String> {
     let date = |which, text: &str| {
         let padded = text.len() == 10
             && text.bytes().enumerate().all(|(index, byte)| {
@@ -587,19 +573,23 @@ fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), Range
         let date = Date::strptime("%d.%m.%Y", text)
             .ok()
             .filter(|_| padded)
-            .ok_or(RangeError::Format { which })?;
+            .ok_or_else(|| format!("Data {which} musi mieć postać dd.mm.rrrr."))?;
         if date < Date::constant(2000, 1, 1) {
-            return Err(RangeError::TooEarly { which });
+            return Err(format!(
+                "Data {which} nie może być wcześniejsza niż 01.01.2000."
+            ));
         }
         if date > today {
-            return Err(RangeError::Future { which });
+            return Err(format!(
+                "Data {which} nie może być późniejsza niż dzisiejsza."
+            ));
         }
         Ok(date)
     };
     let from = date("początkowa", from)?;
     let to = date("końcowa", to)?;
     if from > to {
-        return Err(RangeError::Reversed);
+        return Err("Data początkowa nie może być późniejsza niż końcowa.".to_owned());
     }
     Ok((from, to))
 }
