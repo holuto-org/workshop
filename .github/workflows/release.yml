@@ -16,10 +16,77 @@ jobs:
     uses: ./.github/workflows/checks.yml
 
   package:
+    name: Package (${{ matrix.name }})
     needs: checks
-    uses: ./.github/workflows/package.yml
-    secrets:
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: win-x64, os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { name: mac-arm64, os: macos-latest, target: aarch64-apple-darwin }
+          - { name: mac-x64, os: macos-26-intel, target: x86_64-apple-darwin }
+          # The .deb records the build host's glibc as its libc6 floor: keep it at Ubuntu 24.04.
+          - { name: linux-x64, os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { name: linux-arm64, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+      SENTRY_ENVIRONMENT: production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package-${{ matrix.target }}
+      - name: Install Linux packaging and launch dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libfontconfig1-dev fonts-dejavu-core xvfb xauth dbus-x11 xdotool x11-utils desktop-file-utils binutils
+      - name: Require the production telemetry configuration
+        run: test -n "$SENTRY_DSN"
+      - name: Build native package
+        run: bash packaging/build.sh
+      - name: Check standalone smoke isolation and diagnostics opt-out
+        if: runner.os == 'Linux'
+        run: |
+          target_dir=$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.target_directory')
+          python3 packaging/test-smoke.py "$target_dir/release/workshop"
+      - name: Verify package and launch main window
+        run: bash packaging/verify.sh
+      - name: Prove simulator cannot enter a release build
+        run: |
+          log=$(mktemp)
+          if cargo build --locked --release -p workshop --features simulator >"$log" 2>&1; then
+            cat "$log"
+            echo 'Simulator release unexpectedly compiled' >&2
+            exit 1
+          fi
+          cat "$log"
+          grep -F 'The simulator feature is restricted to local debug builds.' "$log"
+          rm "$log"
+      - name: Install Sentry CLI
+        run: npm install --global @sentry/cli@3
+      - name: Upload native debug information and source context
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          test -n "$SENTRY_AUTH_TOKEN"
+          sentry-cli debug-files upload --include-sources --wait packaging/build/symbols
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.name }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
 
   # Installers refuse downgrades, so a release needs a new workspace version.
   # A push that keeps an already released version builds and checks only.
@@ -51,33 +118,8 @@ jobs:
           echo "new=$new" >> "$GITHUB_OUTPUT"
           echo "tag=$tag new=$new"
 
-  # npm install scripts must never share the provenance signer's OIDC permission.
-  sentry-release:
-    needs: version
-    if: needs.version.outputs.new == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Install Sentry CLI
-        run: npm install --global @sentry/cli@3
-      - name: Finalize Sentry release with commits
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-          SENTRY_URL: ${{ vars.SENTRY_URL }}
-          TAG: ${{ needs.version.outputs.tag }}
-        run: |
-          release="workshop@${TAG#v}"
-          sentry-cli releases new "$release"
-          sentry-cli releases set-commits "$release" --auto
-          sentry-cli releases finalize "$release"
-
   publish:
-    needs: [version, sentry-release]
+    needs: version
     if: needs.version.outputs.new == 'true'
     runs-on: ubuntu-latest
     permissions:

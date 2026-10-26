@@ -15,8 +15,8 @@ Use [platform procedures](../../docs/testing/platforms.md) and
 [CI](../../docs/ci.md); workflow YAML owns the commands and native matrix.
 
 - Run the changed area's commands from
-  [Checks](../../.github/workflows/checks.yml) and
-  [Package](../../.github/workflows/package.yml); retain Package's
+  [Checks](../../.github/workflows/checks.yml) and the Package job in
+  [Release](../../.github/workflows/release.yml); retain its
   simulator-release rejection check. Native package procedures live in
   [platforms](../../docs/testing/platforms.md#package-checks).
 - If ShellCheck is missing, use `uvx --from shellcheck-py shellcheck` with the

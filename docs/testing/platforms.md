@@ -110,7 +110,8 @@ bash packaging/verify.sh
 
 On Linux the build also needs `binutils` and `dpkg-deb`, and the verifier
 needs Xvfb, `xauth`, D-Bus, `xdotool`, `x11-utils`, `desktop-file-utils` and
-desktop fonts; the Package workflow's install step is the authoritative list.
+desktop fonts; the install step of the Package job in the Release workflow is
+the authoritative list.
 Release builds use fat LTO: give containers enough memory instead of weakening
 the release profile.
 

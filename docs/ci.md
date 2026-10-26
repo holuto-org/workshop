@@ -8,19 +8,16 @@
     native nextest on the five test runners below (`ubuntu-24.04` only
     packages); separate simulator-only debug acceptance and release-rejection
     checks. Pull requests do not build packages.
-- **Package (`package.yml`)**
-  - **Trigger**: Reused by Release after Checks pass.
-  - **Runner and work**: Build and verify Windows x64 `.exe`, Linux x64/ARM64
-    `.deb`, macOS ARM64/x64 `.dmg`; isolated installed-package CLI checks and
-    main-window launch without a configured printer; upload of matching debug
-    files/source context to Sentry.
 - **Release (`release.yml`)**
   - **Trigger**: Every push to `master`.
-  - **Runner and work**: Checks, then Package; if no GitHub release exists for
-    the workspace version, finalize the Sentry release and publish stable
-    filenames/checksums. A push that keeps a released version only builds and
-    checks: bump the version to release. Retry a failed release by rerunning
-    its original run.
+  - **Runner and work**: Checks; then the Package job builds and verifies
+    Windows x64 `.exe`, Linux x64/ARM64 `.deb`, macOS ARM64/x64 `.dmg`
+    (isolated installed-package CLI checks and main-window launch without a
+    configured printer) and uploads matching debug files/source context to
+    Sentry. If no GitHub release exists for the workspace version, it publishes
+    stable filenames/checksums. A push that
+    keeps a released version only builds and checks: bump the version to
+    release. Retry a failed release by rerunning its original run.
 - **Cleanup merged PR branches (`cleanup-merged-pr-branches.yml`)**
   - **Trigger**: Merged pull request.
   - **Runner and work**: `ubuntu-latest`; remove the merged head branch subject
@@ -65,28 +62,11 @@ environment override; never smoke-launch against someone's saved state.
 ## Release telemetry artifacts
 
 Set repository variables `SENTRY_DSN`, `SENTRY_ORG=holuto`,
-`SENTRY_PROJECT=workshop`, `SENTRY_URL=https://de.sentry.io`, and
-organization-token secret `SENTRY_AUTH_TOKEN`. Provision the `holuto/workshop`
-project in the EU; local workflow files do not prove provisioning or repository
-variable values. A missing build-time DSN disables client telemetry.
-
-Release identity is `workshop@<workspace version>` and release builds use
-environment `production`. Keep debug information in the unstripped build,
-produce the distributable package separately, and upload matching debug
-files/source context with `@sentry/cli` major version 3
-(`debug-files upload --include-sources`). Release creation/commit
-association/finalization and symbol upload must use that same identity. Never
-put the auth token in a binary or package; the public DSN is not that token.
-Debug files are staged separately from stripped packages and uploaded to Sentry;
-they are not retained as GitHub Actions artifacts.
-
-Every package requires the Sentry configuration and credentials, so pull
-requests (including forks) never build packages. Release creation, commit
-association and finalization happen only in the read-only `sentry-release` job
-for an unreleased version. The separate `publish` job alone holds OIDC and
-attestation write permissions; it never installs npm packages.
-
-A successful upload is not proof of symbolication: inspect a synthetic, approved
-release event against that exact binary as described in
-[workflows](workflows.md#sentry-release-check). [Telemetry](telemetry.md)
-records runtime data and privacy boundaries.
+`SENTRY_PROJECT=workshop` and organization-token secret `SENTRY_AUTH_TOKEN`
+(it carries the Sentry URL). Release builds report as
+`workshop@<workspace version>` in environment `production`; Sentry creates the
+release from the first event. The Package job uploads the matching debug files
+and source context from the unstripped build; the token never enters a binary
+or package. [Telemetry](telemetry.md) records runtime data and privacy
+boundaries; [workflows](workflows.md#sentry-release-check) describes checking
+symbolication.
