@@ -149,6 +149,52 @@ fn macos_login_agent_uses_exact_executable_and_is_removable() -> TestResult {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "The registration is made by a child launched through a symlink in an isolated HOME"
+)]
+fn macos_login_agent_launched_through_the_cli_symlink_names_the_bundle_executable() -> TestResult {
+    use std::{env, os::unix::fs::symlink, process::Command};
+    const CHILD: &str = "WORKSHOP_AUTOSTART_SYMLINK_CHILD";
+    if env::var_os(CHILD).is_some() {
+        return Ok(super::set_enabled(true)?);
+    }
+    let home = tempfile::tempdir()?;
+    let executable = fs::canonicalize(env::current_exe()?)?;
+    // Like the installer's `~/.local/bin/workshop` link into the app bundle.
+    let launcher = home.path().join(".local/bin/workshop");
+    fs::create_dir_all(launcher.parent().ok_or("missing launcher directory")?)?;
+    symlink(&executable, &launcher)?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "Never change the operator's autostart"
+    )]
+    let output = Command::new(&launcher)
+        .args([
+            "--exact",
+            concat!(
+                "autostart::tests::",
+                "macos_login_agent_launched_through_the_cli_symlink_names_the_bundle_executable"
+            ),
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("HOME", home.path())
+        .output()?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(
+            home.path()
+                .join("Library/LaunchAgents/com.holuto.workshop.plist")
+        )?,
+        super::registration(executable.to_str().ok_or("non-UTF-8 test executable")?),
+        "the login item must not depend on the launcher symlink"
+    );
+    Ok(())
+}
+
 #[cfg(windows)]
 #[test]
 #[expect(

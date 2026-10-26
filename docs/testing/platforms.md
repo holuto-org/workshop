@@ -86,7 +86,8 @@ Autostart registers the current executable and saves `startOnLaunch`:
 - Linux: `$XDG_CONFIG_HOME/autostart/workshop.desktop`, falling back to
   `~/.config/autostart/workshop.desktop` for an absent/relative base.
 - macOS: `~/Library/LaunchAgents/com.holuto.workshop.plist`, label
-  `com.holuto.workshop`, with `RunAtLoad`.
+  `com.holuto.workshop`, with `RunAtLoad`, naming the resolved bundle
+  executable even when the CLI runs through the `~/.local/bin/workshop` link.
 - Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`,
   `REG_SZ` value `Holuto Workshop` containing the quoted executable path.
 

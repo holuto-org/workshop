@@ -66,8 +66,15 @@ fn confirmed_actions_cannot_be_submitted_again_until_worker_completion() {
                 summary: false,
             },
         ),
+        (Action::ResolveReport, Command::ResolveReport),
+        (
+            Action::AcknowledgeOrphanedReceipt,
+            Command::AcknowledgeOrphanedReceipt,
+        ),
     ] {
         let mut model = ready();
+        model.report_unresolved = true;
+        model.orphaned_receipt = Some("Zlecenie 42 · paragon 41".into());
         let mut commands = Vec::new();
         model.request(action);
         model.confirm(true, |command| commands.push(command));
@@ -245,6 +252,61 @@ fn cancelled_or_newly_blocked_confirmation_sends_nothing() {
         assert!(
             commands.is_empty(),
             "cancelled or blocked receipt must not be sent"
+        );
+    }
+}
+
+#[test]
+fn the_receipt_carries_the_buyer_nip_it_showed_and_an_invalid_nip_sends_nothing() {
+    let mut model = ready();
+    model.nip = "526104082".into();
+    model.request(Action::QueueReceipt);
+    assert!(
+        model.pending.is_none(),
+        "a 9-digit NIP opens no confirmation"
+    );
+    assert_eq!(
+        (model.message.as_str(), model.tone),
+        ("NIP nabywcy musi zawierać 10 cyfr.", Tone::Error)
+    );
+    model.nip = " 5261040828 ".into();
+    let mut commands = Vec::new();
+    model.request(Action::QueueReceipt);
+    model.confirm(true, |command| commands.push(command));
+    assert_eq!(
+        commands,
+        [Command::Queue {
+            document: document(),
+            buyer_nip: BuyerNip::parse("5261040828").ok(),
+        }]
+    );
+    assert!(model.nip.is_empty(), "the NIP belongs to this receipt only");
+}
+
+#[test]
+fn a_stop_requested_while_a_confirmation_is_open_sends_nothing() {
+    for action in [
+        Action::QueueReceipt,
+        Action::DailyReport,
+        Action::MonthlyReport,
+        Action::PeriodicReport,
+        Action::ResolveReport,
+        Action::AcknowledgeOrphanedReceipt,
+    ] {
+        let mut model = ready();
+        model.report_unresolved = true;
+        model.orphaned_receipt = Some("Zlecenie 42 · paragon 41".into());
+        model.request(action);
+        assert!(model.pending.is_some(), "{action:?} opens a confirmation");
+        // Zatrzymaj or Zakończ: the worker is still connected and finishing its operation.
+        model.stopping = true;
+        let mut commands = Vec::new();
+        model.confirm(true, |command| commands.push(command));
+        assert_eq!(commands, [], "{action:?} must not reach a stopping worker");
+        assert_eq!(
+            model.tone,
+            Tone::Error,
+            "{action:?} must say nothing was sent"
         );
     }
 }

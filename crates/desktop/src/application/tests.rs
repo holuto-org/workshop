@@ -1070,6 +1070,60 @@ fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Err
     Ok(())
 }
 
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn unticking_diagnostics_stops_reporting_from_the_running_app() -> Result<(), Box<dyn Error>> {
+    #[derive(Default)]
+    struct Capture(Mutex<Vec<Envelope>>);
+    impl Transport for Capture {
+        fn send_envelope(&self, envelope: Envelope) {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(envelope);
+        }
+    }
+    let (_temp, _app, window) = fixture()?;
+    let capture = Arc::new(Capture::default());
+    let client = Arc::new(Client::from(
+        telemetry::options()
+            .dsn("https://public@example.invalid/1")
+            .transport(Arc::clone(&capture)),
+    ));
+    let issues = || {
+        capture
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .flat_map(Envelope::items)
+            .filter(|item| matches!(item, EnvelopeItem::Event(_)))
+            .count()
+    };
+    Hub::run(
+        Arc::new(Hub::new(Some(Arc::clone(&client)), Arc::default())),
+        || {
+            let _id = sentry::capture_message("Worker operation failed", Level::Error);
+            assert!(client.flush(Some(Duration::from_secs(1))));
+            assert_eq!(issues(), 1, "diagnostics are shared before the opt-out");
+            control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
+                .invoke_accessible_default_action();
+            // The settings write is still pending: the opt-out must not wait for disk or restart.
+            let _id = sentry::capture_message("Worker operation failed", Level::Error);
+            assert!(client.flush(Some(Duration::from_secs(1))));
+            assert_eq!(
+                issues(),
+                1,
+                "nothing is reported after unticking the checkbox"
+            );
+            Ok::<(), Box<dyn Error>>(())
+        },
+    )
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 #[expect(

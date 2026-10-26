@@ -37,6 +37,14 @@ pub(crate) fn configure(
 pub(crate) fn set_enabled(enabled: bool) -> Result<(), Error> {
     let executable =
         env::current_exe().map_err(|source| store_error(Path::new("workshop"), source))?;
+    // macOS reports the path as invoked: through the `~/.local/bin` launcher symlink the login
+    // item would launch that link, not the bundle. Removal must work even once it is gone.
+    #[cfg(target_os = "macos")]
+    let executable = if enabled {
+        fs::canonicalize(&executable).map_err(|source| store_error(&executable, source))?
+    } else {
+        executable
+    };
     #[cfg(windows)]
     {
         registry(

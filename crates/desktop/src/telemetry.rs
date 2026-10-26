@@ -62,7 +62,7 @@ fn minidump(state: &Path) -> MinidumpIntegration {
         .crashes_dir(state.join("crashes"))
 }
 
-fn options() -> ClientOptions {
+pub(crate) fn options() -> ClientOptions {
     ClientOptions::new()
         .attach_stacktrace(true)
         .release(concat!("workshop@", env!("CARGO_PKG_VERSION")))
