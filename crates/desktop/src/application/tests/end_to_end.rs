@@ -1,8 +1,6 @@
 use std::sync::atomic::AtomicBool;
 
 #[cfg(target_os = "macos")]
-use super::super::macos;
-#[cfg(target_os = "macos")]
 use objc2::{runtime::NSObject, sel};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSApplicationTerminateReply;
@@ -336,8 +334,8 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
                         reply,
                         NSApplicationTerminateReply::TerminateLater,
                         "AppKit holds termination until the worker finishes; Cancel aborts logout"
-                    );
-                }
+                    )
+                };
                 with_app(move |app| {
                     #[cfg(not(target_os = "macos"))]
                     app.stop(true)?;

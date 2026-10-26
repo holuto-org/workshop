@@ -1,6 +1,8 @@
-use std::{error::Error, path::Path};
 #[cfg(not(windows))]
-use std::{fs, io};
+use std::fs;
+#[cfg(target_os = "linux")]
+use std::io;
+use std::{error::Error, path::Path};
 
 #[cfg(not(windows))]
 use super::set_at;

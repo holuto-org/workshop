@@ -34,7 +34,6 @@ use posnet::{capabilities::capabilities, simulator::Simulator};
 use sentry::{Client, ClientOptions, Envelope, Hub, Level, Transport, protocol::EnvelopeItem};
 use slint::{
     Model as _,
-    language::SortOrder,
     platform::{Key, WindowEvent},
 };
 use tempfile::TempDir;
@@ -894,12 +893,16 @@ fn close_without_a_tray_host_keeps_the_window_visible() -> Result<(), Box<dyn Er
     Ok(())
 }
 
+// Slint's AppKit tray requires the main thread, which unit tests never run on.
+#[cfg(not(target_os = "macos"))]
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
 fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<(), Box<dyn Error>> {
+    use slint::language::SortOrder;
+
     let (_temp, app, window) = fixture()?;
     ready(&app);
     button(&window, "Zlecenie")?.invoke_accessible_default_action();
@@ -1347,6 +1350,8 @@ fn diagnostics_completion_preserves_the_unresolved_operation_notice() -> Result<
     Ok(())
 }
 
+// Startup creates the tray, and Slint's AppKit tray requires the main thread.
+#[cfg(not(target_os = "macos"))]
 #[test]
 #[expect(
     clippy::panic_in_result_fn,

@@ -17,9 +17,15 @@ Import-Certificate -FilePath "$env:RUNNER_TEMP/com0com.cer" -CertStoreLocation C
 $env:CNC_INSTALL_CNCA0_CNCB0_PORTS = 'NO'
 $installer = Start-Process "$env:RUNNER_TEMP/setup_com0com_W7_x64_signed.exe" -ArgumentList '/S' -Wait -PassThru
 if ($installer.ExitCode -ne 0) { throw "com0com installer failed: $($installer.ExitCode)" }
-$setup = "${env:ProgramFiles(x86)}\com0com\setupc.exe"
-& $setup install 'PortName=COM10,EmuBR=yes' 'PortName=COM11,EmuBR=yes'
-if ($LASTEXITCODE -ne 0) { throw 'com0com pair creation failed' }
-& $setup list
-if ($LASTEXITCODE -ne 0) { throw 'com0com pair enumeration failed' }
+# setupc resolves com0com.inf from the working directory; elsewhere it opens a
+# console dialog that waits for input until the job times out.
+Push-Location "${env:ProgramFiles(x86)}\com0com"
+try {
+    .\setupc.exe --silent install 'PortName=COM10,EmuBR=yes' 'PortName=COM11,EmuBR=yes'
+    if ($LASTEXITCODE -ne 0) { throw 'com0com pair creation failed' }
+    .\setupc.exe --silent list
+    if ($LASTEXITCODE -ne 0) { throw 'com0com pair enumeration failed' }
+} finally {
+    Pop-Location
+}
 'HOLUTO_TEST_COM_PAIR=COM10,COM11' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

@@ -18,10 +18,18 @@ use agent::{history, status::Snapshot, store::StateDir, testing::JOB_ID, worker}
 #[cfg(target_os = "macos")]
 use serde_json::json;
 
+// Cargo builds a `harness = false` target with `--cfg test` but without `--test`, so each
+// included module's `#[cfg(test)] mod tests` compiles with its `#[test]` functions stripped,
+// leaving their imports and helpers unused. The binary's own test target lints them in full.
 #[cfg(target_os = "macos")]
 #[expect(
     dead_code,
     reason = "The native scenario reuses production modules but not every startup path"
+)]
+#[expect(
+    unused_imports,
+    clippy::wildcard_imports,
+    reason = "Included unit tests are stripped in this harness"
 )]
 mod application {
     include!("../application.rs");
@@ -31,15 +39,31 @@ mod application {
     }
 }
 #[cfg(target_os = "macos")]
+#[expect(
+    dead_code,
+    unused_imports,
+    reason = "Included unit tests are stripped in this harness"
+)]
 #[path = "../autostart.rs"]
 mod autostart;
 #[cfg(target_os = "macos")]
+#[expect(
+    dead_code,
+    unused_imports,
+    clippy::wildcard_imports,
+    reason = "Included unit tests are stripped in this harness"
+)]
 #[path = "../model.rs"]
 mod model;
 #[cfg(target_os = "macos")]
 #[expect(
     dead_code,
     reason = "The native scenario never initializes external telemetry"
+)]
+#[expect(
+    unused_imports,
+    clippy::wildcard_imports,
+    reason = "Included unit tests are stripped in this harness"
 )]
 #[path = "../telemetry.rs"]
 mod telemetry;

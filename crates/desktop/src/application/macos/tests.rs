@@ -53,6 +53,8 @@ pub(crate) fn run(state: &Path) -> Result<(), Box<dyn Error>> {
         ..Settings::default()
     };
     let dir = Arc::new(StateDir::open(state.to_owned())?);
+    // Start takes the credential from the state directory, as after real pairing.
+    settings.save(&dir)?;
     let app = Rc::new(RefCell::new(Application::new(
         dir,
         settings,
@@ -205,9 +207,11 @@ fn check_held_termination(quit: HeldQuit) {
                 printer.receipts().is_empty(),
                 "the fiscal command remains held"
             );
+            // This standalone harness is not a test crate, so clippy's test exemption for
+            // indexing does not apply.
             assert_eq!(
-                fake.job(job)["state"],
-                "taken",
+                fake.job(job).get("state"),
+                Some(&"taken".into()),
                 "no successful result may precede fiscal completion"
             );
             io::stdout()

@@ -82,6 +82,7 @@ fn read_entries(path: &Path) -> io::Result<VecDeque<HistoryEntry>> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(VecDeque::new()),
         Err(error) => return Err(error),
     };
+    #[cfg(unix)]
     store::make_private(&file)?;
     let mut entries = VecDeque::new();
     for line in BufReader::new(file).split(b'\n') {

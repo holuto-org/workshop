@@ -282,6 +282,10 @@ mod pty {
     use fiscal::link::SerialLink;
     use serialport::{SerialPort, TTYPort};
 
+    /// serialport sets a macOS speed through `IOSSIOSPEED`, which a pseudoterminal rejects
+    /// with `ENOTTY`; baud 0 skips it, so macOS still exercises exclusivity and framing.
+    const BAUD: u32 = if cfg!(target_os = "macos") { 0 } else { 9600 };
+
     fn pair() -> (TTYPort, Session, String) {
         let (mut master, slave) = TTYPort::pair().unwrap();
         let path = slave.name().unwrap();
@@ -291,7 +295,7 @@ mod pty {
             &SerialLink,
             &Connection {
                 port: path.clone(),
-                baud_rate: 9600,
+                baud_rate: BAUD,
             },
         )
         .unwrap();
@@ -302,12 +306,12 @@ mod pty {
     fn opening_a_real_terminal_uses_exclusivity_and_releases_it_on_drop() {
         let (_master, session, path) = pair();
         assert!(
-            SerialLink.open(&path, 9600).is_err(),
+            SerialLink.open(&path, BAUD).is_err(),
             "second unique_number open must fail"
         );
         drop(session);
         assert!(
-            SerialLink.open(&path, 9600).is_ok(),
+            SerialLink.open(&path, BAUD).is_ok(),
             "drop releases unique_number ownership"
         );
     }
@@ -323,10 +327,11 @@ mod pty {
 mod com_pair {
     use super::{Connection, Link, Session, TIMEOUT, serial_timeout_and_partial_reads};
     use fiscal::link::SerialLink;
+    use std::env;
 
     #[test]
     fn real_com_ports_are_exclusive_and_preserve_partial_reads_and_timeouts() {
-        let configured = std::env::var("HOLUTO_TEST_COM_PAIR")
+        let configured = env::var("HOLUTO_TEST_COM_PAIR")
             .expect("HOLUTO_TEST_COM_PAIR must name the signed com0com pair, e.g. COM10,COM11");
         let (driver, peer) = configured
             .split_once(',')

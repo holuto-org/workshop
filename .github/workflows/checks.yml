@@ -69,7 +69,16 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny@0.20.2,cargo-shear@1.14.0,actionlint@1.7.12
+          tool: cargo-deny@0.20.2,cargo-shear@1.14.0
+
+      # install-action has no actionlint manifest, and its cargo-binstall
+      # fallback cannot find this Go tool, so fetch the pinned release.
+      - name: Install actionlint
+        run: |
+          archive=actionlint_1.7.12_linux_amd64.tar.gz
+          curl -sSfLo "$RUNNER_TEMP/$archive" "https://github.com/rhysd/actionlint/releases/download/v1.7.12/$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$HOME/.cargo/bin" actionlint
 
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libfontconfig1-dev shellcheck
 

@@ -133,6 +133,7 @@ fn exclusive(directory: &Path, name: &str) -> Result<File, Error> {
         path: lock_path.clone(),
         source,
     })?;
+    #[cfg(unix)]
     make_private(&lock).map_err(|source| Error::Store {
         action: "Nie można zabezpieczyć blokady katalogu stanu",
         path: lock_path.clone(),
@@ -231,11 +232,6 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
 pub(crate) fn make_private(file: &File) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     file.set_permissions(fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-pub(crate) fn make_private(_file: &File) -> io::Result<()> {
-    Ok(())
 }
 
 /// Atomically replaces content through a private sibling temporary file (0600 on Unix).
