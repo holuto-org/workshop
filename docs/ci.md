@@ -1,26 +1,26 @@
 # CI
 
 - **Checks (`checks.yml`)**
-  - **Trigger**: Pull requests into `master`, merge groups and reusable release
-    invocation.
+  - **Trigger**: Pull requests into `master`, merge groups and every Release
+    run.
   - **Runner and work**: Installer checks/dry runs on Linux, Windows and macOS;
     static checks on Ubuntu; default/all-feature Clippy on those three OSes;
     native nextest on the five test runners below (`ubuntu-24.04` only
     packages); separate simulator-only debug acceptance and release-rejection
-    checks; Package for PR artifacts.
+    checks. Pull requests do not build packages.
 - **Package (`package.yml`)**
-  - **Trigger**: Reused by Checks and Release.
+  - **Trigger**: Reused by Release after Checks pass.
   - **Runner and work**: Build and verify Windows x64 `.exe`, Linux x64/ARM64
     `.deb`, macOS ARM64/x64 `.dmg`; isolated installed-package CLI checks and
-    main-window launch without a configured printer; production-only upload of
-    matching debug files/source context to Sentry.
+    main-window launch without a configured printer; upload of matching debug
+    files/source context to Sentry.
 - **Release (`release.yml`)**
-  - **Trigger**: Push to `master` changing `Cargo.toml`; manual artifact build.
-    Publishing additionally requires a qualifying workspace-version increase.
-  - **Runner and work**: Checks + reusable Package; version/published-release
-    guard; required Sentry configuration and debug upload; publish stable
-    filenames/checksums and finalize the Sentry release only for qualifying
-    version increases. Retry a failed release by rerunning its original run.
+  - **Trigger**: Every push to `master`.
+  - **Runner and work**: Checks, then Package; if no GitHub release exists for
+    the workspace version, finalize the Sentry release and publish stable
+    filenames/checksums. A push that keeps a released version only builds and
+    checks: bump the version to release. Retry a failed release by rerunning
+    its original run.
 - **Cleanup merged PR branches (`cleanup-merged-pr-branches.yml`)**
   - **Trigger**: Merged pull request.
   - **Runner and work**: `ubuntu-latest`; remove the merged head branch subject
@@ -73,20 +73,17 @@ variable values. A missing build-time DSN disables client telemetry.
 Release identity is `workshop@<workspace version>` and release builds use
 environment `production`. Keep debug information in the unstripped build,
 produce the distributable package separately, and upload matching debug
-files/source context with pinned `@sentry/cli` 3.8.2
+files/source context with `@sentry/cli` major version 3
 (`debug-files upload --include-sources`). Release creation/commit
 association/finalization and symbol upload must use that same identity. Never
 put the auth token in a binary or package; the public DSN is not that token.
-Fork PRs must remain buildable without release secrets.
-Debug files are staged separately from stripped packages and uploaded to Sentry
-in production mode; they are not retained as GitHub Actions artifacts.
+Debug files are staged separately from stripped packages and uploaded to Sentry;
+they are not retained as GitHub Actions artifacts.
 
-Every Release-workflow package, including manual artifact-only runs, uses
-Package's production mode: Sentry configuration/credentials are required and
-symbols are uploaded. PR packages use non-production mode without telemetry
-credentials. Release creation, commit association and finalization happen only
-in the read-only `sentry-release` job for an actual version-bump push, not a
-manual artifact-only run. The separate `publish` job alone holds OIDC and
+Every package requires the Sentry configuration and credentials, so pull
+requests (including forks) never build packages. Release creation, commit
+association and finalization happen only in the read-only `sentry-release` job
+for an unreleased version. The separate `publish` job alone holds OIDC and
 attestation write permissions; it never installs npm packages.
 
 A successful upload is not proof of symbolication: inspect a synthetic, approved

@@ -2,13 +2,9 @@ name: Package
 
 on:
   workflow_call:
-    inputs:
-      production:
-        type: boolean
-        default: false
     secrets:
       SENTRY_AUTH_TOKEN:
-        required: false
+        required: true
 
 permissions:
   contents: read
@@ -32,14 +28,14 @@ jobs:
       run:
         shell: bash
     env:
-      SENTRY_DSN: ${{ inputs.production && vars.SENTRY_DSN || '' }}
-      SENTRY_ENVIRONMENT: ${{ inputs.production && 'production' || '' }}
+      SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+      SENTRY_ENVIRONMENT: production
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2
         with:
           key: package-${{ matrix.target }}
       - name: Install Linux packaging and launch dependencies
@@ -48,7 +44,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libfontconfig1-dev fonts-dejavu-core xvfb xauth dbus-x11 xdotool x11-utils desktop-file-utils binutils
       - name: Require the production telemetry configuration
-        if: inputs.production
         run: test -n "$SENTRY_DSN"
       - name: Build native package
         run: bash packaging/build.sh
@@ -71,16 +66,14 @@ jobs:
           grep -F 'The simulator feature is restricted to local debug builds.' "$log"
           rm "$log"
       - name: Install Sentry CLI
-        if: inputs.production
-        run: npm install --global @sentry/cli@3.8.2
+        run: npm install --global @sentry/cli@3
       - name: Upload native debug information and source context
-        if: inputs.production
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
           test -n "$SENTRY_AUTH_TOKEN"
           sentry-cli --org holuto --project workshop debug-files upload --include-sources --wait packaging/build/symbols
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: actions/upload-artifact@v7
         with:
           name: package-${{ matrix.name }}
           path: release/*

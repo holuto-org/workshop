@@ -1,11 +1,8 @@
 name: Release
 
 on:
-  workflow_dispatch:
   push:
     branches: [master]
-    paths:
-      - Cargo.toml
 
 permissions:
   contents: read
@@ -15,123 +12,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  package:
+    needs: checks
+    uses: ./.github/workflows/package.yml
+    secrets:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+  # Installers refuse downgrades, so a release needs a new workspace version.
+  # A push that keeps an already released version builds and checks only.
   version:
+    needs: package
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.v.outputs.tag }}
       new: ${{ steps.v.outputs.new }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          fetch-depth: 0
       - id: v
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE: ${{ github.event.before || 'HEAD^' }}
-        shell: bash
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import pathlib
-          import re
-          import subprocess
-          import tomllib
-
-          def version(value):
-              if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
-                  raise ValueError(f"Release versions must be MAJOR.MINOR.PATCH: {value}")
-              return tuple(map(int, value.split(".")))
-
-          current = tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
-          current_version = version(current)
-          new = False
-          if os.environ["GITHUB_EVENT_NAME"] == "push":
-              base = os.environ["BASE"]
-              previous = None
-              if base.strip("0"):
-                  old = subprocess.run(["git", "show", f"{base}:Cargo.toml"], capture_output=True, text=True)
-                  if old.returncode == 0:
-                      previous = version(tomllib.loads(old.stdout)["workspace"]["package"]["version"])
-              if previous is None or current_version > previous:
-                  pages = json.loads(subprocess.check_output([
-                      "gh", "api", "--paginate", "--slurp",
-                      f"repos/{os.environ['GITHUB_REPOSITORY']}/releases",
-                  ], text=True))
-                  published = [
-                      version(release["tag_name"][1:])
-                      for page in pages for release in page
-                      if not release["draft"] and not release["prerelease"]
-                      and re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", release["tag_name"])
-                  ]
-                  new = all(current_version > released for released in published)
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write(f"tag=v{current}\nnew={str(new).lower()}\n")
-          print(f"tag=v{current} new={new}")
-          PY
-
-  test:
-    needs: version
-    if: needs.version.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/checks.yml
-    with:
-      build-packages: false
-
-  build:
-    needs: [version, test]
-    if: needs.version.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/package.yml
-    with:
-      production: true
-    secrets:
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-
-  checksums:
-    needs: [version, build]
-    if: needs.version.outputs.new == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          pattern: package-*
-          path: release
-          merge-multiple: true
-      - name: Stage version-matched installation instructions
-        run: cp scripts/install.sh scripts/install.ps1 docs/install-with-ai.md release/
-      - name: Checksums
-        working-directory: release
-        run: |
-          sha256sum workshop-* install.sh install.ps1 install-with-ai.md > SHA256SUMS.txt
-          sha256sum -c SHA256SUMS.txt
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: checksums
-          path: |
-            release/SHA256SUMS.txt
-            release/install.sh
-            release/install.ps1
-            release/install-with-ai.md
-          if-no-files-found: error
-          retention-days: 7
+          tag="v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          # Only "release not found" means unreleased; any other gh failure stops the run.
+          if out=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName 2>&1); then
+            new=false
+          elif grep -q 'release not found' <<<"$out"; then
+            new=true
+          else
+            echo "$out" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag new=$new"
 
   # npm install scripts must never share the provenance signer's OIDC permission.
   sentry-release:
-    needs: [version, checksums]
-    if: github.event_name == 'push' && needs.version.outputs.new == 'true'
+    needs: version
+    if: needs.version.outputs.new == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
       - name: Install Sentry CLI
-        run: npm install --global @sentry/cli@3.8.2
+        run: npm install --global @sentry/cli@3
       - name: Finalize Sentry release with commits
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -146,28 +77,31 @@ jobs:
           sentry-cli releases finalize "$release"
 
   publish:
-    needs: [version, checksums, sentry-release]
-    if: github.event_name == 'push' && needs.version.outputs.new == 'true'
+    needs: [version, sentry-release]
+    if: needs.version.outputs.new == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
         with:
           pattern: package-*
           path: release
           merge-multiple: true
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: checksums
-          path: release
-      - name: Verify checksums
+      - name: Stage version-matched installation instructions
+        run: cp scripts/install.sh scripts/install.ps1 docs/install-with-ai.md release/
+      - name: Checksums
         working-directory: release
-        run: sha256sum -c SHA256SUMS.txt
+        run: |
+          sha256sum workshop-* install.sh install.ps1 install-with-ai.md > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
       - name: Attest release assets
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: release/*
       - env:
