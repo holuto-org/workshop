@@ -21,6 +21,13 @@ const WAIT: Duration = Duration::from_secs(5);
 struct Release(Option<mpsc::Sender<()>>);
 
 impl Release {
+    /// Lets one held call finish while later calls stay held.
+    fn step(&self) {
+        if let Some(sender) = &self.0 {
+            let _disconnected = sender.send(());
+        }
+    }
+
     fn release(&mut self) {
         if let Some(sender) = self.0.take() {
             let _disconnected = sender.send(());
@@ -202,28 +209,30 @@ fn zero_timeout_shutdown_closes_admission_without_waiting_for_io() -> Result<(),
     } = fixture();
     transport.send_envelope(envelope("in flight"));
     assert_eq!(sent.recv_timeout(WAIT)?, "in flight", "I/O is held");
+    // Fills the queue, so the shutdown task cannot be queued either.
     transport.send_envelope(envelope("queued"));
     let (returned, result) = mpsc::channel();
     let caller = thread::Builder::new()
         .name("telemetry-shutdown-test".into())
         .spawn(move || {
             let stopped = transport.shutdown(Duration::ZERO);
-            transport.send_envelope(envelope("after shutdown"));
-            drop(transport);
-            let _receiver_gone = returned.send(stopped);
+            let _receiver_gone = returned.send((stopped, transport));
         })?;
-
-    assert!(
-        !result.recv_timeout(WAIT)?,
-        "held I/O prevents completed shutdown"
-    );
-    send_release.release();
-    disposing.recv_timeout(WAIT)?;
+    let (stopped, transport) = result.recv_timeout(WAIT)?;
+    assert!(!stopped, "held I/O prevents completed shutdown");
+    send_release.step();
     assert_eq!(
-        sent.try_iter().collect::<Vec<_>>(),
-        ["queued"],
-        "shutdown rejects later admission"
+        sent.recv_timeout(WAIT)?,
+        "queued",
+        "admitted envelope survives"
     );
+    // The owner is held again and the queue has room: only closed admission rejects this.
+    transport.send_envelope(envelope("after shutdown"));
+    send_release.release();
+    // The owner exits on closure while this sender is still alive, after draining the queue.
+    disposing.recv_timeout(WAIT)?;
+    assert!(sent.try_recv().is_err(), "shutdown rejects later admission");
+    drop(transport);
     drop_release.release();
     disposed.recv_timeout(WAIT)?;
     assert!(caller.join().is_ok(), "shutdown caller completed");

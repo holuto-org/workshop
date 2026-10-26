@@ -76,7 +76,6 @@ pub enum Fault {
     },
     DropAfterCommit,
     Redirect(String),
-    Oversized,
     /// Signals arrival, then waits for explicit release.
     Hold {
         reached: Sender<()>,
@@ -413,10 +412,6 @@ fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
         let response = Response::empty(302)
             .with_header(Header::from_bytes("Location", location.as_str()).unwrap());
         let _sent = request.respond(response);
-        return;
-    }
-    if matches!(fault, Some(Fault::Oversized)) {
-        respond_bytes(request, 200, vec![b'x'; 4 * 1024 * 1024 + 1]);
         return;
     }
     contract::validate_request(&method, &path, &log.body).unwrap();

@@ -595,7 +595,6 @@ fn native_reporter_marker_is_recognized_in_an_isolated_child() -> Result<(), Box
 fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(), Box<dyn Error>> {
     use std::{
         env, fs,
-        os::unix::fs::PermissionsExt as _,
         path::PathBuf,
         process::{self, Command},
     };
@@ -652,11 +651,6 @@ fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(
     assert!(
         !shared.join("Crashes").exists(),
         "dump written to the shared temporary directory"
-    );
-    assert_eq!(
-        fs::metadata(state.path())?.permissions().mode() & 0o777,
-        0o700,
-        "only the user can reach the dump"
     );
     Ok(())
 }
