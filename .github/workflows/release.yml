@@ -36,30 +36,39 @@ jobs:
     env:
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
       SENTRY_ENVIRONMENT: production
+
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
       - run: rustup toolchain install
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: package-${{ matrix.target }}
+
       - name: Install Linux packaging and launch dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libfontconfig1-dev fonts-dejavu-core xvfb xauth dbus-x11 xdotool x11-utils desktop-file-utils binutils
+
       - name: Require the production telemetry configuration
         run: test -n "$SENTRY_DSN"
+
       - name: Build native package
         run: bash packaging/build.sh
+
       - name: Check standalone smoke isolation and diagnostics opt-out
         if: runner.os == 'Linux'
         run: |
           target_dir=$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.target_directory')
           python3 packaging/test-smoke.py "$target_dir/release/workshop"
+
       - name: Verify package and launch main window
         run: bash packaging/verify.sh
+
       - name: Prove simulator cannot enter a release build
         run: |
           log=$(mktemp)
@@ -71,8 +80,10 @@ jobs:
           cat "$log"
           grep -F 'The simulator feature is restricted to local debug builds.' "$log"
           rm "$log"
+
       - name: Install Sentry CLI
         run: npm install --global @sentry/cli@3
+
       - name: Upload native debug information and source context
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -81,6 +92,7 @@ jobs:
         run: |
           test -n "$SENTRY_AUTH_TOKEN"
           sentry-cli debug-files upload --include-sources --wait packaging/build/symbols
+
       - uses: actions/upload-artifact@v7
         with:
           name: package-${{ matrix.name }}
@@ -96,10 +108,12 @@ jobs:
     outputs:
       tag: ${{ steps.v.outputs.tag }}
       new: ${{ steps.v.outputs.new }}
+
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
       - id: v
         env:
           GH_TOKEN: ${{ github.token }}
@@ -126,26 +140,32 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
       - uses: actions/download-artifact@v7
         with:
           pattern: package-*
           path: release
           merge-multiple: true
+
       - name: Stage version-matched installation instructions
         run: cp scripts/install.sh scripts/install.ps1 docs/install-with-ai.md release/
+
       - name: Checksums
         working-directory: release
         run: |
           sha256sum workshop-* install.sh install.ps1 install-with-ai.md > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
+
       - name: Attest release assets
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: release/*
+
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
