@@ -659,9 +659,9 @@ fn canonical_unique_number(raw: &str) -> String {
 }
 
 fn boolean(value: &str) -> Result<bool, Error> {
-    match value.to_ascii_lowercase().as_str() {
-        "1" | "y" | "t" => Ok(true),
-        "0" | "n" => Ok(false),
+    match value {
+        "1" | "y" | "Y" | "t" | "T" => Ok(true),
+        "0" | "n" | "N" => Ok(false),
         _ => Err(Error::Protocol(format!(
             "nieprawidłowy status logiczny {value:?}"
         ))),

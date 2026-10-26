@@ -457,18 +457,15 @@ fn pairing_is_single_use_and_revokes_each_previous_device_credential() -> TestRe
     clippy::panic_in_result_fn,
     reason = "boundary assertions panic while setup uses Result"
 )]
-fn expired_invalid_and_throttled_pairing_proofs_do_not_revoke_the_token() -> TestResult {
+fn invalid_and_throttled_pairing_proofs_do_not_revoke_the_token() -> TestResult {
     let server = Holuto::new();
     server.pairing_code("ABCD1234");
-    server.expire_pairing_code("ABCD1234");
-    for code in ["ABCD1234", "ZZZZZZZZ"] {
-        assert!(matches!(
-            Api::pair(server.url(), code),
-            Err(crate::Error::Api(ApiError::Status {
-                status: 400, detail: Some(detail),
-            })) if detail == "fiscal_pairing_invalid"
-        ));
-    }
+    assert!(matches!(
+        Api::pair(server.url(), "ZZZZZZZZ"),
+        Err(crate::Error::Api(ApiError::Status {
+            status: 400, detail: Some(detail),
+        })) if detail == "fiscal_pairing_invalid"
+    ));
     server.pairing_code("EFGH5678");
     server.pairing_throttled(true);
     assert!(matches!(

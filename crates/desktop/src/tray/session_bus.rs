@@ -1,15 +1,9 @@
 #![cfg(test)]
 
+use futures_lite::future::block_on;
 use slint::platform::update_timers_and_animations;
 use std::{
-    env,
-    error::Error,
-    fs,
-    process::Command as ProcessCommand,
-    sync::{Arc, mpsc},
-    task::{Context, Poll, Wake, Waker},
-    thread::{self, Thread},
-    time::Duration,
+    env, error::Error, fs, process::Command as ProcessCommand, sync::mpsc, thread, time::Duration,
 };
 use zbus::Connection;
 
@@ -37,28 +31,6 @@ impl Watcher {
     #[zbus(property)]
     fn registered_status_notifier_items(&self) -> Vec<String> {
         self.items.clone()
-    }
-}
-
-struct ThreadWake(Thread);
-impl Wake for ThreadWake {
-    fn wake(self: Arc<Self>) {
-        self.0.unpark();
-    }
-
-    fn wake_by_ref(self: &Arc<Self>) {
-        self.0.unpark();
-    }
-}
-fn run<F: Future>(future: F) -> F::Output {
-    let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
-    let mut context = Context::from_waker(&waker);
-    let mut future = std::pin::pin!(future);
-    loop {
-        match future.as_mut().poll(&mut context) {
-            Poll::Ready(value) => return value,
-            Poll::Pending => thread::park(),
-        }
     }
 }
 
@@ -110,7 +82,7 @@ fn tray_availability_requires_this_apps_icon_registered_with_a_tray_host()
     }
     let _address = env::var("DBUS_SESSION_BUS_ADDRESS")?;
     i_slint_backend_testing::init_integration_test_with_mock_time();
-    run(async {
+    block_on(async {
         assert!(
             !available().await,
             "a bus without StatusNotifierWatcher must keep the application visible"
@@ -165,7 +137,7 @@ fn tray_availability_requires_this_apps_icon_registered_with_a_tray_host()
         let (sender, probed) = mpsc::channel();
         let _probe = thread::Builder::new()
             .name("tray probe".into())
-            .spawn(move || sender.send(run(available())))?;
+            .spawn(move || sender.send(block_on(available())))?;
         assert_eq!(
             probed.recv_timeout(Duration::from_secs(10)),
             Ok(false),

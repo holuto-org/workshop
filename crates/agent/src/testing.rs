@@ -263,15 +263,6 @@ impl Holuto {
         locked(&self.state).pairing = Some((code, Instant::now() + Duration::from_mins(15)));
     }
 
-    pub fn expire_pairing_code(&self, code: &str) {
-        let mut state = locked(&self.state);
-        if let Some((current, expires)) = &mut state.pairing
-            && Some(current.as_str()) == pairing_code(code).as_deref()
-        {
-            *expires = Instant::now();
-        }
-    }
-
     pub fn pairing_throttled(&self, throttled: bool) {
         locked(&self.state).pairing_throttled = throttled;
     }

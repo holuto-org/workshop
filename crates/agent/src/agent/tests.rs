@@ -457,24 +457,7 @@ fn claimed_job_needing_unqualified_capability_fails_without_fiscal_commands() ->
             Some(JobState::Failed)
         );
         assert_eq!(sim.receipts(), []);
-        assert!(sim.frames().iter().all(|frame| {
-            [
-                "trinit",
-                "trnipset",
-                "trline",
-                "tradvance",
-                "trpayment",
-                "trend",
-                "trftrln",
-                "trftrend",
-            ]
-            .iter()
-            .all(|command| {
-                !frame
-                    .windows(command.len())
-                    .any(|part| part == command.as_bytes())
-            })
-        }));
+        assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
     }
     Ok(())
 }
@@ -872,30 +855,8 @@ fn a_claim_with_unwritable_journal_never_sends_a_fiscal_command() -> TestResult 
         "the claim committed before its intent write failed"
     );
     assert_eq!(agent.journal.load()?, None, "no claim was persisted");
-    let fiscal = sim
-        .frames()
-        .into_iter()
-        .filter(|frame| {
-            [
-                "trinit",
-                "trnipset",
-                "trline",
-                "tradvance",
-                "trpayment",
-                "trend",
-                "trftrln",
-                "trftrend",
-            ]
-            .iter()
-            .any(|command| {
-                frame
-                    .windows(command.len())
-                    .any(|part| part == command.as_bytes())
-            })
-        })
-        .collect::<Vec<_>>();
     assert_eq!(
-        fiscal,
+        sent(&sim, &RECEIPT_COMMANDS),
         Vec::<Vec<u8>>::new(),
         "a failed claim WRITE prevents every fiscal command"
     );
