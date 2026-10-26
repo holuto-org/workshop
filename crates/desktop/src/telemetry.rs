@@ -115,9 +115,7 @@ fn scrub_event(mut event: Event<'static>) -> Option<Event<'static>> {
     event.culprit = None;
     event.transaction = event.transaction.map(|_| "fiscal.operation".into());
     event.logger = None;
-    event
-        .tags
-        .retain(|key, _| matches!(key.as_str(), "printer_id" | "device_unique_number"));
+    event.tags.retain(|key, _| printer_tag(key));
     privacy::scrub_paths(&mut event);
     for exception in &mut event.exception.values {
         exception.value = None;
@@ -148,12 +146,14 @@ fn scrub_log(mut log: Log) -> Option<Log> {
     }
     log.body = message(Some(&log.body)).into();
     log.attributes.retain(|key, _| {
-        matches!(
-            key.as_str(),
-            "sentry.release" | "sentry.environment" | "printer_id" | "device_unique_number"
-        )
+        matches!(key.as_str(), "sentry.release" | "sentry.environment") || printer_tag(key)
     });
     Some(log)
+}
+
+/// The tags `printer` sets; every telemetry path keeps them.
+fn printer_tag(key: &str) -> bool {
+    matches!(key, "printer_id" | "device_unique_number")
 }
 
 pub(crate) fn set_enabled(enabled: bool) {
@@ -229,9 +229,7 @@ impl Transport for SafeTransport {
                 transaction.server_name = None;
                 transaction.request = None;
                 transaction.extra.clear();
-                transaction
-                    .tags
-                    .retain(|key, _| matches!(key.as_str(), "printer_id" | "device_unique_number"));
+                transaction.tags.retain(|key, _| printer_tag(key));
                 scrub_contexts(&mut transaction.contexts);
                 for span in &mut transaction.spans {
                     span.description = None;

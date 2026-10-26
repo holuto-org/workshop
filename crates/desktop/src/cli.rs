@@ -411,10 +411,7 @@ fn pair(path: &Path, code: String) -> Result<Response, Failure> {
                     message,
                 });
             },
-            Event::Stopped => {
-                worker.join();
-                return result;
-            },
+            Event::Stopped => break,
             Event::Status { .. }
             | Event::PortDetected { .. }
             | Event::Connected { .. }
