@@ -46,19 +46,18 @@ check_launcher() {
 # GenericStateLocation. The new app never reads it, so a record that is not a complete
 # JSON object whose top-level state is completed/acknowledged must be resolved in that
 # app first. A full JSON parser decides; without one, an existing journal blocks.
+# osascript comes first: macOS's python3 may be a stub that prompts to install tools.
 legacy_state() {
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import json, sys
-record = json.load(open(sys.argv[1], encoding="utf-8"))
-print(record.get("state", "") if isinstance(record, dict) else "")' "$1" 2>/dev/null
-  elif [[ $os == Darwin ]]; then
+  if command -v osascript >/dev/null 2>&1; then
     osascript -l JavaScript -e 'function run(argv) {
   const text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], 4, null);
   const record = JSON.parse(text.js);
   return record && typeof record === "object" && !Array.isArray(record) ? String(record.state) : "";
 }' "$1" 2>/dev/null
-  else
-    return 1
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json, sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+print(record.get("state", "") if isinstance(record, dict) else "")' "$1" 2>/dev/null
   fi
 }
 check_legacy_journal() {
