@@ -323,19 +323,7 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
             );
             let _scheduled = slint::invoke_from_event_loop(move || {
                 #[cfg(target_os = "macos")]
-                {
-                    let object = NSObject::new();
-                    let reply = macos::should_terminate(
-                        &object,
-                        sel!(applicationShouldTerminate:),
-                        &object,
-                    );
-                    assert_eq!(
-                        reply,
-                        NSApplicationTerminateReply::TerminateLater,
-                        "AppKit holds termination until the worker finishes; Cancel aborts logout"
-                    )
-                };
+                request_native_termination();
                 with_app(move |app| {
                     #[cfg(not(target_os = "macos"))]
                     app.stop(true)?;
@@ -381,6 +369,18 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
     );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
+}
+
+/// Sends `AppKit`'s termination request through the installed delegate hook.
+#[cfg(target_os = "macos")]
+fn request_native_termination() {
+    let object = NSObject::new();
+    let reply = macos::should_terminate(&object, sel!(applicationShouldTerminate:), &object);
+    assert_eq!(
+        reply,
+        NSApplicationTerminateReply::TerminateLater,
+        "AppKit holds termination until the worker finishes; Cancel aborts logout"
+    );
 }
 
 /// A lost display server (logout) ends the event loop without `finish_quit`.

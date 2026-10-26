@@ -40,5 +40,7 @@ fn attach_parent() {
     }
 }
 
-#[cfg(all(test, windows))]
+// Separate attributes: clippy recognizes a test module only by a plain `cfg(test)`.
+#[cfg(test)]
+#[cfg(windows)]
 mod tests;

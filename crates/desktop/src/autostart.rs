@@ -4,7 +4,7 @@ use std::{env, io, path::Path};
 #[cfg(not(windows))]
 use std::{fs, io::Write as _, path::PathBuf};
 #[cfg(windows)]
-use std::{os::windows::ffi::OsStrExt as _, ptr};
+use std::{iter, os::windows::ffi::OsStrExt as _, ptr};
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
@@ -220,8 +220,7 @@ fn registry(key: &str, executable: &Path, enabled: bool) -> Result<(), Error> {
         return Err(registry_error(executable, opened));
     }
     let changed = if enabled {
-        let quoted: Vec<_> = Some(u16::from(b'"'))
-            .into_iter()
+        let quoted: Vec<_> = iter::once(u16::from(b'"'))
             .chain(executable.as_os_str().encode_wide())
             .chain([u16::from(b'"'), 0])
             .collect();
