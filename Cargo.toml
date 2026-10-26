@@ -166,11 +166,12 @@ rustls = { version = "0.23.46", default-features = false, features = ["ring", "s
 url = "2.5.8"
 uuid = { version = "1.29.0", features = ["serde"] }
 
-# Build-time JSON Schema → Rust wire types; schemars is typify's input model.
+# Build-time JSON Schema → Rust wire types; schemars is typify's input model, so
+# its version follows typify's (0.8), not schemars' latest.
 typify = { version = "0.8.0", default-features = false }
 schemars = { version = "0.8.22", default-features = false }
 # Fix typify's serde helper-attribute ordering structurally, at build time only.
-syn = { version = "2.0.119", features = ["full"] }
+syn = { version = "3.0.9", features = ["full"] }
 quote = "1.0.47"
 # The feature-gated loopback fake validates the vendored OpenAPI 3.1 contract offline.
 jsonschema = { version = "0.60.1", default-features = false }
@@ -206,7 +207,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
 # Probe StatusNotifierWatcher using Slint's existing async-io zbus dependency.
-zbus = { version = "5.14.0", default-features = false, features = ["async-io"] }
+# Stay on the zbus major Slint's tray (ksni) uses; zbus 6 replaces async-io.
+zbus = { version = "5.19.0", default-features = false, features = ["async-io"] }
 # Unix session end (SIGTERM/SIGHUP) and Ctrl+C quit cooperatively; versions match
 # the ones zbus already pulls in.
 async-signal = "0.2.14"

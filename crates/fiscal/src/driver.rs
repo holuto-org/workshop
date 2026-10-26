@@ -2,7 +2,7 @@
 //!
 //! Each operation opens its own session, verifies the device before any fiscal command,
 //! journals intent first and never retries or reprints; a lost reply is
-//! [`Error::Uncertain`](crate::error::Error::Uncertain) for the caller to resolve.
+//! [`Error::Uncertain`] for the caller to resolve.
 
 use std::fmt;
 

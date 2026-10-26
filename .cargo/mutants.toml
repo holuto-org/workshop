@@ -20,7 +20,7 @@ exclude_re = [
     'crates/desktop/src/telemetry\.rs:86:41: replace \| with \^ in layer',
     # Defensive stop checks: without a Worker, reachable models are stopped; status_matches
     # then implies processing=false and connected=false. Keep both explicit safety checks.
-    'crates/desktop/src/application\.rs:549:(37|59): replace && with \|\| in Application::finish_quit',
+    'crates/desktop/src/application\.rs:566:(37|59): replace && with \|\| in Application::finish_quit',
     # Defensive gate: every ready Elzab profile supports advances, in production and acceptance.
     'crates/elzab/src/receipt\.rs:37:8: delete ! in validate',
 ]

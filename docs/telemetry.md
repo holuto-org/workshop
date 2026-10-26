@@ -98,6 +98,11 @@ customer/receipt data that happened to be in memory. Local structured-event
 hooks cannot promise that those bytes never leave the computer. Opt out if this
 risk is unacceptable.
 
+The reporter writes the dump to `crashes/` in the private state directory and
+deletes it after the upload attempt; an interrupted reporter can leave it there.
+The SDK default, a `Crashes` directory in the shared temporary directory, would
+let other local users read it.
+
 [Sentry's Rust native-crash documentation](https://docs.sentry.io/platforms/rust/native-crash-reporting.md)
 states that dumps are processed and immediately discarded by default, with
 sensitive information stripped from resulting issues; project administrators can

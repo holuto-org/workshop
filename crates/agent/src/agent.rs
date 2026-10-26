@@ -37,8 +37,6 @@ use crate::{
 pub(crate) const POLL: Duration = Duration::from_secs(3);
 pub(crate) const RETRY: Duration = Duration::from_secs(15);
 const INTERRUPTED: &str = "Przerwano w trakcie drukowania. Sprawdź drukarkę.";
-const UNNUMBERED: &str = "Wydruk zakończony, ale nie odczytano numeru paragonu. Sprawdź wydruk i \
-                          rozstrzygnij zadanie w Holuto.";
 
 /// Retained until drained, even if settlement is followed by an error or report.
 #[derive(Default)]
@@ -373,7 +371,7 @@ impl<'dir> Agent<'dir> {
                 return Ok(Some(Blocked::Receipt));
             },
             (None, Some(number)) | (Some(JobResult::Unknown { .. }), Some(number @ Some(_))) => {
-                self.report(&mut operation, done(number))?;
+                self.report(&mut operation, JobResult::done(number))?;
             },
             (None, None) => {
                 let result = if matches!(operation.device, Device::NotStarted) {
@@ -483,7 +481,7 @@ impl<'dir> Agent<'dir> {
                 operation.issued_at = printed.issued_at;
                 self.journal.save(&Operation::Receipt(operation.clone()))?;
                 tracing::info!(job_id = %job.id, "Receipt printed");
-                self.report(&mut operation, done(printed.receipt_number))?;
+                self.report(&mut operation, JobResult::done(printed.receipt_number))?;
                 if matches!(operation.result, Some(JobResult::Done { .. })) {
                     self.finish(&mut operation, JobState::Done, None)?;
                 }
@@ -501,7 +499,7 @@ impl<'dir> Agent<'dir> {
     }
 
     fn receipt(&self, job: &Job, capabilities: &Capabilities) -> Result<Receipt, String> {
-        job.check(Some(capabilities.max_lines))
+        job.check(capabilities.max_lines)
             .map_err(|problem| format!("Nieprawidłowe zadanie z Holuto: {problem}."))?;
         if !job.advances.is_empty() && !capabilities.advance_deductions {
             return Err("Drukarka nie obsługuje rozliczenia zaliczek.".to_owned());
@@ -736,11 +734,6 @@ impl DeviceJournal for ReportDispatch<'_> {
     fn waiting(&mut self, problem: Option<&str>) {
         (self.waiting)(problem);
     }
-}
-
-/// An unreadable receipt number stays UNKNOWN until staff supply it.
-fn done(receipt_number: Option<String>) -> JobResult {
-    JobResult::done(receipt_number, UNNUMBERED)
 }
 
 fn quantity(text: &str) -> Result<Quantity, String> {

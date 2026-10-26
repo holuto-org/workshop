@@ -67,7 +67,7 @@ fn advance_spans_same_vat_items_and_footer_keeps_exact_cp1250() {
     let driver = printer(&sim);
     let expected = driver.probe().unwrap();
     let caps = &expected.capabilities;
-    let lines = [("Pierwszy", 1000), ("Drugi", 2000)]
+    let lines = [("Pierwszy", 1000), ("Drugi", 2000), ("Trzeci", 3000)]
         .map(|(name, value)| {
             Line::new(
                 name,
@@ -88,7 +88,7 @@ fn advance_spans_same_vat_items_and_footer_keeps_exact_cp1250() {
         vec![
             Payment {
                 form: PaymentForm::Cash,
-                amount: Grosze::new(1500).unwrap(),
+                amount: Grosze::new(4500).unwrap(),
             },
             Payment {
                 form: PaymentForm::Mobile,
@@ -111,15 +111,16 @@ fn advance_spans_same_vat_items_and_footer_keeps_exact_cp1250() {
             "1;@zPierwszy\rA\r10/0/",
             "2$lDrugi\r1\rA/20/20/",
             "1;@zDrugi\rA\r5/15/",
-            "1;0$b15/\r",
-            "0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r15/0/0/15/0/",
+            "3$lTrzeci\r1\rA/30/30/",
+            "1;0$b45/\r",
+            "0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r45/0/0/45/0/",
             "12$z",
             "28;0$z",
         ]
     );
     assert_eq!(
         log.commands,
-        ["$h", "$l", "@z", "$l", "@z", "$b", "$y", "$z", "$z"]
+        ["$h", "$l", "@z", "$l", "@z", "$l", "$b", "$y", "$z", "$z"]
     );
     assert!(
         sim.frames()

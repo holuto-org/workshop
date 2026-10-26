@@ -36,6 +36,8 @@ use crate::{
 const FILE: &str = "operation.json";
 /// API `Note` limit.
 const MAX_REASON_LENGTH: usize = 2000;
+const UNNUMBERED: &str = "Wydruk zakończony, ale nie odczytano numeru paragonu. Sprawdź wydruk i \
+                          rozstrzygnij zadanie w Holuto.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -140,9 +142,10 @@ impl fmt::Debug for JobResult {
 }
 
 impl JobResult {
-    pub(crate) fn done(receipt_number: Option<String>, unnumbered: &str) -> Self {
+    /// An unreadable receipt number stays UNKNOWN until staff supply it.
+    pub(crate) fn done(receipt_number: Option<String>) -> Self {
         let Some(raw) = receipt_number else {
-            return Self::unknown(unnumbered);
+            return Self::unknown(UNNUMBERED);
         };
         receipt_code(&raw).map_or_else(
             || {

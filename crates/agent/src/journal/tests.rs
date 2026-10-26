@@ -311,7 +311,7 @@ fn journaled_done_sends_a_canonical_receipt_number() -> TestResult {
             receipt_number: Some(raw.clone()),
         };
         journal.save(&Operation::Receipt(ReceiptOperation {
-            result: Some(JobResult::done(Some(raw), "Brak numeru.")),
+            result: Some(JobResult::done(Some(raw))),
             ..receipt(device.clone())?
         }))?;
         let Some(Operation::Receipt(restored)) = journal.load()? else {
@@ -350,7 +350,8 @@ fn unusable_completion_numbers_preserve_raw_evidence_and_request_staff_resolutio
         Some("12\u{2028}34".to_owned()),
     ] {
         let expected = if raw.is_none() {
-            "Brak numeru."
+            "Wydruk zakończony, ale nie odczytano numeru paragonu. Sprawdź wydruk i rozstrzygnij \
+             zadanie w Holuto."
         } else {
             "Nieprawidłowy numer wydrukowanego paragonu. Uzupełnij numer w Holuto."
         };
@@ -359,7 +360,7 @@ fn unusable_completion_numbers_preserve_raw_evidence_and_request_staff_resolutio
         };
         let journal = Journal::new(&dir);
         journal.save(&Operation::Receipt(ReceiptOperation {
-            result: Some(JobResult::done(raw, "Brak numeru.")),
+            result: Some(JobResult::done(raw)),
             ..receipt(device.clone())?
         }))?;
         let Some(Operation::Receipt(restored)) = journal.load()? else {

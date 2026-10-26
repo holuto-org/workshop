@@ -5,6 +5,7 @@ mod privacy;
 mod transport;
 
 use std::{
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -12,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use agent::settings::Settings;
+use agent::{settings::Settings, store::StateDir};
 use sentry::{
     ClientInitGuard, ClientOptions, Envelope, Transport, TransportFactory, TransportOptions,
     integrations::{
@@ -31,24 +32,34 @@ pub(crate) fn is_crash_reporter_process() -> bool {
 }
 
 pub(crate) fn init() -> Option<ClientInitGuard> {
-    let minidump = MinidumpIntegration::new().flush_timeout(FLUSH_TIMEOUT);
     // A reporter must enter init even if consent changed since its parent launched it.
     // Reading preferences takes no lock and never creates state.
     let enabled = !cfg!(feature = "simulator")
-        && (minidump.is_crash_reporter_process() || Settings::telemetry_enabled_at_default_path());
+        && (is_crash_reporter_process() || Settings::telemetry_enabled_at_default_path());
     ENABLED.store(enabled, Ordering::SeqCst);
     let dsn = option_env!("SENTRY_DSN").filter(|dsn| !dsn.is_empty())?;
     if !enabled {
         return None;
     }
-    let guard = sentry::init(
-        options()
-            .dsn(dsn)
-            .transport(HttpTransport)
-            .add_integration(minidump),
-    );
+    let mut options = options().dsn(dsn).transport(HttpTransport);
+    // Without a state directory the application cannot start, so there is nothing to dump.
+    if let Some(state) = StateDir::default_path() {
+        options = options.add_integration(minidump(&state));
+    }
+    let guard = sentry::init(options);
     let _subscriber_already_set = tracing_subscriber::registry().with(layer()).try_init();
     Some(guard)
+}
+
+/// Keeps native dumps in the per-user private state directory.
+///
+/// A dump is process memory that can hold the token, NIP or receipts. The reporter writes it
+/// before uploading and keeps it if killed mid-upload, so it never belongs in the default
+/// shared temporary directory (`/tmp` on Linux).
+fn minidump(state: &Path) -> MinidumpIntegration {
+    MinidumpIntegration::new()
+        .flush_timeout(FLUSH_TIMEOUT)
+        .crashes_dir(state.join("crashes"))
 }
 
 fn options() -> ClientOptions {
@@ -254,11 +265,13 @@ fn message(text: Option<&str>) -> &str {
             | "Printer requires operator intervention"
             | "Printer resumed after operator intervention"
             | "Printer refused command"
+            | "Receipt footer incomplete after the fiscal record"
             | "Printer operation has an uncertain outcome"
             | "Fiscal receipt outcome is uncertain"
             | "Worker panicked"
             | "Worker operation requires attention"
             | "Worker operation failed"
+            | "Could not load the receipt display history"
             | "Holuto session unavailable; retrying in 15 seconds"
             | "Printer unavailable at start; retrying in 15 seconds"
             | "Printed receipt conflicts with terminal Holuto state"

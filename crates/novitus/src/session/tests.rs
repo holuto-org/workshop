@@ -1,7 +1,7 @@
 use super::*;
 use crate::simulator::{Fault, Simulator};
 use fiscal::link::Candidate;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 fn open(sim: &Simulator) -> Session {
     Session::open(
@@ -226,14 +226,21 @@ fn invalid_raw_status_is_not_ignored_before_a_successful_reply() {
 
 #[test]
 fn eof_and_partial_frames_never_complete_or_resend() {
-    for fault in [Fault::Disconnect, Fault::Reply(b"\x1bP1#U".to_vec())] {
+    for (fault, eof) in [
+        (Fault::Disconnect, true),
+        (Fault::Reply(b"\x1bP1#U".to_vec()), false),
+    ] {
         let sim = Simulator::start();
         sim.fault("^u", fault);
         let mut session = open(&sim);
-        assert!(matches!(
-            session.command("^u", Duration::from_secs(3)),
-            Err(Error::Io(_) | Error::Timeout("Novitus"))
-        ));
+        let error = session.command("^u", Duration::from_secs(3)).unwrap_err();
+        if eof {
+            assert!(
+                matches!(error, Error::Io(source) if source.kind() == io::ErrorKind::UnexpectedEof)
+            );
+        } else {
+            assert!(matches!(error, Error::Timeout("Novitus")));
+        }
         assert_eq!(
             sim.frames(),
             [b"\x1bP3#e8A\x1b\\".to_vec(), b"\x1bP^uD4\x1b\\".to_vec()]
@@ -558,26 +565,134 @@ fn status_query_schemas_do_not_apply_to_other_hash_s_commands() {
 
 #[test]
 fn clock_and_fiscal_memory_refusals_keep_their_operator_explanations() {
-    for (code, detail) in [
+    for (command, code, detail) in [
         (
+            "$h",
             1,
             "Drukarka Novitus zwróciła błąd 1 ($h). Nie zainicjowano zegara drukarki.",
         ),
         (
+            "$h",
             6,
             "Drukarka Novitus zwróciła błąd 6 ($h). Błąd pamięci fiskalnej. Wezwij serwis.",
         ),
+        (
+            "$h",
+            40,
+            "Drukarka Novitus zwróciła błąd 40 ($h). Brak nagłówka w pamięci drukarki.",
+        ),
+        (
+            "#r",
+            7,
+            "Drukarka Novitus zwróciła błąd 7 (#r). Data drukarki jest wcześniejsza niż ostatni \
+             zapis albo zmieniła się przed raportem.",
+        ),
     ] {
         let sim = Simulator::start();
-        sim.fault("$h", Fault::Refuse(code));
+        sim.fault(command, Fault::Refuse(code));
         let error = open(&sim)
-            .command("0$h", Duration::from_secs(3))
+            .command(
+                if command == "$h" {
+                    "0$h"
+                } else {
+                    "1;26;10;24#r"
+                },
+                Duration::from_secs(3),
+            )
             .unwrap_err();
         assert!(matches!(
             &error,
-            Error::Device { code: actual, command, .. } if *actual == code && command == "$h"
+            Error::Device { code: actual, command: answered, .. }
+                if *actual == code && answered == command
         ));
         assert_eq!(error.to_string(), detail);
         assert_eq!(sim.receipts(), 0);
+    }
+}
+
+#[test]
+fn a_status_of_the_wrong_family_cannot_satisfy_a_realtime_request() {
+    let sim = Simulator::start();
+    sim.set_status(0x6D, 0x6D, "@s0;0;0;00000000;");
+    let mut session = open(&sim);
+    assert!(matches!(
+        session.realtime(DLE),
+        Err(Error::Timeout("Novitus"))
+    ));
+    sim.set_status(0x74, 0x6D, "@s0;0;0;00000000;");
+    assert_eq!(session.realtime(ENQ).unwrap(), 0x6D);
+}
+
+#[test]
+fn scaled_and_unscaled_deadlines_reach_the_real_transport_unchanged() {
+    #[derive(Debug)]
+    struct Observe {
+        inner: Arc<dyn Link>,
+        scale: u32,
+        writes: Arc<Mutex<Vec<Duration>>>,
+    }
+    impl Link for Observe {
+        fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, Error> {
+            Ok(Box::new(ObservedPort {
+                inner: self.inner.open(port, baud_rate)?,
+                writes: Arc::clone(&self.writes),
+            }))
+        }
+
+        fn candidates(&self) -> Vec<Candidate> {
+            self.inner.candidates()
+        }
+
+        fn time_scale(&self) -> u32 {
+            self.scale
+        }
+    }
+    struct ObservedPort {
+        inner: Box<dyn Port>,
+        writes: Arc<Mutex<Vec<Duration>>>,
+    }
+    impl Port for ObservedPort {
+        fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
+            self.writes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(timeout);
+            self.inner.write_all(bytes, timeout)
+        }
+
+        fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
+            self.inner.read(buffer, timeout)
+        }
+    }
+    for (scale, expected) in [
+        (1, [Duration::from_secs(3), Duration::from_secs(600)]),
+        (
+            1000,
+            [Duration::from_millis(100), Duration::from_millis(600)],
+        ),
+    ] {
+        let sim = Simulator::start();
+        let writes = Arc::new(Mutex::new(vec![]));
+        let link = Observe {
+            inner: sim.link(),
+            scale,
+            writes: Arc::clone(&writes),
+        };
+        let mut session = Session::open(
+            &link,
+            &Connection {
+                port: sim.address().to_owned(),
+                baud_rate: 9600,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            session
+                .command("^u", Duration::from_secs(600))
+                .unwrap()
+                .body,
+            "1#UWarsztat Łódź"
+        );
+        assert_eq!(*writes.lock().unwrap(), expected);
     }
 }

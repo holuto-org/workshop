@@ -181,7 +181,7 @@ impl Job {
     }
 
     /// Job shape; a claimed job that breaks it fails before any fiscal command.
-    pub(crate) fn check(&self, max_lines: Option<usize>) -> Result<(), String> {
+    pub(crate) fn check(&self, max_lines: usize) -> Result<(), String> {
         self.kind.check_allocation(self.allocation_id)?;
         if self.order_number <= 0 {
             return Err("numer zlecenia musi być dodatni".to_owned());
@@ -189,10 +189,8 @@ impl Job {
         if self.lines.is_empty() {
             return Err("zadanie musi mieć co najmniej jedną pozycję".to_owned());
         }
-        if let Some(max) = max_lines
-            && self.lines.len() > max
-        {
-            return Err(format!("zadanie musi mieć od 1 do {max} pozycji"));
+        if self.lines.len() > max_lines {
+            return Err(format!("zadanie musi mieć od 1 do {max_lines} pozycji"));
         }
         if self.kind == ReceiptKind::Advance && !self.advances.is_empty() {
             return Err("zaliczka nie może odliczać zaliczek".to_owned());

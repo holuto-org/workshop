@@ -297,21 +297,6 @@ impl Api {
         error
     }
 
-    fn telemetry(&mut self, path: &str, telemetry: &Telemetry) -> Result<(), ApiError> {
-        let status: PrinterStatus = self.post(path, Some(telemetry))?.ok_or_else(empty)?;
-        let printer = status.printer;
-        printer
-            .check(&self.unique_number)
-            .map_err(ApiError::Response)?;
-        if self.printer_id.is_some_and(|id| id != printer.id) {
-            return Err(ApiError::Response(
-                "parowanie przypisane do innej drukarki".to_owned(),
-            ));
-        }
-        self.printer_id = Some(printer.id);
-        Ok(())
-    }
-
     /// Sessions carry the unique number in their body; all other routes use its header.
     fn headers<B>(
         &self,
@@ -339,7 +324,18 @@ impl Api {
     }
 
     pub fn session(&mut self, telemetry: &Telemetry) -> Result<(), ApiError> {
-        self.telemetry("session", telemetry)
+        let status: PrinterStatus = self.post("session", Some(telemetry))?.ok_or_else(empty)?;
+        let printer = status.printer;
+        printer
+            .check(&self.unique_number)
+            .map_err(ApiError::Response)?;
+        if self.printer_id.is_some_and(|id| id != printer.id) {
+            return Err(ApiError::Response(
+                "parowanie przypisane do innej drukarki".to_owned(),
+            ));
+        }
+        self.printer_id = Some(printer.id);
+        Ok(())
     }
 
     pub fn heartbeat(&self) -> Result<(), ApiError> {

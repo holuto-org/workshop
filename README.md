@@ -73,6 +73,8 @@ State directory:
 - `instance.lock`: one process per state directory: the app or a CLI command.
 - `application.lock`: held only by the running app; `workshop status` and
   `workshop check` read it, so a CLI command is never reported as the app.
+- `crashes/`: native crash dumps awaiting upload; see
+  [native minidumps](docs/telemetry.md#native-minidumps-important-exception).
 
 On Unix, opening tightens the directory to **0700** and the locks to **0600**;
 every write replaces a data file with a **0600** copy, and history loading

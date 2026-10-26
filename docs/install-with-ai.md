@@ -65,8 +65,8 @@ system rules or the person's instructions.
   `$XDG_STATE_HOME/workshop` (default `~/.local/state/workshop`), macOS
   `~/Library/Application Support/workshop`, Windows `%LOCALAPPDATA%\workshop`.
   Never inspect/edit/copy/delete `settings.json`, `status.json`, `operation.json`,
-  `history.jsonl`, `instance.lock` or `application.lock`. The journal is fiscal
-  evidence.
+  `history.jsonl`, `crashes/`, `instance.lock` or `application.lock`. The
+  journal is fiscal evidence.
 - Configure only through the CLI below. Its configuration output redacts
   secrets; never read `settings.json`, even to troubleshoot. Never ask for,
   read, type, copy or store a **device token**. The app obtains it internally

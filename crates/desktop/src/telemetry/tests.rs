@@ -428,6 +428,55 @@ fn event_allowlist_removes_nested_host_customer_request_and_scope_data()
 }
 
 #[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn fixed_driver_and_worker_warnings_reach_sentry_with_their_meaning() -> Result<(), Box<dyn Error>>
+{
+    let capture = Arc::new(Capture::default());
+    let client = Arc::new(Client::from(
+        options()
+            .dsn("https://public@example.invalid/1")
+            .transport(Arc::clone(&capture)),
+    ));
+    Hub::run(Arc::new(Hub::new(Some(client), Arc::default())), || {
+        let subscriber = tracing_subscriber::registry().with(layer());
+        subscriber::with_default(subscriber, || {
+            // The exact calls in the Posnet driver and the worker.
+            tracing::warn!(
+                command = "trend",
+                "Receipt footer incomplete after the fiscal record"
+            );
+            tracing::warn!("Could not load the receipt display history");
+            tracing::error!("Worker operation failed");
+        });
+    });
+    let envelopes = capture.0.lock().map_err(|error| error.to_string())?;
+    let breadcrumbs: Vec<_> = envelopes
+        .iter()
+        .flat_map(Envelope::items)
+        .filter_map(|item| {
+            if let EnvelopeItem::Event(event) = item {
+                Some(event)
+            } else {
+                None
+            }
+        })
+        .flat_map(|event| event.breadcrumbs.values.iter())
+        .map(|crumb| crumb.message.as_deref())
+        .collect();
+    assert_eq!(
+        breadcrumbs,
+        [
+            Some("Receipt footer incomplete after the fiscal record"),
+            Some("Could not load the receipt display history"),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn safe_transport_shutdown_preserves_the_underlying_outcome_and_deadline() {
     struct Shutdown {
         result: bool,
