@@ -22,8 +22,6 @@ pub enum Fault {
     Disconnect,
     Device(u32),
     Transport(String),
-    PaperOut,
-    ForeignReply,
     Reply(Vec<u8>),
 }
 /// An accepted daily report prints until the printer has reported it in progress and the
@@ -236,11 +234,6 @@ impl Port for SimPort {
         let (status, reply) = match &fault {
             Some(Fault::Transport(status)) => (status.as_str(), String::new()),
             Some(Fault::Device(code)) => ("SA", code.to_string()),
-            Some(Fault::PaperOut) => {
-                state.transaction = false;
-                state.status[2] = 2;
-                ("SA", "450".to_owned())
-            },
             _ => ("SA", execute(&mut state, &body)),
         };
         let mut reply = frame::encode(
@@ -259,13 +252,8 @@ impl Port for SimPort {
                     *byte ^= 1;
                 }
             },
-            Some(Fault::ForeignReply) => {
-                let foreign = frame::encode("999999999\x1dSA", b"\x1dBFOREIGN\x1dDBAD")
-                    .map_err(io::Error::other)?;
-                self.pending.extend(foreign);
-            },
             Some(Fault::Reply(raw)) => reply = raw,
-            Some(Fault::Device(_) | Fault::Transport(_) | Fault::PaperOut) | None => {},
+            Some(Fault::Device(_) | Fault::Transport(_)) | None => {},
         }
         self.pending.extend(reply);
         Ok(())

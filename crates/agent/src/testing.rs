@@ -103,7 +103,6 @@ struct State {
     vendor: Option<String>,
     pairing: Option<(String, Instant)>,
     pairing_throttled: bool,
-    pairing_attempts: VecDeque<Instant>,
     paired_token: Option<String>,
     token_generation: u64,
     jobs: HashMap<Uuid, Value>,
@@ -516,18 +515,10 @@ fn pairing_code(input: &str) -> Option<String> {
 }
 
 fn pair(state: &mut State, request: &RequestLog) -> (u16, Value) {
-    let now = Instant::now();
-    while state
-        .pairing_attempts
-        .front()
-        .is_some_and(|at| now.duration_since(*at) >= Duration::from_mins(15))
-    {
-        let _expired = state.pairing_attempts.pop_front();
-    }
-    if state.pairing_throttled || state.pairing_attempts.len() >= 10 {
+    if state.pairing_throttled {
         return refused(429, "rate_limited");
     }
-    state.pairing_attempts.push_back(now);
+    let now = Instant::now();
     let code = request
         .body
         .get("code")

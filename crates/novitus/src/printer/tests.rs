@@ -369,7 +369,7 @@ fn vat_sentinels_map_exempt_and_inactive() {
 }
 
 #[test]
-fn receipt_frames_match_snapshot() {
+fn receipt_frames_are_exact() {
     let sim = Simulator::start();
     supported(&sim);
     let driver = printer(&sim);
@@ -380,15 +380,8 @@ fn receipt_frames_match_snapshot() {
         .unwrap();
     assert_eq!(printed.receipt_number.as_deref(), Some("1"));
     assert_eq!(printed.issued_at.to_string(), "2026-10-24T10:00:00Z");
-    let frames = fiscal_bodies(&sim);
-    insta::assert_debug_snapshot!(frames);
-    assert_eq!(frames, RECEIPT_FRAMES);
-    assert_eq!(
-        log.commands,
-        [
-            "$h", "$z", "$l", "$l", "$l", "$b", "$b", "$b", "$b", "$b", "$y", "$z", "$z"
-        ]
-    );
+    assert_eq!(fiscal_bodies(&sim), RECEIPT_FRAMES);
+    assert_eq!(log.commands, RECEIPT_COMMANDS);
     assert_eq!(sim.receipts(), 1);
 }
 

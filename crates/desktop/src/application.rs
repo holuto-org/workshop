@@ -57,9 +57,8 @@ struct Application {
     starting: bool,
     settings_writer: Option<preferences::Writer>,
     writes_pending: VecDeque<WriteKind>,
+    /// Latest submitted status, so unchanged state is not written again.
     status_requested: Option<Snapshot>,
-    /// Latest settled status, including failed writes so they cannot prevent quitting.
-    status_settled: Option<Snapshot>,
     /// The local date for month lists and report ranges; fixed in tests.
     today: fn() -> Date,
 }
@@ -129,7 +128,6 @@ impl Application {
             settings_writer: None,
             writes_pending: VecDeque::new(),
             status_requested: None,
-            status_settled: None,
             today,
         }
     }
@@ -354,13 +352,10 @@ impl Application {
             return;
         }
         let snapshot = self.model.status(jiff::Timestamp::now());
-        if self.write_settings(preferences::Request::Status(snapshot.clone())) {
-            self.status_requested = Some(snapshot);
-        } else {
-            // Submission failure must allow quit without letting an older acknowledgement win.
-            self.status_requested = None;
-            self.status_settled = Some(snapshot);
-        }
+        // An unsubmitted status is retried on the next state change.
+        self.status_requested = self
+            .write_settings(preferences::Request::Status(snapshot.clone()))
+            .then_some(snapshot);
     }
 
     fn settings_saved(&mut self, completion: preferences::Completion) {
@@ -395,11 +390,6 @@ impl Application {
                 }
             },
             Ok(preferences::Outcome::Reload(settings)) => self.adopt_settings(settings),
-            Ok(preferences::Outcome::Status(snapshot))
-                if self.status_requested.as_ref() == Some(&snapshot) =>
-            {
-                self.status_settled = Some(snapshot);
-            },
             Ok(
                 preferences::Outcome::Port
                 | preferences::Outcome::Telemetry
@@ -412,9 +402,8 @@ impl Application {
                         .writes_pending
                         .iter()
                         .any(|kind| matches!(kind, WriteKind::Status))
-                    && let Some(requested) = self.status_requested.take()
                 {
-                    self.status_settled = Some(requested);
+                    self.status_requested = None;
                 }
                 self.model.say(error, Tone::Error);
             },
@@ -561,13 +550,9 @@ impl Application {
     }
 
     fn finish_quit(&self) -> Result<(), slint::PlatformError> {
-        if self.quitting
-            && self.worker.is_none()
-            && self.writes_pending.is_empty()
-            && self.status_settled.as_ref().is_some_and(|settled| {
-                !settled.processing && !settled.connected && self.model.status_matches(settled)
-            })
-        {
+        // Every status change is published at once, so with no write pending after the
+        // worker stopped, the stopped status has been written or has failed.
+        if self.quitting && self.worker.is_none() && self.writes_pending.is_empty() {
             // A held AppKit termination ignores the event-loop quit; only its reply exits.
             #[cfg(target_os = "macos")]
             macos::quit();

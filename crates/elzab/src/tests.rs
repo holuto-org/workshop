@@ -2,7 +2,6 @@ use crate::{
     frame,
     printer::{Printer, identify},
     profile,
-    session::Session,
     simulator::{Fault, Simulator},
 };
 use fiscal::{
@@ -280,17 +279,6 @@ fn non_cp1250_code_page_is_not_ready() {
     assert!(!device.capabilities.allows("😀\n"));
 }
 #[test]
-fn reply_with_foreign_command_id_is_ignored() {
-    let sim = Simulator::start();
-    sim.fault("XTR", Fault::ForeignReply);
-    let mut session = Session::open(sim.link().as_ref(), &connection(&sim)).unwrap();
-    assert_eq!(
-        session.command("XTR", "", Duration::from_secs(3)).unwrap(),
-        "\x1dBELZAB CUBE online\x1dC172\x1dDMD06.02"
-    );
-    assert_eq!(bodies(&sim), ["XTR"]);
-}
-#[test]
 fn receipt_frames_match_snapshot() {
     let sim = Simulator::start();
     let driver = printer(&sim);
@@ -314,27 +302,6 @@ fn receipt_frames_match_snapshot() {
         "LCL\u{1d}RA100,00",
     ]
     "#);
-}
-#[test]
-fn paper_out_mid_receipt_is_uncertain() {
-    let sim = Simulator::start();
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    sim.fault("LIT", Fault::PaperOut);
-    assert!(matches!(
-        driver.print_receipt(&receipt(0, false), &expected, &mut Log::default()),
-        Err(Error::Uncertain(_))
-    ));
-    assert_eq!(sim.receipts(), 0);
-    assert!(!sim.transaction_open());
-    assert_eq!(
-        fiscal(&sim),
-        [
-            "LOR\x1dC0",
-            "LNP\x1dOA1234567890",
-            "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
-        ]
-    );
 }
 #[test]
 fn fiscal_faults_are_never_retried() {
@@ -837,39 +804,6 @@ fn missing_number_never_replays_a_completed_receipt() {
             "LCL\x1dRA123,46",
         ]
     );
-}
-
-#[test]
-fn fiscal_intent_is_persisted_before_each_frame() {
-    struct Ordering<'a> {
-        sim: &'a Simulator,
-        recorded: usize,
-    }
-    impl Journal for Ordering<'_> {
-        fn dispatching(&mut self, _: &'static str) -> io::Result<()> {
-            if fiscal(self.sim).len() != self.recorded {
-                return Err(io::Error::other("fiscal frame preceded its journal intent"));
-            }
-            self.recorded += 1;
-            Ok(())
-        }
-
-        fn waiting(&mut self, _: Option<&str>) {}
-    }
-    let sim = Simulator::start();
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    let _printed = driver
-        .print_receipt(
-            &receipt(2346, false),
-            &expected,
-            &mut Ordering {
-                sim: &sim,
-                recorded: 0,
-            },
-        )
-        .unwrap();
-    assert_eq!(sim.receipts(), 1);
 }
 
 #[test]

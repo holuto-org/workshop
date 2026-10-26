@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::field::Empty;
 use ureq::{
     Agent, Body, RequestBuilder,
-    http::{HeaderValue, Response, StatusCode},
+    http::{Response, StatusCode},
     tls::{RootCerts, TlsConfig},
 };
 use uuid::Uuid;
@@ -173,7 +173,7 @@ impl Api {
                 .post(format!("{base_url}/agent/pair"))
                 .header("App-Version", format!("agent/{APP_VERSION}"))
                 .header("Accept-Language", "pl"),
-        )?;
+        );
         let response = request
             .send_json(model::PairForm { code })
             .map_err(ApiError::from)?;
@@ -246,7 +246,7 @@ impl Api {
             status = Empty
         );
         let _entered = span.enter();
-        let request = self.headers(self.agent.get(self.url(path)), path)?;
+        let request = self.headers(self.agent.get(self.url(path)), path);
         decode(request.query_pairs(query.iter().copied()).call()?)
             .map_err(|error| self.redact(error))
     }
@@ -264,7 +264,7 @@ impl Api {
             status = Empty
         );
         let _entered = span.enter();
-        let request = self.headers(self.agent.post(self.url(path)), path)?;
+        let request = self.headers(self.agent.post(self.url(path)), path);
         decode(match body {
             Some(body) => request.send_json(body),
             None => request.send_empty(),
@@ -298,11 +298,7 @@ impl Api {
     }
 
     /// Sessions carry the unique number in their body; all other routes use its header.
-    fn headers<B>(
-        &self,
-        request: RequestBuilder<B>,
-        path: &str,
-    ) -> Result<RequestBuilder<B>, ApiError> {
+    fn headers<B>(&self, request: RequestBuilder<B>, path: &str) -> RequestBuilder<B> {
         let request = request
             .header("Authorization", self.authorization.as_str())
             .header("App-Version", format!("agent/{APP_VERSION}"))
@@ -404,26 +400,15 @@ fn pairing_code(input: &str) -> Option<String> {
     .then_some(code)
 }
 
-fn trace_headers<B>(mut request: RequestBuilder<B>) -> Result<RequestBuilder<B>, ApiError> {
-    let headers = request
-        .headers_mut()
-        .ok_or_else(|| ApiError::Response("nieprawidłowe nagłówki żądania".to_owned()))?;
-    // sentry-core emits sentry-trace, not baggage; do not fabricate headers.
-    let error = sentry_core::Hub::with_active(|hub| {
-        hub.configure_scope(|scope| {
-            scope
-                .iter_trace_propagation_headers()
-                .try_for_each(|(name, value)| {
-                    let value = HeaderValue::from_str(&value).map_err(|_invalid| {
-                        ApiError::Response("nieprawidłowy kontekst śledzenia".to_owned())
-                    })?;
-                    let _previous = headers.insert(name, value);
-                    Ok::<(), ApiError>(())
-                })
-                .err()
-        })
-    });
-    error.map_or_else(|| Ok(request), Err)
+/// sentry-core emits sentry-trace, not baggage; do not fabricate headers.
+fn trace_headers<B>(request: RequestBuilder<B>) -> RequestBuilder<B> {
+    sentry_core::Hub::with_active(|hub| {
+        hub.configure_scope(|scope| scope.iter_trace_propagation_headers().collect::<Vec<_>>())
+    })
+    .into_iter()
+    .fold(request, |request, (name, value)| {
+        request.header(name, value)
+    })
 }
 
 fn http_agent(base_url: &str) -> Agent {

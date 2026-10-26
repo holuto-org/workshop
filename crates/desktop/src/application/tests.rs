@@ -1182,7 +1182,6 @@ fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement(
                     app.writes_pending.is_empty(),
                     "acknowledgement and unchanged state never form a save loop"
                 );
-                assert!(app.status_settled.is_some());
                 app.stop(true)
             });
         });

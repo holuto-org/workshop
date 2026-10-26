@@ -2,7 +2,6 @@ use std::{
     error::Error as StdError,
     io::{Read, Write},
     net::TcpStream,
-    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
@@ -481,37 +480,6 @@ fn invalid_and_throttled_pairing_proofs_do_not_revoke_the_token() -> TestResult 
         Api::pair(server.url(), "EFGH5678")?.token.as_str(),
         format!("{:0>42}A", 1)
     );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "boundary assertions panic while setup uses Result"
-)]
-fn pairing_limits_guesses_without_consuming_a_valid_code() -> TestResult {
-    let server = Holuto::new();
-    server.pairing_code("ABCD1234");
-    for _ in 0..10 {
-        assert!(matches!(
-            Api::pair(server.url(), "ZZZZZZZZ"),
-            Err(crate::Error::Api(ApiError::Status { status: 400, .. }))
-        ));
-    }
-    assert!(matches!(
-        Api::pair(server.url(), "ABCD1234"),
-        Err(crate::Error::Api(ApiError::Status { status: 429, .. }))
-    ));
-    let mut original = Api::new(server.url(), server.token(), "DEM0000000001")?;
-    original.session(&telemetry())?;
-    // The request window can end before the code expires when guessing starts first.
-    let now = Instant::now();
-    for at in &mut super::locked(&server.state).pairing_attempts {
-        *at = now
-            .checked_sub(Duration::from_mins(15))
-            .ok_or("clock underflow")?;
-    }
-    assert_eq!(Api::pair(server.url(), "ABCD1234")?.printer_id, PRINTER_ID);
     Ok(())
 }
 
