@@ -1,0 +1,12 @@
+---
+source: crates/novitus/src/printer/tests.rs
+expression: fiscal_bodies(&sim)
+---
+[
+    "0$h",
+    "1$lPrzegląd\r1\rA/20/20/",
+    "1;1$b20/\r",
+    "0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r20/0/0/20/0/",
+    "12$z",
+    "28;0$z",
+]

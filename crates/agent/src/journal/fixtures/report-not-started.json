@@ -1,0 +1,14 @@
+{
+  "report": {
+    "report": {
+      "kind": "monthly",
+      "year": 2026,
+      "month": 9
+    },
+    "vendor": "posnet",
+    "device_unique_number": "POS0000123456",
+    "started_at": "2026-10-16T10:00:00Z",
+    "device": "not_started",
+    "acknowledged_at": null
+  }
+}

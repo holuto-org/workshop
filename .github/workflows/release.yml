@@ -1,118 +1,171 @@
 name: Release
 
 on:
-  workflow_dispatch:
   push:
     branches: [master]
-    paths:
-      - pyproject.toml
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  version:
-    runs-on: ubuntu-slim
-    outputs:
-      tag: ${{ steps.v.outputs.tag }}
-      new: ${{ steps.v.outputs.new }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - id: v
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE: ${{ github.event.before || 'HEAD^' }}
-        shell: bash
-        run: |
-          # Compare the whole push; manual runs compare against the selected commit's parent.
-          tag="v$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          previous=""
-          if [[ ! "$BASE" =~ ^0+$ ]]; then
-            previous="v$(git show "$BASE:pyproject.toml" \
-              | python3 -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])')"
-          fi
-          if [[ "$tag" == "$previous" || "$(printf '%s\n' "$previous" "$tag" | sort -V | tail -n1)" != "$tag" ]]; then
-            printf 'tag=%s\nnew=false\n' "$tag" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          latest=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
-            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
-            | sort -V | tail -n1)
-          new=false
-          if [[ "$tag" != "$latest" && "$(printf '%s\n' "$latest" "$tag" | sort -V | tail -n1)" == "$tag" ]]; then
-            new=true
-          fi
-          echo "latest=$latest tag=$tag new=$new"
-          printf 'tag=%s\nnew=%s\n' "$tag" "$new" >> "$GITHUB_OUTPUT"
-
-  test:
-    needs: version
-    if: needs.version.outputs.new == 'true'
+  checks:
     uses: ./.github/workflows/checks.yml
 
-  build:
-    needs: [version, test]
-    if: needs.version.outputs.new == 'true'
+  package:
+    name: Package (${{ matrix.name }})
+    needs: checks
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: win-x64, os: windows-latest }
-          - { name: mac-arm64, os: macos-latest }
-          - { name: mac-x64, os: macos-26-intel }
-          - { name: linux-x64, os: ubuntu-latest }
-          - { name: linux-arm64, os: ubuntu-24.04-arm }
+          - { name: win-x64, os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { name: mac-arm64, os: macos-latest, target: aarch64-apple-darwin }
+          - { name: mac-x64, os: macos-26-intel, target: x86_64-apple-darwin }
+          # The .deb records the build host's glibc as its libc6 floor: keep it at Ubuntu 24.04.
+          - { name: linux-x64, os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { name: linux-arm64, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+      SENTRY_ENVIRONMENT: production
+
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.1.0
+
+      - run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
         with:
-          enable-cache: true
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libfontconfig1 libxkbcommon0 libdbus-1-3 libglib2.0-0t64
-      - run: bash packages/desktop/build.sh
-        shell: bash
-      - if: runner.os == 'Linux'
-        name: Install the package and make sure the app comes up
+          key: package-${{ matrix.target }}
+
+      - name: Install Linux packaging and launch dependencies
+        if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y -qq ./packages/desktop/release/*.deb
-          # No printer on the runner: the app must reach its "not detected" state and stay alive.
-          QT_QPA_PLATFORM=offscreen timeout 10 huggingcar-fiscal && exit 1 || [ $? -eq 124 ]
-      - name: Build and smoke-test the standalone agent
-        run: bash packages/agent/build.sh
-        shell: bash
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libfontconfig1-dev fonts-dejavu-core xvfb xauth dbus-x11 xdotool x11-utils desktop-file-utils binutils
+
+      - name: Require the production telemetry configuration
+        run: test -n "$SENTRY_DSN"
+
+      - name: Build native package
+        run: bash packaging/build.sh
+
+      - name: Check standalone smoke isolation and diagnostics opt-out
+        if: runner.os == 'Linux'
+        run: |
+          target_dir=$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.target_directory')
+          python3 packaging/test-smoke.py "$target_dir/release/workshop"
+
+      - name: Verify package and launch main window
+        run: bash packaging/verify.sh
+
+      - name: Prove simulator cannot enter a release build
+        run: |
+          log=$(mktemp)
+          if cargo build --locked --release -p workshop --features simulator >"$log" 2>&1; then
+            cat "$log"
+            echo 'Simulator release unexpectedly compiled' >&2
+            exit 1
+          fi
+          cat "$log"
+          grep -F 'The simulator feature is restricted to local debug builds.' "$log"
+          rm "$log"
+
+      - name: Install Sentry CLI
+        run: npm install --global @sentry/cli@3
+
+      - name: Upload native debug information and source context
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          test -n "$SENTRY_AUTH_TOKEN"
+          sentry-cli debug-files upload --include-sources --wait packaging/build/symbols
+
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.name }}
-          path: |
-            packages/desktop/release/*
-            packages/agent/release/*
+          name: package-${{ matrix.name }}
+          path: release/*
           if-no-files-found: error
           retention-days: 7
 
+  # Installers refuse downgrades, so a release needs a new workspace version.
+  # A push that keeps an already released version builds and checks only.
+  version:
+    needs: package
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      new: ${{ steps.v.outputs.new }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          # Only "release not found" means unreleased; any other gh failure stops the run.
+          if out=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName 2>&1); then
+            new=false
+          elif grep -q 'release not found' <<<"$out"; then
+            new=true
+          else
+            echo "$out" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag new=$new"
+
   publish:
-    needs: [version, build]
-    if: github.event_name == 'push' && needs.version.outputs.new == 'true'
-    runs-on: ubuntu-slim
+    needs: version
+    if: needs.version.outputs.new == 'true'
+    runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@v7
         with:
+          pattern: package-*
           path: release
           merge-multiple: true
-      - run: cd release && sha256sum * > SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt
+
+      - name: Stage version-matched installation instructions
+        run: cp scripts/install.sh scripts/install.ps1 docs/install-with-ai.md release/
+
+      - name: Checksums
+        working-directory: release
+        run: |
+          sha256sum workshop-* install.sh install.ps1 install-with-ai.md > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/*
+
       - env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}

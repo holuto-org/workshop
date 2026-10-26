@@ -1,16 +1,21 @@
-*                                       text=auto
-*.*ignore               text
+*               text=auto eol=lf
 
-*.lock                  text            -diff
-*.md                    text            diff=markdown
-*.py                    text            diff=python
-*.qss                   text
-*.sh                    text            eol=lf
-*.svg                   text
-*.toml                  text
-*.yml                   text
+*.md            diff=markdown
+*.rs            diff=rust
+*.sh            diff=bash
+*.toml          diff=ini
+*.desktop       diff=ini
 
-.gitattributes          text
-.python-version         text
+*.in            text
+*.plist         text
+*.slint         text
+*.svg           text
+*.yml           text
+.gitattributes  text
+.gitignore      text
+LICENSE         text
 
-LICENSE                 text
+*.lock          -diff
+*.png           binary
+*.ico           binary
+*.icns          binary

@@ -1,0 +1,37 @@
+[test-groups.session_bus]
+max-threads = 1
+
+[test-groups.com_pair]
+max-threads = 1
+
+[profile.default]
+default-filter = 'not test(com_pair)'
+# Simulator waits are scaled; a blocked operation must not stall the suite for minutes.
+slow-timeout = { period = "10s", terminate-after = 3, grace-period = "2s" }
+retries = 0
+
+[[profile.default.overrides]]
+filter = 'test(session_bus)'
+test-group = 'session_bus'
+
+[[profile.default.overrides]]
+filter = 'test(com_pair)'
+test-group = 'com_pair'
+
+# 256 model cases each make durable journal writes; macOS F_FULLFSYNC and Windows
+# FlushFileBuffers put this at 10-30 s on CI VMs, so it gets a larger kill budget.
+[[profile.default.overrides]]
+filter = 'test(=agent::tests::reconciliation::reconciliation_never_replays_fiscal_effects)'
+slow-timeout = { period = "10s", terminate-after = 9, grace-period = "2s" }
+
+[profile.ci]
+default-filter = 'all()'
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.mutants]
+default-filter = 'not test(com_pair)'
+fail-fast = true
+slow-timeout = { period = "10s", terminate-after = 2, grace-period = "2s" }

@@ -1,0 +1,58 @@
+[package]
+name = "agent"
+description = "Holuto agent: /agent API, durable operation journal, receipt execution and the printer worker"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+testing = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "dep:tiny_http", "dep:jsonschema"]
+
+[dependencies]
+elzab.workspace = true
+fiscal.workspace = true
+icu_normalizer.workspace = true
+icu_properties.workspace = true
+jiff.workspace = true
+jsonschema = { workspace = true, optional = true }
+novitus.workspace = true
+posnet.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sentry-core.workspace = true
+tracing.workspace = true
+tiny_http = { workspace = true, optional = true }
+thiserror.workspace = true
+ureq.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+atomicwrites.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+known-folders.workspace = true
+
+[dev-dependencies]
+jsonschema.workspace = true
+elzab = { workspace = true, features = ["simulator"] }
+novitus = { workspace = true, features = ["simulator"] }
+posnet = { workspace = true, features = ["simulator"] }
+tempfile.workspace = true
+tiny_http.workspace = true
+proptest.workspace = true
+proptest-state-machine.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true
+typify.workspace = true
+schemars.workspace = true
+syn.workspace = true
+quote.workspace = true
+
+[lints]
+workspace = true

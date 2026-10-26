@@ -1,186 +1,307 @@
-# HuggingCar workshop
+# Holuto Workshop — fiscal printers
 
-Software that runs on the workshop PC, next to the Posnet Temo Online fiscal printer.
-One uv workspace, three packages:
+Tray app for the workshop PC connected to a supported Posnet, Novitus or Elzab
+online fiscal printer. Prints **only Holuto sales and advances** queued in the
+web app or selected in Holuto Workshop. No manual receipt editor or separate
+agent; processing continues with the window closed.
 
-| Package | Import | What it is |
-| --- | --- | --- |
-| `packages/posnet` | `posnet` | Driver for the Posnet protocol over USB/serial: framing and CRC, CP1250, status probe, receipts, reports, intent journal, plus a socket simulator for tests. Uses pySerial and anyascii. |
-| `packages/desktop` | `fiscal_desktop` | **HuggingCar Fiscal** — Polish desktop app (PySide6): receipt editor, daily/monthly/periodic reports, local history. Ships as `.exe`, `.dmg`, `.deb`. |
-| `packages/agent` | `workshop_agent` | Agent with a setup window sharing the desktop app's Ant Design-style theme. Polls the manager API, prints receipts and reports their fiscal numbers. Standalone `.exe` and `.tar.gz` builds. |
+Contributors start with [AGENTS.md](AGENTS.md).
 
-The desktop app and the agent import the same `posnet` source; a driver fix lands once.
+## Install
 
-## Install HuggingCar Fiscal
-
-Download the build for your machine; each link always points at the
-[latest release](https://github.com/HuggingCar/workshop/releases/latest):
+Download from the
+[latest release](https://github.com/holuto-org/workshop/releases/latest):
 
 | Platform | File |
 | --- | --- |
-| Windows x64 | [`huggingcar-fiscal-win-x64.exe`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-win-x64.exe) — single file, no installation |
-| macOS Apple Silicon | [`huggingcar-fiscal-mac-arm64.dmg`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-mac-arm64.dmg) |
-| macOS Intel | [`huggingcar-fiscal-mac-x64.dmg`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-mac-x64.dmg) |
-| Ubuntu / Debian x64 | [`huggingcar-fiscal-linux-x64.deb`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-linux-x64.deb) |
-| Ubuntu / Debian ARM | [`huggingcar-fiscal-linux-arm64.deb`](https://github.com/HuggingCar/workshop/releases/latest/download/huggingcar-fiscal-linux-arm64.deb) |
+| Windows x64 | [`workshop-win-x64.exe`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-win-x64.exe) |
+| macOS Apple Silicon | [`workshop-mac-arm64.dmg`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-mac-arm64.dmg) |
+| macOS Intel | [`workshop-mac-x64.dmg`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-mac-x64.dmg) |
+| Ubuntu 24.04+ / Debian 13+ x64 | [`workshop-linux-x64.deb`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-linux-x64.deb) |
+| Ubuntu 24.04+ / Debian 13+ ARM64 | [`workshop-linux-arm64.deb`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-linux-arm64.deb) |
 
-File names carry no version so the links stay stable; the version is in the release tag,
-in `SHA256SUMS.txt`, and in the app itself.
+Filenames are stable; the release tag, `SHA256SUMS.txt` and app identify the
+version. Windows builds are unsigned; macOS bundles are ad-hoc signed, not
+Developer-ID signed or notarized. The Windows `.exe` links the C runtime
+statically. The `.deb` installs `/usr/bin/workshop` and a launcher; its `libc6`
+dependency records the build host's glibc version. Software rendering needs no
+GPU or OpenGL driver, including on remote desktops and VMs.
 
-Builds are unsigned: Windows SmartScreen and macOS Gatekeeper ask once before the first
-start (macOS: right-click → Open). The `.deb` installs `huggingcar-fiscal` and a launcher
-entry.
+The [installation guide](docs/install-with-ai.md) covers requirements, pinned
+downloads, checksums/attestations, OS security prompts, install paths, updates
+and uninstall; each release ships it with `install.sh`, `install.ps1` and
+`SHA256SUMS.txt`. Never pipe a download to a shell.
+
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
+
+[Slint](https://slint.dev) uses the Slint Royalty-free Desktop, Mobile, and Web
+Applications License 2.0; the badge is required attribution.
+
+## Sign in and connect
+
+Pair in **Ustawienia** with a one-time code generated for the printer in Holuto
+(valid 15 minutes; see the
+[guided configuration sequence](docs/install-with-ai.md#guided-configuration-sequence)).
+Pairing replaces the previous device token, which stays internal. **Zapisz**
+saves; **Uruchom** starts processing. Every launch needs an explicit start
+unless [autostart](#autostart) is on.
+
+Use the final API URL, including any path prefix. HTTPS is required except on
+loopback (`localhost`, `127.0.0.0/8`, `::1`); redirects are rejected. TLS uses
+the OS certificate store. Changing the API URL forgets the saved pairing. A 401
+stops processing; generate a fresh pairing code in Holuto and pair again. There
+is no token refresh.
+
+State directory:
+
+| OS      | Directory                                                      |
+| ------- | -------------------------------------------------------------- |
+| Linux   | `$XDG_STATE_HOME/workshop` (default `~/.local/state/workshop`) |
+| macOS   | `~/Library/Application Support/workshop`                       |
+| Windows | `%LOCALAPPDATA%\workshop` (Local AppData Known Folder)         |
+
+- `settings.json`: API URL, internal token, port, speed, `vendor` (`"posnet"`,
+  `"novitus"`, `"elzab"` or `null` to detect), `telemetryEnabled`,
+  start-on-launch. Keep private and out of logs.
+- `operation.json`: fiscal journal; each receipt/report records its vendor and
+  fiscal memory unique number, both required for resolution. Malformed files
+  block.
+- `history.jsonl`: local receipt history, newest 500 receipts.
+- `status.json`: processing/connection and fiscal-block flags, last device
+  vendor/unique number, update time. Display state; never credentials or
+  customer data.
+- `instance.lock`: one process per state directory: the app or a CLI command.
+- `application.lock`: held only by the running app; `workshop status` and
+  `workshop check` read it, so a CLI command is never reported as the app.
+- `crashes/`: native crash dumps awaiting upload; see
+  [native minidumps](docs/telemetry.md#native-minidumps-important-exception).
+
+On Unix, opening tightens the directory to **0700** and the locks to **0600**;
+every write replaces a data file with a **0600** copy, and history loading
+tightens its file. Settings, status and journal reads do not repair modes.
+On Windows, profile ACLs protect the directory.
+
+One background FIFO writer persists settings and status. Starting waits for
+settings to persist; quitting waits for pending writes and the worker.
+
+Uninstalling keeps fiscal state. Never delete the journal to unblock printing;
+unresolved evidence needs human reconciliation.
+
+## CLI
+
+One binary: `workshop` opens the GUI; a subcommand runs in the terminal without
+opening a printer port. Every command accepts `--json`. `config show` reports
+pairing as `paired`, never a token. Configuration, pairing and autostart
+changes refuse while the app or another command holds the instance lock.
+`ports` prints names only (its `--json` adds a USB `hint`); `check` and
+`status` never prove printer readiness. Commands, JSON fields, exit codes and
+examples live in the
+[installation guide](docs/install-with-ai.md#4-configure-through-the-cli-not-files).
+
+Never put pairing codes or credentials in reports or logs.
+
+## Autostart
+
+Opt-in: **Uruchamiaj przy logowaniu** registers a per-user login item and starts
+processing at launch, so login can print queued fiscal jobs without a click;
+approve that separately. Preflight and unresolved-operation blocks still apply.
+See the [autostart command](docs/install-with-ai.md#4-configure-through-the-cli-not-files)
+and [OS artefacts](docs/testing/platforms.md#autostart-artefacts).
 
 ## Printer
 
-Printer side: **PC services → USB → POSNET → Windows 1250**, 9600 baud. On Linux the
-port is usually `/dev/ttyACM0` (prefer a stable `/dev/serial/by-id/...` name when one
-exists), on Windows `COM3`-style, on macOS `/dev/cu.usbmodem…`. The user needs read and
-write access to the port (`dialout` group on Linux). Never run through sudo.
+Dedicate the printer to Workshop; do not share it with other software or
+interfaces. Only USB virtual serial and RS232 connections are supported, not
+LAN/RNDIS, Novitus XML or NoviAPI. The brand is detected, not selected by the
+operator. Configure the printer manually; discovery never changes its settings.
 
-The desktop app scans the serial ports on start and adopts the one answering as a Temo;
-the port can also be set by hand under Ustawienia → Drukarka. Only serial connections
-are supported.
+### Posnet
 
-Read-only check that issues no receipt:
+Temo Online: **PC services → USB → POSNET → Windows 1250**, 9600 baud.
+Workshop stays not ready while any PC interface set to POSNET uses another
+code page. Advances, zero-total receipts and company footers are supported.
 
-```bash
-uv run fiscal-desktop --serial /dev/ttyACM0 --probe
-```
+### Novitus
 
-## Development
+Candidate profiles cover HD II Online, Deon Online, Bono Online and Point,
+with exact model/firmware allowlists. Select native **NOVITUS** (dialect
+option 5 = `1`), Windows-1250 for **both input and output** (options 91/92 =
+`1`) and 8N1 at the configured speed (Workshop defaults to 9600).
+Use the fiscal **PC1** endpoint: read-only `50$i` must identify PC1.
+USB A/B names do not prove the endpoint; PC2 can answer queries but cannot
+fiscalize receipts. Full CP1250 text requires the device's `52$i` capability
+bit; otherwise only ASCII is advertised. Advance deductions, zero-total
+receipts and company footers remain disabled pending hardware qualification.
+Program the complete company name in the header for production use.
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # once, if uv is missing
-uv sync --locked                                   # every package, one .venv
-uv run fiscal-desktop                              # the desktop app
-uv run workshop-agent                             # the agent setup window
-QT_QPA_PLATFORM=offscreen uv run pytest -q         # all packages
-uv run ruff check packages && uv run ruff format --check packages
-```
+### Elzab
 
-Python 3.14 or newer. `bash packages/desktop/build.sh` and `bash packages/agent/build.sh`
-produce bundles for the host OS and CPU in their respective `release/` directories.
-CI builds both on five runners only when a push to `master` increases the root
-`pyproject.toml` version above every published release. Other pushes do not rebuild
-packages. A manual **Release** run requires a version increase in the selected commit
-relative to its parent, and an unpublished version. It builds downloadable Actions
-artifacts without publishing a GitHub release. To retry a failed release, rerun its
-original workflow run.
+Candidate profiles cover Zeta Online, Mera Online and Cube Online, not legacy
+Zeta/D10 or network-only T10. USB uses native **ElzabSTX** regardless of the
+menu protocol; **RS232 must explicitly select STX**, 8N1 and the configured
+speed (9600 by default). Select **CP1250** manually. Per-VAT advance
+settlement is supported; zero-total receipts and company footers remain
+disabled. Program the complete company name in the header.
+Daily reports are accepted asynchronously and always require human
+reconciliation; acceptance is not proof of completion.
 
-## Fiscal safety
+Profiles are not hardware certificates. The
+[supervised acceptance checklist](docs/testing/hardware-acceptance.md) records
+evidence per model/firmware before qualification; physical checks are human-only.
+Typical ports: Linux `/dev/ttyACM0` (prefer `/dev/serial/by-id/...`), Windows
+`COM3`, macOS `/dev/cu.usbmodem…`. The user needs read/write access
+(`dialout` group on Linux); never run with sudo.
 
-Both the desktop app and the agent follow the same rules, in the driver:
+The GUI, `workshop ports` and discovery share a passive candidate list: hinted
+USB devices (`1424:*` Posnet, `1A28:2512` Novitus, `0483:5740` Elzab), then
+FTDI/Prolific/WCH/Silicon Labs RS232 bridges, then native ports, sorted by name
+within each group. USB hints are not verified printer identities. Other USB
+devices and Bluetooth are excluded; macOS uses `/dev/cu.*` rather than duplicate
+`/dev/tty.*` nodes. Linux drops native UARTs whose sysfs `type` is zero, retaining
+ports with unreadable metadata. Windows retains non-USB COM ports, including
+PCI cards and virtual/Bluetooth ports, which Windows enumeration reports as
+`Unknown`; macOS retains non-USB, non-Bluetooth ports. An unlisted port can
+still be entered manually. Listing never opens a port.
 
-- Before every operation the Temo identity, fiscal mode, header, mechanism, command
-  queue, transaction state and VAT rates are verified.
-- Intent is journaled before the first command reaches the printer. Nothing is ever
-  retried on the device and nothing is ever reprinted.
-- An uncertain outcome (no answer mid-transaction, process death) blocks further
-  operations, including across restarts, until a person checks the paper and the
-  printer state and acknowledges: in the desktop app "Wyjaśnij ostatnią operację", for
-  the agent the job is reported as *unknown* and resolved in the web app.
-  Acknowledging unblocks; it does not reissue the receipt.
-
-Prices are gross; the printer computes and prints the VAT block. A receipt contains only
-lines priced above zero. VAT rates come from the printer's own table (`vatget`); the
-desktop app applies one selected rate to the whole receipt. The agent uses the highest
-active non-exempt rate (or the exempt slot when that is the only active rate).
-The agent does not support mixed-rate receipts. Verify that this rule fits the workshop
-before printing. When the fiscal header does not contain the company name, it is added
-as a footer line.
+If the saved port fails, discovery identifies other serial candidates read-only
+and verifies the first supported device before using and saving its port/vendor.
+It never scans with an unresolved operation: the device must not change.
 
 ## Desktop app
 
-Three tabs and a message line at the bottom; styling follows Ant Design v5 default tokens
-(`theme.qss`).
+- **Do wydruku** — eligible advances and sales for the printer's branch, showing
+  kind, amount and legal deadline; overdue documents are marked. Queue a
+  document with an optional buyer NIP, which clears after each queued receipt;
+  Holuto derives payments and advance deductions. Unpaid final-sale balances
+  print as credit. Receipt lines and totals are not locally editable. Documents
+  above the printer's amount limit remain listed but cannot execute. Each poll
+  refreshes the current page of up to 100 documents, oldest first; **Następna
+  strona** and **Poprzednia strona** navigate. Column headers sort the page
+  without changing the selected document.
+- **Raporty** — daily, monthly and periodic fiscal reports, confirmed before
+  printing. Periodic dates require zero-padded `dd.mm.rrrr` (for example
+  `01.01.2025`), must be on or after `01.01.2000`, cannot be in the future, and
+  require start ≤ end. Reports and receipts share one worker thread; commands
+  cannot interleave.
+- **Historia** — receipts printed on this computer, with printer-assigned
+  numbers or numbers entered in Holuto when unreadable. Sort by column header.
+  This local log does not replace the printer's fiscal memory.
+- **Ustawienia** — API URL, pairing code, printer port/speed, autostart,
+  **Udostępniaj diagnostykę** (see [Diagnostics](#diagnostics)) and processing
+  controls.
 
-- **Sprzedaż** — the receipt editor (editable names, quantities to 8 decimals, gross
-  prices to 2), a search box that filters the service list without dropping priced rows,
-  and the summary with the net and VAT contained in the gross total. Prices are cleared
-  after a successful print and kept after an error.
-- **Raporty** — daily report, monthly report (previous month preselected), periodic
-  report by dates (full or summary). All three confirm before printing.
-- **Historia** — receipts printed from this computer, newest first, with the number
-  assigned by the printer. A convenience log; the printer's fiscal memory is the record.
-- **Ustawienia** (gear) — the service list shown on Sprzedaż (add, rename by
-  double-click, delete, drag to reorder) and, on the second tab, printer port and speed.
+Polling runs every **3 seconds**, or **15 seconds** after errors or while
+blocked. If the printer does not answer, or Holuto is unreachable, times out
+(408), rate-limits (429), refuses an unavailable branch or company (403) or
+answers 5xx when processing starts, the app retries every 15 seconds and shows
+a notice; a 401 stops processing. A confirmed receipt
+or report stays disabled until the
+worker finishes that command, so a second click cannot queue it twice. Closing
+the window hides it in the tray and releases its memory without stopping
+processing; reopen from the tray. Without a tray icon, closing keeps the window
+visible; on Linux this includes an icon that could not register because the
+desktop's tray started after the app.
+**Zatrzymaj** stops processing; **Zakończ**, the tray's quit, the macOS Dock/⌘Q
+quit, macOS logout, restart or shutdown (macOS waits instead of being cancelled)
+and, on Linux and macOS, SIGTERM, SIGHUP or SIGINT (Linux logout or shutdown,
+Ctrl+C) exit. All of them finish the current operation first. Windows logout
+or shutdown ends the app without that wait; an operation it interrupts may be
+left uncertain, which blocks printing until a person resolves it.
 
-Receipt text is sanitized by the driver, not the API: unsupported characters are
-transliterated, control characters removed, and names shortened to the device limit.
-The desktop editor also checks names before printing.
+Prices are gross; API quantities and amounts are decimal strings. The schema
+allows unit prices with up to eight decimal places, but this driver requires
+whole grosze (at most two fractional digits in the string). It does not round
+higher-precision prices; inconsistent line gross totals also fail before printing.
+The printer calculates VAT. Each line uses its assigned slot for `23`, `8`, `5`,
+`0` or `zw`; mixed rates are supported, with no highest-rate or whole-receipt
+fallback. Holuto omits zero-price lines; the agent rejects any it receives.
+Missing VAT-letter mappings reject queueing, never substitute a rate.
+Buyer NIP, advance deductions and payments reach the device unchanged.
+Line and company names must print in full as
+received; unsupported text fails before fiscal commands, never transliterated or
+truncated.
 
-State: journal and history in `$XDG_STATE_HOME/huggingcar-fiscal/`
-(`~/.local/state/huggingcar-fiscal/`), settings in `~/.config/HuggingCar/Fiscal.conf`.
+## Fiscal safety
 
-## Agent
+- Before each operation, verify identity, fiscal mode, header, mechanism,
+  observable busy/open-document/read-only state, VAT and clock in the session
+  that prints. Posnet also checks queue emptiness and other-interface resource
+  ownership. Novitus/Elzab expose no equivalent ownership readout: dedication
+  to Workshop is mandatory; no open document is adopted or cancelled.
+- Journal claimed jobs in `operation.json` before their preflight; journal every
+  fiscal command **before sending it**. Startup/discovery creates no fiscal
+  intent and sends only read-only commands, apart from the Novitus session's
+  `3#e` response-mode selection. Never retry a device command or reprint a
+  receipt.
+- Paper or operator waits never cause a resend. If the printer stops answering
+  and completion cannot be established, the outcome is **unknown**. See
+  [per-brand wait limits](docs/fiscal-contract.md#silence-and-operator-waits).
+- Uncertain outcomes, including process death during dispatch, are **unknown**
+  and block receipts and reports across restarts. Inspect the printout and
+  printer, then resolve the job in the **web app**. Resolution unblocks, never
+  reissues. Completed prints with unreadable receipt numbers also remain
+  **unknown** until staff enter the number in Holuto; retain completed journal
+  evidence.
+- A claimed job whose journal proves no fiscal command was sent (the printer
+  check failed after the claim, or the app died before the first command)
+  reports `failed` without blocking. If Holuto already marked that job `unknown`
+  (it expired while the app was down), the app keeps blocking and tells staff
+  that nothing was printed, so they can resolve it as failed in the web app.
+- Only [documented certain refusals][certain-refusals] can be reported failed
+  after dispatch. Other failures remain **unknown**; no refusal permits
+  resending. A Posnet footer failure after a completed receipt does not undo
+  the print; the printer stays not ready until its open footer is cleared.
+  An accepted Elzab daily report needs human resolution even if counters advance.
+- Interrupted reports also block. After inspecting the printout, use **Wyjaśnij
+  raport** with the same printer connected and ready; an overdue daily report
+  or read-only mode does not prevent resolution. Resolution prints nothing.
+- Persist the job, attempt and execution-start timestamp before dispatch;
+  persist the result before sending it. A `done` result uses the printer clock,
+  not the PC clock. Unreadable receipt clocks fail before fiscal commands;
+  [Warsaw clock rules](docs/fiscal-contract.md#report-dates-and-printer-clock)
+  differ by brand and operation. Resending a saved API result preserves its
+  attempt and issue time; it is not reprinting. Recovery reconciles durable
+  evidence with server state without replaying commands.
+- Terminal server resolutions are authoritative, except against completed-print
+  evidence: if the receipt printed but Holuto already marked the job `failed` or
+  `expired`, the app keeps the journal, blocks and names the job and receipt
+  number. Record the receipt in Holuto, then confirm with **Wyjaśnij paragon**
+  (same printer, connected and ready as for reports); it prints and reports
+  nothing. Corrupt or unreadable journals fail closed; deleting the journal is
+  not recovery.
+- History is a display cache that the worker publishes to the window; the window
+  never reads it while processing. Report its read/write errors separately; they
+  must not prevent settling a server-accepted result.
 
-### Standalone agent (0.1.2)
+[certain-refusals]: docs/testing/fiscal-safety.md#recovery-classification
 
-No Python, uv, or desktop app is required. Download the matching agent asset from the
-[release page](https://github.com/HuggingCar/workshop/releases/latest):
+## Fiscal API contract
 
-| Platform | Asset |
-| --- | --- |
-| Windows x64 | `huggingcar-agent-win-x64.exe` |
-| macOS Apple Silicon | `huggingcar-agent-mac-arm64.tar.gz` |
-| macOS Intel | `huggingcar-agent-mac-x64.tar.gz` |
-| Linux x64 | `huggingcar-agent-linux-x64.tar.gz` |
-| Linux ARM64 | `huggingcar-agent-linux-arm64.tar.gz` |
+The `/agent` API, device capability profiles, discovery and printer command
+sequences are specified in [docs/fiscal-contract.md](docs/fiscal-contract.md).
 
-Agent assets appear after the 0.1.2 release is published. For an unpublished build,
-use the manual workflow's Actions artifacts or build locally with `bash packages/agent/build.sh`.
-Linux CI builds target Ubuntu 24.04 or newer; a local build requires a compatible
-host libc. Builds are unsigned, as with the desktop application.
+## Diagnostics
 
-1. Deploy the matching API first. Version 0.1.2 requires the new session endpoint;
-   older agents that send a permanent token to job endpoints must be upgraded.
-2. In the web app (director): Ustawienia → Drukarki fiskalne → Dodaj drukarkę.
-   Copy the credential; it is shown only once. Existing printer credentials also work.
-3. Extract the Unix archive. Double-click the Windows `.exe` or macOS `.app`;
-   on Linux launch `./huggingcar-agent` with no arguments.
-4. Enter **Adres API**, paste the credential into **Token**, and select or type the
-   printer port. Leave the speed at 9600 unless the printer uses another speed.
-5. Click **Zapisz** to save without printing. Click **Uruchom** to connect and print
-   queued jobs. The window shows connection and error messages.
-   Closing the window hides it in the system tray; the agent keeps processing jobs.
-   Use **Otwórz** in the tray menu to reopen it. **Zatrzymaj** stops processing;
-   **Zakończ**, in the window or tray menu, exits the app. Both wait for the current
-   operation to finish. If no system tray is available, closing keeps the window
-   visible; use **Zakończ** to exit. Do not run the desktop app against the same printer.
+Release-workflow packages require a build-time `SENTRY_DSN`; absent DSN and simulator
+builds never report. **Udostępniaj diagnostykę** defaults on. Live opt-out gates
+new structured telemetry; restart to disable native crash reporting.
 
-The API URL and permanent credential are saved in
-`$XDG_STATE_HOME/workshop-agent/fiscal.json` (default `~/.local/state/workshop-agent/`).
-Unix credentials are saved with mode 0600;
-on Windows, keep the directory in your private user profile and restrict its ACL.
-Launching the app restores the URL, masked token, port and speed. It does not
-start printing until you click **Uruchom**. Reopening the window from the tray does
-not interrupt or restart the agent.
+Structured diagnostics retain reviewed messages, sanitized errors/frames,
+timing/status, release-health sessions and printer ID/device unique number; payloads,
+arbitrary fields, hostnames and local paths are scrubbed. Native dumps contain
+process memory and may expose sensitive data despite those hooks. See
+[Diagnostics and privacy](docs/telemetry.md) for the exact allowlist, lifecycle,
+500 ms flush bound and native-dump warning, and
+[CI configuration](docs/ci.md#release-telemetry-artifacts).
 
-The agent sends `Authorization: Agent <credential>` only to
-`POST /integrations/fiscal/agent/session/`, with the printer serial and telemetry headers.
-The server pins that serial atomically and returns a signed bearer token valid for
-15 minutes. Job calls use `Authorization: Bearer <access_token>`. Session tokens
-remain in memory, renew before expiry, and are invalidated immediately by credential
-rotation or service/company deletion. A 401 causes one session refresh and one HTTP
-retry; network errors never trigger a physical reprint.
+## Development and releases
 
-HTTPS is required, except for loopback development URLs (`localhost`, `127.0.0.1`, `::1`).
-Redirects are rejected; use the final manager API URL, including any path prefix.
-Serial binding prevents accidental device swaps; it is not hardware attestation.
+[AGENTS.md](AGENTS.md) holds the crate layout, conventions and commands; the
+[testing guide](docs/testing/README.md), [workflows](docs/workflows.md) and
+[CI](docs/ci.md) cover verification and releases. Printer behavior is exercised
+only through offline simulators, **never real fiscal commands**.
 
-Polls every 3 seconds. Queued jobs older than 10 minutes expire rather than print late.
-A crash after printing but before reporting is reconciled from the journal on restart,
-including when the server has marked the job's outcome unknown.
-
-## Tests
-
-Driver: the CRC vector from the Posnet documentation, CP1250 encoding, exact amounts,
-VAT-in-gross rounding, protocol error forms, port autodetection and the branding footer
-against the simulator. Desktop: value validation, the Qt editor, reports, lock release
-after a failed connection. Agent: real HTTP session exchange, renewal, revocation
-responses and redirect rejection; receipt jobs and crash recovery against the simulator.
-Real printouts still need an attached printer.
-
-The protocol source is Posnet's POT-I-DEV-37 specification (v5406, 2022-06-13, Temo
-Online 2.01). No vendor SDK is used, and the specification is not redistributed here.
+`bash packaging/build.sh` writes the host OS/CPU package to `release/`. A push to
+`master` publishes only when the root `Cargo.toml` `[workspace.package] version`
+increases above the previous version and all published releases. Manual
+**Release** runs create Actions artifacts without publishing.

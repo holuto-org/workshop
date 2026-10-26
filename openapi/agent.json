@@ -1,0 +1,2083 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Holuto agent API",
+    "description": "",
+    "license": {
+      "name": "LicenseRef-Proprietary",
+      "identifier": "LicenseRef-Proprietary"
+    },
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "/api"
+    }
+  ],
+  "paths": {
+    "/agent/documents": {
+      "get": {
+        "operationId": "agent_documents",
+        "parameters": [
+          {
+            "name": "X-Device-Unique-Number",
+            "in": "header",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque: pass the previous page's `nextCursor` unchanged.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_AgentDocument"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {
+            "bearerToken": []
+          }
+        ]
+      }
+    },
+    "/agent/heartbeat": {
+      "post": {
+        "operationId": "heartbeat",
+        "parameters": [
+          {
+            "name": "X-Device-Unique-Number",
+            "in": "header",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {
+            "bearerToken": []
+          }
+        ]
+      }
+    },
+    "/agent/jobs": {
+      "post": {
+        "summary": "Missing telemetry answers 409 `fiscal_printer_limits_unknown`. Names are never truncated.",
+        "operationId": "device_queue",
+        "parameters": [
+          {
+            "name": "X-Device-Unique-Number",
+            "in": "header",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceQueueForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Versioned_Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {
+            "bearerToken": []
+          }
+        ]
+      }
+    },
+    "/agent/jobs/take": {
+      "post": {
+        "operationId": "take",
+        "parameters": [
+          {
+            "name": "X-Device-Unique-Number",
+            "in": "header",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Versioned_Job"
+                }
+              }
+            }
+          },
+          "204": {},
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {
+            "bearerToken": []
+          }
+        ]
+      }
+    },
+    "/agent/jobs/{jobId}": {
+      "get": {
+        "operationId": "agent_job",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "description": "Fiscal job ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FiscalJobId"
+            }
+          },
+          {
+            "name": "X-Device-Unique-Number",
+            "in": "header",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Versioned_Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {
+            "bearerToken": []
+          }
+        ]
+      }
+    },
+    "/agent/jobs/{jobId}/result": {
+      "post": {
+        "operationId": "result",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "description": "Fiscal job ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/FiscalJobId"
+            }
+          },
+          {
+            "name": "X-Device-Unique-Number",
+            "in": "header",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResultForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Versioned_Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {
+            "bearerToken": []
+          }
+        ]
+      }
+    },
+    "/agent/pair": {
+      "post": {
+        "summary": "Redeem a human pairing proof once. Existing device authority is revoked only on success.",
+        "operationId": "redeem_pairing_code",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPaired"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/agent/session": {
+      "post": {
+        "operationId": "session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Telemetry"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {
+            "bearerToken": []
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/openapi/{file}": {
+      "get": {
+        "operationId": "openapi_document",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "description": "`<audience>.json`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "That audience's document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdvanceDeduction": {
+        "type": "object",
+        "required": [
+          "vatLetter",
+          "vatRate",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/PositiveAmount_Amount"
+          },
+          "vatLetter": {
+            "$ref": "#/components/schemas/FiscalVatLetter"
+          },
+          "vatRate": {
+            "$ref": "#/components/schemas/VatRate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentDocument": {
+        "type": "object",
+        "required": [
+          "kind",
+          "allocationId",
+          "orderId",
+          "orderNumber",
+          "amount",
+          "customerName",
+          "occurredAt",
+          "dueAt",
+          "latestAt",
+          "isOverdue"
+        ],
+        "properties": {
+          "allocationId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaymentAllocationId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Amount"
+          },
+          "customerName": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Name"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dueAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the receipt becomes due and should be printed without delay: sale completion or\nthe payment's recorded (credited) time."
+          },
+          "isOverdue": {
+            "type": "boolean",
+            "description": "Past `latest_at`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FiscalReceiptKind"
+          },
+          "latestAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The statutory hard limit: equal to `due_at`, except that a card, transfer or BLIK\nadvance, still due promptly, breaches the law only after the earlier of its local\nmonth's end and sale completion."
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "orderId": {
+            "$ref": "#/components/schemas/ServiceOrderId"
+          },
+          "orderNumber": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentPaired": {
+        "type": "object",
+        "required": [
+          "token",
+          "printerId"
+        ],
+        "properties": {
+          "printerId": {
+            "$ref": "#/components/schemas/FiscalPrinterId"
+          },
+          "token": {
+            "$ref": "#/components/schemas/Token_TokenKindAgent"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AllowedCharacters": {
+        "type": "string",
+        "description": "Every character the printer can print, including spaces, in Unicode NFC. No control characters.",
+        "examples": [
+          " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-.,"
+        ],
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+      },
+      "Amount": {
+        "type": "string",
+        "format": "decimal",
+        "description": "Money with at most two decimals.",
+        "examples": [
+          "1234.50"
+        ],
+        "pattern": "^-?[0-9]{1,16}(\\.[0-9]{1,2})?$"
+      },
+      "Attempt": {
+        "type": "string",
+        "format": "uuid",
+        "examples": [
+          "01925d4f-a342-7a33-91fe-000000000001"
+        ]
+      },
+      "BranchId": {
+        "type": "string",
+        "format": "uuid",
+        "examples": [
+          "0199aabc-1234-7000-8000-000000000001"
+        ]
+      },
+      "ClientLimits": {
+        "type": "object",
+        "required": [
+          "maxPageSize",
+          "maxFilesPerTarget",
+          "maxFileBytesByMimeType",
+          "downloadUrlValiditySeconds",
+          "photoMaxEdge",
+          "photoJpegQualityPercent",
+          "previewMaxEdge",
+          "previewMaxBytes",
+          "previewJpegQualityPercent",
+          "videoMaxEdge",
+          "videoBitsPerSecond"
+        ],
+        "properties": {
+          "downloadUrlValiditySeconds": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxFileBytesByMimeType": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string",
+              "enum": [
+                "application/pdf",
+                "image/jpeg",
+                "video/mp4"
+              ]
+            }
+          },
+          "maxFilesPerTarget": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "maxPageSize": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "photoJpegQualityPercent": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "photoMaxEdge": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "previewJpegQualityPercent": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "previewMaxBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "previewMaxEdge": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "videoBitsPerSecond": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "videoMaxEdge": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Code": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+      },
+      "CursorPage_AgentDocument": {
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "kind",
+                "allocationId",
+                "orderId",
+                "orderNumber",
+                "amount",
+                "customerName",
+                "occurredAt",
+                "dueAt",
+                "latestAt",
+                "isOverdue"
+              ],
+              "properties": {
+                "allocationId": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PaymentAllocationId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "amount": {
+                  "$ref": "#/components/schemas/Amount"
+                },
+                "customerName": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Name"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "dueAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "When the receipt becomes due and should be printed without delay: sale completion or\nthe payment's recorded (credited) time."
+                },
+                "isOverdue": {
+                  "type": "boolean",
+                  "description": "Past `latest_at`."
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/FiscalReceiptKind"
+                },
+                "latestAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "The statutory hard limit: equal to `due_at`, except that a card, transfer or BLIK\nadvance, still due promptly, breaches the law only after the earlier of its local\nmonth's end and sale completion."
+                },
+                "occurredAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "orderId": {
+                  "$ref": "#/components/schemas/ServiceOrderId"
+                },
+                "orderNumber": {
+                  "type": "integer",
+                  "format": "int64"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CursorQuery": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque: pass the previous page's `nextCursor` unchanged."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeviceQueueForm": {
+        "type": "object",
+        "required": [
+          "orderId",
+          "kind"
+        ],
+        "properties": {
+          "allocationId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaymentAllocationId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "buyerNip": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Nip"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FiscalReceiptKind"
+          },
+          "orderId": {
+            "$ref": "#/components/schemas/ServiceOrderId"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Etag": {
+        "type": "string",
+        "maxLength": 32,
+        "minLength": 32,
+        "pattern": "^[0-9a-f]{32}$"
+      },
+      "FieldError": {
+        "type": "object",
+        "required": [
+          "code",
+          "pointer",
+          "detail"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FiscalJobId": {
+        "type": "string",
+        "format": "uuid",
+        "examples": [
+          "0199aabc-1234-7000-8000-000000000001"
+        ]
+      },
+      "FiscalJobState": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "taken",
+          "done",
+          "failed",
+          "expired",
+          "unknown",
+          "voided"
+        ]
+      },
+      "FiscalPaymentForm": {
+        "type": "string",
+        "enum": [
+          "cash",
+          "card",
+          "transfer",
+          "mobile",
+          "credit"
+        ]
+      },
+      "FiscalPrinterId": {
+        "type": "string",
+        "format": "uuid",
+        "examples": [
+          "0199aabc-1234-7000-8000-000000000001"
+        ]
+      },
+      "FiscalReceiptKind": {
+        "type": "string",
+        "enum": [
+          "advance",
+          "sale"
+        ]
+      },
+      "FiscalVatLetter": {
+        "type": "string",
+        "enum": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G"
+        ]
+      },
+      "FiscalVendor": {
+        "type": "string",
+        "enum": [
+          "posnet",
+          "novitus",
+          "elzab"
+        ]
+      },
+      "Health": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Job": {
+        "type": "object",
+        "required": [
+          "id",
+          "orderId",
+          "orderNumber",
+          "printerId",
+          "state",
+          "kind",
+          "allocationId",
+          "buyerNip",
+          "companyName",
+          "total",
+          "lines",
+          "advances",
+          "payments",
+          "attempt",
+          "receiptNumber",
+          "result",
+          "createdAt",
+          "takenAt",
+          "resolvedAt"
+        ],
+        "properties": {
+          "advances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdvanceDeduction"
+            }
+          },
+          "allocationId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaymentAllocationId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Attempt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "buyerNip": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Nip"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "companyName": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "$ref": "#/components/schemas/FiscalJobId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FiscalReceiptKind"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReceiptLine"
+            }
+          },
+          "orderId": {
+            "$ref": "#/components/schemas/ServiceOrderId"
+          },
+          "orderNumber": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReceiptPayment"
+            }
+          },
+          "printerId": {
+            "$ref": "#/components/schemas/FiscalPrinterId"
+          },
+          "receiptNumber": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Code"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolvedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Note"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/FiscalJobState"
+          },
+          "takenAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "total": {
+            "$ref": "#/components/schemas/PositiveAmount_Amount"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Label": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+      },
+      "Language": {
+        "type": "string",
+        "enum": [
+          "en",
+          "pl",
+          "es",
+          "ru"
+        ]
+      },
+      "Name": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+      },
+      "Nip": {
+        "type": "string",
+        "description": "Normalized on input; responses always match `^[1-9]((\\d[1-9])|([1-9]\\d))\\d{7}$`.",
+        "examples": [
+          "5260250274"
+        ],
+        "minLength": 1
+      },
+      "Note": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 2000,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]+$"
+      },
+      "Outcome": {
+        "type": "string",
+        "enum": [
+          "done",
+          "failed",
+          "unknown"
+        ]
+      },
+      "PageQuery": {
+        "type": "object",
+        "required": [
+          "page",
+          "pageSize"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 100,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "PairForm": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/PairingInput"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PairingInput": {
+        "type": "string",
+        "description": "Retain malformed submitted proofs privately so all string proofs get the same refusal.",
+        "example": "ABCD-2345"
+      },
+      "PaymentAllocationId": {
+        "type": "string",
+        "format": "uuid",
+        "examples": [
+          "0199aabc-1234-7000-8000-000000000001"
+        ]
+      },
+      "PositiveAmount_Amount": {
+        "type": "string",
+        "format": "decimal",
+        "description": "Money with at most two decimals.",
+        "examples": [
+          "1234.50"
+        ],
+        "pattern": "^(?!0(?:\\.0+)?$)[0-9]{1,16}(\\.[0-9]{1,2})?$"
+      },
+      "PositiveQuantity_Quantity": {
+        "type": "string",
+        "format": "decimal",
+        "description": "Quantity with up to six decimals.",
+        "examples": [
+          "1.5"
+        ],
+        "pattern": "^(?!0(?:\\.0+)?$)[0-9]{1,16}(\\.[0-9]{1,6})?$"
+      },
+      "PositiveUnitPrice_UnitPrice": {
+        "type": "string",
+        "format": "decimal",
+        "description": "Non-negative unit price with up to eight decimals.",
+        "examples": [
+          "11.27725962"
+        ],
+        "pattern": "^(?!0(?:\\.0+)?$)[0-9]{1,14}(\\.[0-9]{1,8})?$"
+      },
+      "Printer": {
+        "type": "object",
+        "required": [
+          "vendor",
+          "capabilities",
+          "id",
+          "branchId",
+          "name",
+          "uniqueNumber",
+          "model",
+          "firmware",
+          "appVersion",
+          "vatRates"
+        ],
+        "properties": {
+          "appVersion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Code"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branchId": {
+            "$ref": "#/components/schemas/BranchId"
+          },
+          "capabilities": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrinterCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "firmware": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Code"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/FiscalPrinterId"
+          },
+          "model": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Code"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "$ref": "#/components/schemas/Label"
+          },
+          "uniqueNumber": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UniqueNumber"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vatRates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VatRateMapping"
+            }
+          },
+          "vendor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FiscalVendor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrinterCapabilities": {
+        "type": "object",
+        "required": [
+          "maxItemNameLength",
+          "maxCompanyNameLength",
+          "maxLinesPerReceipt",
+          "allowedCharacters",
+          "maxQuantityDecimals",
+          "advanceDeductions",
+          "zeroTotalReceipts"
+        ],
+        "properties": {
+          "advanceDeductions": {
+            "type": "boolean"
+          },
+          "allowedCharacters": {
+            "$ref": "#/components/schemas/AllowedCharacters"
+          },
+          "maxCompanyNameLength": {
+            "$ref": "#/components/schemas/PrinterLimit"
+          },
+          "maxItemNameLength": {
+            "$ref": "#/components/schemas/PrinterLimit"
+          },
+          "maxLinesPerReceipt": {
+            "$ref": "#/components/schemas/PrinterLimit"
+          },
+          "maxQuantityDecimals": {
+            "$ref": "#/components/schemas/QuantityDecimals"
+          },
+          "zeroTotalReceipts": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrinterLimit": {
+        "type": "integer",
+        "examples": [
+          42
+        ],
+        "maximum": 2147483647,
+        "minimum": 1
+      },
+      "PrinterStatus": {
+        "type": "object",
+        "required": [
+          "printer",
+          "isOnline",
+          "lastSeenAt",
+          "updatedAt",
+          "isDeleted"
+        ],
+        "properties": {
+          "isDeleted": {
+            "type": "boolean",
+            "description": "ID lookups resolve deleted printers; they can no longer pair, queue or print."
+          },
+          "isOnline": {
+            "type": "boolean"
+          },
+          "lastSeenAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "printer": {
+            "$ref": "#/components/schemas/Printer"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Problem": {
+        "type": "object",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            }
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "QuantityDecimals": {
+        "type": "integer",
+        "examples": [
+          3
+        ],
+        "maximum": 8,
+        "minimum": 0
+      },
+      "ReceiptLine": {
+        "type": "object",
+        "required": [
+          "name",
+          "quantity",
+          "unitPrice",
+          "total",
+          "vatRate",
+          "vatLetter"
+        ],
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/Title"
+          },
+          "quantity": {
+            "$ref": "#/components/schemas/PositiveQuantity_Quantity"
+          },
+          "total": {
+            "$ref": "#/components/schemas/PositiveAmount_Amount"
+          },
+          "unitPrice": {
+            "$ref": "#/components/schemas/PositiveUnitPrice_UnitPrice"
+          },
+          "vatLetter": {
+            "$ref": "#/components/schemas/FiscalVatLetter"
+          },
+          "vatRate": {
+            "$ref": "#/components/schemas/VatRate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReceiptPayment": {
+        "type": "object",
+        "required": [
+          "form",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/PositiveAmount_Amount"
+          },
+          "form": {
+            "$ref": "#/components/schemas/FiscalPaymentForm"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResultForm": {
+        "type": "object",
+        "required": [
+          "attempt",
+          "state"
+        ],
+        "properties": {
+          "attempt": {
+            "$ref": "#/components/schemas/Attempt"
+          },
+          "issuedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "receiptNumber": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Code"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Note"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/Outcome"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ServiceOrderId": {
+        "type": "string",
+        "format": "uuid",
+        "examples": [
+          "0199aabc-1234-7000-8000-000000000001"
+        ]
+      },
+      "Telemetry": {
+        "type": "object",
+        "required": [
+          "vendor",
+          "capabilities",
+          "uniqueNumber",
+          "model",
+          "firmware",
+          "appVersion",
+          "vatRates"
+        ],
+        "properties": {
+          "appVersion": {
+            "$ref": "#/components/schemas/Code"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/PrinterCapabilities"
+          },
+          "firmware": {
+            "$ref": "#/components/schemas/Code"
+          },
+          "model": {
+            "$ref": "#/components/schemas/Code"
+          },
+          "uniqueNumber": {
+            "$ref": "#/components/schemas/UniqueNumber"
+          },
+          "vatRates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VatRateMapping"
+            }
+          },
+          "vendor": {
+            "$ref": "#/components/schemas/FiscalVendor"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Title": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+      },
+      "Token_TokenKindAgent": {
+        "type": "string",
+        "examples": [
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ],
+        "writeOnly": true,
+        "maxLength": 43,
+        "minLength": 43,
+        "pattern": "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$"
+      },
+      "UniqueNumber": {
+        "type": "string",
+        "examples": [
+          "ABC1234567890"
+        ],
+        "pattern": "^[A-Z]{3}[0-9]{10}$"
+      },
+      "VatRate": {
+        "type": "string",
+        "description": "Polish VAT rates as `KSeF` codes them; `zw` marks an exempt supply.",
+        "enum": [
+          "23",
+          "8",
+          "5",
+          "0",
+          "zw"
+        ]
+      },
+      "VatRateMapping": {
+        "type": "object",
+        "required": [
+          "letter",
+          "vatRate"
+        ],
+        "properties": {
+          "letter": {
+            "$ref": "#/components/schemas/FiscalVatLetter"
+          },
+          "vatRate": {
+            "$ref": "#/components/schemas/VatRate"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Versioned_Job": {
+        "type": "object",
+        "required": [
+          "id",
+          "orderId",
+          "orderNumber",
+          "printerId",
+          "state",
+          "kind",
+          "allocationId",
+          "buyerNip",
+          "companyName",
+          "total",
+          "lines",
+          "advances",
+          "payments",
+          "attempt",
+          "receiptNumber",
+          "result",
+          "createdAt",
+          "takenAt",
+          "resolvedAt",
+          "etag"
+        ],
+        "properties": {
+          "advances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdvanceDeduction"
+            }
+          },
+          "allocationId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaymentAllocationId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Attempt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "buyerNip": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Nip"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "companyName": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "etag": {
+            "$ref": "#/components/schemas/Etag"
+          },
+          "id": {
+            "$ref": "#/components/schemas/FiscalJobId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FiscalReceiptKind"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReceiptLine"
+            }
+          },
+          "orderId": {
+            "$ref": "#/components/schemas/ServiceOrderId"
+          },
+          "orderNumber": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReceiptPayment"
+            }
+          },
+          "printerId": {
+            "$ref": "#/components/schemas/FiscalPrinterId"
+          },
+          "receiptNumber": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Code"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolvedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Note"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/FiscalJobState"
+          },
+          "takenAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "total": {
+            "$ref": "#/components/schemas/PositiveAmount_Amount"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The request does not match the contract or domain validation.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The request conflicts with the current resource state.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The audience, context, permission or CSRF check refused access.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The resource does not exist in the caller's scope.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "The request body exceeds the size limit.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "PreconditionFailed": {
+        "description": "The editable representation has changed.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "PreconditionRequired": {
+        "description": "An If-Match revision is required.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "RequestTimeout": {
+        "description": "The request exceeded the server's time limit.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "A required dependency is unavailable.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "The request rate limit was exceeded.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Authentication is missing, invalid or expired.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "UnexpectedError": {
+        "description": "An unexpected server failure.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "UpgradeRequired": {
+        "description": "The client application must be updated.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerToken": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-holuto_session"
+      }
+    }
+  }
+}
