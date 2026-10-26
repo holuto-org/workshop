@@ -35,9 +35,9 @@ interruptMode: never
   evidence only; they never re-run claim-time job validation, which would
   strand an already printed receipt.
 - Every write goes through `store::write_durably` (temp file, fsync, atomic
-  replace; write-through on Windows). Unix modes: state directory 0700, files
-  0600. Windows state lives in the Local AppData Known Folder, never an
-  environment override.
+  replace; on Windows a POSIX-semantics rename that tolerates open readers,
+  then a flush). Unix modes: state directory 0700, files 0600. Windows state
+  lives in the Local AppData Known Folder, never an environment override.
 - One process per state directory (`instance.lock`); CLI mutations refuse while
   the app or another command holds it. Only the app also holds
   `application.lock`, which `status`/`check` report. Readers that skip the lock

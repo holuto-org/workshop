@@ -11,7 +11,6 @@ version.workspace = true
 testing = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "dep:tiny_http", "dep:jsonschema"]
 
 [dependencies]
-atomicwrites.workspace = true
 elzab.workspace = true
 fiscal.workspace = true
 icu_normalizer.workspace = true
@@ -30,6 +29,9 @@ thiserror.workspace = true
 ureq.workspace = true
 url.workspace = true
 uuid.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+atomicwrites.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 known-folders.workspace = true

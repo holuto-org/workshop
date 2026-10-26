@@ -21,7 +21,7 @@ fixtures make future format changes deliberate. Until the first Workshop
 release a format change is a clean cutover that updates the fixtures (see
 [external surfaces](../../AGENTS.md#external-surfaces)). Never treat an
 unreadable journal as permission to print. File replacement/locking behavior
-must pass on each OS; Linux rename does not prove Windows write-through.
+must pass on each OS; Linux rename does not prove Windows replacement.
 
 ## `/agent` and the backend
 

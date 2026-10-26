@@ -128,7 +128,8 @@ fiscal = { path = "crates/fiscal" }
 novitus = { path = "crates/novitus" }
 posnet = { path = "crates/posnet" }
 
-# Durable replace: directory fsync on Unix, MoveFileExW(MOVEFILE_WRITE_THROUGH) on Windows.
+# Durable replace with directory fsync on Unix. Windows uses std's POSIX-semantics rename:
+# atomicwrites' MoveFileExW fails while a reader or scanner has the target open.
 atomicwrites = "0.4.4"
 # Europe/Warsaw civil time and DST folds for printer clocks, reports and history.
 jiff = { version = "0.2.38", features = ["serde"] }

@@ -10,7 +10,7 @@ startup on another OS.
 - **Linux ARM64**: The same Linux guarantees on ARM64, native dependencies and
   `.deb` launch; not merely an x64 cross-build
 - **Windows x64**: Signed com0com serial pair, COM path/timeouts, Known Folder
-  and write-through replacement, cross-process locks,
+  and replacement under open readers, cross-process locks,
   GUI-subsystem/version/icon resources, portable executable launch
 - **macOS ARM64**: Unix pty, Application Support path and file/lock behavior,
   native UI dependencies, `.app` metadata, mountable `.dmg` and launch

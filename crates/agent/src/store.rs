@@ -8,6 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(not(windows))]
 use atomicwrites::{AtomicFile, OverwriteBehavior};
 
 use crate::Error;
@@ -236,12 +237,51 @@ pub(crate) fn make_private(file: &File) -> io::Result<()> {
 
 /// Atomically replaces content through a private sibling temporary file (0600 on Unix).
 ///
-/// Unix directory fsync and Windows `MoveFileExW(MOVEFILE_WRITE_THROUGH)` ensure durability.
-/// Crashes leave old or new content; failed temporary writes are removed on drop.
+/// Unix fsyncs the file and its directory. Crashes leave old or new content; failed
+/// temporary writes are removed on drop.
+#[cfg(not(windows))]
 pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
     AtomicFile::new(path, OverwriteBehavior::AllowOverwrite)
         .write_with_options(|file| file.write_all(bytes), private_new_file())
         .map_err(io::Error::from)
+}
+
+/// Atomically replaces content through a synced sibling temporary file.
+///
+/// `fs::rename` uses POSIX rename semantics on NTFS, so the replacement succeeds while
+/// another process (a status reader, an antivirus scan) has the target open; legacy
+/// `MoveFileExW` replacement fails with access denied then. Flushing the renamed handle
+/// commits the rename to the NTFS log. Crashes leave old or new content; a failed
+/// replacement removes its temporary file.
+#[cfg(windows)]
+pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::{
+        process,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let mut name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?
+        .to_owned();
+    name.push(format!(
+        ".{}.{}.tmp",
+        process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let temporary = path.with_file_name(name);
+    let mut file = private_new_file().open(&temporary)?;
+    let replaced = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| fs::rename(&temporary, path));
+    if let Err(error) = replaced {
+        drop(file);
+        let _removed = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    file.sync_all()
 }
 
 fn private_new_file() -> fs::OpenOptions {
