@@ -609,10 +609,8 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
                         !app.writes_pending.is_empty(),
                         "quit still waits for status"
                     );
-                    assert!(
-                        app.status_settled
-                            .as_ref()
-                            .is_some_and(|saved| saved.processing),
+                    assert_ne!(
+                        app.status_settled, app.status_requested,
                         "a persisted but unacknowledged snapshot is not optimistically accepted"
                     );
                     release_final.send(()).map_err(|error| error.to_string())?;

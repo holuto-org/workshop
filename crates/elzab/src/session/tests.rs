@@ -100,6 +100,8 @@ fn malformed_headers_never_become_transport_rejections() {
         "1\x1dSD",
         "1\x1dSL\x1d0",
         "1\x1dSL\x1d2\x1d2",
+        "1\x1dSL\x1d2\x1d1",
+        "1\x1dSL\x1d1\x1d2",
         "1\x1dSL\x1d1\x1d1\x1dZIP",
         "1\x1dSL\x1d1\x1d1\x1dNDT\x1dextra",
     ] {
@@ -370,4 +372,36 @@ fn multipart_reply_bound_is_exact_and_frame_numbers_cannot_skip_or_repeat() {
         ));
         assert_eq!(sim.frames(), [frame::encode("1", b"FNR").unwrap()]);
     }
+}
+
+#[test]
+fn the_last_request_id_is_usable_once_and_exhaustion_never_wraps_or_sends() {
+    let sim = Simulator::start();
+    let mut session = open(&sim);
+    session.next_id = 999_999_999;
+    assert_eq!(
+        session.command("FNR", "", Duration::from_secs(3)).unwrap(),
+        "\x1dBABC1234567890"
+    );
+    assert!(matches!(session.command("XTR", "", Duration::from_secs(3)),
+        Err(Error::Protocol(message)) if message == "Nieprawidłowa ramka ElzabSTX."));
+    assert_eq!(sim.frames(), [frame::encode("999999999", b"FNR").unwrap()]);
+}
+
+#[test]
+fn transport_rejection_after_a_multipart_start_is_corrupt_not_a_certain_refusal() {
+    let sim = Simulator::start();
+    let mut raw = frame::encode("1\x1dSA\x1d1\x1d0", b"").unwrap();
+    raw.extend(frame::encode("1\x1dSL\x1d1\x1d1", b"").unwrap());
+    sim.fault("LOR", Fault::Reply(raw));
+    let mut session = open(&sim);
+    assert!(
+        matches!(session.command("LOR", "C0", Duration::from_secs(3)),
+        Err(Error::Protocol(message)) if message == "Nieprawidłowa ramka ElzabSTX.")
+    );
+    assert!(matches!(
+        session.command("FNR", "", Duration::from_secs(3)),
+        Err(Error::NotReady(_))
+    ));
+    assert_eq!(sim.frames(), [frame::encode("1", b"LOR\x1dC0").unwrap()]);
 }
