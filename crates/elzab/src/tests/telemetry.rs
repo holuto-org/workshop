@@ -105,3 +105,47 @@ fn accepted_daily_report_is_traced_as_uncertain_not_printed() {
 fn sim_unique(sim: &Simulator) -> String {
     printer(sim).probe().unwrap().unique_number
 }
+
+#[test]
+fn completed_receipt_traces_never_include_names_nip_amounts_or_wire_data() {
+    let captured = capture(|| {
+        let sim = Simulator::start();
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let printed = driver
+            .print_receipt(&receipt(2346, false), &expected, &mut Log::default())
+            .unwrap();
+        assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+        assert_eq!(sim.receipts(), 1);
+    });
+    assert!(captured.contains("Receipt printed"), "{captured}");
+    for command in ["LOR", "LNP", "LIT", "LDS", "LBP", "LCL"] {
+        assert!(
+            captured.contains(&format!("command=\"{command}\"")),
+            "{captured}"
+        );
+    }
+    for sensitive in [
+        "Warsztat",
+        "Łódź",
+        "Łożysko",
+        "1234567890",
+        "123.46",
+        "123,46",
+        "23.46",
+        "23,46",
+        "100.00",
+        "100,00",
+        "KARTA",
+        "Zaliczka",
+        "GAŁ",
+        "IAA1",
+        "RA100",
+    ] {
+        assert!(
+            !captured.contains(sensitive),
+            "fiscal payload leaked: {sensitive}"
+        );
+    }
+    assert!(!captured.contains("uncertain outcome"), "{captured}");
+}

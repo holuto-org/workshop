@@ -15,8 +15,8 @@
     main-window launch without a configured printer; retain matching debug
     artifacts.
 - **Release (`release.yml`)**
-  - **Trigger**: Push to `master` with an increased workspace version; manual
-    artifact build.
+  - **Trigger**: Push to `master` changing `Cargo.toml`; manual artifact build.
+    Publishing additionally requires a qualifying workspace-version increase.
   - **Runner and work**: Checks + reusable Package; version/published-release
     guard; required Sentry configuration and debug upload; publish stable
     filenames/checksums and finalize the Sentry release only for qualifying
@@ -49,8 +49,8 @@ simulator, pty or virtual com0com; no job may use a real fiscal printer.
 
 The `ci` nextest profile includes platform tests; the default profile excludes
 `com_pair`. Session-bus tests run in their serial group. Both default-feature
-production code and all-feature debug/test code must compile/lint. Production
-release builds reject simulator/testing features; packaging never enables them.
+production code and all-feature debug/test code must compile/lint. Release builds
+reject desktop `simulator` and agent `testing`; packaging never enables them.
 See [local platform procedures](testing/platforms.md).
 The acceptance job follows
 [hardware acceptance](testing/hardware-acceptance.md): a dedicated

@@ -25,20 +25,15 @@ must pass on each OS; Linux rename does not prove Windows write-through.
 
 ## `/agent` and the backend
 
-The vendored OpenAPI is the production contract, not the fake. Compare session/heartbeat
-vendor + unique number binding, current per-driver
+The vendored OpenAPI is the production contract, not the fake. Compare session
+vendor + unique number binding, heartbeat identity headers, current per-driver
 limits/VAT/capabilities, document pagination, queue inputs, take attempts,
-terminal states and result idempotency/refusals with those handlers. Update
+terminal states and result idempotency/refusals with that contract. Update the
 `agent::testing` loopback fake in the same change, then prove requests through
 production `ureq` and the observable stored server state.
 
-The source is the backend's `openapi/agent.json`. After regenerating it with
-`cargo run -p holuto -- openapi` in the
-backend, run `bash scripts/openapi-sync.sh` here (`BACKEND_DIR` defaults to
-`../backend`) and commit the vendored `openapi/` diff. Typify generates wire
-types into `OUT_DIR/agent-wire.rs` during builds, not committed source. Deploy
-backend changes first: generation follows the vendored schema, not the live
-server.
+Follow the [sync procedure](../../AGENTS.md#api-contract). Typify generates wire
+types into `OUT_DIR/agent-wire.rs` during builds, not committed source.
 
 Full OpenAPI schema validation belongs to the feature-gated testing fake, not
 the runtime HTTP client. Fiscal amount/name/NIP scalars deliberately remain
@@ -78,8 +73,8 @@ Exercise default production features as well as all debug/test features. Desktop
 release builds reject `simulator`; agent builds without debug assertions reject
 `testing`. The drivers' own `simulator` features have no release guard. A green
 all-features test run does not prove the real serial branch builds. Rebuild and
-verify all five packages for dependency/toolchain upgrades; run advisory/license
-and unused-dependency checks. See [CI](../ci.md).
+verify all five OS/architecture packages for dependency/toolchain upgrades; run
+advisory/license and unused-dependency checks. See [CI](../ci.md).
 `--all-features` must retain production fiscal-mode and unqualified-capability
 gates. Acceptance uses a separate debug-only cfg, not a feature; run its
 [isolated suite and release-rejection check](hardware-acceptance.md).

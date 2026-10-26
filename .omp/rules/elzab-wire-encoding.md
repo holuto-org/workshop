@@ -32,7 +32,7 @@ semantics.
   owned by
   [recovery classification](../../docs/testing/fiscal-safety.md#recovery-classification);
   never widen it. Paper-out may auto-cancel an ONLINE receipt: never cancel,
-  resume, replay or reprint automatically. Human resolution never sends
+  resume, replay or reprint automatically. Human resolution never sends fiscal
   commands.
 - Advances use ONLINE LDS with final bare RS D. Zero-total receipts stay blocked
   before LOR. Never substitute 0.01 or a negative sale. Company LAL remains

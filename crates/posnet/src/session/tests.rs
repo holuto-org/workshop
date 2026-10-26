@@ -144,14 +144,59 @@ fn an_oversized_unterminated_reply_is_rejected_before_growing_without_bound() {
 
 #[test]
 fn a_foreign_reply_is_a_protocol_error_not_the_current_commands_success() {
-    let (mut session, _) = wire(vec![Ok(reply("scnt\tbt1\t"))]);
+    for payload in ["scnt\tbt1\t", "scnt\t?2036\t", "scnt\t?2036\tcmtrend\t"] {
+        let (mut session, _) = wire(vec![Ok(reply(payload))]);
+        assert_eq!(
+            session
+                .command("trend", &[], TIMEOUT)
+                .unwrap_err()
+                .to_string(),
+            "Oczekiwano odpowiedzi trend, otrzymano scnt.",
+            "{payload:?}"
+        );
+    }
+}
+
+#[test]
+fn eof_after_a_partial_reply_is_not_retried_or_misreported_as_a_timeout() {
+    let (mut session, sent) = wire(vec![
+        Ok(b"\x02trend\t".to_vec()),
+        Ok(vec![]),
+        Ok(reply("trend\t")),
+    ]);
+    assert!(matches!(session.command("trend", &[], TIMEOUT),
+            Err(Error::Io(error)) if error.kind() == io::ErrorKind::UnexpectedEof));
     assert_eq!(
-        session
-            .command("trend", &[], TIMEOUT)
-            .unwrap_err()
-            .to_string(),
-        "Oczekiwano odpowiedzi trend, otrzymano scnt."
+        *sent.lock().unwrap(),
+        [frame::encode("trend", &[]).unwrap()]
     );
+}
+
+#[test]
+fn malformed_reply_controls_keys_and_error_codes_are_protocol_errors() {
+    for payload in [
+        "trend\tbt1\0\t",
+        "trend\tbt1\r\t",
+        "trend\tbt1\u{7f}\t",
+        "trend\tB!1\t",
+        "trend\t?+382\t",
+        "TREND\t",
+        "\tbt1\t",
+        "trend\t?4294967296\t",
+    ] {
+        let (mut session, sent) = wire(vec![Ok(reply(payload))]);
+        assert!(
+            matches!(
+                session.command("trend", &[], TIMEOUT),
+                Err(Error::Protocol(_))
+            ),
+            "{payload:?}"
+        );
+        assert_eq!(
+            *sent.lock().unwrap(),
+            [frame::encode("trend", &[]).unwrap()]
+        );
+    }
 }
 
 #[test]

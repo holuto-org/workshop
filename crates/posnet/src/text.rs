@@ -13,6 +13,3 @@ pub(crate) fn header_text(raw: &str) -> String {
     }
     text
 }
-
-#[cfg(test)]
-mod tests;

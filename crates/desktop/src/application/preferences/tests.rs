@@ -306,3 +306,39 @@ fn failed_status_write_is_not_acknowledged_as_saved_or_blocking_later_preference
     );
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "A failed Start must not acknowledge or overwrite the worker's saved configuration"
+)]
+fn failed_start_preserves_connection_and_does_not_block_the_next_reload()
+-> Result<(), Box<dyn Error>> {
+    let temporary = TempDir::new()?;
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let supplied = settings();
+    supplied.save(&dir)?;
+    let before = fs::read(dir.path().join("settings.json"))?;
+    let (completed, completions) = mpsc::channel();
+    let writer = Writer::spawn(Arc::clone(&dir), move |completion| {
+        let _sent = completed.send(completion);
+    })?;
+    writer.submit(Request::Save {
+        settings: Settings {
+            baud_rate: 123,
+            ..supplied.clone()
+        },
+        start: true,
+    })?;
+    writer.submit(Request::Reload)?;
+    assert_eq!(
+        completions.recv_timeout(WAIT)?,
+        Err("Nieprawidłowa prędkość transmisji.".into())
+    );
+    assert_eq!(
+        completions.recv_timeout(WAIT)?,
+        Ok(Outcome::Reload(supplied))
+    );
+    assert_eq!(fs::read(dir.path().join("settings.json"))?, before);
+    Ok(())
+}

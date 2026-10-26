@@ -3,7 +3,11 @@ description:
   "Posnet wire text is Windows-1250 through fiscal::cp1250, never UTF-8 or Latin-1"
 condition:
   - 'from_utf8|as_bytes\(\)|into_bytes\(\)|encoding_rs|latin'
-scope: "tool:edit(crates/posnet/src/**), tool:write(crates/posnet/src/**), tool:edit(crates/fiscal/src/cp1250*), tool:write(crates/fiscal/src/cp1250*)"
+scope:
+  "tool:edit(crates/posnet/src/**), tool:write(crates/posnet/src/**),
+  tool:edit(crates/fiscal/src/cp1250*), tool:write(crates/fiscal/src/cp1250*),
+  tool:edit(crates/fiscal/src/cp1250/**),
+  tool:write(crates/fiscal/src/cp1250/**)"
 interruptMode: never
 ---
 

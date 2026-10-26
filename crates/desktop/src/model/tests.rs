@@ -1,3 +1,5 @@
+use std::slice;
+
 use super::*;
 use agent::documents::ReceiptKind;
 use fiscal::device::Problem;
@@ -40,11 +42,30 @@ fn ready() -> Model {
 
 #[test]
 fn confirmed_actions_cannot_be_submitted_again_until_worker_completion() {
-    for action in [
-        Action::QueueReceipt,
-        Action::DailyReport,
-        Action::MonthlyReport,
-        Action::PeriodicReport,
+    for (action, expected) in [
+        (
+            Action::QueueReceipt,
+            Command::Queue {
+                document: document(),
+                buyer_nip: None,
+            },
+        ),
+        (Action::DailyReport, Command::DailyReport),
+        (
+            Action::MonthlyReport,
+            Command::MonthlyReport {
+                year: 2025,
+                month: 9,
+            },
+        ),
+        (
+            Action::PeriodicReport,
+            Command::PeriodicReport {
+                from: Date::constant(2025, 10, 17),
+                to: today(),
+                summary: false,
+            },
+        ),
     ] {
         let mut model = ready();
         let mut commands = Vec::new();
@@ -53,14 +74,18 @@ fn confirmed_actions_cannot_be_submitted_again_until_worker_completion() {
         model.request(action);
         model.confirm(true, |command| commands.push(command));
         assert_eq!(
-            commands.len(),
-            1,
-            "second confirmation must not queue another fiscal operation"
+            commands.as_slice(),
+            slice::from_ref(&expected),
+            "second confirmation is consumed once"
         );
         model.command_completed();
         model.request(action);
         model.confirm(true, |command| commands.push(command));
-        assert_eq!(commands.len(), 2, "worker completion unlocks the action");
+        assert_eq!(
+            commands.iter().collect::<Vec<_>>(),
+            [&expected, &expected],
+            "completion unlocks the action"
+        );
     }
 }
 
@@ -105,15 +130,19 @@ fn a_read_only_printer_offers_monthly_and_periodic_reports_but_not_the_daily_rep
         model.confirm(true, |command| commands.push(command));
         model.command_completed();
     }
-    assert!(
-        matches!(
-            commands.as_slice(),
-            [
-                Command::MonthlyReport { .. },
-                Command::PeriodicReport { .. }
-            ]
-        ),
-        "{commands:?}"
+    assert_eq!(
+        commands,
+        [
+            Command::MonthlyReport {
+                year: 2025,
+                month: 9
+            },
+            Command::PeriodicReport {
+                from: Date::constant(2025, 10, 1),
+                to: today(),
+                summary: false,
+            },
+        ]
     );
 }
 
@@ -150,6 +179,16 @@ fn periodic_dates_require_padded_day_month_and_year_at_least_2000() {
             "24.10.2025",
             "Data początkowa musi mieć postać dd.mm.rrrr.",
         ),
+        (
+            "01.01.2025",
+            "25.10.2025",
+            "Data końcowa nie może być późniejsza niż dzisiejsza.",
+        ),
+        (
+            "29.02.2025",
+            "24.10.2025",
+            "Data początkowa musi mieć postać dd.mm.rrrr.",
+        ),
     ] {
         let error = report_range(from, to, today())
             .err()
@@ -160,6 +199,11 @@ fn periodic_dates_require_padded_day_month_and_year_at_least_2000() {
         report_range("01.01.2000", "24.10.2025", today()).ok(),
         Some((Date::constant(2000, 1, 1), today())),
         "both inclusive boundaries are accepted"
+    );
+    assert_eq!(
+        report_range("29.02.2024", "29.02.2024", today()).unwrap(),
+        (Date::constant(2024, 2, 29), Date::constant(2024, 2, 29)),
+        "a valid leap day and equal endpoints are accepted"
     );
 }
 
@@ -219,11 +263,12 @@ fn sorted_refresh_retains_document_identity_not_row_index() {
     model.request(Action::QueueReceipt);
     let mut commands = Vec::new();
     model.confirm(true, |command| commands.push(command));
-    assert!(
-        matches!(
-            commands.as_slice(),
-            [Command::Queue { document, .. }] if document.order_number == 42
-        ),
+    assert_eq!(
+        commands,
+        [Command::Queue {
+            document: document(),
+            buyer_nip: None
+        }],
         "refresh must not queue the old row index"
     );
 }

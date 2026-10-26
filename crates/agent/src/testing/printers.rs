@@ -106,6 +106,14 @@ impl Simulator {
         }
     }
 
+    pub(crate) fn disconnect_final_reply(&self) {
+        match self {
+            Self::Posnet(sim) => sim.fault("trend", PosnetFault::Disconnect),
+            Self::Elzab(sim) => sim.fault("LCL", ElzabFault::Disconnect),
+            Self::Novitus(sim) => sim.fault("28;0$z", NovitusFault::Disconnect),
+        }
+    }
+
     pub(crate) fn fiscal_frames(&self) -> Vec<Vec<u8>> {
         self.frames()
             .into_iter()

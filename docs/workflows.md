@@ -41,17 +41,17 @@ Additional finish evidence by changed area:
 
 - **Binding receipt/report output**:
   `cargo insta test --test-runner nextest --review -p <driver> --all-features`
-  (`posnet` or `novitus`), read each diff against the protocol, then rerun
-  ordinary nextest.
+  (`posnet`, `novitus` or `elzab`), read each diff against the protocol, then
+  rerun ordinary nextest.
 - **Worker, race, time or shared state**: The scoped nextest stress command
   below; ten repetitions with no flakes.
 - **Recovery/numeric properties**: Increase `PROPTEST_CASES` for the affected
   model/property; commit real regression seeds with the fix.
 - **Dependencies**: `cargo deny --locked check` and
   `cargo shear --deny-warnings`; all native/package targets.
-- **Backend `/agent` contract**: Regenerate backend OpenAPI, run
-  `bash scripts/openapi-sync.sh`, review/commit `openapi/` diff; compatibility
-  scenarios through production client.
+- **Backend `/agent` contract**: Follow the
+  [sync procedure](../AGENTS.md#api-contract); prove compatibility scenarios
+  through the production client.
 - **Platform/persistence/package**: Native tests and
   `bash packaging/build.sh` then `bash packaging/verify.sh` on affected
   OS/architecture.
@@ -63,8 +63,8 @@ Additional finish evidence by changed area:
   ```
 
 - **Markdown**: `npx -y markdownlint-cli2 <changed files>` and
-  `lychee --offline AGENTS.md README.md docs .omp llms.txt`; online/fragment
-  checks when available.
+  `lychee --offline --include-fragments --no-progress <changed files>`;
+  online checks when available.
 - **Driver profiles, preflight or acceptance gates**: Ordinary all-feature
   tests prove production gates; then run the simulator-only acceptance suite
   and release rejection from
@@ -85,13 +85,13 @@ permission to tolerate flakes. Linux watcher tests launch their own private bus
 and require `dbus-run-session`; Windows COM tests require the `ci` profile and
 a configured virtual pair. See [platform procedures](testing/platforms.md).
 
-For snapshots, `cargo insta review -p <driver>` reviews pending changes for
-that crate only; `--workspace` or blanket accept also takes other sessions'
-pending output, so never use them for fiscal snapshots. The
-[`cargo insta test` command](https://insta.rs/docs/cli/) can force snapshots to
-pass to collect changes, so it is **not** the final verification run. Commit
-accepted snapshots, not pending `.snap.new` files. Fixed inputs should remove
-nondeterminism; do not redact amounts, VAT, text or command order.
+For snapshots, `cargo insta review --manifest-path crates/<driver>/Cargo.toml`
+reviews pending changes for that crate only; `--workspace` or blanket accept
+also takes other sessions' pending output, so never use them for fiscal snapshots.
+The [`cargo insta test`](https://insta.rs/docs/cli/) command can force
+snapshots to pass to collect changes, so it is **not** the final verification run.
+Commit accepted snapshots, not pending `.snap.new` files. Fixed inputs should
+remove nondeterminism; do not redact amounts, VAT, text or command order.
 
 Coverage is a local diagnostic only:
 

@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{decimal, error::Error};
+use crate::{decimal, error::Error, receipt::VAT_SLOTS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,7 +34,11 @@ pub struct VatRate {
 }
 
 impl VatRate {
+    /// Slots are always A–G, including inactive entries; active A–E have fixed rates.
     pub const fn legal_letter(self) -> bool {
+        if self.slot >= VAT_SLOTS {
+            return false;
+        }
         if !self.active() {
             return true;
         }

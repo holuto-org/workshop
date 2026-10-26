@@ -1,6 +1,6 @@
 //! Display snapshots, not fiscal authority; the desktop's persistence writer publishes them.
 //!
-//! Readers check the instance lock before and after loading and ignore snapshots while the
+//! Readers check the application lock before and after loading and ignore snapshots while the
 //! app is stopped. Loading takes no lock and creates no state. Disconnected snapshots may
 //! retain printer identity and unresolved flags. Never stores credentials, API URLs,
 //! customer data or document payloads.

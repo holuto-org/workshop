@@ -4,7 +4,9 @@ description:
 condition: ".*"
 scope:
   "tool:read(crates/agent/src/api*), tool:edit(crates/agent/src/api*),
-  tool:write(crates/agent/src/api*), tool:read(crates/agent/src/testing.rs),
+  tool:write(crates/agent/src/api*), tool:read(crates/agent/src/api/**),
+  tool:edit(crates/agent/src/api/**), tool:write(crates/agent/src/api/**),
+  tool:read(crates/agent/src/testing.rs),
   tool:edit(crates/agent/src/testing.rs), tool:write(crates/agent/src/testing.rs),
   tool:edit(crates/agent/build.rs), tool:write(crates/agent/build.rs),
   tool:edit(openapi/**), tool:write(openapi/**)"

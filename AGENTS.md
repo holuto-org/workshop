@@ -78,8 +78,8 @@ One Cargo workspace; dependency versions and lints live only in the root
   per-user autostart and Sentry lifecycle/privacy.
 
 Each driver's `simulator` feature provides its offline peer. Agent `testing`
-exposes the simulators and the loopback Holuto fake; desktop `simulator` runs
-all three peers with state in a separate `workshop-simulator` directory. Agent
+enables those features and exposes the loopback Holuto fake; desktop `simulator`
+runs all three peers with state in a separate `workshop-simulator` directory. Agent
 `testing` and desktop `simulator` fail to compile without debug assertions; the
 drivers' `simulator` features have no release guard of their own. The
 debug-only `cfg(workshop_acceptance)` is not a Cargo feature; see
@@ -87,26 +87,21 @@ debug-only `cfg(workshop_acceptance)` is not a Cargo feature; see
 
 ### External surfaces
 
-The crates are workspace-internal (`publish = false`): no other repository or
-branch depends on them, so `pub` is not external API and needs no search
-outside this repository. The simulators' and `agent::testing`'s `pub` items are
-a shared harness: check `agent::testing` and desktop tests before calling one
-dead. External surfaces are the `/agent` API, the files in the state
-directory, the CLI and its JSON ([install guide](docs/install-with-ai.md)), the
-telemetry allowlist and the release assets the install scripts fetch.
+The crates are workspace-internal (`publish = false`) and no other repository
+depends on them: `pub` is not external API and needs no search outside this
+repository. The simulators' and
+`agent::testing`'s `pub` items are a shared harness: check `agent::testing`
+and desktop tests before calling one dead. External surfaces are the `/agent`
+API, the files in the state directory, the CLI and its JSON
+([install guide](docs/install-with-ai.md)), the telemetry allowlist and the
+release assets the install scripts fetch.
 
-Workshop has not been released; the `v0.1.x` tags are a retired predecessor
-that needs no upgrade path. Until the first Workshop release, change stored
-formats, CLI and package metadata by clean cutover: no migrations, aliases,
-legacy names or package replacement metadata. After it they are contracts.
+Before the first Workshop release, change stored formats, CLI and package
+metadata by clean cutover: no migrations, aliases, legacy names or package
+replacement metadata. After it they are contracts.
 
 ## Code conventions
 
-- A justified lint exception is `#[expect(lint, reason = "…")]` at the call
-  site, never `allow`.
-- Modules are `foo.rs` + `foo/`, never `mod.rs`; unit tests live in
-  `foo/tests.rs`.
-- No `pub use`: import items from the module that defines them.
 - Errors callers match on are `thiserror` enums; their `Display` is the Polish,
   operator-facing text.
 - Comments and docs cite only public sources, such as the vendor spec pages
@@ -115,8 +110,7 @@ legacy names or package replacement metadata. After it they are contracts.
 - `posnet`, `novitus` and `elzab` share one shape (session, preflight, profile,
   simulator). A bug or simplification found in one driver: check the other
   two, and change all three or say why one differs.
-- Clippy runs pedantic and nursery groups at `-D warnings`: run the scoped
-  clippy after your first edit, not only at the end.
+- Run scoped clippy after your first edit, not only at the end.
 
 ### Simplifying and deleting
 
@@ -136,15 +130,13 @@ Before calling an item dead, check it with and without
 
 ## API contract
 
-`openapi/agent.json` is the `/agent` contract, vendored from the backend
-repository (`../backend` by default), the only repository coupled to this one.
-After a backend `/agent` change, run `cargo run -p holuto -- openapi` there,
-then `bash scripts/openapi-sync.sh` here (`BACKEND_DIR` overrides the path) and
-commit the `openapi/` diff. The script copies whatever the backend checkout
-holds: confirm it is on the branch that will be deployed. A read-only check is
-`cmp openapi/agent.json ../backend/openapi/agent.json`; it does not run backend
-code. A feature that needs a new `/agent` field starts in the backend and cannot
-be finished here alone. Wire types are generated into `OUT_DIR` at build time.
+`openapi/agent.json` is the vendored `/agent` contract. After the backend
+regenerates it, run `bash scripts/openapi-sync.sh` and commit the `openapi/`
+diff. `BACKEND_DIR` selects the backend checkout (default `../backend`).
+The script copies that checkout's exported schema without regenerating it:
+confirm it is on the branch that will be deployed. A feature needing a new
+`/agent` field starts in the backend and cannot be finished here alone.
+Wire types are generated into `OUT_DIR` at build time.
 Nothing compares the live API with the schema: deploy the backend first. See
 [fiscal contract](docs/fiscal-contract.md) and
 [compatibility](docs/testing/compatibility.md).
@@ -207,20 +199,13 @@ cargo nextest run --workspace --all-features -E 'package(workshop)'
 ```
 
 A change is done when its area's evidence from
-[finishing a change](docs/workflows.md#finishing-a-change) also exists:
-mutation runs for changed product code, stress runs for worker/race/time
-changes, reviewed snapshots, the simulator-only acceptance suite for driver
-profile/preflight changes, and `cargo deny --locked check` plus
-`cargo shear --deny-warnings` for dependency changes. Report every check you
-did not run and why.
+[finishing a change](docs/workflows.md#finishing-a-change) also exists.
+Report every check you did not run and why.
 
-Linux builds need `pkg-config` and fontconfig headers (`libfontconfig1-dev` /
-`fontconfig-devel`). Default nextest excludes Windows `com_pair`; Linux
-`session_bus` tests spawn their own `dbus-run-session` and run serially. From
-Linux, Windows and macOS targets do not build (`ring` needs the target's C
-toolchain): do not install targets or stub compilers. Keep `cfg(windows)` and
-`cfg(target_os = "macos")` changes minimal, report them as not compiled or run,
-and rely on CI's native matrix; see [platforms](docs/testing/platforms.md).
+For native dependencies, COM-pair/session-bus setup and changes this host cannot
+compile or run, follow [platform procedures](docs/testing/platforms.md).
+Do not treat Linux evidence as Windows or macOS coverage; report native checks
+not run and rely on CI's native matrix.
 
 User-level evidence an agent can produce comes from the end-to-end scenarios in
 `crates/desktop/src/application/tests/end_to_end.rs` (real application, worker,

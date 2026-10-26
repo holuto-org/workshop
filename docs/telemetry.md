@@ -1,9 +1,9 @@
 # Diagnostics and privacy
 
-CI expects the Sentry project **`holuto/workshop`** and EU service URL
-**`https://de.sentry.io`** to be configured as repository variables; the repository
-does not prove that provisioning. Diagnostics are separate from printer identity
-and VAT telemetry sent to Holuto's `/agent/session` and `/agent/heartbeat`.
+[CI configuration](ci.md#release-telemetry-artifacts) owns Sentry provisioning
+and repository variables. Diagnostics are separate from printer identity and VAT
+telemetry sent to Holuto's `/agent/session`; `/agent/heartbeat` carries the
+device identity header, not that telemetry body.
 
 ## Enable and opt out
 
@@ -53,7 +53,8 @@ Structured diagnostics use an allowlist:
   release/debug identifiers and available allowlisted context; see the memory
   privacy warning below.
 
-No span or INFO message is created for each normal three-second poll. ERROR
+Normal three-second polling creates HTTP-call spans but no poll-specific root
+span or INFO message. ERROR
 means someone must act (uncertain fiscal outcome, corrupt journal, worker panic,
 unexpected API contract violation); WARN is degraded but handled (printer not
 ready, operator wait, retrying start); INFO is a milestone (connected, claimed,
@@ -115,16 +116,16 @@ inherit later scope changes
 Client shutdown and native-reporter flushing use a **500 ms** timeout.
 The bounded best-effort transport keeps SDK HTTP ownership and disposal off the
 application thread; it may drop diagnostics rather than delay fiscal shutdown.
-Like Holuto requests, it uses the environment proxy (`HTTPS_PROXY`/`ALL_PROXY`).
+It uses the environment proxy; the Holuto client bypasses proxies for loopback.
 Structured capture/transport tests do not verify native minidump delivery.
 
 ## Release and debug files
 
-Release identity is **`workshop@<workspace version>`**. CI release packages use
-environment **`production`**; other release builds use `SENTRY_ENVIRONMENT`,
+The [CI release identity and environment](ci.md#release-telemetry-artifacts)
+must match client events. Non-CI release builds use `SENTRY_ENVIRONMENT`,
 defaulting to `production` only when unset. Debug builds use `development`.
-CI retains matching symbols before distribution stripping and uploads debug
-files/source context using `sentry-cli debug-files upload --include-sources`.
+CI retains matching symbols before distribution stripping and uploads source
+context with them.
 Source uploads contain application source code, not runtime settings or fiscal
 documents. Release records/commits and client events must agree on identity;
 Linux ELF/DWARF, macOS dSYM and Windows PDB files must match their packaged

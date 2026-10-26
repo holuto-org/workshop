@@ -1,7 +1,30 @@
-use super::{Capabilities, Device, Problem, VatKind, VatRate, Vendor, valid_unique_number};
+use super::{Capabilities, Device, Problem, VatKind, VatRate, Vendor};
+use crate::error::Error;
+
+fn device() -> Device {
+    Device {
+        vendor: Vendor::Posnet,
+        model: "Test".to_owned(),
+        firmware: "1".to_owned(),
+        unique_number: "TST0000000001".to_owned(),
+        problems: vec![],
+        vat: vec![],
+        capabilities: Capabilities {
+            max_item_name: 64,
+            max_lines: 255,
+            max_company_name: 42,
+            max_buyer_nip: 30,
+            max_quantity_decimals: 5,
+            allowed_characters: " Aą1".to_owned(),
+            advance_deductions: false,
+            zero_total_receipts: false,
+            company_footer: false,
+        },
+    }
+}
 
 #[test]
-fn vendor_serializes_snake_case() {
+fn persisted_vendor_names_keep_their_exact_meaning() {
     for (vendor, name) in [
         (Vendor::Posnet, "\"posnet\""),
         (Vendor::Novitus, "\"novitus\""),
@@ -17,6 +40,7 @@ fn vat_rates_label_slots_and_report_activity() {
     for (kind, label, active) in [
         (VatKind::Rate { basis_points: 2300 }, "A · 23%", true),
         (VatKind::Rate { basis_points: 850 }, "A · 8,5%", true),
+        (VatKind::Rate { basis_points: 801 }, "A · 8,01%", true),
         (VatKind::Rate { basis_points: 0 }, "A · 0%", true),
         (VatKind::Exempt, "A · zwolniona", true),
         (VatKind::Inactive, "A · nieaktywna", false),
@@ -36,112 +60,99 @@ fn vat_rates_label_slots_and_report_activity() {
 }
 
 #[test]
-fn daily_report_eligibility_only_ignores_overdue_reports_for_every_vendor() {
-    for vendor in [Vendor::Posnet, Vendor::Novitus, Vendor::Elzab] {
-        for (problems, ready, daily) in [
-            (vec![], true, true),
-            (vec![Problem::DailyReportOverdue], false, true),
-            (vec!["Brak papieru".into()], false, false),
-            (
-                vec![Problem::DailyReportOverdue, "Brak papieru".into()],
-                false,
-                false,
-            ),
+fn readiness_tolerates_only_the_problems_allowed_for_each_operation() {
+    let read_only = |periodic_reports| Problem::ReadOnly { periodic_reports };
+    for (problems, ready, daily, periodic, resolvable, description) in [
+        (vec![], true, true, true, true, "Gotowa do drukowania"),
+        (
+            vec![Problem::DailyReportOverdue],
+            false,
+            true,
+            false,
+            true,
+            "Wymagany zaległy raport dobowy",
+        ),
+        (
+            vec![read_only(true)],
+            false,
+            false,
+            true,
+            true,
+            "Drukarka jest w trybie tylko do odczytu",
+        ),
+        (
+            vec![read_only(false)],
+            false,
+            false,
+            false,
+            true,
+            "Drukarka jest w trybie tylko do odczytu",
+        ),
+        (
+            vec![Problem::DailyReportOverdue, read_only(true)],
+            false,
+            false,
+            false,
+            true,
+            "Wymagany zaległy raport dobowy. Drukarka jest w trybie tylko do odczytu",
+        ),
+        (
+            vec!["Brak papieru".into()],
+            false,
+            false,
+            false,
+            false,
+            "Brak papieru",
+        ),
+        (
+            vec![Problem::DailyReportOverdue, "Brak papieru".into()],
+            false,
+            false,
+            false,
+            false,
+            "Wymagany zaległy raport dobowy. Brak papieru",
+        ),
+        (
+            vec![read_only(true), "Brak papieru".into()],
+            false,
+            false,
+            false,
+            false,
+            "Drukarka jest w trybie tylko do odczytu. Brak papieru",
+        ),
+        (
+            vec![read_only(false), "Brak papieru".into()],
+            false,
+            false,
+            false,
+            false,
+            "Drukarka jest w trybie tylko do odczytu. Brak papieru",
+        ),
+    ] {
+        let device = Device {
+            problems,
+            ..device()
+        };
+        assert_eq!(device.ready(), ready, "{description}");
+        assert_eq!(device.daily_report_allowed(), daily, "{description}");
+        assert_eq!(device.periodic_reports_allowed(), periodic, "{description}");
+        assert_eq!(device.description(), description);
+        for (result, allowed) in [
+            (device.require_ready(), ready),
+            (device.require_periodic_reports(), periodic),
+            (device.require_resolvable(), resolvable),
         ] {
-            let device = Device {
-                vendor,
-                model: String::new(),
-                firmware: String::new(),
-                unique_number: "TST0000000001".to_owned(),
-                problems,
-                vat: vec![],
-                capabilities: Capabilities {
-                    max_item_name: 0,
-                    max_lines: 0,
-                    max_company_name: 0,
-                    max_buyer_nip: 0,
-                    max_quantity_decimals: 0,
-                    allowed_characters: String::new(),
-                    advance_deductions: false,
-                    zero_total_receipts: false,
-                    company_footer: false,
-                },
-            };
-            assert_eq!(device.ready(), ready, "{vendor:?}: {:?}", device.problems);
-            assert_eq!(
-                device.daily_report_allowed(),
-                daily,
-                "{vendor:?}: {:?}",
-                device.problems
-            );
-            assert_eq!(device.require_ready().is_ok(), ready);
+            match (result, allowed) {
+                (Ok(()), true) => {},
+                (Err(Error::NotReady(message)), false) => assert_eq!(message, description),
+                (result, _) => panic!("{description}: {result:?}"),
+            }
         }
     }
 }
 
 #[test]
-fn read_only_mode_allows_reports_only_when_permitted_and_always_allows_resolution() {
-    let reporting = Problem::ReadOnly {
-        periodic_reports: true,
-    };
-    let silent = Problem::ReadOnly {
-        periodic_reports: false,
-    };
-    for (problems, ready, daily, periodic, resolvable) in [
-        (vec![], true, true, true, true),
-        (vec![reporting.clone()], false, false, true, true),
-        (vec![silent], false, false, false, true),
-        (vec![Problem::DailyReportOverdue], false, true, false, true),
-        (
-            vec![reporting, "Brak papieru".into()],
-            false,
-            false,
-            false,
-            false,
-        ),
-    ] {
-        let device = Device {
-            vendor: Vendor::Posnet,
-            model: String::new(),
-            firmware: String::new(),
-            unique_number: "TST0000000001".to_owned(),
-            problems,
-            vat: vec![],
-            capabilities: Capabilities::default(),
-        };
-        let label = format!("{:?}", device.problems);
-        assert_eq!(device.ready(), ready, "{label}");
-        assert_eq!(device.daily_report_allowed(), daily, "{label}");
-        assert_eq!(device.periodic_reports_allowed(), periodic, "{label}");
-        assert_eq!(
-            device.require_periodic_reports().is_ok(),
-            periodic,
-            "{label}"
-        );
-        assert_eq!(device.require_resolvable().is_ok(), resolvable, "{label}");
-    }
-    let read_only = Device {
-        vendor: Vendor::Posnet,
-        model: String::new(),
-        firmware: String::new(),
-        unique_number: "TST0000000001".to_owned(),
-        problems: vec![Problem::ReadOnly {
-            periodic_reports: false,
-        }],
-        vat: vec![],
-        capabilities: Capabilities::default(),
-    };
-    assert_eq!(
-        read_only.description(),
-        "Drukarka jest w trybie tylko do odczytu"
-    );
-}
-
-#[test]
-fn fiscal_memory_unique_number_uses_exact_ascii_format() {
-    for identity in ["ABC1234567890", "ZZZ0000000000"] {
-        assert!(valid_unique_number(identity));
-    }
+fn invalid_identity_blocks_every_operation_even_when_problems_are_tolerated() {
     for identity in [
         "",
         "ABC123456789",
@@ -151,7 +162,170 @@ fn fiscal_memory_unique_number_uses_exact_ascii_format() {
         "ABC123456789x",
         "ĄBC1234567890",
         " ABC1234567890",
+        "ABC1234567890 ",
     ] {
-        assert!(!valid_unique_number(identity));
+        let device = Device {
+            unique_number: identity.to_owned(),
+            problems: vec![
+                Problem::DailyReportOverdue,
+                Problem::ReadOnly {
+                    periodic_reports: true,
+                },
+            ],
+            vat: vec![VatRate {
+                slot: 0,
+                kind: VatKind::Exempt,
+            }],
+            ..device()
+        };
+        assert!(!device.ready(), "{identity:?}");
+        assert!(!device.daily_report_allowed(), "{identity:?}");
+        assert!(!device.periodic_reports_allowed(), "{identity:?}");
+        assert!(device.describable_capabilities().is_none(), "{identity:?}");
+        for result in [
+            device.require_ready(),
+            device.require_periodic_reports(),
+            device.require_resolvable(),
+        ] {
+            match result {
+                Err(Error::NotReady(message)) => assert_eq!(
+                    message, "Nieprawidłowy numer unikatowy drukarki",
+                    "{identity:?}"
+                ),
+                result => panic!("{identity:?}: {result:?}"),
+            }
+        }
+    }
+    for identity in ["ABC1234567890", "ZZZ0000000000"] {
+        let device = Device {
+            unique_number: identity.to_owned(),
+            ..device()
+        };
+        assert!(device.require_ready().is_ok());
+        assert!(device.describable_capabilities().is_some());
+    }
+}
+
+#[test]
+fn vat_assignments_gate_readiness_reports_resolution_and_telemetry() {
+    for (slot, kind, legal) in [
+        (0, VatKind::Rate { basis_points: 2300 }, true),
+        (1, VatKind::Rate { basis_points: 800 }, true),
+        (2, VatKind::Rate { basis_points: 500 }, true),
+        (3, VatKind::Rate { basis_points: 0 }, true),
+        (4, VatKind::Exempt, true),
+        (0, VatKind::Rate { basis_points: 2299 }, false),
+        (1, VatKind::Rate { basis_points: 801 }, false),
+        (2, VatKind::Rate { basis_points: 501 }, false),
+        (3, VatKind::Rate { basis_points: 1 }, false),
+        (4, VatKind::Rate { basis_points: 0 }, false),
+        (0, VatKind::Exempt, false),
+        (5, VatKind::Rate { basis_points: 1900 }, true),
+        (6, VatKind::Exempt, true),
+        (7, VatKind::Rate { basis_points: 2300 }, false),
+        (7, VatKind::Inactive, false),
+        (255, VatKind::Inactive, false),
+    ]
+    .into_iter()
+    .chain((0..7).map(|slot| (slot, VatKind::Inactive, true)))
+    {
+        let device = Device {
+            vat: vec![VatRate { slot, kind }],
+            ..device()
+        };
+        let label = format!("{slot}: {kind:?}");
+        assert_eq!(device.ready(), legal, "{label}");
+        assert_eq!(device.daily_report_allowed(), legal, "{label}");
+        assert_eq!(device.periodic_reports_allowed(), legal, "{label}");
+        assert_eq!(
+            device.describable_capabilities().is_some(),
+            legal,
+            "{label}"
+        );
+        for result in [
+            device.require_ready(),
+            device.require_periodic_reports(),
+            device.require_resolvable(),
+        ] {
+            match (result, legal) {
+                (Ok(()), true) => {},
+                (Err(Error::NotReady(message)), false) => {
+                    assert_eq!(message, "Nieprawidłowe przypisanie liter VAT A–E");
+                },
+                (result, _) => panic!("{label}: {result:?}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn unknown_capabilities_are_not_advertised_but_readiness_problems_can_be() {
+    let known = device();
+    assert_eq!(known.describable_capabilities(), Some(&known.capabilities));
+    let paper_out = Device {
+        problems: vec!["Brak papieru".into()],
+        ..device()
+    };
+    assert_eq!(
+        paper_out.describable_capabilities(),
+        Some(&paper_out.capabilities)
+    );
+    for caps in [
+        Capabilities {
+            max_item_name: 0,
+            ..known.capabilities.clone()
+        },
+        Capabilities {
+            max_lines: 0,
+            ..known.capabilities.clone()
+        },
+        Capabilities {
+            max_company_name: 0,
+            ..known.capabilities.clone()
+        },
+        Capabilities {
+            max_quantity_decimals: 9,
+            ..known.capabilities.clone()
+        },
+        Capabilities {
+            allowed_characters: String::new(),
+            ..known.capabilities
+        },
+    ] {
+        let device = Device {
+            capabilities: caps,
+            ..device()
+        };
+        assert!(
+            device.describable_capabilities().is_none(),
+            "{:?}",
+            device.capabilities
+        );
+    }
+    for decimals in [0, 8] {
+        let mut device = device();
+        device.capabilities.max_quantity_decimals = decimals;
+        assert_eq!(
+            device.describable_capabilities(),
+            Some(&device.capabilities)
+        );
+    }
+}
+
+#[test]
+fn operation_binding_compares_the_complete_unique_number_without_normalizing() {
+    let device = device();
+    assert!(device.require_unique_number("TST0000000001").is_ok());
+    for other in ["TST0000000002", "tst0000000001", "TST 0000000001", ""] {
+        let result = device.require_unique_number(other);
+        assert!(matches!(result, Err(Error::Invalid(_))));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!(
+                "Podłączona drukarka TST0000000001 nie jest drukarką {other}, \
+                 której dotyczy operacja."
+            )
+        );
+        assert_eq!(device.unique_number, "TST0000000001");
     }
 }

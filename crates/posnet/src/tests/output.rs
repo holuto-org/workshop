@@ -3,8 +3,8 @@ use jiff::civil::date;
 use super::{Recorder, printer, sale, simulator};
 use crate::{
     capabilities::capabilities,
-    simulator::{Simulator, UNIQUE_NUMBER},
-    testing::{BRAND, line, pay},
+    simulator::{SimReport, Simulator, UNIQUE_NUMBER},
+    testing::{BRAND, line, params, pay},
 };
 use fiscal::{
     driver::Driver,
@@ -34,18 +34,10 @@ fn receipt_stream(receipt: &Receipt, header: &str) -> String {
     let status = device.probe().unwrap();
     let from = sim.frames().len();
     let mut journal = Recorder::default();
-    let printed = device
+    let _printed = device
         .print_receipt(receipt, &status, &mut journal)
         .unwrap();
-    assert_eq!(printed.receipt_number.as_deref(), Some("1"));
-    assert_eq!(printed.issued_at, "2026-07-01T10:34:00Z".parse().unwrap());
-    assert_eq!(sim.receipts()[0].total, receipt.fiscal_total().get());
-    let frames = stream(&sim, from);
-    assert!(
-        device.probe().unwrap().ready(),
-        "receipt and optional footer are closed"
-    );
-    frames
+    stream(&sim, from)
 }
 
 #[test]
@@ -154,7 +146,7 @@ fn brand_footer_frames() {
 }
 
 macro_rules! report_frames {
-    ($name:ident,$report:expr) => {
+    ($name:ident,$report:expr,$command:literal,$params:expr) => {
         #[test]
         fn $name() {
             let sim = simulator();
@@ -162,17 +154,30 @@ macro_rules! report_frames {
                 .print_report($report, UNIQUE_NUMBER, &mut Recorder::default())
                 .unwrap();
             insta::assert_snapshot!(stream(&sim, 0));
-            assert_eq!(sim.reports().len(), 1);
+            assert_eq!(
+                sim.reports(),
+                [SimReport {
+                    command: $command.to_owned(),
+                    params: params($params),
+                }]
+            );
         }
     };
 }
-report_frames!(daily_report_frames, Report::Daily);
+report_frames!(
+    daily_report_frames,
+    Report::Daily,
+    "dailyrep",
+    &[("da", "2026-07-01")]
+);
 report_frames!(
     monthly_report_frames,
     Report::Monthly {
         year: 2026,
         month: 6
-    }
+    },
+    "monthlyrep",
+    &[("da", "2026-06-01"), ("su", "0")]
 );
 report_frames!(
     periodic_report_frames,
@@ -180,7 +185,9 @@ report_frames!(
         from: date(2026, 1, 1),
         to: date(2026, 6, 30),
         summary: false
-    }
+    },
+    "periodicrepbydates",
+    &[("fd", "2026-01-01"), ("td", "2026-06-30"), ("su", "0")]
 );
 report_frames!(
     periodic_summary_frames,
@@ -188,7 +195,9 @@ report_frames!(
         from: date(2026, 1, 1),
         to: date(2026, 6, 30),
         summary: true
-    }
+    },
+    "periodicrepbydates",
+    &[("fd", "2026-01-01"), ("td", "2026-06-30"), ("su", "1")]
 );
 
 #[test]

@@ -52,6 +52,7 @@ impl VatLetter {
         }
     }
 
+    /// A–G are slots 0–6; every other slot is outside the wire contract.
     pub const fn from_slot(slot: u8) -> Option<Self> {
         match slot {
             0 => Some(Self::A),
@@ -229,10 +230,13 @@ impl Page {
 pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<String>) {
     let mut mapped = Vec::new();
     let mut skipped = Vec::new();
-    for rate in rates.iter().filter(|r| r.active() && r.slot < VAT_SLOTS) {
-        match (VatCode::of(*rate), VatLetter::from_slot(rate.slot)) {
-            (Some(vat_rate), Some(letter)) => mapped.push(VatRateMapping { letter, vat_rate }),
-            _ => skipped.push(format!(
+    for rate in rates.iter().filter(|rate| rate.active()) {
+        let Some(letter) = VatLetter::from_slot(rate.slot) else {
+            continue;
+        };
+        match VatCode::of(*rate) {
+            Some(vat_rate) => mapped.push(VatRateMapping { letter, vat_rate }),
+            None => skipped.push(format!(
                 "Pomijam nieobsługiwaną stawkę VAT w slocie {}",
                 rate.label()
             )),

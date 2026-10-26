@@ -9,11 +9,10 @@ interruptMode: never
 
 # Telemetry
 
-[The telemetry policy](../../docs/telemetry.md) is the data allowlist and
-explains native-dump privacy. Instrumentation in the drivers and agent uses
-`tracing`, not direct Sentry capture (agent API may read trace propagation headers).
-Desktop owns the Sentry client, OS-root transport, subscriber, scrubbers,
-sessions and native reporter.
+Read [the telemetry policy](../../docs/telemetry.md) before changing capture.
+It owns the data allowlist, severity levels, sampling, propagation and consent
+lifecycle. Instrument driver/agent code through `tracing`; keep Sentry client
+ownership in desktop.
 
 - Instrument only IDs, command names, states, attempts and device error codes;
   the structured transport retains a narrower allowlist, not arbitrary fields.
@@ -21,27 +20,19 @@ sessions and native reporter.
   hostname, local paths or raw request/response/problem bodies. Do not instrument
   arguments with automatic `Debug`; skip payloads/secrets. Route names are fixed
   templates, not actual IDs/URLs/cursors.
-- ERROR: a person must act — uncertain fiscal outcome, corrupt journal, worker
-  panic, unexpected API contract violation. WARN: handled degradation —
-  not-ready device, operator wait, retrying start. INFO: milestones — connected,
-  claimed, receipt/report printed. No span/INFO per normal three-second poll.
+- Follow the [signal policy](../../docs/telemetry.md#what-is-sent); do not add
+  poll-specific root spans or INFO messages. Keep normal HTTP-call spans.
 - Agent owns the single fiscal-operation span with
-  `sentry.op = "fiscal.receipt"` or `"fiscal.report"`, job ID/attempt/kind;
-  nested driver spans use `device.receipt`/`device.report`. One HTTP-call span
+  `sentry.op = "fiscal.receipt"` or `"fiscal.report"`; receipt roots include
+  job ID/attempt/kind. Nested driver spans use `device.receipt`/`device.report`.
+  One HTTP-call span
   with `sentry.op = "http.client"`, method/template/status. Forward only
-  SDK-provided trace headers to Holuto: 0.49.3 emits `sentry-trace`, not
-  `baggage`; do not fabricate baggage or log propagation contents.
-- Device tags are Holuto printer ID and physical serial, not staff/customer
-  identity. Keep default PII disabled and host/server identity removed. Scrub
-  errors, breadcrumbs, logs **and transactions**; test the full envelope through
-  a capturing transport with synthetic secret/PII canaries.
-- No build-time DSN or saved opt-out means no client transmission at startup.
-  Live opt-out gates new structured signals/envelopes; restart to disable the
-  native reporter or initialize a client after opting in. Read the preference
-  and initialize Sentry before the instance lock, fiscal journal or worker: the
-  native reporter re-executes the binary and must enter initialization even if
-  consent changed after its parent launched. Native memory is not protected by
-  structured hooks; never promise it contains no sensitive data.
+  SDK-provided trace headers to Holuto; never fabricate or log their contents.
+- Test errors, breadcrumbs, logs **and transactions** through a capturing
+  transport with synthetic secret/PII canaries, not just `before_send`.
+- Preserve the [native reporter lifecycle](../../docs/telemetry.md#native-minidumps-important-exception):
+  initialize before the instance lock, fiscal journal or worker; enter
+  initialization in reporter children even after consent changes.
 
 Changing capture fields, retention or opt-out behavior changes the documented
 privacy contract: update policy and tests in the same change.

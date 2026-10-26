@@ -22,11 +22,12 @@ effects, and no replayed fiscal frames.
 
 ## Fault matrix
 
-At the first, middle, final and footer commands of each driver, exercise: explicit
-named refusal; refusal naming another command; execute then lose reply; execute
-then corrupt reply; execute then close connection. Inspect the simulator's
-effects separately from what the driver received. A simple pre-execution error
-cannot prove post-execution uncertainty.
+At the first, middle, final and footer commands of each driver, exercise:
+matched explicit refusal; mismatched reply correlation; execute then lose reply;
+execute then corrupt reply; execute then close connection. Posnet/Novitus replies
+name commands; Elzab correlates IDs, not command names. Inspect simulator effects
+separately from what the driver received. A pre-execution error cannot prove
+post-execution uncertainty.
 
 Each brand's `simulator::Simulator` fixes printer time (`set_clock`), varies
 documented readiness (`set_status`) and injects execute-first faults through its
@@ -55,11 +56,11 @@ authorization to skip preflight or switch printers while blocked.
   unresolved; staff reconcile the number in Holuto. Never reprint.
 - **Completed but Holuto already failed/expired**: Retain journal and block.
   Notice names job/order and receipt number or `nieczytelny`. Only explicit
-  **local operator acknowledgement** on the same ready device serial appends
-  history and settles; it neither prints nor reports to Holuto. Backend staff
-  resolution cannot resolve these terminal states.
-- **Mismatched attempt/serial, corrupt or unreadable journal**: Fail closed,
-  preserving evidence; never delete the file as recovery.
+  **local operator acknowledgement** on the same ready vendor/unique number
+  appends history and settles; it neither prints nor reports to Holuto. Backend
+  staff resolution cannot resolve these terminal states.
+- **Mismatched attempt/vendor/unique number, corrupt or unreadable journal**:
+  Fail closed, preserving evidence; never delete the file as recovery.
 - **Interrupted report**: Block until explicit report resolution with the same
   ready printer; resolution prints nothing. An overdue daily report or read-only
   mode alone does not count as not ready for either local resolution, or the
@@ -77,9 +78,10 @@ form before journaling and sending; replay preserves that canonical note.
 
 A post-send refusal is **certain** only with a vendor statement that it rejects
 the operation before any print or fiscal-memory effect. An error-code name or
-table alone is insufficient. Simulator `Refused` faults skip execution: they
-test classification, never prove that the device has no effects. Default to
-**uncertain**; admit no additional code without that vendor evidence.
+table alone is insufficient. Posnet `Refused`, Novitus `Refuse` and Elzab
+`Device`/`Transport` simulator faults skip execution: they test classification,
+never prove that hardware has no effects. Default to **uncertain**; admit no
+additional code without that vendor evidence.
 
 The complete certain-refusal list (only at the initial dispatch stage, with a
 valid reply matched to the sent command) is:
@@ -92,9 +94,9 @@ valid reply matched to the sent command) is:
   `#o` (invalid range or no fiscal records in it).
 - **Elzab:** transport rejection of the initial single-frame `LOR` only.
 
-All other execution errors, lost replies and wrong-command replies remain
-uncertain, including Posnet report date-error codes 2042/2043/2045/2046/2050
-and later receipt refusals through fiscal close. No refusal permits resending.
+All other execution errors, lost replies and mismatched replies remain uncertain,
+including report date-error replies and later receipt refusals through fiscal
+close. No refusal permits resending.
 A successful Posnet `trend` completes the fiscal record (`strns.fe`,
 POT-I-DEV-37 p. 377), so a failing `trftrln`/`trftrend` footer still returns the
 printed receipt; the unfinished footer keeps preflight not ready. An accepted
@@ -114,10 +116,9 @@ cannot prove fsync or serialization.
 Use independent published frame/CRC vectors and fixed-clock output snapshots.
 Review every receipt kind: advance, sale, mixed VAT, deductions, split payment,
 credit, fully prepaid and optional footer. Assert exact command order and field
-values in addition to the snapshot. The
-[Posnet protocol](../fiscal-contract.md#posnet) is
-the output oracle; simulator and driver sharing a helper is not an independent
-one.
+values in addition to the snapshot. Each brand's
+[published specification](../fiscal-contract.md#specification-sources) is the
+output oracle; simulator and driver sharing a helper is not an independent one.
 
 Properties compare quantity × unit price half-up rounding to independent integer
 arithmetic, validate range/overflow, per-slot sales/deductions and exact payment

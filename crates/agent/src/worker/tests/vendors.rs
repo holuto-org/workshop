@@ -254,11 +254,18 @@ fn orphaned_receipt_on_an_overdue_printer_is_acknowledged_without_printing() {
 }
 
 #[test]
-fn each_vendor_lost_reply_blocks_across_restart_without_replay() {
-    for vendor in VENDORS {
+fn each_vendor_lost_or_disconnected_reply_blocks_across_restart_without_replay() {
+    for (vendor, disconnect) in VENDORS
+        .into_iter()
+        .flat_map(|vendor| [(vendor, false), (vendor, true)])
+    {
         let sim = Simulator::start(vendor);
         sim.prepare_receipt();
-        sim.lose_final_reply();
+        if disconnect {
+            sim.disconnect_final_reply();
+        } else {
+            sim.lose_final_reply();
+        }
         let holuto = Holuto::new();
         let id = holuto.enqueue(job_json());
         let (_temporary, dir) = state_dir();
@@ -304,6 +311,28 @@ fn each_vendor_lost_reply_blocks_across_restart_without_replay() {
                 .count(),
             1
         );
+        holuto.resolve(id, Some("1")).unwrap();
+        let (worker, events) = spawn(&sim, &holuto, &dir, Some(Vendor::Posnet));
+        let _resolved = receive_until(&events, |event| {
+            matches!(event, Event::Device { blocked: false, .. })
+        });
+        let _stopped = stop(worker, &events);
+        assert_eq!(
+            sim.fiscal_frames(),
+            before,
+            "{vendor:?}: staff resolution reissued a command"
+        );
+        assert_eq!(sim.receipts(), 1);
+        let Some(Operation::Receipt(resolved)) = Journal::new(&dir).load().unwrap() else {
+            panic!("resolved evidence must remain journaled");
+        };
+        assert_eq!(resolved.device, operation.device);
+        assert_eq!(resolved.attempt, operation.attempt);
+        assert_eq!(
+            resolved.settled.map(|settled| settled.state),
+            Some(JobState::Done)
+        );
+        assert_eq!(holuto.job(id)["state"], "done");
     }
 }
 

@@ -1,4 +1,4 @@
-use proptest::{prelude::*, sample, test_runner::Config};
+use proptest::{prelude::*, sample};
 use proptest_state_machine::{ReferenceStateMachine, StateMachineTest, prop_state_machine};
 use tempfile::TempDir;
 
@@ -170,7 +170,7 @@ impl StateMachineTest for System {
         }
     }
 
-    fn apply(state: Self, _model: &Model, transition: Transition) -> Self {
+    fn apply(state: Self, ref_state: &Model, transition: Transition) -> Self {
         match transition {
             Transition::StaffDone => state.server.resolve(JOB_ID, Some("41")).unwrap(),
             Transition::StaffFailed => state.server.resolve(JOB_ID, None).unwrap(),
@@ -189,7 +189,15 @@ impl StateMachineTest for System {
                     },
                 );
                 let mut agent = agent(&state.sim, &state.dir, &state.server).unwrap();
-                let _result = agent.settle();
+                let result = agent.settle();
+                if ref_state.settled {
+                    assert_eq!(result.unwrap(), None);
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(Error::Api(ApiError::Status { status: 503, .. }))
+                    ));
+                }
                 // A settled journal emits no request, so consume an unused scripted failure.
                 state.server.clear_faults();
             },
@@ -213,6 +221,24 @@ impl StateMachineTest for System {
             ref_state.settled,
             "journal settlement agrees with reference after each step"
         );
+        assert_eq!(operation.job_id, JOB_ID);
+        assert_eq!(operation.vendor, Vendor::Posnet);
+        assert_eq!(operation.device_unique_number, UNIQUE_NUMBER);
+        assert_eq!(
+            operation.device,
+            match ref_state.evidence {
+                Evidence::NoDispatch => Device::NotStarted,
+                Evidence::Dispatching => Device::Dispatching {
+                    stage: "trend".to_owned()
+                },
+                Evidence::Printed => Device::Completed {
+                    receipt_number: Some("41".to_owned())
+                },
+                Evidence::Unnumbered => Device::Completed {
+                    receipt_number: None
+                },
+            }
+        );
         assert_eq!(
             operation.attempt, ATTEMPT,
             "reconciliation never changes attempt"
@@ -222,51 +248,17 @@ impl StateMachineTest for System {
             "2025-01-02T12:00:00Z",
             "reconciliation never changes printer issue time"
         );
-        assert!(
-            state.sim.receipts().is_empty() && state.sim.reports().is_empty(),
-            "every model transition is side-effect-free on the fiscal device"
+        assert_eq!(
+            sent(&state.sim, &RECEIPT_COMMANDS),
+            Vec::<Vec<u8>>::new(),
+            "reconciliation never sends even an incomplete fiscal command"
         );
-    }
-}
-
-#[test]
-fn reconciliation_preconditions_reject_transitions_invalidated_by_shrinking() {
-    for (evidence, remote, settled, staff_allowed, acknowledge_allowed) in [
-        (Evidence::Printed, Remote::Unknown, false, true, false),
-        (Evidence::Printed, Remote::Taken, false, false, false),
-        (Evidence::Printed, Remote::Done, false, false, false),
-        (Evidence::Printed, Remote::Failed, false, false, true),
-        (Evidence::Printed, Remote::Expired, false, false, true),
-        (Evidence::Unnumbered, Remote::Failed, false, false, true),
-        (Evidence::Unnumbered, Remote::Expired, false, false, true),
-        (Evidence::Printed, Remote::Failed, true, false, false),
-        (Evidence::Unnumbered, Remote::Expired, true, false, false),
-        (Evidence::NoDispatch, Remote::Failed, false, false, false),
-        (Evidence::Dispatching, Remote::Expired, false, false, false),
-    ] {
-        let state = Model {
-            evidence,
-            remote,
-            settled,
-        };
-        for (transition, allowed) in [
-            (Transition::Settle, true),
-            (Transition::NetworkFailure, true),
-            (Transition::StaffDone, staff_allowed),
-            (Transition::StaffFailed, staff_allowed),
-            (Transition::Acknowledge, acknowledge_allowed),
-        ] {
-            assert_eq!(
-                Reconciliation::preconditions(&state, &transition),
-                allowed,
-                "{state:?}, {transition:?}"
-            );
-        }
+        assert_eq!(state.sim.receipts(), []);
+        assert_eq!(state.sim.reports(), []);
     }
 }
 
 prop_state_machine! {
-    #![proptest_config(Config {cases:32,..Config::default()})]
     #[test]
     fn reconciliation_never_replays_fiscal_effects(sequential 1..12 => System);
 }

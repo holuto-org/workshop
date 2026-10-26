@@ -32,7 +32,13 @@ fn cli_attachment_preserves_captured_subprocess_output() -> TestResult {
         .env("WORKSHOP_CONSOLE_CHILD", "1")
         .output()?;
     assert!(output.status.success(), "child process: {output:?}");
-    assert!(String::from_utf8(output.stdout)?.contains("workshop-stdout"));
+    assert_eq!(
+        String::from_utf8(output.stdout)?
+            .lines()
+            .filter(|line| line.starts_with("workshop-"))
+            .collect::<Vec<_>>(),
+        ["workshop-stdout"]
+    );
     assert_eq!(String::from_utf8(output.stderr)?, "workshop-stderr\n");
     Ok(())
 }

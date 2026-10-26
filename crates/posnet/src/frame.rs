@@ -2,6 +2,7 @@
 //!
 //! CRC-16/XMODEM (polynomial 0x1021, initial value 0) covers the payload;
 //! four uppercase hex digits carry the checksum (spec p. 13).
+//! Replies reject malformed keys, error codes and controls; LF remains valid in header text.
 
 use fiscal::{cp1250, error::Error};
 
@@ -150,12 +151,24 @@ pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
         return Err(corrupt());
     }
     let text = cp1250::decode(payload).ok_or_else(corrupt)?;
+    if text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\t' | '\n'))
+    {
+        return Err(corrupt());
+    }
     let mut fields = text.split('\t');
     let command = fields.next().unwrap_or_default().to_owned();
+    if command != "ERR" && !valid_command(&command) {
+        return Err(corrupt());
+    }
     let mut reply = Vec::new();
     let mut error = None;
     for field in fields.filter(|field| !field.is_empty()) {
         if let Some(code) = field.strip_prefix('?') {
+            if code.is_empty() || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(corrupt());
+            }
             if error.is_some() {
                 return Err(Error::Protocol(
                     "Powtórzony kod błędu w odpowiedzi drukarki.".to_owned(),
@@ -177,6 +190,9 @@ pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
                 };
                 pair
             };
+            if !valid_key(key) {
+                return Err(corrupt());
+            }
             if reply.iter().any(|(name, _)| name == key) {
                 return Err(Error::Protocol(
                     "Powtórzony parametr w odpowiedzi drukarki.".to_owned(),

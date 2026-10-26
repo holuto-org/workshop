@@ -144,6 +144,7 @@ fn windows_keeps_unknown_com_ports_without_asserting_physical_identity() {
             vec![
                 port("COM3", SerialPortType::Unknown),
                 port("COM1", SerialPortType::Unknown),
+                port("COM2", SerialPortType::PciPort),
                 port("COM4", SerialPortType::BluetoothPort),
                 usb("COM5", 0x1234, 0x5678),
             ],
@@ -163,6 +164,7 @@ fn macos_keeps_callout_drops_dialin_duplicates() {
                 usb("/dev/cu.usbmodem", 0x1424, 0x10B0),
                 port("/dev/tty.serial", SerialPortType::PciPort),
                 port("/dev/cu.serial", SerialPortType::PciPort),
+                port("/dev/cu.unknown", SerialPortType::Unknown),
                 port("/dev/cu.Bluetooth", SerialPortType::BluetoothPort),
             ],
             Os::Macos,
@@ -199,4 +201,37 @@ fn orders_hinted_then_bridges_then_native() {
             candidate("z-native", None),
         ]
     );
+}
+
+#[test]
+fn usb_descriptions_and_serial_numbers_never_become_verified_identity() {
+    let described = |name: &str, vid, pid| {
+        port(
+            name,
+            SerialPortType::UsbPort(UsbPortInfo {
+                vid,
+                pid,
+                serial_number: Some("ABC1234567890".to_owned()),
+                manufacturer: Some("Posnet Novitus Elzab".to_owned()),
+                product: Some("Temo Online".to_owned()),
+            }),
+        )
+    };
+    for os in [Os::Linux, Os::Windows, Os::Macos] {
+        assert_eq!(
+            filter(
+                vec![
+                    described("unknown", 0x1234, 0x5678),
+                    described("bridge", 0x0403, 0x6001),
+                    described("hint", 0x0483, 0x5740),
+                ],
+                os,
+                &|_| panic!("USB metadata must never query native UARTs"),
+            ),
+            vec![
+                candidate("hint", Some(Vendor::Elzab)),
+                candidate("bridge", None)
+            ],
+        );
+    }
 }

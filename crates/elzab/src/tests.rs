@@ -1,5 +1,3 @@
-#[cfg(not(workshop_acceptance))]
-use crate::receipt as receipt_commands;
 use crate::{
     frame,
     printer::{Printer, identify},
@@ -18,6 +16,7 @@ use fiscal::{
     receipt::{Advance, Line, Payment, PaymentForm, Quantity, Receipt, VatSlot},
     report::Report,
 };
+use jiff::civil::date;
 use std::{
     io,
     sync::{Arc, Mutex, PoisonError},
@@ -200,8 +199,6 @@ fn read_only_printer_refuses_printing_but_allows_resolution() {
 #[test]
 fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command() {
     // LDS advances are qualified; only zero-total and footer need acceptance.
-    let caps = profile::lookup("ELZAB CUBE online").unwrap();
-    assert!(caps.advance_deductions);
     for (advance, footer, message) in [
         (
             12346,
@@ -252,8 +249,10 @@ fn identify_accepts_online_models_only() {
         sim.set_identity(model, "MD06.02");
         assert!(matches!(
             identify(sim.link().as_ref(), &connection(&sim)),
-            Err(Error::Unsupported(message))
-                if message.contains(model) && message.contains("MD06.02")
+            Err(Error::Unsupported(message)) if message == format!(
+                "Nieobsługiwany model drukarki Elzab: {model} (oprogramowanie MD06.02). \
+                 Obsługiwane są Elzab Zeta, Mera i Cube ONLINE."
+            )
         ));
         assert_eq!(bodies(&sim), ["XTR"], "nothing beyond identification");
     }
@@ -281,30 +280,15 @@ fn non_cp1250_code_page_is_not_ready() {
     assert!(!device.capabilities.allows("😀\n"));
 }
 #[test]
-fn transport_status_rejection_of_first_frame_is_certain() {
-    let sim = Simulator::start();
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    sim.fault("LOR", Fault::Transport("SL".to_owned()));
-    assert!(matches!(
-        driver.print_receipt(&receipt(0, false), &expected, &mut Log::default()),
-        Err(Error::Device { rejected: true, .. })
-    ));
-    assert_eq!(fiscal(&sim), ["LOR\x1dC0"]);
-    assert_eq!(sim.receipts(), 0);
-}
-#[test]
 fn reply_with_foreign_command_id_is_ignored() {
     let sim = Simulator::start();
     sim.fault("XTR", Fault::ForeignReply);
     let mut session = Session::open(sim.link().as_ref(), &connection(&sim)).unwrap();
-    assert!(
-        session
-            .command("XTR", "", Duration::from_secs(3))
-            .unwrap()
-            .contains("ELZAB CUBE online")
+    assert_eq!(
+        session.command("XTR", "", Duration::from_secs(3)).unwrap(),
+        "\x1dBELZAB CUBE online\x1dC172\x1dDMD06.02"
     );
-    assert_eq!(sim.frames().len(), 1);
+    assert_eq!(bodies(&sim), ["XTR"]);
 }
 #[test]
 fn receipt_frames_match_snapshot() {
@@ -316,6 +300,9 @@ fn receipt_frames_match_snapshot() {
         .print_receipt(&receipt(2346, false), &expected, &mut log)
         .unwrap();
     assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+    assert_eq!(printed.issued_at.to_string(), "2026-10-24T10:00:00Z");
+    assert_eq!(sim.receipts(), 1);
+    assert!(!sim.transaction_open());
     assert_eq!(log.commands, ["LOR", "LNP", "LIT", "LDS", "LBP", "LCL"]);
     insta::assert_debug_snapshot!(fiscal(&sim), @r#"
     [
@@ -340,55 +327,63 @@ fn paper_out_mid_receipt_is_uncertain() {
     ));
     assert_eq!(sim.receipts(), 0);
     assert!(!sim.transaction_open());
-    assert_eq!(fiscal(&sim).len(), 3);
-}
-#[test]
-fn daily_report_acceptance_is_unknown_and_blocks() {
-    let sim = Simulator::start();
-    let mut log = Log::default();
-    assert!(matches!(
-        printer(&sim).print_report(Report::Daily, "ABC1234567890", &mut log),
-        Err(Error::Uncertain(_))
-    ));
-    assert_eq!(log.commands, ["RRP"]);
-    assert_eq!(sim.reports(), 0);
-    assert_eq!(fiscal(&sim), ["RRP\x1dI1\x1dJ1"]);
-}
-#[cfg(not(workshop_acceptance))]
-#[test]
-fn fully_prepaid_receipt_is_refused_before_open() {
-    let sim = Simulator::start();
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    assert!(matches!(
-        driver.print_receipt(&receipt(12346, false), &expected, &mut Log::default()),
-        Err(Error::Invalid(_))
-    ));
-    assert_eq!(fiscal(&sim), Vec::<String>::new());
+    assert_eq!(
+        fiscal(&sim),
+        [
+            "LOR\x1dC0",
+            "LNP\x1dOA1234567890",
+            "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+        ]
+    );
 }
 #[test]
 fn fiscal_faults_are_never_retried() {
-    for command in ["LOR", "LNP", "LIT", "LDS", "LBP", "LCL"] {
+    let commands = ["LOR", "LNP", "LIT", "LDS", "LBP", "LCL"];
+    let frames = [
+        "LOR\x1dC0",
+        "LNP\x1dOA1234567890",
+        "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+        "LDS\x1dIAA1\x1fB23,46\x1fDZaliczka\x1eCA\x1eD",
+        "LBP\x1dKA1\x1eBKARTA\x1eC100,00\x1eX2",
+        "LCL\x1dRA100,00",
+    ];
+    for (index, command) in commands.iter().enumerate() {
         for fault in [
             Fault::LoseReply,
             Fault::CorruptReply,
             Fault::Disconnect,
             Fault::Device(450),
+            Fault::Transport("SL".to_owned()),
+            Fault::Reply(frame::encode("999999999", b"").unwrap()),
         ] {
             let sim = Simulator::start();
             let driver = printer(&sim);
             let expected = driver.probe().unwrap();
+            let executes = !matches!(fault, Fault::Device(_) | Fault::Transport(_));
+            let certain = index == 0 && matches!(fault, Fault::Transport(_));
             sim.fault(command, fault);
-            assert!(matches!(
-                driver.print_receipt(&receipt(2346, false), &expected, &mut Log::default()),
-                Err(Error::Uncertain(_))
-            ));
+            let mut log = Log::default();
+            let error = driver
+                .print_receipt(&receipt(2346, false), &expected, &mut log)
+                .unwrap_err();
+            assert!(if certain {
+                matches!(
+                    error,
+                    Error::Device {
+                        rejected: true,
+                        code: 76,
+                        ..
+                    }
+                )
+            } else {
+                matches!(error, Error::Uncertain(_))
+            });
+            assert_eq!(fiscal(&sim), frames[..=index]);
+            assert_eq!(log.commands, commands[..=index]);
+            assert_eq!(sim.receipts(), u32::from(index == 5 && executes));
             assert_eq!(
-                fiscal(&sim)
-                    .iter()
-                    .filter(|b| b.starts_with(command))
-                    .count(),
-                1
+                sim.transaction_open(),
+                (index != 0 || executes) && !(index == 5 && executes)
             );
         }
     }
@@ -411,29 +406,51 @@ fn journal_failure_prevents_next_send() {
         } else {
             matches!(error, Error::Uncertain(_))
         });
-        assert_eq!(fiscal(&sim).len(), index);
+        let frames = [
+            "LOR\x1dC0",
+            "LNP\x1dOA1234567890",
+            "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+            "LDS\x1dIAA1\x1fB23,46\x1fDZaliczka\x1eCA\x1eD",
+            "LBP\x1dKA1\x1eBKARTA\x1eC100,00\x1eX2",
+            "LCL\x1dRA100,00",
+        ];
+        assert_eq!(fiscal(&sim), frames[..index]);
+        assert_eq!(
+            log.commands,
+            ["LOR", "LNP", "LIT", "LDS", "LBP", "LCL"][..index]
+        );
+        assert_eq!(sim.receipts(), 0);
+        assert_eq!(sim.transaction_open(), index > 0);
     }
 }
 #[test]
-fn fresh_identity_vat_status_and_header_are_required() {
-    // The acceptance build deliberately permits the non-fiscal-mode case.
-    for change in (0..4).filter(|&change| !cfg!(workshop_acceptance) || change != 2) {
+fn identity_header_and_code_page_are_rechecked_before_dispatch() {
+    for change in 0..3 {
         let sim = Simulator::start();
         let driver = printer(&sim);
         let expected = driver.probe().unwrap();
         match change {
             0 => sim.set_unique_number("OTHER"),
-            1 => sim.set_vat(["22,00", "8,00", "5,00", "0,00", "=", "?", "?"]),
-            2 => sim.set_status(0, (1_u128 << 102) | (1_u128 << 98) | 4 | 8, 32),
-            _ => sim.set_header(""),
+            1 => sim.set_header(""),
+            _ => sim.set_code_page("CP852"),
         }
-        assert!(
-            driver
-                .print_receipt(&receipt(0, false), &expected, &mut Log::default())
-                .is_err(),
-            "case {change}"
-        );
+        let mut log = Log::default();
+        let error = driver
+            .print_receipt(&receipt(0, false), &expected, &mut log)
+            .unwrap_err();
+        match change {
+            0 => assert!(matches!(error, Error::NotReady(_))),
+            1 => assert!(matches!(error, Error::NotReady(message)
+                if message == "Brak zaprogramowanego nagłówka lub NIP")),
+            _ => assert!(matches!(error, Error::NotReady(message)
+                if message == "Ustaw stronę kodową drukarki na CP1250")),
+        }
+        assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal(&sim), Vec::<String>::new());
+        assert_eq!(
+            (sim.receipts(), sim.reports(), sim.transaction_open()),
+            (0, 0, false)
+        );
     }
 }
 #[test]
@@ -511,7 +528,7 @@ fn nested_lpc_refusal_prevents_open_while_status_reports_ready() {
     let mut log = Log::default();
     assert!(matches!(
         driver.print_receipt(&receipt(0, false), &expected, &mut log),
-        Err(Error::NotReady(message)) if message.contains("1203")
+        Err(Error::NotReady(message)) if message == "Elzab nie pozwala otworzyć paragonu: 1203."
     ));
     assert_eq!(log.commands, Vec::<&str>::new());
     assert_eq!(fiscal(&sim), Vec::<String>::new());
@@ -586,18 +603,53 @@ fn every_document_and_mechanism_blocker_prevents_dispatch_and_names_its_cause() 
     });
     for ([one, two, three], (package, bit), message) in set.chain(cleared) {
         let sim = Simulator::start();
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
         sim.set_status(one, two, u32::try_from(three).unwrap());
-        let device = printer(&sim).probe().unwrap();
+        let device = driver.probe().unwrap();
         assert!(!device.ready(), "package {package} bit {bit}");
         assert_eq!(device.description(), message, "package {package} bit {bit}");
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_receipt(&receipt(0, false), &expected, &mut log),
+            Err(Error::NotReady(actual)) if actual == message
+        ));
+        for report in [
+            Report::Daily,
+            Report::Monthly {
+                year: 2026,
+                month: 9,
+            },
+            Report::Periodic {
+                from: date(2026, 9, 1),
+                to: date(2026, 9, 30),
+                summary: true,
+            },
+        ] {
+            assert!(matches!(
+                driver.print_report(report, &expected.unique_number, &mut log),
+                Err(Error::NotReady(actual)) if actual == message
+            ));
+        }
+        assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal(&sim), Vec::<String>::new());
+        assert_eq!(
+            (sim.receipts(), sim.reports(), sim.transaction_open()),
+            (0, 0, false)
+        );
     }
+}
+
+#[test]
+fn simultaneous_status_causes_are_deduplicated_in_operator_order() {
     let sim = Simulator::start();
-    sim.set_status(0, ready[1] | (1 << 68) | (1 << 67), 32 | 2 | 8);
+    let ready = (1_u128 << 102) | (1_u128 << 98) | 4;
+    sim.set_status(0, ready | (1 << 68) | (1 << 67), 32 | 2 | 8);
     assert_eq!(
         printer(&sim).probe().unwrap().description(),
-        format!("{OPERATOR}. {DOCUMENT}. {PAPER}"),
-        "each cause is listed once, in a stable order"
+        "Drukarka Elzab jest w menu lub teście albo wydruk przerwano na drukarce. \
+         Otwarty dokument na drukarce Elzab. Dokończ lub anuluj go na drukarce. \
+         Brak papieru lub podniesiona głowica drukarki Elzab",
     );
 }
 
@@ -711,35 +763,41 @@ fn accepted_daily_report_stays_pending_until_a_later_connection_has_seen_it() {
     // The printout finished; the operator can now resolve the interrupted report.
     let _resolvable = driver.verify("ABC1234567890").unwrap();
     assert!(!sim.daily_pending());
-    assert_eq!(fiscal(&sim).len(), 1);
+    assert_eq!(fiscal(&sim), ["RRP\x1dI1\x1dJ1"]);
 }
 
 #[test]
-fn dst_fold_clock_blocks_only_receipt_timestamps() {
-    use jiff::civil::date;
-    let sim = Simulator::start();
-    sim.set_clock("261025023000");
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    assert!(expected.ready(), "{}", expected.description());
-    driver
-        .print_report(
-            Report::Periodic {
-                from: date(2026, 9, 1),
-                to: date(2026, 9, 30),
-                summary: false,
-            },
-            "ABC1234567890",
-            &mut Log::default(),
-        )
-        .unwrap();
-    let mut log = Log::default();
-    assert!(matches!(
-        driver.print_receipt(&receipt(0, false), &expected, &mut log),
-        Err(Error::Protocol(_))
-    ));
-    assert_eq!(log.commands, Vec::<&str>::new());
-    assert_eq!(fiscal(&sim), ["RPP\x1dE1\x1dFE260901\x1eF260930\x1dS0"]);
+fn dst_fold_and_gap_clocks_block_only_receipt_timestamps() {
+    for clock in ["261025023000", "260329023000"] {
+        let sim = Simulator::start();
+        sim.set_clock(clock);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        assert!(expected.ready(), "{}", expected.description());
+        assert_eq!(
+            driver.verify("ABC1234567890").unwrap().unique_number,
+            "ABC1234567890"
+        );
+        driver
+            .print_report(
+                Report::Periodic {
+                    from: date(2026, 2, 1),
+                    to: date(2026, 2, 28),
+                    summary: false,
+                },
+                "ABC1234567890",
+                &mut Log::default(),
+            )
+            .unwrap();
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_receipt(&receipt(0, false), &expected, &mut log),
+            Err(Error::Protocol(_))
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal(&sim), ["RPP\x1dE1\x1dFE260201\x1eF260228\x1dS0"]);
+        assert_eq!(sim.receipts(), 0);
+    }
 }
 
 #[test]
@@ -770,8 +828,14 @@ fn missing_number_never_replays_a_completed_receipt() {
     assert_eq!(printed.receipt_number, None);
     assert_eq!(sim.receipts(), 1);
     assert_eq!(
-        fiscal(&sim).iter().filter(|b| b.starts_with("LCL")).count(),
-        1
+        fiscal(&sim),
+        [
+            "LOR\x1dC0",
+            "LNP\x1dOA1234567890",
+            "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+            "LBP\x1dKA1\x1eBKARTA\x1eC123,46\x1eX2",
+            "LCL\x1dRA123,46",
+        ]
     );
 }
 
@@ -817,9 +881,41 @@ fn configured_header_all_lines_are_used_without_writing_configuration() {
     let _printed = driver
         .print_receipt(&receipt(0, false), &expected, &mut Log::default())
         .unwrap();
-    assert!(!fiscal(&sim).iter().any(|b| b.starts_with("LAL")));
-    assert!(bodies(&sim).iter().any(|b| b == "yHR\x1dva2"));
-    assert!(!bodies(&sim).iter().any(|b| b.ends_with('W')));
+    assert_eq!(
+        bodies(&sim),
+        [
+            "XTR",
+            "FNR",
+            "XHR\x1dw",
+            "ySR",
+            "YYR\x1dJ",
+            "yHR\x1dva1",
+            "yHR\x1dva2",
+            "yHR\x1dx",
+            "FTR",
+            "XCR",
+            "XTR",
+            "FNR",
+            "XHR\x1dw",
+            "ySR",
+            "YYR\x1dJ",
+            "yHR\x1dva1",
+            "yHR\x1dva2",
+            "yHR\x1dx",
+            "FTR",
+            "XCR",
+            "LPC\x1dA1",
+            "SER",
+            "RNR",
+            "XCR",
+            "LOR\x1dC0",
+            "LNP\x1dOA1234567890",
+            "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+            "LBP\x1dKA1\x1eBKARTA\x1eC123,46\x1eX2",
+            "LCL\x1dRA123,46",
+            "SER",
+        ]
+    );
 }
 
 #[cfg(not(workshop_acceptance))]
@@ -832,8 +928,17 @@ fn brand_across_header_lines_needs_no_footer() {
         let expected = driver.probe().unwrap();
         let result = driver.print_receipt(&receipt(0, true), &expected, &mut Log::default());
         if printed {
-            assert!(result.is_ok(), "{header:?}: {result:?}");
-            assert!(!fiscal(&sim).iter().any(|b| b.starts_with("LAL")));
+            assert_eq!(result.unwrap().receipt_number.as_deref(), Some("1"));
+            assert_eq!(
+                fiscal(&sim),
+                [
+                    "LOR\x1dC0",
+                    "LNP\x1dOA1234567890",
+                    "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+                    "LBP\x1dKA1\x1eBKARTA\x1eC123,46\x1eX2",
+                    "LCL\x1dRA123,46",
+                ]
+            );
             assert_eq!(sim.receipts(), 1);
         } else {
             assert!(
@@ -921,7 +1026,8 @@ fn receipt_is_revalidated_against_actual_name_and_quantity_limits() {
         .unwrap();
         assert!(matches!(
             driver.print_receipt(&receipt, &expected, &mut Log::default()),
-            Err(Error::Invalid(_))
+            Err(Error::Invalid(message))
+                if message == "Pozycja nie mieści się w profilu Elzab (64 znaki, 5 miejsc ilości)."
         ));
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
@@ -964,39 +1070,26 @@ fn exact_64_character_names_print_without_utf8_truncation() {
 }
 
 #[test]
-fn close_effect_survives_lost_corrupt_or_disconnected_reply() {
-    for fault in [Fault::LoseReply, Fault::CorruptReply, Fault::Disconnect] {
-        let sim = Simulator::start();
-        let driver = printer(&sim);
-        let expected = driver.probe().unwrap();
-        sim.fault("LCL", fault);
-        assert!(matches!(
-            driver.print_receipt(&receipt(0, false), &expected, &mut Log::default()),
-            Err(Error::Uncertain(_))
-        ));
-        assert_eq!(sim.receipts(), 1);
-        assert!(!sim.transaction_open());
-        assert_eq!(
-            fiscal(&sim).iter().filter(|b| b.starts_with("LCL")).count(),
-            1
-        );
-    }
-}
-
-#[test]
 fn report_failures_and_transport_rejections_remain_uncertain() {
-    use jiff::civil::date;
-    for report in [
-        Report::Daily,
-        Report::Monthly {
-            year: 2026,
-            month: 9,
-        },
-        Report::Periodic {
-            from: date(2026, 9, 1),
-            to: date(2026, 9, 30),
-            summary: true,
-        },
+    for (report, command, body) in [
+        (Report::Daily, "RRP", "RRP\x1dI1\x1dJ1"),
+        (
+            Report::Monthly {
+                year: 2026,
+                month: 9,
+            },
+            "RPP",
+            "RPP\x1dE1\x1dFB2609\x1dS0",
+        ),
+        (
+            Report::Periodic {
+                from: date(2026, 9, 1),
+                to: date(2026, 9, 30),
+                summary: true,
+            },
+            "RPP",
+            "RPP\x1dE3\x1dFE260901\x1eF260930\x1dS0",
+        ),
     ] {
         for fault in [
             Fault::LoseReply,
@@ -1004,41 +1097,26 @@ fn report_failures_and_transport_rejections_remain_uncertain() {
             Fault::Disconnect,
             Fault::Device(503),
             Fault::Transport("SL".to_owned()),
+            Fault::Reply(frame::encode("999999999", b"").unwrap()),
         ] {
             let sim = Simulator::start();
-            sim.fault(
-                if report == Report::Daily {
-                    "RRP"
-                } else {
-                    "RPP"
-                },
-                fault,
-            );
+            let executes = !matches!(fault, Fault::Device(_) | Fault::Transport(_));
+            sim.fault(command, fault);
+            let mut log = Log::default();
             assert!(matches!(
-                printer(&sim).print_report(report, "ABC1234567890", &mut Log::default()),
+                printer(&sim).print_report(report, "ABC1234567890", &mut log),
                 Err(Error::Uncertain(_))
             ));
-            assert_eq!(fiscal(&sim).len(), 1);
+            assert_eq!(log.commands, [command]);
+            assert_eq!(fiscal(&sim), [body]);
+            assert_eq!(
+                sim.reports(),
+                u32::from(executes && report != Report::Daily)
+            );
+            assert_eq!(sim.daily_pending(), executes && report == Report::Daily);
+            assert_eq!((sim.receipts(), sim.transaction_open()), (0, false));
         }
     }
-}
-
-#[cfg(not(workshop_acceptance))]
-#[test]
-fn unqualified_footer_is_refused_and_qualified_profile_emits_lal() {
-    let sim = Simulator::start();
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    assert!(matches!(
-        driver.print_receipt(&receipt(0, true), &expected, &mut Log::default()),
-        Err(Error::Invalid(text)) if text == FOOTER_REFUSAL
-    ));
-    assert_eq!(fiscal(&sim), Vec::<String>::new());
-    let mut qualified = profile::lookup("ELZAB CUBE online").unwrap();
-    qualified.company_footer = true;
-    let steps = receipt_commands::steps(&receipt(0, true), Some("Inna firma"), &qualified).unwrap();
-    assert_eq!(steps.last().unwrap().fields, "QAAInna firma");
-    assert_eq!(steps.last().unwrap().command, "LAL");
 }
 
 #[test]
@@ -1056,11 +1134,10 @@ fn simulator_link_is_exclusive_and_never_opens_another_port() {
     ));
     drop(first);
     drop(link.open(sim.address(), 9600).unwrap());
-    assert_eq!(link.time_scale(), 1000);
 }
 
 #[test]
-fn inconsistent_multipart_lcl_reply_is_uncertain_not_printed() {
+fn inconsistent_multipart_close_is_uncertain_despite_the_completed_effect() {
     struct CorruptCloseTotal<'a> {
         sim: &'a Simulator,
     }
@@ -1097,8 +1174,14 @@ fn inconsistent_multipart_lcl_reply_is_uncertain_not_printed() {
     assert!(matches!(error, Error::Uncertain(cause) if matches!(*cause, Error::Protocol(_))));
     assert_eq!(sim.receipts(), 1);
     assert_eq!(
-        fiscal(&sim).iter().filter(|b| b.starts_with("LCL")).count(),
-        1
+        fiscal(&sim),
+        [
+            "LOR\x1dC0",
+            "LNP\x1dOA1234567890",
+            "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+            "LBP\x1dKA1\x1eBKARTA\x1eC123,46\x1eX2",
+            "LCL\x1dRA123,46",
+        ]
     );
 }
 /// Command, write budget and the first read budget after it.
@@ -1214,10 +1297,358 @@ fn silence_budget_is_short_for_receipt_lines_and_long_only_for_synchronous_repor
     for (command, write, read) in fiscal {
         let read = read.unwrap();
         assert!(
-            write
-                .checked_sub(read)
-                .is_some_and(|spent| spent < Duration::from_secs(1)),
+            !read.is_zero() && read <= write,
             "{command}: read budget {read:?} must be the remaining {write:?}"
         );
     }
+}
+
+#[test]
+fn malformed_preflight_fields_never_reach_a_fiscal_command() {
+    for (command, id, body) in [
+        (
+            "XTR",
+            "1",
+            "\x1dBELZAB CUBE online\x1dBELZAB ZETA ONLINE\x1dDMD06.02",
+        ),
+        ("XTR", "1", "\x1dBELZAB CUBE online"),
+        ("FNR", "2", "\x1dB"),
+        ("FNR", "2", "\x1dBABC 1234567890"),
+        ("XHR", "3", "\x1dwACP1250\x1dwACP1250"),
+        ("ySR", "4", "\x1dSA1\x1eB0\x1dSA2\x1eB4"),
+        ("ySR", "4", "\x1dSA1\x1eB0\x1dSA1\x1eB0\x1dSA3\x1eB20"),
+        ("ySR", "4", "\x1dSA0\x1eB0\x1dSA2\x1eB4\x1dSA3\x1eB20"),
+        ("ySR", "4", "\x1dSA1\x1eBG\x1dSA2\x1eB4\x1dSA3\x1eB20"),
+        (
+            "ySR",
+            "4",
+            "\x1dSA1\x1eB0\x1dSA2\x1eB4\x1dSA3\x1eB100000000",
+        ),
+        ("YYR", "5", "\x1dJA0"),
+        ("YYR", "5", "\x1dJA257"),
+        ("yHR", "6", "\x1dva1\x1ebWarsztat\x1ebDuplicate"),
+        (
+            "FTR",
+            "8",
+            "\x1dAA23,00\x1eB8,00\x1eC5,00\x1eD0,00\x1eE=\x1eF?",
+        ),
+        (
+            "FTR",
+            "8",
+            "\x1dAA23,00\x1eA8,00\x1eB8,00\x1eC5,00\x1eD0,00\x1eE=\x1eF?\x1eG?",
+        ),
+        (
+            "FTR",
+            "8",
+            "\x1dAA23,0\x1eB8,00\x1eC5,00\x1eD0,00\x1eE=\x1eF?\x1eG?",
+        ),
+        (
+            "FTR",
+            "8",
+            "\x1dAA23,00\x1eB8,00\x1eC5,00\x1eD0,00\x1eE=\x1eF101,00\x1eG?",
+        ),
+        (
+            "FTR",
+            "8",
+            "\x1dAA23,00\x1eB8,00\x1eC5,00\x1eD0,00\x1eE=\x1eF-\x1eG?",
+        ),
+        ("XCR", "9", "\x1dA26102412000"),
+        ("XCR", "9", "\x1dA500101120000"),
+        ("XCR", "9", "\x1dA260229120000"),
+        ("XCR", "9", "\x1dA261024240000"),
+    ] {
+        let sim = Simulator::start();
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        sim.fault(
+            command,
+            Fault::Reply(frame::encode(id, body.as_bytes()).unwrap()),
+        );
+        let mut log = Log::default();
+        assert!(
+            matches!(
+                driver.print_receipt(&receipt(0, false), &expected, &mut log),
+                Err(Error::Protocol(message)) if message == "Nieprawidłowa ramka ElzabSTX."
+            ),
+            "{command}: {body:?}"
+        );
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal(&sim), Vec::<String>::new());
+        assert_eq!(
+            (sim.receipts(), sim.reports(), sim.transaction_open()),
+            (0, 0, false)
+        );
+    }
+}
+
+#[test]
+fn reports_require_the_same_serial_and_a_successful_journal_before_dispatch() {
+    for report in [
+        Report::Daily,
+        Report::Monthly {
+            year: 2026,
+            month: 9,
+        },
+        Report::Periodic {
+            from: date(2026, 9, 1),
+            to: date(2026, 9, 30),
+            summary: false,
+        },
+    ] {
+        let sim = Simulator::start();
+        let driver = printer(&sim);
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_report(report, "OTHER", &mut log),
+            Err(Error::Invalid(message)) if message ==
+                "Podłączona drukarka ABC1234567890 nie jest drukarką OTHER, \
+                 której dotyczy operacja."
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        log.fail_at = Some(0);
+        assert!(
+            matches!(driver.print_report(report, "ABC1234567890", &mut log),
+            Err(Error::Journal(error)) if error.kind() == io::ErrorKind::StorageFull)
+        );
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal(&sim), Vec::<String>::new());
+        assert_eq!(
+            (sim.receipts(), sim.reports(), sim.daily_pending()),
+            (0, 0, false)
+        );
+    }
+}
+
+#[test]
+fn report_year_and_month_boundaries_refuse_before_journaling() {
+    for report in [
+        Report::Monthly {
+            year: 1999,
+            month: 12,
+        },
+        Report::Monthly {
+            year: 2026,
+            month: 0,
+        },
+        Report::Monthly {
+            year: 2026,
+            month: 13,
+        },
+        Report::Periodic {
+            from: date(1999, 12, 31),
+            to: date(2000, 1, 1),
+            summary: false,
+        },
+    ] {
+        let sim = Simulator::start();
+        let mut log = Log::default();
+        assert!(matches!(
+            printer(&sim).print_report(report, "ABC1234567890", &mut log),
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal(&sim), Vec::<String>::new());
+        assert_eq!(sim.reports(), 0);
+    }
+}
+
+#[test]
+fn printer_civil_clock_epoch_and_offsets_determine_issue_time() {
+    for (clock, expected_time) in [
+        ("000101120000", "2000-01-01T11:00:00Z"),
+        ("490101120000", "2049-01-01T11:00:00Z"),
+        ("260701120000", "2026-07-01T10:00:00Z"),
+        ("261201120000", "2026-12-01T11:00:00Z"),
+    ] {
+        let sim = Simulator::start();
+        sim.set_clock(clock);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let printed = driver
+            .print_receipt(&receipt(0, false), &expected, &mut Log::default())
+            .unwrap();
+        assert_eq!(printed.issued_at.to_string(), expected_time);
+        assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+        assert_eq!(sim.receipts(), 1);
+    }
+}
+
+#[test]
+fn receipt_line_limit_is_rechecked_before_lor() {
+    for lines in [255, 256] {
+        let sim = Simulator::start();
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let mut permissive = expected.capabilities.clone();
+        permissive.max_lines = 256;
+        let line = Line::new(
+            "Olej",
+            Quantity::parse("1").unwrap(),
+            Grosze::new(1).unwrap(),
+            VatSlot::new(0).unwrap(),
+            &permissive,
+        )
+        .unwrap();
+        let receipt = Receipt::new(
+            vec![line; lines],
+            vec![],
+            vec![Payment {
+                form: PaymentForm::Cash,
+                amount: Grosze::new(u64::try_from(lines).unwrap()).unwrap(),
+            }],
+            None,
+            "Warsztat",
+            &permissive,
+        )
+        .unwrap();
+        let mut log = Log::default();
+        let result = driver.print_receipt(&receipt, &expected, &mut log);
+        if lines == 255 {
+            assert_eq!(result.unwrap().receipt_number.as_deref(), Some("1"));
+            let mut frames = vec!["LOR\x1dC0".to_owned()];
+            frames.extend(vec![
+                "LIT\x1dGAOlej\x1eBA\x1eC1\x1eD0,01\x1eE0,01".to_owned();
+                255
+            ]);
+            frames.extend([
+                "LBP\x1dKA1\x1eBGOTÓWKA\x1eC2,55\x1eX1".to_owned(),
+                "LCL\x1dRA2,55".to_owned(),
+            ]);
+            assert_eq!(fiscal(&sim), frames);
+            assert_eq!(sim.receipts(), 1);
+        } else {
+            assert!(matches!(result, Err(Error::Invalid(message))
+                if message == "Dane paragonu przekraczają możliwości Elzab."));
+            assert_eq!(log.commands, Vec::<&str>::new());
+            assert_eq!(fiscal(&sim), Vec::<String>::new());
+            assert_eq!(sim.receipts(), 0);
+        }
+    }
+}
+
+#[test]
+fn seven_nonzero_payments_are_allowed_but_an_eighth_prevents_lor() {
+    for count in [7, 8] {
+        let sim = Simulator::start();
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let caps = &expected.capabilities;
+        let line = Line::new(
+            "Olej",
+            Quantity::parse("1").unwrap(),
+            Grosze::new(count).unwrap(),
+            VatSlot::new(0).unwrap(),
+            caps,
+        )
+        .unwrap();
+        let mut payments = vec![Payment {
+            form: PaymentForm::Cash,
+            amount: Grosze::ZERO,
+        }];
+        payments.extend(vec![
+            Payment {
+                form: PaymentForm::Card,
+                amount: Grosze::new(1).unwrap()
+            };
+            usize::try_from(count).unwrap()
+        ]);
+        let receipt = Receipt::new(vec![line], vec![], payments, None, "Warsztat", caps).unwrap();
+        let mut log = Log::default();
+        let result = driver.print_receipt(&receipt, &expected, &mut log);
+        if count == 7 {
+            assert_eq!(result.unwrap().receipt_number.as_deref(), Some("1"));
+            assert_eq!(
+                fiscal(&sim),
+                [
+                    "LOR\x1dC0",
+                    "LIT\x1dGAOlej\x1eBA\x1eC1\x1eD0,07\x1eE0,07",
+                    "LBP\x1dKA1\x1eBKARTA\x1eC0,01\x1eX2",
+                    "LBP\x1dKA2\x1eBKARTA\x1eC0,01\x1eX2",
+                    "LBP\x1dKA3\x1eBKARTA\x1eC0,01\x1eX2",
+                    "LBP\x1dKA4\x1eBKARTA\x1eC0,01\x1eX2",
+                    "LBP\x1dKA5\x1eBKARTA\x1eC0,01\x1eX2",
+                    "LBP\x1dKA6\x1eBKARTA\x1eC0,01\x1eX2",
+                    "LBP\x1dKA7\x1eBKARTA\x1eC0,01\x1eX2",
+                    "LCL\x1dRA0,07",
+                ]
+            );
+            assert_eq!(sim.receipts(), 1);
+        } else {
+            assert!(matches!(result, Err(Error::Invalid(message))
+                if message == "Elzab przyjmuje najwyżej 7 wpisów płatności."));
+            assert_eq!(log.commands, Vec::<&str>::new());
+            assert_eq!(fiscal(&sim), Vec::<String>::new());
+            assert_eq!(sim.receipts(), 0);
+        }
+    }
+}
+
+#[test]
+fn mixed_vat_advances_keep_their_native_slots_and_exact_fiscal_total() {
+    let sim = Simulator::start();
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    let caps = &expected.capabilities;
+    let lines = (0..5)
+        .map(|slot| {
+            Line::new(
+                "Olej",
+                Quantity::parse("1").unwrap(),
+                Grosze::new(1000).unwrap(),
+                VatSlot::new(slot).unwrap(),
+                caps,
+            )
+            .unwrap()
+        })
+        .collect();
+    let advances = [(0, 100), (1, 200), (4, 300)]
+        .map(|(slot, amount)| Advance {
+            vat: VatSlot::new(slot).unwrap(),
+            amount: Grosze::new(amount).unwrap(),
+        })
+        .to_vec();
+    let receipt = Receipt::new(
+        lines,
+        advances,
+        vec![Payment {
+            form: PaymentForm::Transfer,
+            amount: Grosze::new(4400).unwrap(),
+        }],
+        None,
+        "Warsztat",
+        caps,
+    )
+    .unwrap();
+    let mut log = Log::default();
+    assert_eq!(
+        driver
+            .print_receipt(&receipt, &expected, &mut log)
+            .unwrap()
+            .receipt_number
+            .as_deref(),
+        Some("1")
+    );
+    assert_eq!(
+        fiscal(&sim),
+        [
+            "LOR\x1dC0",
+            "LIT\x1dGAOlej\x1eBA\x1eC1\x1eD10,00\x1eE10,00",
+            "LIT\x1dGAOlej\x1eBB\x1eC1\x1eD10,00\x1eE10,00",
+            "LIT\x1dGAOlej\x1eBC\x1eC1\x1eD10,00\x1eE10,00",
+            "LIT\x1dGAOlej\x1eBD\x1eC1\x1eD10,00\x1eE10,00",
+            "LIT\x1dGAOlej\x1eBE\x1eC1\x1eD10,00\x1eE10,00",
+            "LDS\x1dIAA1\x1fB1,00\x1fDZaliczka\x1eCA\x1eD",
+            "LDS\x1dIAA1\x1fB2,00\x1fDZaliczka\x1eCB\x1eD",
+            "LDS\x1dIAA1\x1fB3,00\x1fDZaliczka\x1eCE\x1eD",
+            "LBP\x1dKA1\x1eBPRZELEW\x1eC44,00\x1eX7",
+            "LCL\x1dRA44,00",
+        ]
+    );
+    assert_eq!(
+        log.commands,
+        [
+            "LOR", "LIT", "LIT", "LIT", "LIT", "LIT", "LDS", "LDS", "LDS", "LBP", "LCL"
+        ]
+    );
+    assert_eq!((sim.receipts(), sim.transaction_open()), (1, false));
 }

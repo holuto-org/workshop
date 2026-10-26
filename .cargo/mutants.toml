@@ -11,3 +11,9 @@ exclude_globs = [
 ]
 minimum_test_timeout = 180
 additional_cargo_test_args = ["--profile", "mutants"]
+exclude_re = [
+    # Disjoint bits: shifted checksum value has a zero low nibble and digit < 16.
+    'crates/novitus/src/frame\.rs:\d+:\d+: replace \| with \^ in decode',
+    # Defense in depth: after the ten-digit guard, normalized Quantity is at most 11 bytes.
+    'crates/novitus/src/receipt\.rs:73:87: replace > with (==|>=) in validate',
+]

@@ -5,7 +5,7 @@ use fiscal::{
     receipt::{Line, Payment, PaymentForm, Quantity, VatSlot},
 };
 
-use crate::capabilities::capabilities;
+use crate::{capabilities::capabilities, simulator::Params};
 
 pub(crate) const BRAND: &str = "Warsztat Kowalski";
 
@@ -25,4 +25,11 @@ pub(crate) fn pay(form: PaymentForm, amount: u64) -> Payment {
         form,
         amount: Grosze::new(amount).unwrap(),
     }
+}
+
+pub(crate) fn params(fields: &[(&str, &str)]) -> Params {
+    fields
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect()
 }

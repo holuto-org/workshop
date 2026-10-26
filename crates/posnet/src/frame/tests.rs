@@ -16,7 +16,11 @@ fn published_checksums_cover_the_payload_not_the_delimiters() {
     );
     assert_eq!(
         encode("trline", &[("na", "ł".to_owned())]).unwrap(),
-        wrap(b"trline\tna\xB3\t")
+        b"\x02trline\tna\xB3\t#CA09\x03"
+    );
+    assert_eq!(
+        encode("trline", &[("na", "Zażółć gęślą jaźń".to_owned())]).unwrap(),
+        b"\x02trline\tnaZa\xBF\xF3\xB3\xE6 g\xEA\x9Cl\xB9 ja\x9F\xF1\t#CF2E\x03"
     );
 }
 
@@ -111,7 +115,7 @@ proptest! {
     #[test]
     fn printable_payloads_round_trip_with_exact_field_boundaries(
         command in "!?[a-z][a-z0-9]{0,15}",
-        value in "[ -~]{0,200}",
+        value in "[ -~ąćęłńóśźżĄĆĘŁŃÓŚŹŻ€–]{0,200}",
     ) {
         let frame = encode(&command, &[("na", value.clone())]).unwrap();
         let (answered, fields) = decode(&frame).unwrap();

@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, sync::Arc, time::Duration};
 
 use fiscal::{
     cp1250,
@@ -6,7 +6,7 @@ use fiscal::{
     driver::Driver,
     error::Error,
     journal::Journal,
-    link::Connection,
+    link::{Candidate, Connection, Link, Port},
     money::Grosze,
     receipt::{Advance, Line, Payment, PaymentForm, Quantity, Receipt, VatSlot},
     report::Report,
@@ -14,8 +14,8 @@ use fiscal::{
 
 use super::{Printer, identify};
 use crate::{
-    frame, profile, receipt,
-    session::{Session, identifier},
+    frame, profile,
+    session::{DLE2, identifier},
     simulator::{Fault, Simulator},
 };
 #[cfg(workshop_acceptance)]
@@ -123,6 +123,26 @@ fn fiscal_bodies(sim: &Simulator) -> Vec<String> {
         .collect()
 }
 
+const RECEIPT_FRAMES: [&str; 13] = [
+    "0$h",
+    "100;1$z1234567890\r",
+    "1$lNaprawa\r1\rA/10/10/",
+    "2$lOlej\r1\rB/20/20/",
+    "3$lPrzeglad\r1\rE/30/30/",
+    "1;0$b12/\r",
+    "1;1$b12/\r",
+    "1;8$b12/\r",
+    "1;9$b12/\r",
+    "1;5$b12/\r",
+    "0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r60/0/0/60/0/",
+    "12$z",
+    "28;0$z",
+];
+
+const RECEIPT_COMMANDS: [&str; 13] = [
+    "$h", "$z", "$l", "$l", "$l", "$b", "$b", "$b", "$b", "$b", "$y", "$z", "$z",
+];
+
 #[cfg(not(workshop_acceptance))]
 #[test]
 fn non_fiscal_device_is_not_ready_without_acceptance() {
@@ -162,10 +182,23 @@ fn read_only_printer_refuses_printing_but_allows_resolution() {
         driver.print_receipt(&receipt(vec![]), &expected, &mut log),
         Err(Error::NotReady(_))
     ));
-    assert!(matches!(
-        driver.print_report(Report::Daily, "ABC1234567890", &mut log),
-        Err(Error::NotReady(_))
-    ));
+    for report in [
+        Report::Daily,
+        Report::Monthly {
+            year: 2024,
+            month: 2,
+        },
+        Report::Periodic {
+            from: "2024-01-01".parse().unwrap(),
+            to: "2024-01-31".parse().unwrap(),
+            summary: true,
+        },
+    ] {
+        assert!(matches!(
+            driver.print_report(report, "ABC1234567890", &mut log),
+            Err(Error::NotReady(message)) if message == expected.description()
+        ));
+    }
     assert_eq!(log.commands, Vec::<&str>::new());
     assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
 }
@@ -219,11 +252,17 @@ const FOOTER_REFUSAL: &str = "Nagłówek drukarki nie zawiera nazwy firmy z Holu
 
 #[test]
 fn identify_accepts_supported_models_only() {
-    for (model, firmware) in [
-        ("NOVITUS HD II ONLINE", "1.40"),
-        ("NOVITUS DEON ONLINE", "1.40"),
-        ("NOVITUS BONO ONLINE", "1.10"),
-        ("NOVITUS POINT", "1.0"),
+    for (model, firmware, name_width, company_width) in [
+        ("NOVITUS HD II ONLINE", "1.40", 60, 40),
+        ("NOVITUS HD II ONLINE", "2.20", 60, 40),
+        ("NOVITUS HD II ONLINE", "3.50", 60, 40),
+        ("NOVITUS DEON ONLINE", "1.40", 40, 42),
+        ("NOVITUS DEON ONLINE", "220", 60, 42),
+        ("NOVITUS DEON ONLINE", "310", 60, 42),
+        ("NOVITUS BONO ONLINE", "1.10", 40, 42),
+        ("NOVITUS BONO ONLINE", "210", 60, 42),
+        ("NOVITUS BONO ONLINE", "300", 60, 42),
+        ("NOVITUS POINT", "1.0", 60, 44),
     ] {
         let sim = Simulator::start();
         sim.set_identity(model, firmware);
@@ -232,19 +271,50 @@ fn identify_accepts_supported_models_only() {
             .unwrap();
         assert!(device.ready(), "{}", device.description());
         assert_eq!(device.unique_number, "ABC1234567890");
+        assert_eq!(device.model, model);
+        assert_eq!(device.firmware, firmware);
+        assert_eq!(device.capabilities.max_item_name, name_width);
+        assert_eq!(device.capabilities.max_company_name, company_width);
+        assert_eq!(
+            (
+                device.capabilities.advance_deductions,
+                device.capabilities.zero_total_receipts,
+                device.capabilities.company_footer,
+            ),
+            (
+                cfg!(workshop_acceptance),
+                cfg!(workshop_acceptance),
+                cfg!(workshop_acceptance)
+            )
+        );
     }
     for (model, firmware) in [
         ("POSNET TEMO ONLINE", "1.40"),
         ("NOVITUS UNKNOWN", "1.40"),
         ("NOVITUS HD II ONLINE", "99.00"),
+        ("NOVITUS HD II ONLINE", "3.50 "),
+        ("NOVITUS HD II ONLINE", "3.51"),
+        ("NOVITUS DEON ONLINE", "2.20"),
+        ("NOVITUS BONO ONLINE", "2.10"),
+        ("NOVITUS POINT", "1.00"),
+        ("NOVITUS POINT ONLINE", "1.0"),
     ] {
         let sim = Simulator::start();
         sim.set_identity(model, firmware);
         let found = identify(sim.link().as_ref(), &connection(&sim)).unwrap();
-        assert!(
-            found.is_none_or(|device| !device.ready()),
-            "unqualified identity"
-        );
+        if model.starts_with("NOVITUS ") {
+            let device = found.unwrap();
+            assert_eq!(device.description(), "Nieznany model lub firmware Novitus");
+            let mut log = Log::default();
+            assert!(matches!(
+                printer(&sim).print_receipt(&receipt(vec![]), &device, &mut log),
+                Err(Error::NotReady(message)) if message == device.description()
+            ));
+            assert_eq!(log.commands, Vec::<&str>::new());
+        } else {
+            assert!(found.is_none());
+            assert_eq!(bodies(&sim), ["30#v"]);
+        }
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }
 }
@@ -271,17 +341,6 @@ fn pc2_endpoint_is_not_ready_and_receives_no_fiscal_command() {
         !bodies(&sim).iter().any(|body| body.contains("^c")),
         "PC2 must be rejected before PC1-only reads"
     );
-}
-
-#[test]
-fn non_native_dialect_is_not_ready() {
-    for option in ["0", "2"] {
-        let sim = Simulator::start();
-        supported(&sim);
-        sim.set_dialect(option);
-        assert!(!printer(&sim).probe().unwrap().ready());
-        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
-    }
 }
 
 #[test]
@@ -323,6 +382,7 @@ fn receipt_frames_match_snapshot() {
     assert_eq!(printed.issued_at.to_string(), "2026-10-24T10:00:00Z");
     let frames = fiscal_bodies(&sim);
     insta::assert_debug_snapshot!(frames);
+    assert_eq!(frames, RECEIPT_FRAMES);
     assert_eq!(
         log.commands,
         [
@@ -330,63 +390,6 @@ fn receipt_frames_match_snapshot() {
         ]
     );
     assert_eq!(sim.receipts(), 1);
-}
-
-#[test]
-fn lost_reply_after_begin_is_uncertain() {
-    for command in ["$h", "$l", "$b", "$y", "$z"] {
-        let sim = Simulator::start();
-        supported(&sim);
-        let driver = printer(&sim);
-        let expected = driver.probe().unwrap();
-        sim.fault(command, Fault::LoseReply);
-        assert!(
-            matches!(
-                driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default()),
-                Err(Error::Uncertain(_))
-            ),
-            "{command}"
-        );
-        assert_eq!(
-            fiscal_bodies(&sim)
-                .iter()
-                .filter(|body| body.as_str() == "0$h")
-                .count(),
-            1
-        );
-    }
-}
-
-#[test]
-fn begin_refusal_is_certain_failure() {
-    let sim = Simulator::start();
-    supported(&sim);
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    sim.fault("$h", Fault::Refuse(40));
-    assert!(matches!(
-        driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default()),
-        Err(Error::Device { code: 40, .. })
-    ));
-    assert_eq!(sim.receipts(), 0);
-}
-
-#[cfg(not(workshop_acceptance))]
-#[test]
-fn unqualified_advance_is_refused_before_begin() {
-    let sim = Simulator::start();
-    supported(&sim);
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    let receipt = receipt(vec![Advance {
-        vat: VatSlot::new(0).unwrap(),
-        amount: Grosze::new(500).unwrap(),
-    }]);
-    assert!(matches!(
-        driver.print_receipt(&receipt, &expected, &mut Log::default()),
-        Err(Error::Invalid(_))
-    ));
-    assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
 }
 
 #[test]
@@ -489,26 +492,67 @@ fn certain_refusals_explain_documented_codes() {
 }
 
 #[test]
-fn preflight_rejects_busy_readonly_missing_header_bad_clock_and_codepage() {
-    for problem in 0..7 {
+fn preflight_refusals_are_rechecked_before_receipts_and_reports() {
+    for problem in 0..11 {
         let sim = Simulator::start();
         supported(&sim);
-        match problem {
-            0 => sim.set_status(0x74, 0x6F, "@s0;0;0;00000000;"),
-            1 => sim.set_status(0x76, 0x6D, "@s0;0;0;00000000;"),
-            2 => sim.set_status(0x74, 0x6D, "@s0;0;0;00000001;"),
-            3 => sim.set_fiscal_mode(2),
-            4 => sim.set_header(""),
-            5 => sim.set_clock("26;2;30;12;0;0"),
-            _ => sim.set_config_option(92, "0"),
-        }
         let driver = printer(&sim);
-        let result = driver.probe();
-        assert!(
-            result.map_or(true, |device| !device.ready()),
-            "case {problem}"
-        );
+        let expected = driver.probe().unwrap();
+        let message = match problem {
+            0 => {
+                sim.set_status(0x74, 0x6F, "@s0;0;0;00000000;");
+                "Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi"
+            },
+            1 => {
+                sim.set_status(0x76, 0x6D, "@s0;0;0;00000000;");
+                "Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi"
+            },
+            2 => {
+                sim.set_status(0x74, 0x6D, "@s0;0;0;00000001;");
+                "Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi"
+            },
+            3 => {
+                sim.set_fiscal_mode(2);
+                "Drukarka jest w trybie tylko do odczytu"
+            },
+            4 => {
+                sim.set_header("");
+                "Brak zaprogramowanego nagłówka"
+            },
+            5 => {
+                sim.set_config_option(91, "0");
+                "Ustaw wejście i wyjście PC na Windows-1250"
+            },
+            6 => {
+                sim.set_config_option(92, "0");
+                "Ustaw wejście i wyjście PC na Windows-1250"
+            },
+            7 | 10 => {
+                sim.set_dialect(if problem == 7 { "0" } else { "2" });
+                "Wymagany jest natywny protokół NOVITUS"
+            },
+            8 => {
+                sim.set_endpoint("PC2");
+                "Nieprawidłowy numer unikatowy drukarki"
+            },
+            _ => {
+                sim.set_vat(["99.99"; 7]);
+                "Brak aktywnych stawek VAT"
+            },
+        };
+        assert_eq!(driver.probe().unwrap().description(), message);
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_receipt(&receipt(vec![]), &expected, &mut log),
+            Err(Error::NotReady(text)) if text == message
+        ));
+        assert!(matches!(
+            driver.print_report(Report::Daily, "ABC1234567890", &mut log),
+            Err(Error::NotReady(text)) if text == message
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+        assert_eq!((sim.receipts(), sim.reports()), (0, 0));
     }
 }
 
@@ -549,6 +593,9 @@ fn dle_or_dle2_problem_is_reported_without_waiting_for_an_unanswered_enq() {
         (0x75, "@s0;0;0;00000000;"),
         (0x70, "@s0;0;0;00000000;"),
         (0x74, "@s0;0;0;00000080;"),
+        (0x74, "@s0;0;0;00008000;"),
+        (0x74, "@s0;0;0;00800000;"),
+        (0x74, "@s1530;0;0;00000000;"),
         (0x74, "@s0;0;0;01000000;"),
     ] {
         let sim = Simulator::start();
@@ -569,12 +616,13 @@ fn dle_or_dle2_problem_is_reported_without_waiting_for_an_unanswered_enq() {
             "DLE {dle:#04X}, {extended}"
         );
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+        assert!(!sim.frames().iter().any(|raw| raw == &[super::ENQ]));
     }
 }
 
 #[test]
 fn journal_failure_prevents_send_and_is_uncertain_only_after_begin() {
-    for fail_at in [0, 1] {
+    for fail_at in 0..RECEIPT_FRAMES.len() {
         let sim = Simulator::start();
         supported(&sim);
         let driver = printer(&sim);
@@ -591,7 +639,9 @@ fn journal_failure_prevents_send_and_is_uncertain_only_after_begin() {
         } else {
             assert!(matches!(error, Error::Uncertain(_)));
         }
-        assert_eq!(fiscal_bodies(&sim).len(), fail_at);
+        assert_eq!(fiscal_bodies(&sim), RECEIPT_FRAMES[..fail_at]);
+        assert_eq!(log.commands, RECEIPT_COMMANDS[..fail_at]);
+        assert_eq!(sim.receipts(), 0);
     }
 }
 
@@ -654,16 +704,7 @@ fn operator_wait_resumes_without_resending() {
             None
         ]
     );
-    // The exact uninterrupted sequence: no step replayed, skipped or reordered.
-    let clean = Simulator::start();
-    supported(&clean);
-    let clean_driver = printer(&clean);
-    let clean_expected = clean_driver.probe().unwrap();
-    let clean_printed = clean_driver
-        .print_receipt(&receipt(vec![]), &clean_expected, &mut Log::default())
-        .unwrap();
-    assert_eq!(clean_printed.receipt_number, printed.receipt_number);
-    assert_eq!(fiscal_bodies(&sim), fiscal_bodies(&clean));
+    assert_eq!(fiscal_bodies(&sim), RECEIPT_FRAMES);
     assert_eq!(sim.receipts(), 1);
 }
 
@@ -763,21 +804,6 @@ fn monthly_report_of_the_printer_month_never_dispatches() {
 
 #[cfg(not(workshop_acceptance))]
 #[test]
-fn unqualified_footer_is_refused_before_begin() {
-    let sim = Simulator::start();
-    supported(&sim);
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    sim.set_header("Inny podatnik");
-    assert!(matches!(
-        driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default()),
-        Err(Error::Invalid(text)) if text == FOOTER_REFUSAL
-    ));
-    assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
-}
-
-#[cfg(not(workshop_acceptance))]
-#[test]
 fn brand_across_padded_header_lines_needs_no_footer() {
     // `^u` pads header lines with spaces instead of sending line breaks.
     for (header, printed) in [
@@ -815,35 +841,40 @@ fn brand_across_padded_header_lines_needs_no_footer() {
 }
 
 #[test]
-fn every_post_begin_stage_failure_is_uncertain_even_after_final_print() {
-    for (body, receipts) in [
-        ("100;1$z1234567890\r", 0),
-        ("1$lNaprawa\r1\rA/10/10/", 0),
-        ("1;9$b12/\r", 0),
-        ("0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r60/0/0/60/0/", 0),
-        ("12$z", 0),
-        ("28;0$z", 1),
-    ] {
-        for fault in [Fault::LoseReply, Fault::CorruptReply, Fault::Disconnect] {
+fn receipt_stage_faults_preserve_the_exact_prefix_and_never_retry() {
+    for (index, body) in RECEIPT_FRAMES.iter().enumerate() {
+        for fault in [
+            Fault::LoseReply,
+            Fault::CorruptReply,
+            Fault::Disconnect,
+            Fault::Refuse(40),
+            Fault::Reply(frame::query(b"0#Z#r")),
+        ] {
             let sim = Simulator::start();
             supported(&sim);
             let driver = printer(&sim);
             let expected = driver.probe().unwrap();
+            let refused = matches!(fault, Fault::Refuse(_));
             sim.fault(body, fault);
-            assert!(
-                matches!(
-                    driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default()),
-                    Err(Error::Uncertain(_))
-                ),
-                "{body:?}"
-            );
-            assert_eq!(sim.receipts(), receipts);
+            let mut log = Log::default();
+            let error = driver
+                .print_receipt(&receipt(vec![]), &expected, &mut log)
+                .unwrap_err();
+            if index == 0 && refused {
+                assert!(
+                    matches!(error, Error::Device { code: 40, command, .. } if command == "$h")
+                );
+            } else {
+                assert!(matches!(error, Error::Uncertain(_)), "{index}: {error:?}");
+            }
+            assert_eq!(fiscal_bodies(&sim), RECEIPT_FRAMES[..=index]);
+            assert_eq!(log.commands, RECEIPT_COMMANDS[..=index]);
+            assert_eq!(sim.receipts(), u32::from(index == 12 && !refused));
+            assert_eq!(sim.reports(), 0);
             assert_eq!(
-                fiscal_bodies(&sim)
-                    .iter()
-                    .filter(|sent| *sent == body)
-                    .count(),
-                1
+                driver.probe().unwrap().ready(),
+                (index == 0 && refused) || (index == 12 && !refused),
+                "open receipt state after stage {index}"
             );
         }
     }
@@ -881,17 +912,19 @@ fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
             },
         }
         let result = driver.print_receipt(&receipt(vec![]), &expected, &mut Log::default());
-        if problem == 2 {
-            assert!(matches!(
-                result,
-                Err(Error::Invalid(message))
-                    if message == "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie."
-            ));
+        let message = match problem {
+            0 => {
+                "Podłączona drukarka ABC1234567890 nie jest drukarką OTHER12345678, \
+                 której dotyczy operacja."
+            },
+            1 => "Nieprawidłowe przypisanie liter VAT A–E",
+            2 => "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie.",
+            _ => "Wybrana stawka VAT jest nieaktywna.",
+        };
+        if problem == 1 {
+            assert!(matches!(result, Err(Error::NotReady(text)) if text == message));
         } else {
-            assert!(matches!(
-                result,
-                Err(Error::Invalid(_) | Error::NotReady(_))
-            ));
+            assert!(matches!(result, Err(Error::Invalid(text)) if text == message));
         }
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }
@@ -907,8 +940,20 @@ fn invalid_printer_clock_blocks_every_operation() {
     ] {
         let sim = Simulator::start();
         supported(&sim);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
         sim.set_clock(clock);
-        assert!(matches!(printer(&sim).probe(), Err(Error::Protocol(_))));
+        let mut log = Log::default();
+        assert!(matches!(driver.probe(), Err(Error::Protocol(_))));
+        assert!(matches!(
+            driver.print_receipt(&receipt(vec![]), &expected, &mut log),
+            Err(Error::Protocol(_))
+        ));
+        assert!(matches!(
+            driver.print_report(Report::Daily, "ABC1234567890", &mut log),
+            Err(Error::Protocol(_))
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }
 }
@@ -945,74 +990,6 @@ fn dst_fold_or_gap_clock_blocks_only_receipt_timestamps() {
 }
 
 #[test]
-fn experimental_advance_allocation_and_footer_are_exact_and_gated() {
-    let sim = Simulator::start();
-    supported(&sim);
-    let mut session = Session::open(sim.link().as_ref(), &connection(&sim)).unwrap();
-    let mut caps = profile::lookup("NOVITUS HD II ONLINE", "1.40").unwrap();
-    caps.advance_deductions = true;
-    caps.company_footer = true;
-    caps.allowed_characters.push_str("Łóź");
-    let caps = &caps;
-    let lines = [("Pierwszy", 1000), ("Drugi", 2000)]
-        .map(|(name, value)| {
-            Line::new(
-                name,
-                Quantity::parse("1").unwrap(),
-                Grosze::new(value).unwrap(),
-                VatSlot::new(0).unwrap(),
-                caps,
-            )
-            .unwrap()
-        })
-        .to_vec();
-    let job = Receipt::new(
-        lines,
-        vec![Advance {
-            vat: VatSlot::new(0).unwrap(),
-            amount: Grosze::new(1500).unwrap(),
-        }],
-        vec![
-            Payment {
-                form: PaymentForm::Cash,
-                amount: Grosze::new(1500).unwrap(),
-            },
-            Payment {
-                form: PaymentForm::Mobile,
-                amount: Grosze::ZERO,
-            },
-        ],
-        None,
-        "Łódź",
-        caps,
-    )
-    .unwrap();
-    let steps = receipt::steps(&job, Some("Łódź"), caps).unwrap();
-    super::dispatch(&mut session, &steps, &mut Log::default()).unwrap();
-    assert_eq!(
-        fiscal_bodies(&sim),
-        [
-            "0;1$hŁódź\r",
-            "1$lPierwszy\r1\rA/10/10/",
-            "1;@zPierwszy\rA\r10/0/",
-            "2$lDrugi\r1\rA/20/20/",
-            "1;@zDrugi\rA\r5/15/",
-            "1;0$b15/\r",
-            "0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r15/0/0/15/0/",
-            "12$z",
-            "28;0$z"
-        ]
-    );
-    assert!(
-        sim.frames()
-            .iter()
-            .any(|raw| raw.windows(4).any(|part| part == [0xA3, 0xF3, b'd', 0x9F])),
-        "footer is CP1250, not UTF-8"
-    );
-    assert_eq!(sim.receipts(), 1);
-}
-
-#[test]
 fn journal_precedes_every_fiscal_send() {
     struct Ordered<'a> {
         sim: &'a Simulator,
@@ -1040,12 +1017,23 @@ fn journal_precedes_every_fiscal_send() {
     let _printed = driver
         .print_receipt(&receipt(vec![]), &expected, &mut journal)
         .unwrap();
-    assert_eq!(journal.log.len(), 13);
+    assert_eq!(journal.log, RECEIPT_COMMANDS);
+    assert_eq!(fiscal_bodies(&sim), RECEIPT_FRAMES);
+    assert_eq!(sim.receipts(), 1);
 }
 
 #[test]
 fn waiting_cap_and_unexplained_silence_never_resend_or_guess_dle2_order() {
-    for fault in [Fault::Wait, Fault::LoseReply] {
+    for (fault, waits) in [
+        (
+            Fault::Wait,
+            vec![
+                Some("Brak papieru lub niskie napięcie akumulatora".to_owned()),
+                None,
+            ],
+        ),
+        (Fault::LoseReply, vec![]),
+    ] {
         let sim = Simulator::start();
         supported(&sim);
         sim.fault("#r", fault);
@@ -1056,10 +1044,18 @@ fn waiting_cap_and_unexplained_silence_never_resend_or_guess_dle2_order() {
         ));
         assert_eq!(fiscal_bodies(&sim), ["1;26;10;24#r"]);
         assert_eq!(sim.reports(), 1);
-        if journal.waits.is_empty() {
-            continue;
-        }
-        assert_eq!(journal.waits.last(), Some(&None));
+        assert_eq!(journal.waits, waits);
+        assert_eq!(journal.commands, ["#r"]);
+        let frames = sim.frames();
+        let dispatched = frames
+            .iter()
+            .position(|raw| frame::decode(raw).is_ok_and(|body| body == b"1;26;10;24#r"))
+            .unwrap();
+        assert!(
+            !frames[dispatched + 1..]
+                .iter()
+                .any(|raw| raw == &[super::ENQ])
+        );
     }
 }
 
@@ -1114,43 +1110,6 @@ fn receipt_is_revalidated_against_actual_model_limits_before_begin() {
         ));
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }
-}
-
-#[cfg(not(workshop_acceptance))]
-#[test]
-fn zero_total_is_disabled_in_qualified_profiles_but_encodable_when_enabled() {
-    let sim = Simulator::start();
-    supported(&sim);
-    let mut caps = profile::lookup("NOVITUS HD II ONLINE", "1.40").unwrap();
-    let job = receipt(vec![
-        Advance {
-            vat: VatSlot::new(0).unwrap(),
-            amount: Grosze::new(1000).unwrap(),
-        },
-        Advance {
-            vat: VatSlot::new(1).unwrap(),
-            amount: Grosze::new(2000).unwrap(),
-        },
-        Advance {
-            vat: VatSlot::new(4).unwrap(),
-            amount: Grosze::new(3000).unwrap(),
-        },
-    ]);
-    assert!(matches!(
-        receipt::steps(&job, None, &caps),
-        Err(Error::Invalid(_))
-    ));
-    caps.advance_deductions = true;
-    assert!(matches!(
-        receipt::steps(&job, None, &caps),
-        Err(Error::Invalid(_))
-    ));
-    caps.zero_total_receipts = true;
-    let steps = receipt::steps(&job, None, &caps).unwrap();
-    assert!(!steps.iter().any(|step| step.command == "$b"));
-    let mut session = Session::open(sim.link().as_ref(), &connection(&sim)).unwrap();
-    super::dispatch(&mut session, &steps, &mut Log::default()).unwrap();
-    assert_eq!(sim.receipts(), 1);
 }
 
 #[test]
@@ -1393,4 +1352,646 @@ fn discovery_refusal_in_power_on_mode_gets_no_reply_and_is_not_ready() {
         (' '..='~').collect::<String>()
     );
     assert!(!bodies(&sim).iter().any(|body| body == "3#e"));
+}
+
+#[test]
+fn reports_require_matching_identity_and_a_journal_before_dispatch() {
+    for (report, body, command) in [
+        (Report::Daily, "1;26;10;24#r", "#r"),
+        (
+            Report::Monthly {
+                year: 2024,
+                month: 2,
+            },
+            "24;2;1;24;2;29;6#o",
+            "#o",
+        ),
+        (
+            Report::Periodic {
+                from: "2024-01-02".parse().unwrap(),
+                to: "2024-03-04".parse().unwrap(),
+                summary: false,
+            },
+            "24;1;2;24;3;4;0#o",
+            "#o",
+        ),
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let driver = printer(&sim);
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_report(report, "OTHER12345678", &mut log),
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+        log.fail_at = Some(0);
+        assert!(matches!(
+            driver.print_report(report, "ABC1234567890", &mut log),
+            Err(Error::Journal(error)) if error.kind() == io::ErrorKind::StorageFull
+        ));
+        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+        assert_eq!(sim.reports(), 0);
+        log.fail_at = None;
+        driver
+            .print_report(report, "ABC1234567890", &mut log)
+            .unwrap();
+        assert_eq!(fiscal_bodies(&sim), [body]);
+        assert_eq!(log.commands, [command]);
+        assert_eq!(sim.reports(), 1);
+    }
+}
+
+#[test]
+fn executed_report_with_lost_corrupt_disconnected_or_mismatched_reply_is_uncertain() {
+    for (report, body, command) in [
+        (Report::Daily, "1;26;10;24#r", "#r"),
+        (
+            Report::Monthly {
+                year: 2024,
+                month: 2,
+            },
+            "24;2;1;24;2;29;6#o",
+            "#o",
+        ),
+        (
+            Report::Periodic {
+                from: "2024-01-02".parse().unwrap(),
+                to: "2024-03-04".parse().unwrap(),
+                summary: true,
+            },
+            "24;1;2;24;3;4;1#o",
+            "#o",
+        ),
+    ] {
+        for fault in [
+            Fault::LoseReply,
+            Fault::CorruptReply,
+            Fault::Disconnect,
+            Fault::Reply(frame::query(b"36#Z$h")),
+            Fault::Reply(frame::query(b"+36#Z#r")),
+        ] {
+            let sim = Simulator::start();
+            supported(&sim);
+            sim.fault(body, fault);
+            let mut log = Log::default();
+            assert!(matches!(
+                printer(&sim).print_report(report, "ABC1234567890", &mut log),
+                Err(Error::Uncertain(_))
+            ));
+            assert_eq!(fiscal_bodies(&sim), [body]);
+            assert_eq!(log.commands, [command]);
+            assert_eq!((sim.receipts(), sim.reports()), (0, 1));
+        }
+    }
+}
+
+#[test]
+fn report_year_outside_wire_epoch_is_refused_without_dispatch() {
+    for report in [
+        Report::Monthly {
+            year: 1999,
+            month: 12,
+        },
+        Report::Periodic {
+            from: "1999-12-31".parse().unwrap(),
+            to: "2000-01-01".parse().unwrap(),
+            summary: false,
+        },
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let mut log = Log::default();
+        assert!(matches!(
+            printer(&sim).print_report(report, "ABC1234567890", &mut log),
+            Err(Error::Invalid(message))
+                if message == "Rok raportu musi należeć do zakresu 2000–2099."
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+        assert_eq!(sim.reports(), 0);
+    }
+}
+
+#[test]
+fn unknown_vat_values_never_reach_fiscal_dispatch() {
+    for value in ["101.01", "102", "-1", "NaN", "23.001"] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        sim.set_vat(["23", "8", "5", "0", value, "99.99", "99.99"]);
+        let mut log = Log::default();
+        assert!(matches!(driver.probe(), Err(Error::Protocol(_))), "{value}");
+        assert!(matches!(
+            driver.print_receipt(&receipt(vec![]), &expected, &mut log),
+            Err(Error::Protocol(_))
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn line_and_payment_limits_are_revalidated_at_the_driver_boundary() {
+    for (lines, payments, accepted, message) in [
+        (255, 16, true, ""),
+        (
+            256,
+            1,
+            false,
+            "Paragon przekracza limity tekstu lub liczby pozycji Novitus.",
+        ),
+        (
+            1,
+            17,
+            false,
+            "Novitus obsługuje najwyżej 16 form płatności.",
+        ),
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let mut caps = expected.capabilities.clone();
+        caps.max_lines = 256;
+        let line = Line::new(
+            "Limit",
+            Quantity::parse("1").unwrap(),
+            Grosze::new(payments).unwrap(),
+            VatSlot::new(0).unwrap(),
+            &caps,
+        )
+        .unwrap();
+        let job = Receipt::new(
+            vec![line; lines],
+            vec![],
+            vec![
+                Payment {
+                    form: PaymentForm::Cash,
+                    amount: Grosze::new(u64::try_from(lines).unwrap()).unwrap()
+                };
+                usize::try_from(payments).unwrap()
+            ],
+            None,
+            "Warsztat",
+            &caps,
+        )
+        .unwrap();
+        let mut log = Log::default();
+        let result = driver.print_receipt(&job, &expected, &mut log);
+        if accepted {
+            assert_eq!(result.unwrap().receipt_number.as_deref(), Some("1"));
+            let mut frames = vec!["0$h".to_owned()];
+            frames.extend((1..=255).map(|index| format!("{index}$lLimit\r1\rA/0.16/0.16/")));
+            frames.extend(vec!["1;0$b2.55/\r".to_owned(); 16]);
+            frames.extend(
+                [
+                    "0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r40.8/0/0/40.8/0/",
+                    "12$z",
+                    "28;0$z",
+                ]
+                .map(str::to_owned),
+            );
+            assert_eq!(fiscal_bodies(&sim), frames);
+            assert_eq!(sim.receipts(), 1);
+        } else {
+            assert!(matches!(result, Err(Error::Invalid(text)) if text == message));
+            assert_eq!(log.commands, Vec::<&str>::new());
+            assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+            assert_eq!(sim.receipts(), 0);
+        }
+    }
+}
+
+#[test]
+fn operator_wait_reason_changes_and_resume_do_not_repeat_the_report() {
+    struct Operator<'a> {
+        sim: &'a Simulator,
+        events: Vec<Option<String>>,
+    }
+    impl Journal for Operator<'_> {
+        fn dispatching(&mut self, _: &'static str) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn waiting(&mut self, problem: Option<&str>) {
+            self.events.push(problem.map(str::to_owned));
+            match problem {
+                Some("Brak papieru lub niskie napięcie akumulatora") => {
+                    self.sim.set_status(0x75, 0x6D, "@s0;0;0;00000000;");
+                },
+                Some("Błąd mechanizmu drukarki") => self.sim.resume(),
+                _ => {},
+            }
+        }
+    }
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.fault("#r", Fault::Wait);
+    let mut journal = Operator {
+        sim: &sim,
+        events: vec![],
+    };
+    printer(&sim)
+        .print_report(Report::Daily, "ABC1234567890", &mut journal)
+        .unwrap();
+    assert_eq!(
+        journal.events,
+        [
+            Some("Brak papieru lub niskie napięcie akumulatora".to_owned()),
+            Some("Błąd mechanizmu drukarki".to_owned()),
+            None,
+        ]
+    );
+    assert_eq!(fiscal_bodies(&sim), ["1;26;10;24#r"]);
+    assert_eq!(sim.reports(), 1);
+}
+
+#[test]
+fn corrupt_wait_status_after_execution_is_uncertain_without_a_resend() {
+    struct CorruptStatus<'a>(&'a Simulator);
+    impl Journal for CorruptStatus<'_> {
+        fn dispatching(&mut self, _: &'static str) -> io::Result<()> {
+            self.0.set_status(0x74, 0x6D, "@s0;0;0;not-flags;");
+            Ok(())
+        }
+
+        fn waiting(&mut self, _: Option<&str>) {}
+    }
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.fault("#r", Fault::Wait);
+    assert!(matches!(
+        printer(&sim).print_report(Report::Daily, "ABC1234567890", &mut CorruptStatus(&sim)),
+        Err(Error::Uncertain(error)) if matches!(*error, Error::Protocol(_))
+    ));
+    assert_eq!(fiscal_bodies(&sim), ["1;26;10;24#r"]);
+    assert_eq!(sim.reports(), 1);
+}
+
+#[test]
+fn quantity_and_rounded_grosze_are_unchanged_on_the_wire() {
+    // NOVITUS v1.15 §3.4.2: ten quantity digits; compare rounded quantity × price.
+    for (quantity, grosze, amount) in [
+        ("0.5", 1, "0.01"),
+        ("1.5", 2, "0.02"),
+        ("1.005", 1, "0.01"),
+        ("99999999.99", 100_000_000, "1000000"),
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let caps = &expected.capabilities;
+        let line = Line::new(
+            "Ilość",
+            Quantity::parse(quantity).unwrap(),
+            Grosze::new(1).unwrap(),
+            VatSlot::new(0).unwrap(),
+            caps,
+        )
+        .unwrap();
+        let job = Receipt::new(
+            vec![line],
+            vec![],
+            vec![Payment {
+                form: PaymentForm::Cash,
+                amount: Grosze::new(grosze).unwrap(),
+            }],
+            None,
+            "Warsztat",
+            caps,
+        )
+        .unwrap();
+        let printed = driver
+            .print_receipt(&job, &expected, &mut Log::default())
+            .unwrap();
+        assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+        assert_eq!(
+            fiscal_bodies(&sim),
+            [
+                "0$h".to_owned(),
+                format!("1$lIlość\r{quantity}\rA/0.01/{amount}/"),
+                format!("1;0$b{amount}/\r"),
+                format!("0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r{amount}/0/0/{amount}/0/"),
+                "12$z".to_owned(),
+                "28;0$z".to_owned(),
+            ]
+        );
+        assert_eq!(sim.receipts(), 1);
+    }
+}
+
+fn status_reply(status: &str, unique: &str, suffix: &str) -> Vec<u8> {
+    frame::encode(
+        format!("2#X{status}/23/8/5/0/98.99/99.99/99.99/0/0/0/0/0/0/0/0/0/{unique}{suffix}")
+            .as_bytes(),
+    )
+}
+
+#[test]
+fn each_fiscal_status_source_is_checked_independently_in_the_execution_session() {
+    for (mode, enq, status, problem) in [
+        (
+            0,
+            0x6D,
+            "0;1;0;1;1;0;26;10;24",
+            "Drukarka nie jest w czynnym trybie fiskalnym",
+        ),
+        (
+            1,
+            0x65,
+            "0;1;0;1;1;0;26;10;24",
+            "Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi",
+        ),
+        (
+            1,
+            0x6D,
+            "0;0;0;1;1;0;26;10;24",
+            "Status fiskalny wskazuje otwartą transakcję lub błąd",
+        ),
+        (
+            1,
+            0x6D,
+            "1;1;0;1;1;0;26;10;24",
+            "Status fiskalny wskazuje otwartą transakcję lub błąd",
+        ),
+        (
+            1,
+            0x6D,
+            "0;1;1;1;1;0;26;10;24",
+            "Status fiskalny wskazuje otwartą transakcję lub błąd",
+        ),
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        sim.set_fiscal_mode(mode);
+        sim.set_status(0x74, enq, "@s0;0;0;00000000;");
+        sim.fault(
+            "23#s",
+            Fault::Reply(status_reply(status, "ABC1234567890", "")),
+        );
+        let mut log = Log::default();
+        let result = driver.print_receipt(&receipt(vec![]), &expected, &mut log);
+        if cfg!(workshop_acceptance) && (mode == 0 || enq == 0x65 || status.starts_with("0;0;")) {
+            assert_eq!(result.unwrap().receipt_number.as_deref(), Some("1"));
+            assert_eq!(fiscal_bodies(&sim), RECEIPT_FRAMES);
+            assert_eq!(log.commands, RECEIPT_COMMANDS);
+            assert_eq!(sim.receipts(), 1);
+        } else {
+            assert!(matches!(result, Err(Error::NotReady(message)) if message == problem));
+            assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+            assert_eq!(log.commands, Vec::<&str>::new());
+            assert_eq!(sim.receipts(), 0);
+        }
+    }
+}
+
+#[test]
+fn malformed_status_and_unique_number_are_protocol_errors_before_dispatch() {
+    for (status, unique, suffix) in [
+        ("0;1;0;1;1;0;26;10", "ABC1234567890", ""),
+        ("0;1;0;1;1;0;26;10;", "ABC1234567890", ""),
+        ("0;1;0;1;1;0;26;10;x", "ABC1234567890", ""),
+        ("0;1;0;1;1;0;26;10;24", "", ""),
+        ("0;1;0;1;1;0;26;10;24", "ABC123456789!", ""),
+        ("0;1;0;1;1;0;26;10;24", "ABC1234567890", "/extra"),
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        sim.fault("23#s", Fault::Reply(status_reply(status, unique, suffix)));
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_receipt(&receipt(vec![]), &expected, &mut log),
+            Err(Error::Protocol(message))
+                if message == "Uszkodzona ramka Novitus (suma kontrolna lub format)."
+        ));
+        assert_eq!(log.commands, Vec::<&str>::new());
+        assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+        assert_eq!(sim.receipts(), 0);
+    }
+}
+
+#[test]
+fn receipt_number_readback_never_returns_empty_or_non_decimal_numbers() {
+    for number in ["", "ABC", "1A", "+1"] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let mut reply = frame::encode(format!("0?l2/0/{number}/").as_bytes());
+        reply.extend(frame::query(b"0#Z?l"));
+        sim.fault("?l", Fault::Reply(reply));
+        let printed = driver
+            .print_receipt(&receipt(vec![]), &expected, &mut Log::default())
+            .unwrap();
+        assert_eq!(printed.receipt_number, None, "{number:?}");
+        assert_eq!(fiscal_bodies(&sim), RECEIPT_FRAMES);
+        assert_eq!(sim.receipts(), 1);
+    }
+}
+
+#[test]
+fn exact_text_and_nip_limits_accept_the_boundary_and_reject_excess_before_begin() {
+    for (name_len, brand_len, nip, accepted, message) in [
+        (60, 40, "ABCDEFGHIJKLMNOP", true, ""),
+        (
+            61,
+            40,
+            "ABCDEFGHIJKLMNOP",
+            false,
+            "Nazwa pozycji przekracza możliwości Novitus.",
+        ),
+        (
+            60,
+            41,
+            "ABCDEFGHIJKLMNOP",
+            false,
+            "Paragon przekracza limity tekstu lub liczby pozycji Novitus.",
+        ),
+        (
+            60,
+            40,
+            "ABCDEFGHIJKLMNOPQ",
+            false,
+            "Paragon przekracza limity tekstu lub liczby pozycji Novitus.",
+        ),
+    ] {
+        let sim = Simulator::start();
+        supported(&sim);
+        let brand = "B".repeat(brand_len);
+        sim.set_header(&brand);
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        let mut caps = expected.capabilities.clone();
+        caps.max_item_name = 61;
+        caps.max_company_name = 41;
+        caps.max_buyer_nip = 17;
+        let name = "A".repeat(name_len);
+        let line = Line::new(
+            &name,
+            Quantity::parse("1").unwrap(),
+            Grosze::new(100).unwrap(),
+            VatSlot::new(0).unwrap(),
+            &caps,
+        )
+        .unwrap();
+        let job = Receipt::new(
+            vec![line],
+            vec![],
+            vec![Payment {
+                form: PaymentForm::Cash,
+                amount: Grosze::new(100).unwrap(),
+            }],
+            Some(nip.to_owned()),
+            &brand,
+            &caps,
+        )
+        .unwrap();
+        let mut log = Log::default();
+        let result = driver.print_receipt(&job, &expected, &mut log);
+        if accepted {
+            assert_eq!(result.unwrap().receipt_number.as_deref(), Some("1"));
+            assert_eq!(
+                fiscal_bodies(&sim),
+                [
+                    "0$h".to_owned(),
+                    "100;1$zABCDEFGHIJKLMNOP\r".to_owned(),
+                    format!("1$l{name}\r1\rA/1/1/"),
+                    "1;0$b1/\r".to_owned(),
+                    "0;3;0;0;0;0;0;0;0;0;1;0$y\r\r\r1/0/0/1/0/".to_owned(),
+                    "12$z".to_owned(),
+                    "28;0$z".to_owned(),
+                ]
+            );
+            assert_eq!(sim.receipts(), 1);
+        } else {
+            assert!(matches!(result, Err(Error::Invalid(text)) if text == message));
+            assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+            assert_eq!(log.commands, Vec::<&str>::new());
+            assert_eq!(sim.receipts(), 0);
+        }
+    }
+}
+
+#[test]
+fn company_repertoire_is_revalidated_even_when_the_header_already_contains_it() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.set_header("Łódź");
+    let driver = printer(&sim);
+    let expected = driver.probe().unwrap();
+    let base = receipt(vec![]);
+    let job = Receipt::new(
+        base.lines().to_vec(),
+        vec![],
+        base.payments().to_vec(),
+        None,
+        "Łódź",
+        &expected.capabilities,
+    )
+    .unwrap();
+    sim.set_full_cp1250(false);
+    let mut log = Log::default();
+    assert!(matches!(
+        driver.print_receipt(&job, &expected, &mut log),
+        Err(Error::Invalid(message))
+            if message == "Paragon przekracza limity tekstu lub liczby pozycji Novitus."
+    ));
+    assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
+    assert_eq!(log.commands, Vec::<&str>::new());
+    assert_eq!(sim.receipts(), 0);
+}
+
+#[test]
+fn discovery_ack_before_capability_data_is_already_settled() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.set_error_mode(3);
+    let mut reply = frame::query(b"0#Z$i");
+    reply.extend(frame::encode(
+        b"52$I00000200\r00000000\r00000000\r00000000\r00000000\r00000000\r00000000\r00000000\r",
+    ));
+    sim.fault("52$i", Fault::Reply(reply));
+    let found = identify(sim.link().as_ref(), &connection(&sim))
+        .unwrap()
+        .unwrap();
+    assert!(found.ready(), "{}", found.description());
+    assert_eq!(
+        bodies(&sim),
+        [
+            "30#v",
+            "50$i",
+            "0;1^c5/5/",
+            "0;1^c91/92/",
+            "11$i",
+            "^u",
+            "23#s",
+            "#c",
+            "52$i",
+        ]
+    );
+    assert_eq!(sim.receipts(), 0);
+}
+
+#[derive(Debug)]
+struct ByteReads(Arc<dyn Link>);
+
+impl Link for ByteReads {
+    fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, Error> {
+        Ok(Box::new(BytePort(self.0.open(port, baud_rate)?)))
+    }
+
+    fn candidates(&self) -> Vec<Candidate> {
+        self.0.candidates()
+    }
+
+    fn time_scale(&self) -> u32 {
+        self.0.time_scale()
+    }
+}
+
+struct BytePort(Box<dyn Port>);
+
+impl Port for BytePort {
+    fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
+        self.0.write_all(bytes, timeout)
+    }
+
+    fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
+        self.0.read(&mut buffer[..1], timeout)
+    }
+}
+
+#[test]
+fn a_resumed_ack_gets_a_fresh_receive_deadline_without_another_status_poll() {
+    let sim = Simulator::start();
+    supported(&sim);
+    sim.fault("#r", Fault::WaitPolls(1));
+    let driver = Printer::new(Arc::new(ByteReads(sim.link())), connection(&sim));
+    let mut log = Log::default();
+    driver
+        .print_report(Report::Daily, "ABC1234567890", &mut log)
+        .unwrap();
+    assert_eq!(
+        log.waits,
+        [
+            Some("Brak papieru lub niskie napięcie akumulatora".to_owned()),
+            None
+        ]
+    );
+    let frames = sim.frames();
+    let report = frames
+        .iter()
+        .position(|raw| frame::decode(raw).is_ok_and(|body| body == b"1;26;10;24#r"))
+        .unwrap();
+    assert_eq!(&frames[report + 1..], [vec![DLE2], vec![super::DLE]]);
+    assert_eq!(log.commands, ["#r"]);
+    assert_eq!(sim.reports(), 1);
 }

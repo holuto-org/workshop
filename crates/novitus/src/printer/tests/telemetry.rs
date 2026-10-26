@@ -13,7 +13,7 @@ use fiscal::{
 use tracing::{
     Event, Subscriber,
     field::{Field, Visit},
-    span::{Attributes, Id},
+    span::{Attributes, Id, Record},
     subscriber,
 };
 use tracing_subscriber::{
@@ -46,6 +46,10 @@ impl<S: Subscriber> Layer<S> for Capture {
 
     fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _context: Context<'_, S>) {
         attrs.record(&mut self.clone());
+    }
+
+    fn on_record(&self, _id: &Id, values: &Record<'_>, _context: Context<'_, S>) {
+        values.record(&mut self.clone());
     }
 }
 

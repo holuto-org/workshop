@@ -1,6 +1,7 @@
 use std::{
-    fmt,
+    fmt, io,
     sync::{Arc, Mutex, PoisonError},
+    time::Duration,
 };
 
 use tracing::{
@@ -15,10 +16,11 @@ use tracing_subscriber::{
     registry,
 };
 
-use super::{Recorder, printer, simulator};
+use super::{Recorder, all_steps_receipt, printer, simulator};
 use fiscal::{
     driver::Driver,
     error::Error,
+    link::{Candidate, Connection, Link, Port},
     receipt::{PaymentForm, Receipt},
     report::Report,
 };
@@ -26,6 +28,8 @@ use jiff::civil::date;
 
 use crate::{
     capabilities::capabilities,
+    frame,
+    printer::Printer,
     simulator::{Fault, UNIQUE_NUMBER},
     testing::{line, pay},
 };
@@ -104,38 +108,104 @@ fn command_traces_include_timeouts_and_device_codes_but_never_fiscal_payloads() 
     }
 }
 
+#[derive(Debug)]
+struct Deadlines {
+    inner: Arc<dyn Link>,
+    writes: Arc<Mutex<Vec<(String, Duration)>>>,
+}
+
+impl Link for Deadlines {
+    fn open(&self, port: &str, baud_rate: u32) -> Result<Box<dyn Port>, Error> {
+        Ok(Box::new(DeadlinePort {
+            inner: self.inner.open(port, baud_rate)?,
+            writes: Arc::clone(&self.writes),
+        }))
+    }
+
+    fn candidates(&self) -> Vec<Candidate> {
+        self.inner.candidates()
+    }
+}
+
+struct DeadlinePort {
+    inner: Box<dyn Port>,
+    writes: Arc<Mutex<Vec<(String, Duration)>>>,
+}
+
+impl Port for DeadlinePort {
+    fn write_all(&mut self, bytes: &[u8], timeout: Duration) -> io::Result<()> {
+        let (command, _) = frame::decode(bytes).map_err(io::Error::other)?;
+        self.writes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((command, timeout));
+        self.inner.write_all(bytes, timeout)
+    }
+
+    fn read(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
+        self.inner.read(buffer, timeout)
+    }
+}
+
 #[test]
-fn a_monthly_report_waits_as_long_as_the_periodic_report_covering_that_month() {
-    let captured = Arc::new(Mutex::new(String::new()));
-    let subscriber = registry().with(Capture(Arc::clone(&captured)));
-    subscriber::with_default(subscriber, || {
-        let sim = simulator();
-        let device = printer(&sim);
-        for report in [
-            Report::Monthly {
-                year: 2026,
-                month: 6,
-            },
-            Report::Periodic {
-                from: date(2026, 6, 1),
-                to: date(2026, 6, 30),
-                summary: false,
-            },
-        ] {
-            device
-                .print_report(report, UNIQUE_NUMBER, &mut Recorder::default())
-                .unwrap();
-        }
-    });
-    let captured = captured.lock().unwrap();
-    let budget = |command: &str| {
-        captured
-            .split(&format!("command=\"{command}\";timeout_ms="))
-            .nth(1)
-            .and_then(|rest| rest.split(';').next())
-            .map(str::to_owned)
-    };
-    let periodic = budget("periodicrepbydates");
-    assert!(periodic.is_some(), "{captured}");
-    assert_eq!(budget("monthlyrep"), periodic);
+fn fiscal_writes_use_the_documented_production_deadlines() {
+    let sim = simulator();
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let device = Printer::new(
+        Arc::new(Deadlines {
+            inner: sim.link(),
+            writes: Arc::clone(&writes),
+        }),
+        Connection {
+            port: sim.address().to_owned(),
+            baud_rate: 9600,
+        },
+    );
+    let expected = device.probe().unwrap();
+    let mut journal = Recorder::default();
+    let _printed = device
+        .print_receipt(&all_steps_receipt(), &expected, &mut journal)
+        .unwrap();
+    for report in [
+        Report::Daily,
+        Report::Monthly {
+            year: 2026,
+            month: 6,
+        },
+        Report::Periodic {
+            from: date(2026, 6, 1),
+            to: date(2026, 6, 30),
+            summary: false,
+        },
+    ] {
+        device
+            .print_report(report, UNIQUE_NUMBER, &mut journal)
+            .unwrap();
+    }
+    let fiscal: Vec<_> = writes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(command, _)| {
+            command.starts_with("tr") || command.ends_with("rep") || command == "periodicrepbydates"
+        })
+        .cloned()
+        .collect();
+    assert_eq!(
+        fiscal,
+        [
+            ("trinit".to_owned(), 10),
+            ("trnipset".to_owned(), 10),
+            ("trline".to_owned(), 10),
+            ("tradvance".to_owned(), 10),
+            ("trpayment".to_owned(), 10),
+            ("trend".to_owned(), 30),
+            ("trftrln".to_owned(), 10),
+            ("trftrend".to_owned(), 30),
+            ("dailyrep".to_owned(), 120),
+            ("monthlyrep".to_owned(), 300),
+            ("periodicrepbydates".to_owned(), 300),
+        ]
+        .map(|(command, seconds)| (command, Duration::from_secs(seconds)))
+    );
 }

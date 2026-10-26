@@ -4,6 +4,7 @@ use slint::platform::update_timers_and_animations;
 use std::{
     env,
     error::Error,
+    fs,
     process::Command as ProcessCommand,
     sync::{Arc, mpsc},
     task::{Context, Poll, Wake, Waker},
@@ -80,6 +81,8 @@ fn show_icon() -> Result<TrayIcon, slint::PlatformError> {
 fn tray_availability_requires_this_apps_icon_registered_with_a_tray_host()
 -> Result<(), Box<dyn Error>> {
     if env::var_os("WORKSHOP_PRIVATE_TEST_BUS").is_none() {
+        let temporary = tempfile::tempdir()?;
+        let outcome = temporary.path().join("outcome");
         #[expect(
             clippy::disallowed_methods,
             reason = "The platform test needs a private D-Bus daemon, not the operator's tray host"
@@ -96,11 +99,12 @@ fn tray_availability_requires_this_apps_icon_registered_with_a_tray_host()
                 "--nocapture",
             ])
             .env("WORKSHOP_PRIVATE_TEST_BUS", "1")
+            .env("WORKSHOP_TRAY_OUTCOME", &outcome)
             .output()?;
-        assert!(
-            child.status.success() && String::from_utf8_lossy(&child.stdout).contains(" 1 passed"),
-            "isolated bus test failed: {}",
-            String::from_utf8_lossy(&child.stderr)
+        assert!(child.status.success(), "{child:?}");
+        assert_eq!(
+            fs::read_to_string(outcome)?,
+            "absent; unregistered; registered; hostless; vanished; hung\n"
         );
         return Ok(());
     }
@@ -167,6 +171,10 @@ fn tray_availability_requires_this_apps_icon_registered_with_a_tray_host()
             Ok(false),
             "an unresponsive watcher must not leave the close button doing nothing"
         );
+        fs::write(
+            env::var_os("WORKSHOP_TRAY_OUTCOME").ok_or("missing outcome path")?,
+            "absent; unregistered; registered; hostless; vanished; hung\n",
+        )?;
         Ok::<(), Box<dyn Error>>(())
     })
 }

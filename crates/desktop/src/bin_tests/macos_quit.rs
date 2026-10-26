@@ -14,7 +14,9 @@ use std::{
 };
 
 #[cfg(target_os = "macos")]
-use agent::{history, status::Snapshot, store::StateDir, worker};
+use agent::{history, status::Snapshot, store::StateDir, testing::JOB_ID, worker};
+#[cfg(target_os = "macos")]
+use serde_json::json;
 
 #[cfg(target_os = "macos")]
 #[expect(
@@ -105,8 +107,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let dir = StateDir::open(state.path().to_owned())?;
     assert_eq!(
-        history::load(&dir)?.len(),
-        1,
+        serde_json::to_value(history::load(&dir)?)?,
+        json!([{
+            "jobId": JOB_ID,
+            "printedAt": "2025-10-24T10:00:00Z",
+            "receiptNumber": "1",
+            "total": 25000,
+            "payments": [["card", 25000]],
+            "items": ["Wymiana oleju", "Klocki hamulcowe"]
+        }]),
         "the held receipt printed and settled before exit"
     );
     assert!(

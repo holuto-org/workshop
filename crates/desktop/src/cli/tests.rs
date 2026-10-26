@@ -1,6 +1,7 @@
 use std::{error::Error, ffi::OsString, fmt, fs, path::Path, sync::Arc};
 
 use agent::{Error as AgentError, settings::Settings, status::Snapshot, store::StateDir};
+use fiscal::device::Vendor;
 use serde_json::json;
 
 use super::{Command, Failure, execute, parse};
@@ -74,66 +75,21 @@ fn save_api_url(path: &Path, api_url: &str) -> Result<(), AgentError> {
 }
 
 #[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Assertions prove both CLI JSON vendor contracts."
-)]
-fn config_show_and_status_report_vendor() -> TestResult {
-    use fiscal::device::Vendor;
-
-    let temporary = tempfile::tempdir()?;
-    let dir = StateDir::open_application(temporary.path().join("state"))?;
-    Settings {
-        vendor: Some(Vendor::Elzab),
-        ..Settings::default()
-    }
-    .save(&dir)?;
-    assert_eq!(
-        execute(Command::ConfigShow, dir.path())?.value["config"]["vendor"],
-        "elzab"
-    );
-    Snapshot {
-        processing: true,
-        connected: true,
-        vendor: Some(Vendor::Novitus),
-        unique_number: Some("SAME-UNIQUE_NUMBER".into()),
-        printer_id: None,
-        blocked: true,
-        report_unresolved: true,
-        orphaned_receipt: false,
-        updated_at: jiff::Timestamp::UNIX_EPOCH,
-    }
-    .save(&dir)?;
-    assert_eq!(
-        execute(Command::Status, dir.path())?.value["state"]["vendor"],
-        "novitus"
-    );
-    Ok(())
-}
-
-#[test]
 fn manual_credentials_and_unknown_arguments_are_rejected_without_echoing_them() {
     for args in [
         vec!["--token", "secret-canary"],
         vec!["config", "set", "--token", "secret-canary"],
         vec!["pair"],
+        vec!["-psn_0_1234567", "status"],
     ] {
         let error = parse(args.into_iter().map(OsString::from)).expect_err("invalid command");
         assert_eq!(error.code, "arguments");
         assert_eq!(error.exit, 2);
-        assert!(!error.message.contains("secret-canary"));
+        assert_eq!(
+            error.message,
+            "Nieprawidłowe argumenty. Użyj workshop --help."
+        );
     }
-}
-
-#[test]
-fn only_a_lone_process_serial_number_is_a_launch_services_argument() {
-    assert!(super::process_serial_number(&[OsString::from(
-        "-psn_0_1234567"
-    )]));
-    assert!(!super::process_serial_number(
-        &["-psn_0_1234567", "status"].map(OsString::from)
-    ));
-    assert!(!super::process_serial_number(&[OsString::from("status")]));
 }
 
 #[cfg(target_os = "macos")]
@@ -203,6 +159,7 @@ fn configuration_output_redacts_saved_credentials() -> TestResult {
     let settings = Settings {
         api_url: "https://example.test".into(),
         token: "secret-canary".into(),
+        vendor: Some(Vendor::Elzab),
         ..Settings::default()
     };
     settings.save(&dir)?;
@@ -211,10 +168,9 @@ fn configuration_output_redacts_saved_credentials() -> TestResult {
         response.value,
         json!({"ok":true,"config":{
             "apiUrl":"https://example.test","paired":true,"port":"auto",
-            "baudRate":9600,"vendor":null,"telemetryEnabled":true,"startOnLaunch":false
+            "baudRate":9600,"vendor":"elzab","telemetryEnabled":true,"startOnLaunch":false
         }})
     );
-    assert!(!response.value.to_string().contains("secret-canary"));
     Ok(())
 }
 
@@ -272,6 +228,13 @@ fn fresh_installation_check_reports_missing_configuration_without_opening_ports(
 fn invalid_configuration_is_not_partially_saved() -> TestResult {
     let temp = tempfile::tempdir()?;
     let path = temp.path().join("state");
+    let settings = Settings {
+        api_url: "https://paired.example.test".into(),
+        token: "synthetic-existing-credential".into(),
+        ..Settings::default()
+    };
+    settings.save(&StateDir::open(path.clone())?)?;
+    let before = fs::read(path.join("settings.json"))?;
     let parsed = parse(
         [
             "config",
@@ -284,8 +247,16 @@ fn invalid_configuration_is_not_partially_saved() -> TestResult {
         .map(OsString::from),
     )?;
     let error = execute(parsed.command, &path).expect_err("unsafe URL");
-    assert_eq!(error.exit, 3);
-    assert!(!path.join("settings.json").exists());
+    assert_eq!((error.exit, error.code), (3, "configuration"));
+    assert_eq!(
+        error.message,
+        concat!(
+            "Adres API wymaga https (http tylko dla localhost), ",
+            "bez danych logowania, zapytania i fragmentu."
+        )
+    );
+    assert_eq!(fs::read(path.join("settings.json"))?, before);
+    assert_eq!(Settings::load_at(&path)?, Some(settings));
     Ok(())
 }
 
@@ -336,7 +307,7 @@ fn status_exposes_the_running_apps_published_state_without_configuration_secrets
     let snapshot = Snapshot {
         processing: true,
         connected: true,
-        vendor: None,
+        vendor: Some(Vendor::Novitus),
         unique_number: Some("DEM0000000001".into()),
         printer_id: Some("00000000-0000-0000-0000-000000000009".into()),
         blocked: true,
@@ -349,14 +320,12 @@ fn status_exposes_the_running_apps_published_state_without_configuration_secrets
     assert_eq!(
         response.value,
         json!({"ok":true,"appRunning":true,"state":{
-            "processing":true,"connected":true,"uniqueNumber":"DEM0000000001","vendor":null,
+            "processing":true,"connected":true,"uniqueNumber":"DEM0000000001","vendor":"novitus",
             "printerId":"00000000-0000-0000-0000-000000000009",
             "blocked":true,"reportUnresolved":false,"orphanedReceipt":true,
             "updatedAt":"2026-10-24T12:34:56Z"
         }})
     );
-    assert!(!response.value.to_string().contains("token-canary"));
-    assert!(!response.value.to_string().contains("private.example.test"));
     Ok(())
 }
 
@@ -458,6 +427,16 @@ fn autostart_command_registers_login_and_persists_processing_preference() -> Tes
             .env("XDG_STATE_HOME", temp.path().join("state"))
             .output()?;
         assert!(output.status.success(), "child: {output:?}");
+        let stdout = String::from_utf8(output.stdout)?;
+        let responses = stdout
+            .lines()
+            .filter(|line| line.starts_with('{'))
+            .map(serde_json::from_str::<serde_json::Value>)
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            responses,
+            [json!({"ok":true, "autostart":value == "on", "startOnLaunch":value == "on"})]
+        );
         let state = temp
             .path()
             .join("state")
@@ -513,11 +492,35 @@ fn pairing_command_persists_credentials_and_returns_only_printer_identity() -> T
 )]
 fn pairing_command_maps_refusals_to_stable_exit_codes_without_saving() -> TestResult {
     use agent::testing::{Fault, Holuto};
-    for (status, code, expected_exit, expected_code) in [
-        (400, "fiscal_pairing_invalid", 3, "pairing_invalid"),
-        (429, "rate_limited", 7, "rate_limited"),
-        (401, "unauthorized", 6, "unauthorized"),
-        (503, "unavailable", 5, "holuto"),
+    for (status, code, expected_exit, expected_code, expected_message) in [
+        (
+            400,
+            "fiscal_pairing_invalid",
+            3,
+            "pairing_invalid",
+            "Nieprawidłowy, wykorzystany lub wygasły kod parowania. Wygeneruj nowy kod w Holuto.",
+        ),
+        (
+            429,
+            "rate_limited",
+            7,
+            "rate_limited",
+            "Zbyt wiele prób parowania. Spróbuj później.",
+        ),
+        (
+            401,
+            "unauthorized",
+            6,
+            "unauthorized",
+            "Holuto odrzuciło parowanie drukarki (401). Sparuj drukarkę ponownie w Ustawieniach.",
+        ),
+        (
+            503,
+            "unavailable",
+            5,
+            "holuto",
+            "Holuto odpowiedziało błędem 503",
+        ),
     ] {
         let server = Holuto::new();
         server.pairing_code("ABCD1234");
@@ -536,7 +539,7 @@ fn pairing_command_maps_refusals_to_stable_exit_codes_without_saving() -> TestRe
         let before = Settings::load_at(&path)?;
         let error = execute(Command::Pair("ABCD1234".into()), &path).expect_err("pairing refusal");
         assert_eq!((error.exit, error.code), (expected_exit, expected_code));
-        assert!(!error.message.contains("secret-canary"));
+        assert_eq!(error.message, expected_message);
         assert_eq!(Settings::load_at(&path)?, before);
     }
     Ok(())
@@ -561,5 +564,128 @@ fn malformed_pairing_code_exits_three_without_a_backend_request_or_settings_chan
     );
     assert_eq!(server.requests(), []);
     assert_eq!(Settings::load_at(temp.path())?, before);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Child dispatch checks the public CLI output, exit code and persisted configuration"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep literal CLI cases beside their subprocess and output assertions"
+)]
+fn json_dispatch_round_trips_configuration_and_reports_exact_errors() -> TestResult {
+    use std::{
+        env,
+        process::{Command as Process, ExitCode},
+    };
+    const CHILD: &str = "WORKSHOP_CLI_DISPATCH_CHILD";
+    if let Some(arguments) = env::var_os(CHILD) {
+        let arguments: Vec<String> = serde_json::from_str(&arguments.to_string_lossy())?;
+        let expected: u8 = env::var("WORKSHOP_CLI_EXIT")?.parse()?;
+        assert_eq!(
+            super::run(arguments.into_iter().map(OsString::from)),
+            Some(ExitCode::from(expected))
+        );
+        fs::write(
+            env::var_os("WORKSHOP_CLI_OUTCOME").ok_or("missing outcome path")?,
+            "dispatched\n",
+        )?;
+        return Ok(());
+    }
+    let temporary = tempfile::tempdir()?;
+    let invalid = json!({"ok":false,"error":{
+        "code":"arguments","message":"Nieprawidłowe argumenty. Użyj workshop --help."
+    }});
+    for (arguments, exit, expected) in [
+        (
+            vec!["check"],
+            3,
+            json!({"ok":false,"configured":false,"appRunning":false,
+            "errors":["Wpisz adres API w Ustawieniach."]}),
+        ),
+        (
+            vec!["config", "show"],
+            0,
+            json!({"ok":true,"config":{
+                "apiUrl":"","paired":false,"port":"auto","baudRate":9600,"vendor":null,
+                "telemetryEnabled":true,"startOnLaunch":false
+            }}),
+        ),
+        (
+            vec!["config", "set", "--speed", "19200", "--speed", "9600"],
+            2,
+            invalid.clone(),
+        ),
+        (vec!["config", "set"], 2, invalid.clone()),
+        (vec!["config", "set", "--diagnostics", "maybe"], 2, invalid),
+        (
+            vec![
+                "config",
+                "set",
+                "--api-url",
+                "https://example.test/api",
+                "--port",
+                "TEST-NOT-SERIAL",
+                "--speed",
+                "19200",
+                "--diagnostics",
+                "off",
+            ],
+            0,
+            json!({"ok":true}),
+        ),
+        (
+            vec!["config", "show"],
+            0,
+            json!({"ok":true,"config":{
+                "apiUrl":"https://example.test/api","paired":false,"port":"TEST-NOT-SERIAL",
+                "baudRate":19200,"vendor":null,"telemetryEnabled":false,"startOnLaunch":false
+            }}),
+        ),
+        (
+            vec!["check"],
+            3,
+            json!({"ok":false,"configured":false,"appRunning":false,
+            "errors":["Sparuj drukarkę kodem z Holuto w Ustawieniach."]}),
+        ),
+        (vec!["status"], 0, json!({"ok":true,"appRunning":false})),
+    ] {
+        let mut arguments = arguments;
+        arguments.push("--json");
+        let outcome = temporary.path().join("outcome");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "CLI path overrides are child-local"
+        )]
+        let output = Process::new(env::current_exe()?)
+            .args([
+                "--exact",
+                "cli::tests::json_dispatch_round_trips_configuration_and_reports_exact_errors",
+                "--nocapture",
+            ])
+            .env(CHILD, serde_json::to_string(&arguments)?)
+            .env("WORKSHOP_CLI_EXIT", exit.to_string())
+            .env("WORKSHOP_CLI_OUTCOME", &outcome)
+            .env("XDG_STATE_HOME", temporary.path())
+            .output()?;
+        assert!(output.status.success(), "{arguments:?}: {output:?}");
+        assert_eq!(fs::read_to_string(&outcome)?, "dispatched\n");
+        fs::remove_file(&outcome)?;
+        assert!(output.stderr.is_empty(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout)?;
+        assert_eq!(
+            stdout
+                .lines()
+                .filter(|line| line.starts_with('{'))
+                .map(serde_json::from_str::<serde_json::Value>)
+                .collect::<Result<Vec<_>, _>>()?,
+            [expected],
+            "{arguments:?}"
+        );
+    }
     Ok(())
 }

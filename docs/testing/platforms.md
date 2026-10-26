@@ -43,10 +43,11 @@ the more specific platform they prove). They must exercise production serial
 transport connected only to the simulator peer. macOS port filtering and
 platform path tests remain gated to the relevant OS.
 
-The default nextest profile excludes `com_pair` tests. Linux tray tests belong
-to `session_bus` and the serial test group in `.config/nextest.toml`. The
-watcher scenario re-executes itself under `dbus-run-session`; the caller need
-not supply a session-bus address. CI also wraps the complete Linux run:
+The default nextest profile excludes `com_pair` tests.
+[Nextest configuration](../../.config/nextest.toml) assigns `session_bus` and
+`com_pair` tests to separate single-threaded groups. The watcher scenario
+re-executes itself under `dbus-run-session`; the caller need not supply a
+session-bus address. CI also wraps the complete Linux run:
 
 ```sh
 dbus-run-session -- cargo nextest run --profile ci --workspace --all-features
@@ -75,8 +76,8 @@ cargo nextest run --profile ci -p posnet --all-features -E 'test(com_pair)'
 `com_pair` reads both names, opens both ends and fails loudly if the variable is
 missing or invalid; no silent skip and no fallback to enumerated hardware. The
 `ci` profile includes the tests; a default-profile filter alone still excludes
-them. Run them serially when sharing the single pair. CI provisions the signed
-pair before the Windows suite.
+them. The configured `com_pair` group serializes access to the shared pair.
+CI provisions the signed pair before the Windows suite.
 
 ## Autostart artefacts
 

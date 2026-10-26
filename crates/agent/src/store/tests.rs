@@ -24,15 +24,29 @@ fn child(test: &str) -> Result<Command, Box<dyn StdError>> {
     Ok(command)
 }
 
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "A completed child leaves evidence independent of the test runner output."
+)]
 fn assert_child(command: &mut Command) -> TestResult {
-    let output = command.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if output.status.success() && stdout.contains("1 passed") {
-        Ok(())
-    } else {
-        Err(format!("child test failed or filter matched nothing:\n{stdout}\n{stderr}").into())
+    let temporary = tempfile::tempdir()?;
+    let outcome = temporary.path().join("outcome");
+    let output = command
+        .env("HOLUTO_TEST_CHILD_OUTCOME", &outcome)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!("child failed: {output:?}").into());
     }
+    assert_eq!(fs::read(outcome)?, b"complete");
+    Ok(())
+}
+
+fn child_succeeded() -> TestResult {
+    fs::write(
+        env::var_os("HOLUTO_TEST_CHILD_OUTCOME").ok_or("missing outcome path")?,
+        b"complete",
+    )?;
+    Ok(())
 }
 
 #[test]
@@ -57,7 +71,7 @@ fn another_process_cannot_open_state_until_the_holder_releases_it() -> TestResul
         } else {
             let _dir = StateDir::open(path)?;
         }
-        return Ok(());
+        return child_succeeded();
     }
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("Zażółć gęślą jaźń");
@@ -129,9 +143,12 @@ fn failed_replacement_preserves_the_original_target() -> TestResult {
         b"keep this",
         "failed writes preserve the previous target"
     );
+    let names = fs::read_dir(temporary.path())?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(
-        fs::read_dir(temporary.path())?.count(),
-        1,
+        names,
+        ["settings.json"],
         "failed writes clean their staging directory"
     );
     Ok(())
@@ -221,7 +238,7 @@ fn linux_uses_absolute_xdg_state_or_falls_back_to_home() -> TestResult {
             Some(PathBuf::from(expected)),
             "Linux must not open a second journal through relative overrides"
         );
-        return Ok(());
+        return child_succeeded();
     }
     let temporary = tempfile::tempdir()?;
     let home = temporary.path().join("Dom – Łódź");
@@ -262,7 +279,7 @@ fn macos_uses_home_application_support_and_ignores_xdg() -> TestResult {
             Some(PathBuf::from(expected)),
             "macOS state belongs in Application Support"
         );
-        return Ok(());
+        return child_succeeded();
     }
     let temporary = tempfile::tempdir()?;
     let home = temporary.path().join("Dom – Łódź");
@@ -288,7 +305,7 @@ fn windows_uses_the_known_folder_and_ignores_localappdata() -> TestResult {
             Some(PathBuf::from(expected)),
             "environment overrides cannot move the Windows fiscal journal"
         );
-        return Ok(());
+        return child_succeeded();
     }
     let expected = known_folders::get_known_folder_path(known_folders::KnownFolder::LocalAppData)
         .ok_or("LocalAppData Known Folder unavailable")?
@@ -441,5 +458,32 @@ fn simulator_and_production_default_paths_are_distinct() -> TestResult {
         StateDir::default_path_for(true),
         Some(production.with_file_name("workshop-simulator"))
     );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "An unreadable application lock is not a stopped application."
+)]
+fn unreadable_application_lock_is_an_error_instead_of_a_false_stopped_status() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let path = dir.file("application.lock");
+    fs::create_dir(&path)?;
+    let error = StateDir::is_application_running(dir.path())
+        .err()
+        .ok_or("unreadable lock ignored")?;
+    let Error::Store {
+        action,
+        path: failed_path,
+        ..
+    } = error
+    else {
+        return Err("unreadable lock must report a store error".into());
+    };
+    assert_eq!(action, "Nie można odczytać blokady katalogu stanu");
+    assert_eq!(failed_path, path);
+    assert!(path.is_dir());
     Ok(())
 }

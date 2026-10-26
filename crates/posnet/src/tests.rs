@@ -17,8 +17,8 @@ use crate::{
     capabilities::capabilities,
     frame,
     printer::{Printer, identify},
-    simulator::{Fault, Simulator, UNIQUE_NUMBER},
-    testing::{BRAND, line, pay},
+    simulator::{Fault, SimReceipt, SimReport, Simulator, UNIQUE_NUMBER},
+    testing::{BRAND, line, params, pay},
 };
 
 #[cfg(workshop_acceptance)]
@@ -85,6 +85,33 @@ fn all_steps_receipt() -> Receipt {
         &capabilities(),
     )
     .unwrap()
+}
+
+fn all_steps_effect() -> SimReceipt {
+    SimReceipt {
+        total: 100,
+        lines: vec![params(&[
+            ("na", "Olej"),
+            ("vt", "0"),
+            ("pr", "200"),
+            ("il", "1"),
+            ("wa", "200"),
+        ])],
+        payments: vec![params(&[("ty", "2"), ("wa", "100")])],
+        buyer_nip: Some("1234567890".to_owned()),
+    }
+}
+
+fn report_effect(command: &str) -> SimReport {
+    SimReport {
+        command: command.to_owned(),
+        params: params(match command {
+            "dailyrep" => &[("da", "2026-07-01")],
+            "monthlyrep" => &[("da", "2026-06-01"), ("su", "0")],
+            "periodicrepbydates" => &[("fd", "2026-01-01"), ("td", "2026-06-30"), ("su", "0")],
+            _ => panic!("unknown report fixture"),
+        }),
+    }
 }
 
 fn commands(sim: &Simulator) -> Vec<String> {
@@ -251,18 +278,93 @@ fn an_enabled_posnet_interface_without_windows_1250_refuses_before_journaling() 
 }
 
 #[test]
-fn an_unreadable_status_is_never_treated_as_a_ready_printer() {
+fn every_incomplete_preflight_reply_refuses_before_journaling_or_fiscal_effects() {
+    for (command, field) in [
+        ("getrealid", "nm"),
+        ("sdev", "qe"),
+        ("sprn", "pr"),
+        ("scomm", "fs"),
+        ("strns", "to"),
+        ("vatget", "va"),
+        ("pccfgget", "id"),
+    ] {
+        let sim = simulator();
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        sim.fault(command, Fault::Reply(vec![]));
+        let mut journal = Recorder::default();
+        for error in [
+            driver
+                .print_receipt(&sale(), &expected, &mut journal)
+                .unwrap_err(),
+            driver
+                .print_report(Report::Daily, UNIQUE_NUMBER, &mut journal)
+                .unwrap_err(),
+            driver.verify(UNIQUE_NUMBER).unwrap_err(),
+        ] {
+            assert!(
+                matches!(&error, Error::Protocol(message) if message ==
+                    &format!("Niepełna lub nieprawidłowa odpowiedź statusu drukarki: \
+                              Niepełna odpowiedź drukarki: brak parametru {field}.")),
+                "{command}: {error:?}"
+            );
+        }
+        assert_eq!(journal.stages, Vec::<&str>::new());
+        assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
+        assert_eq!(sim.receipts(), vec![]);
+        assert_eq!(sim.reports(), vec![]);
+    }
+}
+
+#[test]
+fn undocumented_false_status_spellings_never_authorize_a_fiscal_command() {
+    for field in ["fs", "hr", "qe", "fe", "td"] {
+        for value in ["f", "F"] {
+            let sim = simulator();
+            let device = printer(&sim);
+            let expected = device.probe().unwrap();
+            sim.set_status(field, value);
+            let mut journal = Recorder::default();
+            assert!(
+                matches!(
+                    device.print_receipt(&sale(), &expected, &mut journal),
+                    Err(Error::Protocol(_))
+                ),
+                "{field}={value}"
+            );
+            assert!(
+                matches!(
+                    device.print_report(Report::Daily, UNIQUE_NUMBER, &mut journal),
+                    Err(Error::Protocol(_))
+                ),
+                "{field}={value}"
+            );
+            assert_eq!(journal.stages, Vec::<&str>::new());
+            assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
+            assert_eq!(sim.receipts(), vec![]);
+            assert_eq!(sim.reports(), vec![]);
+        }
+    }
+}
+
+#[test]
+fn malformed_zero_daily_error_codes_remain_uncertain_and_are_not_retried() {
     let sim = simulator();
     sim.fault(
-        "sdev",
-        Fault::Reply(vec![("ds".to_owned(), "0".to_owned())]),
+        "dailyrep",
+        Fault::Reply(vec![("?".to_owned(), "+382".to_owned())]),
     );
-    assert_eq!(
-        printer(&sim).probe().unwrap_err().to_string(),
-        "Niepełna lub nieprawidłowa odpowiedź statusu drukarki: \
-         Niepełna odpowiedź drukarki: brak parametru qe."
+    let mut journal = Recorder::default();
+    let error = printer(&sim)
+        .print_report(Report::Daily, UNIQUE_NUMBER, &mut journal)
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Uncertain(inner) if matches!(inner.as_ref(), Error::Protocol(_))),
+        "{error:?}"
     );
-    assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
+    assert_eq!(journal.stages, ["dailyrep"]);
+    assert_eq!(fiscal_commands(&sim), ["dailyrep"]);
+    assert_eq!(sim.reports(), vec![]);
 }
 
 #[test]
@@ -393,6 +495,41 @@ fn legacy_clock_without_an_offset_chooses_the_earlier_repeated_instant() {
 }
 
 #[test]
+fn a_nonexistent_legacy_clock_time_refuses_receipts_but_keeps_date_only_reports() {
+    let sim = simulator();
+    sim.fault(
+        "rtcget",
+        Fault::Reply(vec![("da".to_owned(), "2026-03-29;02:30".to_owned())]),
+    );
+    let device = printer(&sim);
+    let expected = device.probe().unwrap();
+    let mut journal = Recorder::default();
+    let error = device
+        .print_receipt(&sale(), &expected, &mut journal)
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Protocol(message)
+            if message == "Nie można odczytać zegara drukarki: \
+                           czas lokalny nie istnieje w strefie Europe/Warsaw."),
+        "{error:?}"
+    );
+    assert_eq!(journal.stages, Vec::<&str>::new());
+    assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
+    assert_eq!(sim.receipts(), vec![]);
+    device
+        .print_report(Report::Daily, UNIQUE_NUMBER, &mut journal)
+        .unwrap();
+    assert_eq!(journal.stages, ["dailyrep"]);
+    assert_eq!(
+        sim.reports(),
+        [SimReport {
+            command: "dailyrep".to_owned(),
+            params: params(&[("da", "2026-03-29")]),
+        }]
+    );
+}
+
+#[test]
 fn unreadable_clocks_fail_before_fiscal_commands() {
     for fault in [
         Fault::Error,
@@ -411,6 +548,100 @@ fn unreadable_clocks_fail_before_fiscal_commands() {
             .unwrap_err();
         assert!(!matches!(error, Error::Uncertain(_)), "{error:?}");
         assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn header_formatting_and_case_choose_only_the_needed_full_company_footer() {
+    for (header, footer) in [
+        ("&c&1AUTO && MOTO&1&c\nŻółw&", false),
+        ("&cAuto &b&&&b Moto&c", false),
+        ("Auto && Moto dodatkowy tekst", false),
+        ("Auto", true),
+        ("Auto && Motocykl", false),
+        ("Auto && Mot", true),
+    ] {
+        let sim = simulator();
+        sim.set_header(header);
+        let device = printer(&sim);
+        let expected = device.probe().unwrap();
+        let receipt = Receipt::new(
+            vec![line("Olej", "1", "1", 0)],
+            vec![],
+            vec![pay(PaymentForm::Cash, 100)],
+            None,
+            "Auto & Moto",
+            &capabilities(),
+        )
+        .unwrap();
+        let mut journal = Recorder::default();
+        let printed = device
+            .print_receipt(&receipt, &expected, &mut journal)
+            .unwrap();
+        assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+        let expected_commands = if footer {
+            vec![
+                "trinit",
+                "trline",
+                "trpayment",
+                "trend",
+                "trftrln",
+                "trftrend",
+            ]
+        } else {
+            vec!["trinit", "trline", "trpayment", "trend"]
+        };
+        assert_eq!(fiscal_commands(&sim), expected_commands, "{header:?}");
+        assert_eq!(journal.stages, expected_commands, "{header:?}");
+        if footer {
+            let fields = sim
+                .frames()
+                .iter()
+                .map(|raw| frame::decode(raw).unwrap())
+                .find(|(command, _)| command == "trftrln")
+                .unwrap()
+                .1;
+            assert_eq!(
+                fields.fields(),
+                &[
+                    ("id".to_owned(), "25".to_owned()),
+                    ("na".to_owned(), "Auto & Moto".to_owned()),
+                ]
+            );
+        }
+        assert!(device.probe().unwrap().ready(), "{header:?}");
+    }
+}
+
+#[test]
+fn a_report_journal_failure_sends_no_fiscal_command_or_effect() {
+    for report in [
+        Report::Daily,
+        Report::Monthly {
+            year: 2026,
+            month: 6,
+        },
+        Report::Periodic {
+            from: date(2026, 1, 1),
+            to: date(2026, 6, 30),
+            summary: true,
+        },
+    ] {
+        let sim = simulator();
+        let mut journal = Recorder {
+            fail_at: Some(0),
+            ..Recorder::default()
+        };
+        assert!(
+            matches!(
+                printer(&sim).print_report(report, UNIQUE_NUMBER, &mut journal),
+                Err(Error::Journal(_))
+            ),
+            "{report:?}"
+        );
+        assert_eq!(journal.stages, Vec::<&str>::new());
+        assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
+        assert_eq!(sim.reports(), vec![]);
     }
 }
 
@@ -435,52 +666,42 @@ fn refused_trinit_and_report_commands_are_certain_but_other_named_errors_are_not
             }),
         ),
     ] {
-        let sim = simulator();
-        sim.fault(
-            command,
-            Fault::Device {
-                code: 2036,
-                command: command.to_owned(),
-                field: "da".to_owned(),
-            },
-        );
-        let device = printer(&sim);
-        let status = device.probe().unwrap();
-        let mut journal = Recorder::default();
-        let error = if let Some(report) = report {
-            device
-                .print_report(report, UNIQUE_NUMBER, &mut journal)
-                .unwrap_err()
-        } else {
-            device
-                .print_receipt(&sale(), &status, &mut journal)
-                .unwrap_err()
-        };
-        assert!(
-            matches!(error, Error::Device { code: 2036, .. }),
-            "{command}: {error:?}"
-        );
-        assert_eq!(journal.stages, [command]);
-        assert_eq!(fiscal_commands(&sim), [command]);
-        assert_eq!(sim.receipts(), vec![]);
-        assert_eq!(sim.reports(), vec![]);
+        for named in [command, "!sdev"] {
+            let sim = simulator();
+            sim.fault(
+                command,
+                Fault::Device {
+                    code: 2036,
+                    command: named.to_owned(),
+                    field: "da".to_owned(),
+                },
+            );
+            let device = printer(&sim);
+            let status = device.probe().unwrap();
+            let mut journal = Recorder::default();
+            let error = if let Some(report) = report {
+                device
+                    .print_report(report, UNIQUE_NUMBER, &mut journal)
+                    .unwrap_err()
+            } else {
+                device
+                    .print_receipt(&sale(), &status, &mut journal)
+                    .unwrap_err()
+            };
+            if named == command {
+                assert!(
+                    matches!(error, Error::Device { code: 2036, .. }),
+                    "{command}: {error:?}"
+                );
+            } else {
+                assert!(matches!(error, Error::Uncertain(_)), "{command}: {error:?}");
+            }
+            assert_eq!(journal.stages, [command]);
+            assert_eq!(fiscal_commands(&sim), [command]);
+            assert_eq!(sim.receipts(), vec![]);
+            assert_eq!(sim.reports(), vec![]);
+        }
     }
-    let sim = simulator();
-    sim.fault(
-        "dailyrep",
-        Fault::Device {
-            code: 2036,
-            command: "!sdev".to_owned(),
-            field: String::new(),
-        },
-    );
-    assert!(
-        matches!(
-            printer(&sim).print_report(Report::Daily, UNIQUE_NUMBER, &mut Recorder::default()),
-            Err(Error::Uncertain(_))
-        ),
-        "a foreign refusal proves nothing about dailyrep"
-    );
 }
 
 #[test]
@@ -540,14 +761,13 @@ fn invalid_reports_are_refused_without_sending_a_report() {
 
 #[test]
 fn reports_outside_the_printer_date_and_fiscalisation_are_refused_before_journaling() {
-    // Printer date 2026-07-01 (Warsaw); fiscalised 2026-03-10.
-    for (report, prints) in [
+    for (report, message) in [
         (
             Report::Monthly {
                 year: 2026,
                 month: 8,
             },
-            false,
+            "Raport nie może zaczynać się po dacie drukarki (01.07.2026).",
         ),
         (
             Report::Periodic {
@@ -555,14 +775,14 @@ fn reports_outside_the_printer_date_and_fiscalisation_are_refused_before_journal
                 to: date(2026, 7, 2),
                 summary: false,
             },
-            false,
+            "Raport nie może zaczynać się po dacie drukarki (01.07.2026).",
         ),
         (
             Report::Monthly {
                 year: 2026,
                 month: 2,
             },
-            false,
+            "Raport nie może kończyć się przed fiskalizacją drukarki (10.03.2026).",
         ),
         (
             Report::Periodic {
@@ -570,21 +790,43 @@ fn reports_outside_the_printer_date_and_fiscalisation_are_refused_before_journal
                 to: date(2026, 3, 9),
                 summary: true,
             },
-            false,
+            "Raport nie może kończyć się przed fiskalizacją drukarki (10.03.2026).",
         ),
+    ] {
+        let sim = simulator();
+        sim.set_fiscalised("2026-03-10T08:00:00Z".parse().unwrap());
+        let mut journal = Recorder::default();
+        let error = printer(&sim)
+            .print_report(report, UNIQUE_NUMBER, &mut journal)
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::Invalid(reason) if reason == message),
+            "{report:?}: {error:?}"
+        );
+        assert_eq!(journal.stages, Vec::<&str>::new(), "{report:?}");
+        assert_eq!(fiscal_commands(&sim), Vec::<String>::new(), "{report:?}");
+        assert_eq!(sim.reports(), vec![]);
+    }
+}
+
+#[test]
+fn reports_include_the_current_month_and_fiscalisation_day_boundaries() {
+    for (report, command, fields) in [
         (
             Report::Monthly {
                 year: 2026,
                 month: 7,
             },
-            true,
+            "monthlyrep",
+            params(&[("da", "2026-07-01"), ("su", "0")]),
         ),
         (
             Report::Monthly {
                 year: 2026,
                 month: 3,
             },
-            true,
+            "monthlyrep",
+            params(&[("da", "2026-03-01"), ("su", "0")]),
         ),
         (
             Report::Periodic {
@@ -592,7 +834,8 @@ fn reports_outside_the_printer_date_and_fiscalisation_are_refused_before_journal
                 to: date(2026, 7, 1),
                 summary: false,
             },
-            true,
+            "periodicrepbydates",
+            params(&[("fd", "2026-07-01"), ("td", "2026-07-01"), ("su", "0")]),
         ),
         (
             Report::Periodic {
@@ -600,25 +843,26 @@ fn reports_outside_the_printer_date_and_fiscalisation_are_refused_before_journal
                 to: date(2026, 3, 10),
                 summary: true,
             },
-            true,
+            "periodicrepbydates",
+            params(&[("fd", "2026-01-01"), ("td", "2026-03-10"), ("su", "1")]),
         ),
     ] {
         let sim = simulator();
         sim.set_fiscalised("2026-03-10T08:00:00Z".parse().unwrap());
         let mut journal = Recorder::default();
-        let result = printer(&sim).print_report(report, UNIQUE_NUMBER, &mut journal);
-        if prints {
-            assert!(result.is_ok(), "{report:?}: {result:?}");
-            assert_eq!(journal.stages.len(), 1, "{report:?}");
-            assert_eq!(sim.reports().len(), 1, "{report:?}");
-        } else {
-            assert!(
-                matches!(&result, Err(Error::Invalid(_))),
-                "{report:?}: {result:?}"
-            );
-            assert_eq!(journal.stages, Vec::<&str>::new(), "{report:?}");
-            assert_eq!(fiscal_commands(&sim), Vec::<String>::new(), "{report:?}");
-        }
+        printer(&sim)
+            .print_report(report, UNIQUE_NUMBER, &mut journal)
+            .unwrap();
+        assert_eq!(journal.stages, [command], "{report:?}");
+        assert_eq!(fiscal_commands(&sim), [command], "{report:?}");
+        assert_eq!(
+            sim.reports(),
+            [SimReport {
+                command: command.to_owned(),
+                params: fields
+            }],
+            "{report:?}"
+        );
     }
 }
 
@@ -720,7 +964,15 @@ fn a_lost_corrupt_or_disconnected_receipt_reply_is_uncertain_and_never_resent() 
                 end < 5,
                 "{case}: the command executed before its reply failed"
             );
-            assert_eq!(sim.receipts().len(), usize::from(end >= 5), "{case}");
+            assert_eq!(
+                sim.receipts(),
+                if end >= 5 {
+                    vec![all_steps_effect()]
+                } else {
+                    vec![]
+                },
+                "{case}"
+            );
         }
     }
 }
@@ -761,8 +1013,8 @@ fn a_lost_corrupt_or_disconnected_report_reply_is_uncertain_and_never_resent() {
             );
             assert_eq!(journal.stages, [command], "{case}");
             assert_eq!(
-                sim.reports()[0].command,
-                command,
+                sim.reports(),
+                [report_effect(command)],
                 "{case}: report executed before the reply failed"
             );
         }
@@ -851,7 +1103,7 @@ fn a_footer_failure_after_trend_returns_the_printed_receipt_without_a_second_sen
                 "{command} {fault:?}: stop at the failure without resending"
             );
             assert_eq!(journal.stages, expected[..sent]);
-            assert_eq!(sim.receipts().len(), 1);
+            assert_eq!(sim.receipts(), [all_steps_effect()]);
             let footer_closed = command == "trftrend"
                 && matches!(
                     fault,
@@ -890,7 +1142,7 @@ fn every_fiscal_command_is_journaled_before_it_reaches_the_device() {
         sim: &sim,
         stages: vec![],
     };
-    let _printed = device
+    let printed = device
         .print_receipt(&all_steps_receipt(), &status, &mut journal)
         .unwrap();
     assert_eq!(
@@ -906,7 +1158,11 @@ fn every_fiscal_command_is_journaled_before_it_reaches_the_device() {
             "trftrend"
         ]
     );
-    assert_eq!(sim.receipts()[0].buyer_nip.as_deref(), Some("1234567890"));
+    assert_eq!(fiscal_commands(&sim), journal.stages);
+    assert_eq!(sim.receipts(), [all_steps_effect()]);
+    assert_eq!(printed.receipt_number.as_deref(), Some("1"));
+    assert_eq!(printed.issued_at, "2026-07-01T10:34:00Z".parse().unwrap());
+    assert!(device.probe().unwrap().ready());
 }
 
 #[test]
@@ -945,7 +1201,7 @@ fn a_report_execution_error_keeps_the_effect_uncertain_without_a_second_send() {
         );
         assert_eq!(fiscal_commands(&sim), [command]);
         assert_eq!(journal.stages, [command]);
-        assert_eq!(sim.reports()[0].command, command);
+        assert_eq!(sim.reports(), [report_effect(command)]);
     }
 }
 
@@ -1035,7 +1291,21 @@ fn a_spaced_unique_number_binds_in_its_canonical_form() {
             let _printed = device
                 .print_receipt(&sale(), &status, &mut Recorder::default())
                 .unwrap();
-            assert_eq!(sim.receipts().len(), 1);
+            assert_eq!(
+                sim.receipts(),
+                [SimReceipt {
+                    total: 100,
+                    lines: vec![params(&[
+                        ("na", "Olej"),
+                        ("vt", "0"),
+                        ("pr", "100"),
+                        ("il", "1"),
+                        ("wa", "100")
+                    ])],
+                    payments: vec![params(&[("ty", "0"), ("wa", "100")])],
+                    buyer_nip: None,
+                }]
+            );
         }
     }
 }
@@ -1090,7 +1360,8 @@ fn a_refused_zero_daily_report_is_certain_and_other_report_codes_stay_uncertain(
         .print_report(Report::Daily, UNIQUE_NUMBER, &mut journal)
         .unwrap_err();
     assert!(
-        matches!(&error, Error::Device { code: 382, rejected: false, command, .. } if command == "dailyrep"),
+        matches!(&error, Error::Device { code: 382, rejected: false, command, .. }
+            if command == "dailyrep"),
         "{error:?}"
     );
     assert_eq!(
@@ -1146,7 +1417,8 @@ fn a_read_only_printer_prints_monthly_and_periodic_reports_but_no_sales_or_daily
             .unwrap_err(),
     ] {
         assert!(
-            matches!(&error, Error::NotReady(reason) if reason == "Drukarka jest w trybie tylko do odczytu"),
+            matches!(&error, Error::NotReady(reason)
+                if reason == "Drukarka jest w trybie tylko do odczytu"),
             "{error:?}"
         );
     }
@@ -1189,12 +1461,13 @@ fn a_read_only_printer_prints_monthly_and_periodic_reports_but_no_sales_or_daily
         )
         .unwrap_err();
     assert!(
-        matches!(&error, Error::NotReady(reason) if reason.contains("Brak papieru")),
+        matches!(&error, Error::NotReady(reason)
+            if reason == "Brak papieru. Drukarka jest w trybie tylko do odczytu"),
         "{error:?}"
     );
     assert_eq!(
-        sim.reports().len(),
-        2,
+        journal.stages,
+        ["monthlyrep", "periodicrepbydates"],
         "other problems still refuse reports"
     );
 }

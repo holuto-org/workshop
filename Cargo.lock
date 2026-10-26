@@ -305,6 +305,7 @@ dependencies = [
  "proptest",
  "proptest-state-machine",
  "quote",
+ "rustls",
  "schemars",
  "sentry-core",
  "serde",

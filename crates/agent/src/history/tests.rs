@@ -40,6 +40,11 @@ fn torn_history_retains_complete_receipts_once_and_accepts_the_next_receipt() ->
         [entry(3)?, entry(2)?, entry(1)?].as_slice(),
         "torn rows are skipped, complete duplicate upgrades keep the original position"
     );
+    assert_eq!(
+        fs::read(dir.file("history.jsonl"))?,
+        include_bytes!("fixtures/history-compacted.jsonl"),
+        "compaction writes the reviewed current format, including its final newline"
+    );
     drop(dir);
     let reopened = StateDir::open(temporary.path().join("Historia – Łódź"))?;
     assert_eq!(
@@ -145,29 +150,6 @@ fn compaction_bounds_the_physical_file_and_retains_exactly_the_newest_receipts()
             .map(entry)
             .collect::<Result<Vec<_>, _>>()?,
         "subsequent appends remain bounded"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Test assertions panic on violated guarantees; setup errors use Result."
-)]
-fn a_previous_worker_snapshot_stays_unchanged_after_the_next_append() -> TestResult {
-    let temporary = tempfile::tempdir()?;
-    let dir = StateDir::open(temporary.path().join("state"))?;
-    let previous = append(&dir, &entry(1)?)?;
-    let current = append(&dir, &entry(2)?)?;
-    assert_eq!(
-        previous,
-        [entry(1)?],
-        "a published snapshot must remain unchanged while the worker changes history"
-    );
-    assert_eq!(
-        current,
-        [entry(2)?, entry(1)?],
-        "the next snapshot contains the new receipt, newest first"
     );
     Ok(())
 }
@@ -296,5 +278,44 @@ fn loading_history_tightens_its_permissions_without_waiting_for_a_print() -> Tes
         0o600,
         "privacy repair must not depend on issuing another receipt"
     );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Cache corruption must not swallow valid rows."
+)]
+fn unknown_history_fields_and_non_utf8_rows_do_not_hide_the_next_receipt() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let literal = include_str!("fixtures/history-compacted.jsonl");
+    let tolerant = literal.replacen('{', "{\"futureDisplayField\":true,", 1);
+    let mut bytes = vec![0xFF, b'\n'];
+    bytes.extend_from_slice(tolerant.as_bytes());
+    fs::write(dir.file("history.jsonl"), bytes)?;
+    assert_eq!(load(&dir)?, [entry(3)?, entry(2)?, entry(1)?]);
+    assert_eq!(
+        format!("{:?}", load(&dir)?.last().ok_or("missing history")?),
+        "HistoryEntry { job_id: 00000000-0000-0000-0000-000000000001, items: 1, .. }"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "An open failure is not an empty history cache."
+)]
+fn a_history_file_that_cannot_be_opened_is_not_silently_treated_as_missing() -> TestResult {
+    use std::{os::unix::fs::symlink, path::Path};
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let path = dir.file("history.jsonl");
+    symlink("history.jsonl", &path)?;
+    assert!(matches!(load(&dir),Err(Error::Store {
+        action:"Nie można odczytać historii",path:failed_path,..}) if failed_path == path));
+    assert_eq!(fs::read_link(path)?, Path::new("history.jsonl"));
     Ok(())
 }

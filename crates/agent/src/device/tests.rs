@@ -6,7 +6,7 @@ use fiscal::{
     error::Error,
     link::{Candidate, Connection, Link, Port},
 };
-use novitus::{frame as novitus_frame, simulator::Simulator as NovitusSimulator};
+use novitus::frame as novitus_frame;
 use std::{io, sync::Arc};
 
 fn connection(port: &str) -> Connection {
@@ -251,7 +251,9 @@ fn unsupported_elzab_model_is_reported_instead_of_a_later_silent_port() {
     .err()
     .unwrap();
     assert!(
-        matches!(&error, Error::Unsupported(message) if message.contains("ELZAB Zeta Online")),
+        matches!(&error, Error::Unsupported(message) if message ==
+            "Nieobsługiwany model drukarki Elzab: ELZAB Zeta Online (oprogramowanie MD06.02). \
+             Obsługiwane są Elzab Zeta, Mera i Cube ONLINE."),
         "{error:?}"
     );
     // Novitus is never probed on a port where Elzab already answered.
@@ -400,40 +402,42 @@ fn blocked_detection_never_falls_back_to_another_brand_on_the_same_port() {
 }
 
 #[test]
-fn novitus_pc2_is_not_adopted_and_a_non_native_dialect_is_unready() {
-    let sim = NovitusSimulator::start();
-    sim.set_identity("NOVITUS HD II ONLINE", "3.50");
-    sim.set_endpoint("PC2");
-    assert!(
-        detect(
-            sim.link(),
-            connection(sim.address()),
-            Some(Vendor::Novitus),
-            false
-        )
-        .is_err()
-    );
-    assert_eq!(
-        sim.frames()
-            .iter()
-            .map(|frame| novitus_frame::unframe(frame).unwrap())
-            .collect::<Vec<_>>(),
-        [b"30#v".as_slice(), b"50$i", b"#c"]
-    );
-    sim.set_endpoint("PC1");
-    sim.set_dialect("0");
-    let (_, device) = detect(
-        sim.link(),
-        connection(sim.address()),
-        Some(Vendor::Novitus),
-        false,
+fn the_first_unsupported_printer_diagnostic_is_not_replaced_by_another_unsupported_candidate() {
+    let first = Simulator::start(Vendor::Elzab);
+    let second = Simulator::start(Vendor::Elzab);
+    if let Simulator::Elzab(sim) = &first {
+        sim.set_identity("ELZAB Zeta Online", "MD06.02");
+    }
+    if let Simulator::Elzab(sim) = &second {
+        sim.set_identity("ELZAB Mera Online", "MD06.02");
+    }
+    let link = RoutingLink::new(vec![
+        (
+            Candidate {
+                port: first.address().to_owned(),
+                hint: Some(Vendor::Elzab),
+            },
+            first.link(),
+        ),
+        (
+            Candidate {
+                port: second.address().to_owned(),
+                hint: Some(Vendor::Elzab),
+            },
+            second.link(),
+        ),
+    ]);
+    let error = detect(
+        Arc::<RoutingLink>::clone(&link),
+        connection("missing"),
+        None,
+        true,
     )
+    .err()
     .unwrap();
-    assert!(!device.ready());
-    assert_eq!(
-        device.description(),
-        "Wymagany jest natywny protokół NOVITUS"
-    );
-    assert_eq!(sim.receipts(), 0);
-    assert_eq!(sim.reports(), 0);
+    assert!(matches!(error,Error::Unsupported(message) if message ==
+        "Nieobsługiwany model drukarki Elzab: ELZAB Zeta Online (oprogramowanie MD06.02). \
+         Obsługiwane są Elzab Zeta, Mera i Cube ONLINE."));
+    assert_eq!(first.fiscal_frames(), Vec::<Vec<u8>>::new());
+    assert_eq!(second.fiscal_frames(), Vec::<Vec<u8>>::new());
 }

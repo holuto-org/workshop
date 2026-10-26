@@ -12,6 +12,7 @@ fn login_checkbox_registers_and_persists_without_pairing_or_unsaved_edits()
     const CHILD: &str = "WORKSHOP_AUTOSTART_UI_CHILD";
     if env::var_os(CHILD).is_none() {
         let home = TempDir::new()?;
+        let outcome = home.path().join("outcome");
         #[expect(
             clippy::disallowed_methods,
             reason = "The child isolates XDG autostart registration from the operator's session"
@@ -28,12 +29,12 @@ fn login_checkbox_registers_and_persists_without_pairing_or_unsaved_edits()
             .env(CHILD, "1")
             .env("HOME", home.path())
             .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("WORKSHOP_AUTOSTART_UI_OUTCOME", &outcome)
             .output()?;
-        assert!(
-            output.status.success()
-                && String::from_utf8_lossy(&output.stdout).contains(" 1 passed"),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            fs::read_to_string(outcome)?,
+            "registered; persisted; stopped\n"
         );
         return Ok(());
     }
@@ -68,5 +69,9 @@ fn login_checkbox_registers_and_persists_without_pairing_or_unsaved_edits()
         "checkbox registers a real per-user login entry"
     );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    fs::write(
+        env::var_os("WORKSHOP_AUTOSTART_UI_OUTCOME").ok_or("missing outcome path")?,
+        "registered; persisted; stopped\n",
+    )?;
     Ok(())
 }

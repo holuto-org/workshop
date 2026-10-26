@@ -6,7 +6,7 @@ use std::{
 
 use sentry::{
     Client, Hub,
-    protocol::{ItemContainer, LogLevel},
+    protocol::{ItemContainer, LogLevel, Request, User},
 };
 use tracing::subscriber;
 
@@ -28,6 +28,10 @@ impl Transport for Capture {
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Keep error, breadcrumb and log canaries at the outgoing envelope boundary"
+)]
 fn panic_and_error_have_printer_tags_and_no_sensitive_payload() -> Result<(), Box<dyn Error>> {
     let capture = Arc::new(Capture::default());
     let options = sentry::apply_defaults(options())
@@ -40,6 +44,8 @@ fn panic_and_error_have_printer_tags_and_no_sensitive_payload() -> Result<(), Bo
         let subscriber = tracing_subscriber::registry().with(layer());
         subscriber::with_default(subscriber, || {
             tracing::warn!(
+                host = "HOST_CANARY_9183",
+                home = "/home/HOME_CANARY_9183",
                 token = "SECRET_TOKEN",
                 url = "https://host/private?key=secret",
                 "Jan Kowalski 1234567890 Oil 250.00"
@@ -106,6 +112,38 @@ fn panic_and_error_have_printer_tags_and_no_sensitive_payload() -> Result<(), Bo
         [LogLevel::Warn, LogLevel::Info],
         "WARN and INFO also become structured logs"
     );
+    for event in envelopes
+        .iter()
+        .flat_map(Envelope::items)
+        .filter_map(|item| {
+            if let EnvelopeItem::Event(event) = item {
+                Some(event)
+            } else {
+                None
+            }
+        })
+    {
+        assert_eq!(
+            event.message.as_deref(),
+            Some("Fiscal application diagnostic")
+        );
+        assert_eq!(
+            event
+                .breadcrumbs
+                .values
+                .iter()
+                .map(|crumb| (
+                    crumb.message.as_deref(),
+                    crumb.category.as_deref(),
+                    crumb.data.len()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (Some("Fiscal application diagnostic"), None, 0),
+                (Some("Fiscal application diagnostic"), None, 0),
+            ]
+        );
+    }
     let mut bytes = Vec::new();
     for envelope in envelopes.iter() {
         envelope.to_writer(&mut bytes)?;
@@ -119,6 +157,8 @@ fn panic_and_error_have_printer_tags_and_no_sensitive_payload() -> Result<(), Bo
         "250.00",
         "/private",
         "key=secret",
+        "HOST_CANARY_9183",
+        "HOME_CANARY_9183",
     ] {
         assert!(!payload.contains(private), "telemetry leaked {private}");
     }
@@ -143,12 +183,17 @@ fn disabling_telemetry_drops_all_signals_including_sessions_immediately()
     Hub::run(
         Arc::new(Hub::new(Some(Arc::clone(&client)), Arc::default())),
         || {
+            let transaction = sentry::start_transaction(sentry::TransactionContext::new(
+                "fiscal.operation",
+                "fiscal.receipt",
+            ));
             ENABLED.store(false, Ordering::SeqCst);
             sentry::start_session();
             let _event = sentry::capture_message("private", sentry::Level::Error);
             sentry::add_breadcrumb(Breadcrumb::default());
             sentry::logger_info!("private");
             sentry::end_session();
+            transaction.finish();
             assert!(
                 client.flush(Some(Duration::from_secs(1))),
                 "disabled signals flush without sending"
@@ -184,14 +229,41 @@ fn only_fiscal_operations_are_sampled_and_transaction_data_is_scrubbed()
     Hub::run(
         Arc::new(Hub::new(Some(Arc::clone(&client)), Arc::default())),
         || {
+            sentry::configure_scope(|scope| {
+                scope.set_user(Some(User {
+                    username: Some("CUSTOMER_CANARY".into()),
+                    ..User::default()
+                }));
+                scope.set_tag("private_host", "HOST_CANARY");
+                scope.set_context(
+                    "private",
+                    Context::Other(Map::from_iter([("host".into(), "HOST_CANARY".into())])),
+                );
+            });
             sentry::start_transaction(sentry::TransactionContext::new("poll", "http.client"))
                 .finish();
-            let transaction = sentry::start_transaction(sentry::TransactionContext::new(
-                "SECRET_TOKEN",
-                "fiscal.receipt",
-            ));
-            transaction.set_data("buyer_nip", "1234567890".into());
-            transaction.finish();
+            for operation in ["fiscal.receipt", "fiscal.report"] {
+                let transaction = sentry::start_transaction(sentry::TransactionContext::new(
+                    "SECRET_TOKEN",
+                    operation,
+                ));
+                transaction.set_data("buyer_nip", "1234567890".into());
+                transaction.set_extra("amount", "AMOUNT_CANARY".into());
+                transaction.set_request(Request {
+                    url: Some(
+                        "https://HOST_CANARY/private?token=SECRET_TOKEN"
+                            .parse()
+                            .unwrap(),
+                    ),
+                    ..Request::default()
+                });
+                let span = transaction.start_child("http.client", "https://HOST_CANARY/private");
+                span.set_data("customer", "CUSTOMER_CANARY".into());
+                span.set_data("home", "/home/HOME_CANARY".into());
+                span.set_data("amount", "AMOUNT_CANARY".into());
+                span.finish();
+                transaction.finish();
+            }
             assert!(
                 client.flush(Some(Duration::from_secs(1))),
                 "transactions flush into the capture"
@@ -212,24 +284,145 @@ fn only_fiscal_operations_are_sampled_and_transaction_data_is_scrubbed()
         .collect();
     assert_eq!(
         transactions.len(),
-        1,
+        2,
         "polling HTTP calls do not become standalone transactions"
     );
+    for transaction in transactions {
+        assert_eq!(transaction.name.as_deref(), Some("fiscal.operation"));
+        assert_eq!(transaction.user, None);
+        assert_eq!(transaction.request, None);
+        assert_eq!(transaction.server_name, None);
+        assert!(transaction.tags.is_empty());
+        assert_eq!(transaction.spans.len(), 1);
+        for span in &transaction.spans {
+            assert_eq!(span.op.as_deref(), Some("http.client"));
+            assert_eq!(span.description, None);
+            assert!(span.data.is_empty());
+            assert!(span.tags.is_empty());
+        }
+    }
+    let mut bytes = Vec::new();
+    for envelope in envelopes.iter() {
+        envelope.to_writer(&mut bytes)?;
+    }
+    let payload = String::from_utf8(bytes)?;
+    for canary in [
+        "SECRET_TOKEN",
+        "1234567890",
+        "CUSTOMER_CANARY",
+        "AMOUNT_CANARY",
+        "HOST_CANARY",
+        "HOME_CANARY",
+        "/private",
+    ] {
+        assert!(!payload.contains(canary), "transaction leaked {canary}");
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Capturing transports prove no envelope leaves a disabled SDK"
+)]
+fn absent_dsn_disables_errors_logs_sessions_and_fiscal_transactions() -> Result<(), Box<dyn Error>>
+{
+    let capture = Arc::new(Capture::default());
+    let client = Arc::new(Client::from(options().transport(Arc::clone(&capture))));
+    Hub::run(
+        Arc::new(Hub::new(Some(Arc::clone(&client)), Arc::default())),
+        || {
+            sentry::start_session();
+            let _event = sentry::capture_message("Worker operation failed", sentry::Level::Error);
+            sentry::logger_warn!("Connected");
+            sentry::start_transaction(sentry::TransactionContext::new(
+                "fiscal.operation",
+                "fiscal.receipt",
+            ))
+            .finish();
+            sentry::end_session();
+            assert!(client.flush(Some(Duration::from_secs(1))));
+        },
+    );
+    assert!(
+        capture
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "The complete outgoing event is checked against synthetic private fields"
+)]
+fn event_allowlist_removes_nested_host_customer_request_and_scope_data()
+-> Result<(), Box<dyn Error>> {
+    let event: Event<'static> = serde_json::from_value(serde_json::json!({
+        "message":"Worker operation failed",
+        "server_name":"HOST_CANARY",
+        "user":{"username":"CUSTOMER_CANARY","email":"CUSTOMER_CANARY@example.invalid"},
+        "request":{"url":"https://HOST_CANARY/private?token=TOKEN_CANARY",
+            "headers":{"Authorization":"Bearer TOKEN_CANARY"},"data":"NIP_CANARY"},
+        "extra":{"nested":{"customer":"CUSTOMER_CANARY","amount":"AMOUNT_CANARY"}},
+        "tags":{"printer_id":"printer-42","device_unique_number":"SERIAL42","host":"HOST_CANARY"},
+        "contexts":{"private":{"customer":"CUSTOMER_CANARY"},
+            "trace":{"trace_id":"00000000000000000000000000000001",
+                "span_id":"0000000000000001","op":"fiscal.receipt",
+                "description":"TOKEN_CANARY","data":{"nip":"NIP_CANARY"}}},
+        "breadcrumbs":{"values":[{"message":"TOKEN_CANARY","category":"HOST_CANARY",
+            "data":{"customer":"CUSTOMER_CANARY","nip":"NIP_CANARY"}}]},
+        "exception":{"values":[{"type":"PrinterFailure","value":"TOKEN_CANARY"}]}
+    }))?;
+    let capture = Arc::new(Capture::default());
+    let client = Arc::new(Client::from(
+        options()
+            .dsn("https://public@example.invalid/1")
+            .transport(Arc::clone(&capture)),
+    ));
+    Hub::run(Arc::new(Hub::new(Some(client), Arc::default())), || {
+        let _event = sentry::capture_event(event);
+    });
+    let envelopes = capture.0.lock().map_err(|error| error.to_string())?;
+    let events = envelopes
+        .iter()
+        .flat_map(Envelope::items)
+        .filter_map(|item| {
+            if let EnvelopeItem::Event(event) = item {
+                Some(event)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let [event] = events.as_slice() else {
+        return Err("expected one captured event".into());
+    };
+    assert_eq!(event.message.as_deref(), Some("Worker operation failed"));
     assert_eq!(
-        transactions
-            .first()
-            .and_then(|transaction| transaction.name.as_deref()),
-        Some("fiscal.operation"),
-        "transaction names cannot carry user input"
+        event.tags,
+        Map::from_iter([
+            ("printer_id".into(), "printer-42".into()),
+            ("device_unique_number".into(), "SERIAL42".into()),
+        ])
     );
     let mut bytes = Vec::new();
     for envelope in envelopes.iter() {
         envelope.to_writer(&mut bytes)?;
     }
     let payload = String::from_utf8(bytes)?;
-    assert!(
-        !payload.contains("SECRET_TOKEN") && !payload.contains("1234567890"),
-        "transactions must not bypass the privacy boundary"
-    );
+    for canary in [
+        "HOST_CANARY",
+        "CUSTOMER_CANARY",
+        "TOKEN_CANARY",
+        "NIP_CANARY",
+        "AMOUNT_CANARY",
+        "/private",
+    ] {
+        assert!(!payload.contains(canary), "event leaked {canary}");
+    }
     Ok(())
 }

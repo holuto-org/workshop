@@ -13,7 +13,12 @@ use fiscal::{
     receipt::{Receipt, VAT_SLOTS},
     report::Report,
 };
-use jiff::{Timestamp, civil::Date, fmt::strtime::BrokenDownTime, tz::TimeZone};
+use jiff::{
+    Timestamp,
+    civil::Date,
+    fmt::strtime::BrokenDownTime,
+    tz::{AmbiguousOffset, TimeZone},
+};
 
 use crate::{
     capabilities::capabilities,
@@ -408,10 +413,11 @@ fn watch(
             outstanding = outstanding.saturating_sub(1);
         } else if token.is_none() {
             let result = reply.into_result(&name);
-            if name == command || result.as_ref().is_err_and(|error| refuses(error, command)) {
+            if name == command
+                || (name == "ERR" && result.as_ref().is_err_and(|error| refuses(error, command)))
+            {
                 answered = Some(result);
             } else if answered.is_none() {
-                let _reply = result?;
                 return Err(Error::Protocol(format!(
                     "Oczekiwano odpowiedzi {command}, otrzymano {name}."
                 )));
@@ -467,7 +473,7 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
 }
 
 /// Prefer ISO8601 `tm` (spec p. 17), preserving the autumn-hour offset; seconds round down.
-/// Older replies with only civil `da` choose the earlier repeated instant.
+/// Older replies with only civil `da` reject gaps and choose the earlier repeated instant.
 fn clock(session: &mut Session) -> Result<Timestamp, Error> {
     let unreadable = |problem: String| {
         Error::Protocol(format!("Nie można odczytać zegara drukarki: {problem}."))
@@ -488,8 +494,15 @@ fn clock(session: &mut Session) -> Result<Timestamp, Error> {
     let time = time
         .to_datetime()
         .map_err(|error| unreadable(error.to_string()))?;
-    TimeZone::get(PRINTER_ZONE)
-        .and_then(|zone| zone.to_ambiguous_timestamp(time).earlier())
+    let zone = TimeZone::get(PRINTER_ZONE).map_err(|error| unreadable(error.to_string()))?;
+    let timestamp = zone.to_ambiguous_timestamp(time);
+    if matches!(timestamp.offset(), AmbiguousOffset::Gap { .. }) {
+        return Err(unreadable(
+            "czas lokalny nie istnieje w strefie Europe/Warsaw".to_owned(),
+        ));
+    }
+    timestamp
+        .earlier()
         .map_err(|error| unreadable(error.to_string()))
 }
 
@@ -648,7 +661,7 @@ fn canonical_unique_number(raw: &str) -> String {
 fn boolean(value: &str) -> Result<bool, Error> {
     match value.to_ascii_lowercase().as_str() {
         "1" | "y" | "t" => Ok(true),
-        "0" | "n" | "f" => Ok(false),
+        "0" | "n" => Ok(false),
         _ => Err(Error::Protocol(format!(
             "nieprawidłowy status logiczny {value:?}"
         ))),

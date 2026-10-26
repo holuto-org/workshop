@@ -28,11 +28,9 @@ use tracing::{
 use tracing_subscriber::{Layer, layer::Context, prelude::*};
 use uuid::Uuid;
 
-use super::{Command, Event, Tone, Worker, retry_start};
+use super::{Command, Event, Tone, Worker};
 use crate::{
-    Error,
     agent::POLL,
-    api::{ApiError, TransportFailure},
     documents::BuyerNip,
     history,
     journal::{Device, JobResult, Journal, Operation, ReceiptOperation},
@@ -159,31 +157,6 @@ fn device_debug_reports_readiness_without_the_printer_company_header() {
          orphaned_receipt: false }"
     );
     assert!(!format!("{received:?}").contains("private-company"));
-}
-
-#[test]
-fn startup_retries_network_server_and_unavailable_failures_but_not_auth_or_contract_failures() {
-    assert!(retry_start(&Error::Api(ApiError::Transport(
-        TransportFailure::Connection
-    ))));
-    // 408 and 429 are the backend's request timeout and burst limiter: transient. 403 is an
-    // inactive branch or suspended company; the pairing stays valid until it is available again.
-    for status in [403, 408, 429, 500, 502, 503, 599] {
-        assert!(retry_start(&Error::Api(ApiError::Status {
-            status,
-            detail: None
-        })));
-    }
-    for status in [400, 409, 422, 499] {
-        assert!(!retry_start(&Error::Api(ApiError::Status {
-            status,
-            detail: None
-        })));
-    }
-    assert!(!retry_start(&Error::Api(ApiError::Unauthorized)));
-    assert!(!retry_start(&Error::Api(ApiError::Response(
-        "invalid binding".to_owned()
-    ))));
 }
 
 #[derive(Clone)]
@@ -317,6 +290,10 @@ fn stop(worker: Worker, events: &Receiver<Event>) -> Vec<Event> {
     worker.stop();
     let received = receive_until(events, |event| matches!(event, Event::Stopped));
     worker.join();
+    assert_eq!(
+        events.try_recv().unwrap_err(),
+        mpsc::TryRecvError::Disconnected
+    );
     received
 }
 
@@ -419,34 +396,88 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
 }
 
 #[test]
-fn startup_server_failure_is_a_notice_and_can_be_stopped_during_the_retry_wait() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    holuto.fault("POST", "/agent/session", problem(503));
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let received = receive_until(&events, |event| {
-        matches!(event,
-            Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
-        )
-    });
-    assert!(matches!(
-        received.last(),
-        Some(Event::Status { tone: Tone::Error, text })
-            if text == "Nie można połączyć z Holuto: Holuto odpowiedziało błędem 503: \
-                        backend unavailable. Ponowna próba za 15 sekund."
-    ));
-    let stopped = stop(worker, &events);
-    assert!(matches!(stopped.as_slice(), [Event::Stopped]));
-    assert_eq!(
-        holuto
-            .requests()
-            .iter()
-            .map(|request| request.path.as_str())
-            .collect::<Vec<_>>(),
-        ["/agent/session"]
-    );
+fn startup_transient_http_failures_wait_for_retry_and_can_be_stopped() {
+    for status in [403, 408, 429, 500, 502, 503, 599] {
+        let sim = Simulator::start();
+        let holuto = Holuto::new();
+        holuto.fault("POST", "/agent/session", problem(status));
+        let (_temporary, dir) = state_dir();
+        let dir = Arc::new(dir);
+        let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
+        let (worker, events) = spawn(&holuto, &sim, &dir);
+        let expected = format!(
+            "Nie można połączyć z Holuto: Holuto odpowiedziało błędem {status}: \
+             backend unavailable. Ponowna próba za 15 sekund."
+        );
+        let _retrying = receive_until(
+            &events,
+            |event| matches!(event, Event::Status { text, tone: Tone::Error } if text == &expected),
+        );
+        let stopped = stop(worker, &events);
+        assert!(matches!(stopped.as_slice(), [Event::Stopped]));
+        assert_eq!(
+            holuto
+                .requests()
+                .iter()
+                .map(|request| request.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/agent/session"]
+        );
+        assert_eq!(sim.receipts(), []);
+        assert_eq!(sim.reports(), []);
+        assert_eq!(Journal::new(&dir).load().unwrap(), None);
+    }
+}
+
+#[test]
+fn startup_contract_failures_stop_without_retry_or_fiscal_effects() {
+    for (fault, expected) in [
+        (
+            problem(400),
+            "Błąd: Holuto odpowiedziało błędem 400: backend unavailable",
+        ),
+        (
+            problem(409),
+            "Błąd: Holuto odpowiedziało błędem 409: backend unavailable",
+        ),
+        (
+            problem(422),
+            "Błąd: Holuto odpowiedziało błędem 422: backend unavailable",
+        ),
+        (
+            problem(499),
+            "Błąd: Holuto odpowiedziało błędem 499: backend unavailable",
+        ),
+    ] {
+        let sim = Simulator::start();
+        let holuto = Holuto::new();
+        holuto.fault("POST", "/agent/session", fault);
+        let (_temporary, dir) = state_dir();
+        let dir = Arc::new(dir);
+        let (worker, events) = spawn(&holuto, &sim, &dir);
+        let received = receive_until(&events, |event| matches!(event, Event::Stopped));
+        worker.join();
+        assert!(matches!(
+            received.as_slice(),
+            [
+                Event::Status { tone: Tone::Info, .. },
+                Event::HistoryChanged(entries),
+                Event::Status { tone: Tone::Error, text },
+                Event::Stopped
+            ] if entries.is_empty() && text == expected
+        ));
+        assert_eq!(
+            holuto
+                .requests()
+                .iter()
+                .map(|request| request.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/agent/session"]
+        );
+        assert_eq!(sim.receipts(), []);
+        assert_eq!(sim.reports(), []);
+        assert_eq!(Journal::new(&dir).load().unwrap(), None);
+    }
 }
 
 #[test]
@@ -1134,7 +1165,7 @@ fn documents_still_page_when_the_printer_probe_is_failing() {
     worker.submit(Command::ResolveReport);
     let _failed_probe = receive_until(&events, |event| {
         matches!(event, Event::Status { text, tone: Tone::Error }
-        if text.contains("2000"))
+        if text == "Błąd: Drukarka zwróciła błąd 2000 (getrealid).")
     });
     worker.submit(Command::NextPage);
     let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
@@ -2339,4 +2370,109 @@ fn pairing_explains_missing_api_configuration_without_a_request() {
             message, failure: super::PairingFailure::Invalid,
         }, Event::Stopped] if message == expected
     ));
+}
+
+#[test]
+fn an_executed_report_with_a_lost_or_disconnected_reply_blocks_restart_until_resolution() {
+    for fault in [PrinterFault::LoseReply, PrinterFault::Disconnect] {
+        let sim = Simulator::start();
+        let holuto = Holuto::new();
+        let (_temporary, dir) = state_dir();
+        let dir = Arc::new(dir);
+        let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
+        let (worker, events) = spawn(&holuto, &sim, &dir);
+        let _started = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+        sim.fault("dailyrep", fault);
+        worker.submit(Command::DailyReport);
+        let _completed = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
+        let _stopped = stop(worker, &events);
+        let saved = Journal::new(&dir).load().unwrap();
+        let Some(Operation::Report(operation)) = &saved else {
+            panic!("executed report must retain its uncertain intent");
+        };
+        assert_eq!(
+            operation.device,
+            Device::Dispatching {
+                stage: "dailyrep".to_owned()
+            }
+        );
+        assert_eq!(operation.acknowledged_at, None);
+        assert_eq!(
+            sim.reports(),
+            [SimReport {
+                command: "dailyrep".to_owned(),
+                params: BTreeMap::from([("da".to_owned(), "2026-10-16".to_owned())]),
+            }]
+        );
+        let reports = sim
+            .frames()
+            .into_iter()
+            .filter(|frame| sent_command(frame, "dailyrep"))
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 1);
+        let requests_before_restart = holuto.requests().len();
+        let id = holuto.enqueue(job_json());
+
+        let (worker, events) = spawn(&holuto, &sim, &dir);
+        let _blocked = receive_until(&events, |event| {
+            matches!(
+                event,
+                Event::Device {
+                    blocked: true,
+                    report_unresolved: true,
+                    ..
+                }
+            )
+        });
+        worker.submit(Command::DailyReport);
+        let refused = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
+        assert!(refused.iter().any(|event| matches!(event,
+            Event::Status { text, tone: Tone::Error }
+                if text == "Błąd: Najpierw wyjaśnij przerwany raport."
+        )));
+        assert_eq!(Journal::new(&dir).load().unwrap(), saved);
+        assert_eq!(holuto.job(id)["state"], "queued");
+        assert_eq!(sim.receipts(), []);
+        assert!(
+            holuto
+                .requests()
+                .iter()
+                .skip(requests_before_restart)
+                .all(|request| request.path != "/agent/jobs/take")
+        );
+
+        sim.set_paper(false);
+        worker.submit(Command::ResolveReport);
+        let _refused = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
+        assert_eq!(Journal::new(&dir).load().unwrap(), saved);
+        sim.set_paper(true);
+        let (arrival, release) = hold_http(&holuto, "POST", "/agent/jobs/take");
+        worker.submit(Command::ResolveReport);
+        arrival.recv_timeout(WAIT).unwrap();
+        let Some(Operation::Report(resolved)) = Journal::new(&dir).load().unwrap() else {
+            panic!("resolution must be durable before the next claim");
+        };
+        assert!(resolved.acknowledged_at.is_some());
+        assert_eq!(resolved.device, operation.device);
+        let after = sim
+            .frames()
+            .into_iter()
+            .filter(|frame| sent_command(frame, "dailyrep"))
+            .collect::<Vec<_>>();
+        assert_eq!(after, reports, "resolution never reissues a report");
+        release.send(()).unwrap();
+        let printed = receive_until(&events, |event| {
+            matches!(event,
+                Event::HistoryChanged(entries) if entries.iter().any(|entry| entry.job_id == id)
+            )
+        });
+        let _stopped = stop(worker, &events);
+        assert_eq!(
+            history_rows(&printed),
+            Some(vec![(id, Some("1".to_owned()))])
+        );
+        assert_eq!(holuto.job(id)["state"], "done");
+        assert_eq!(sim.receipts().len(), 1);
+        assert_eq!(sim.reports().len(), 1);
+    }
 }

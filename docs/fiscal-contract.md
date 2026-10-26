@@ -19,56 +19,18 @@ Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
 `App-Version: agent/<version>` and `Accept-Language: pl`, plus SDK-provided
 `sentry-trace` propagation. `POST /agent/pair` exchanges `{code}` for
 `{token, printerId}` without bearer or device-identity headers.
-`POST /agent/session` sends telemetry at startup and when the profile changes:
-
-```json
-{
-  "vendor": "posnet",
-  "model": "POSNET TEMO ONLINE",
-  "firmware": "32.01",
-  "appVersion": "0.2.0",
-  "capabilities": {
-    "advanceDeductions": true,
-    "zeroTotalReceipts": true,
-    "maxItemNameLength": 80,
-    "maxLinesPerReceipt": 500,
-    "maxCompanyNameLength": 40,
-    "maxQuantityDecimals": 8,
-    "allowedCharacters": " !\"#$%&'()*+,-./0123…"
-  },
-  "uniqueNumber": "ABC1234567890",
-  "vatRates": [
-    {
-      "letter": "A",
-      "vatRate": "23"
-    },
-    {
-      "letter": "B",
-      "vatRate": "8"
-    }
-    },
-    {
-      "letter": "C",
-      "vatRate": "5"
-    },
-    {
-      "letter": "D",
-      "vatRate": "0"
-    },
-    {
-      "letter": "E",
-      "vatRate": "zw"
-  ]
-}
-```
+`POST /agent/session` sends `Telemetry` at startup and when the profile changes;
+its exact fields are defined in the linked schema.
 
 `vendor` is `"posnet"`, `"novitus"` or `"elzab"` and binds alongside the physical
-unique number. `vatRates` is the actual device table, with letters A–G and rates
-`"23"`, `"8"`, `"5"`, `"0"` or `"zw"`. Each session replaces the backend mapping.
-A–E mean 23%, 8%, 5%, 0% and exempt respectively; F/G retain other programmed
-rates. Illegal A–E assignments remain visible locally as not ready and are not
-uploaded. `maxItemNameLength`,
-`maxLinesPerReceipt`, `maxCompanyNameLength`, `allowedCharacters` (all printable
+unique number. `vatRates` contains supported active entries from the device
+table: letters A–G and rates `"23"`, `"8"`, `"5"`, `"0"` or `"zw"`. Each session
+replaces the backend mapping.
+A–E mean 23%, 8%, 5%, 0% and exempt respectively. Other programmed rates stay
+visible locally, but telemetry omits rates outside Holuto's supported set.
+Illegal A–E assignments remain not ready and are not uploaded.
+`maxItemNameLength`, `maxLinesPerReceipt`, `maxCompanyNameLength`,
+`allowedCharacters` (all printable
 characters, NFC), `maxQuantityDecimals` (0–8) and `capabilities` are required
 before queueing. The backend rejects names outside the limits, excessive
 quantity precision (ignoring trailing zeros), advance deductions without
@@ -80,9 +42,10 @@ failed.
 
 Sessions bind the fiscal memory unique number (`^[A-Z]{3}[0-9]{10}$`) and vendor;
 a mismatch fails with 403 `fiscal_unique_number_mismatch` or
-`fiscal_vendor_mismatch`. Bodyless `POST /agent/heartbeat` returns 204; it and
-other authenticated requests carry the same `X-Device-Unique-Number` header;
-device swaps are rejected before taking or printing jobs.
+`fiscal_vendor_mismatch`. Bodyless `POST /agent/heartbeat` returns 204.
+Authenticated routes other than `/agent/session` carry
+`X-Device-Unique-Number`; the session carries `uniqueNumber` in its body.
+Device swaps are rejected before taking or printing jobs.
 
 - **`GET /agent/documents?limit=100[&cursor=…]`**:
   `{items:[{kind, orderId, orderNumber, allocationId, amount, customerName,`
@@ -125,8 +88,9 @@ protocol shapes are unsupported.
 
 ## Device capabilities
 
-These limits come from each driver's `fiscal::device::Capabilities`; the wire
-group contains all seven limits and receipt flags; `company_footer` stays local.
+These limits come from each driver's `fiscal::device::Capabilities`. The wire
+group contains seven fields (five limits/repertoire fields and two receipt
+flags); buyer-NIP length and `company_footer` stay local.
 `posnet::capabilities` defines the documented Temo Online limits: eight quantity
 decimals, 80-character item names (`trline`), 500 lines (`trinit`),
 40-character company footer lines (`trftrln`) and printable CP1250 from
@@ -156,9 +120,9 @@ rediscovered only when no operation blocks. The detected port and vendor are
 saved together. An unresolved journal pins the vendor and forbids scanning
 other ports, even when preferences are stale.
 
-An unidentified capability profile (for example unknown firmware or an
-unsupported code page) stays visible as not ready. The worker keeps running
-and rechecks it every 15 seconds, without sending invalid session
+An unidentified capability profile (for example unknown Novitus firmware or an
+Elzab code page other than CP1250) stays visible as not ready. The worker keeps
+running and rechecks it every 15 seconds, without sending invalid session
 telemetry or claiming jobs. Once the device has describable capabilities,
 connection and normal readiness checks resume. Novitus discovery accepts both
 power-on error mode 0 and preconfigured mode 3 without changing printer settings.
@@ -175,7 +139,8 @@ printer date); periodic reports require `from ≤ to ≤ printer date`.
 
 Receipt issue times must identify a Warsaw instant. Posnet prefers
 offset-bearing `rtcget.tm`; legacy civil `da` chooses the earlier repeated
-instant. Novitus (`#c`) and Elzab (`XCR`) send civil time without an offset:
+instant and refuses a receipt in the skipped spring hour.
+Novitus (`#c`) and Elzab (`XCR`) send civil time without an offset:
 only receipts require it to be an unambiguous Warsaw instant. Probe, identify,
 verify and reports validate civil time and use its date, so the repeated or
 skipped hour does not block them. Both native two-digit clock parsers currently
@@ -284,7 +249,8 @@ or unreadable wait status leaves dispatch uncertain; no driver retries a command
 Every listed document is due now (`dueAt`: sale completion or the advance's
 recorded payment); `latestAt` is the statutory hard limit, later only for card,
 transfer and BLIK advances. The table shows "Niezwłocznie · najpóźniej …" until
-that limit and "PO TERMINIE · …" after it (`isOverdue`), sorted by the limit.
+that limit and "PO TERMINIE · …" after it (`isOverdue`). Column headers can sort
+the displayed page by the limit.
 Deadlines never queue or print anything; staff still choose every document.
 A `voided` job is a terminal, already-printed receipt cancelled in the
 obvious-mistake register. Recovery acknowledges

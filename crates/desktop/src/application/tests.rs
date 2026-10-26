@@ -34,6 +34,7 @@ use posnet::{capabilities::capabilities, simulator::Simulator};
 use sentry::{Client, ClientOptions, Envelope, Hub, Level, Transport, protocol::EnvelopeItem};
 use slint::{
     Model as _,
+    language::SortOrder,
     platform::{Key, WindowEvent},
 };
 use tempfile::TempDir;
@@ -94,9 +95,17 @@ fn control(
     label: &str,
     role: AccessibleRole,
 ) -> Result<ElementHandle, Box<dyn Error>> {
-    ElementHandle::find_by_accessible_label(window, label)
-        .find(|element| element.accessible_role() == Some(role))
-        .ok_or_else(|| format!("missing accessible control {label}").into())
+    let elements = ElementHandle::find_by_accessible_label(window, label)
+        .filter(|element| element.accessible_role() == Some(role))
+        .collect::<Vec<_>>();
+    match elements.as_slice() {
+        [only] => Ok(only.clone()),
+        _ => Err(format!(
+            "expected one accessible control {label}, found {}",
+            elements.len()
+        )
+        .into()),
+    }
 }
 fn button(window: &AppWindow, label: &str) -> Result<ElementHandle, Box<dyn Error>> {
     control(window, label, AccessibleRole::Button)
@@ -710,17 +719,14 @@ fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(
     state.sync();
     drop(state);
     button(&window, "Wyjaśnij paragon")?.invoke_accessible_default_action();
-    assert!(
-        window
-            .get_confirm_text()
-            .contains("Paragon 17 został wydrukowany dla zlecenia 42"),
-        "acknowledgement identifies the printed receipt"
-    );
-    assert!(
-        window
-            .get_confirm_text()
-            .contains("Nie wydrukuje paragonu ponownie"),
-        "confirmation explains no reprint"
+    assert_eq!(
+        window.get_confirm_text(),
+        concat!(
+            "Paragon 17 został wydrukowany dla zlecenia 42\n\n",
+            "Sprawdź wydruk i uzgodnij dokument w Holuto. ",
+            "Potwierdzenie zapisze lokalne wyjaśnienie i usunie blokadę. ",
+            "Nie wydrukuje paragonu ponownie ani nie zmieni wyniku w Holuto."
+        )
     );
     button(&window, "Anuluj")?.invoke_accessible_default_action();
     // A submitted acknowledgement would mark a command in flight and hide the button.
@@ -779,8 +785,9 @@ fn accessible_headers_sort_visible_rows_without_changing_the_selected_document()
         "second header action sorts descending"
     );
     button(&window, "Dodaj do wydruku")?.invoke_accessible_default_action();
-    assert!(
-        window.get_confirm_text().contains("zlecenie 42"),
+    assert_eq!(
+        window.get_confirm_text(),
+        "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
         "sorting must never move selection to another document"
     );
     Ok(())
@@ -813,6 +820,9 @@ fn close_without_a_tray_host_keeps_the_window_visible() -> Result<(), Box<dyn Er
 )]
 fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
+    ready(&app);
+    button(&window, "Zlecenie")?.invoke_accessible_default_action();
+    control(&window, "NIP nabywcy", AccessibleRole::TextInput)?.set_accessible_value("1234567890");
     app.borrow_mut().tray = Some(TrayIcon::new()?);
     app.borrow_mut().close_after_probe(true);
     assert!(
@@ -824,12 +834,28 @@ fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<()
         "tray close releases the component"
     );
     app.borrow_mut().open()?;
-    assert!(
-        app.borrow()
-            .window
-            .as_ref()
-            .is_some_and(|window| window.window().is_visible()),
-        "tray open recreates a visible window"
+    let reopened = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing reopened window")?
+        .clone_strong();
+    assert!(reopened.window().is_visible());
+    assert_eq!(reopened.get_selected(), 0);
+    assert_eq!(
+        reopened
+            .get_document_columns()
+            .row_data(0)
+            .map(|column| column.sort_order),
+        Some(SortOrder::Ascending)
+    );
+    button(&reopened, "Dodaj do wydruku")?.invoke_accessible_default_action();
+    assert_eq!(
+        reopened.get_confirm_text(),
+        concat!(
+            "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: 1234567890\n",
+            "Zatwierdzenie wystawi paragon fiskalny."
+        )
     );
     Ok(())
 }
@@ -882,8 +908,9 @@ fn keyboard_navigation_selects_rows_and_enter_opens_the_selected_receipt_confirm
     window.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Return.into(),
     });
-    assert!(
-        window.get_confirm_text().contains("zlecenie 1"),
+    assert_eq!(
+        window.get_confirm_text(),
+        "Sprzedaż · zlecenie 1 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
         "Enter invokes the selected row's default action without printing yet"
     );
     Ok(())
@@ -968,12 +995,7 @@ fn missing_native_quit_hook_blocks_worker_start() -> Result<(), Box<dyn Error>> 
         app.borrow().worker.is_none(),
         "no fiscal worker may start without safe native quit"
     );
-    assert!(
-        window
-            .get_status()
-            .contains("Obsługa drukarki jest wyłączona"),
-        "operator sees why starting is refused"
-    );
+    assert_eq!(window.get_status().as_str(), NATIVE_QUIT_ERROR);
     Ok(())
 }
 
@@ -1081,5 +1103,51 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
     drop(state);
     assert!(app.borrow().writes_pending.is_empty());
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Real report callbacks expose their exact confirmation parameters"
+)]
+fn report_confirmations_show_exact_kind_dates_and_summary_and_cancel_sends_nothing()
+-> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    window.set_tab(1);
+    for (label, expected) in [
+        (
+            "Drukuj raport dobowy",
+            "Raport dobowy zamknie bieżącą sprzedaż dnia w pamięci fiskalnej. Wydrukować raport?",
+        ),
+        (
+            "Drukuj raport miesięczny",
+            "Wydrukować raport miesięczny za wrzesień 2025?",
+        ),
+        (
+            "Drukuj raport okresowy",
+            "Wydrukować raport szczegółowy za okres 29.02.2024 – 24.10.2025?",
+        ),
+    ] {
+        control(&window, "Data początkowa", AccessibleRole::TextInput)?
+            .set_accessible_value("29.02.2024");
+        control(&window, "Data końcowa", AccessibleRole::TextInput)?
+            .set_accessible_value("24.10.2025");
+        button(&window, label)?.invoke_accessible_default_action();
+        assert!(window.get_confirming());
+        assert_eq!(window.get_confirm_text().as_str(), expected);
+        button(&window, "Anuluj")?.invoke_accessible_default_action();
+        assert!(!window.get_confirming());
+        assert_eq!(button(&window, label)?.accessible_enabled(), Some(true));
+    }
+    control(&window, "Skrócony", AccessibleRole::Checkbox)?.invoke_accessible_default_action();
+    button(&window, "Drukuj raport okresowy")?.invoke_accessible_default_action();
+    assert_eq!(
+        window.get_confirm_text(),
+        "Wydrukować raport skrócony za okres 29.02.2024 – 24.10.2025?"
+    );
+    button(&window, "Anuluj")?.invoke_accessible_default_action();
+    assert!(!app.borrow().dir.path().join("operation.json").exists());
     Ok(())
 }

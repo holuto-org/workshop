@@ -8,9 +8,6 @@ fn demo_mode_enables_unqualified_capabilities_through_the_real_driver() {
         let driver = printer(&sim);
         let expected = driver.probe().unwrap();
         assert!(expected.ready(), "{}", expected.description());
-        assert!(expected.capabilities.advance_deductions);
-        assert!(expected.capabilities.zero_total_receipts);
-        assert!(expected.capabilities.company_footer);
         let mut log = Log::default();
         let result = driver.print_receipt(&receipt(advance, true), &expected, &mut log);
         if advance == 12346 {
@@ -25,26 +22,32 @@ fn demo_mode_enables_unqualified_capabilities_through_the_real_driver() {
             assert_eq!(result.unwrap().receipt_number.as_deref(), Some("1"));
             assert_eq!(sim.receipts(), 1);
         }
-        let frames = fiscal(&sim);
-        assert_eq!(
-            frames.last().unwrap(),
-            if advance == 12346 {
-                "LCL\x1dRA0,00"
-            } else {
-                "LAL\x1dQAAInna firma"
-            }
-        );
-        assert_eq!(
-            frames.iter().filter(|body| body.starts_with("LDS")).count(),
-            1
-        );
-        assert!(frames.iter().any(|body| body
-            == if advance == 12346 {
-                "LCL\x1dRA0,00"
-            } else {
-                "LCL\x1dRA100,00"
-            }));
-        assert_eq!(log.commands.len(), frames.len());
+        let mut frames = vec![
+            "LOR\x1dC0",
+            "LNP\x1dOA1234567890",
+            "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+        ];
+        if advance == 12346 {
+            frames.extend([
+                "LDS\x1dIAA1\x1fB123,46\x1fDZaliczka\x1eCA\x1eD",
+                "LCL\x1dRA0,00",
+            ]);
+            assert_eq!(log.commands, ["LOR", "LNP", "LIT", "LDS", "LCL"]);
+            assert!(sim.transaction_open());
+        } else {
+            frames.extend([
+                "LDS\x1dIAA1\x1fB23,46\x1fDZaliczka\x1eCA\x1eD",
+                "LBP\x1dKA1\x1eBKARTA\x1eC100,00\x1eX2",
+                "LCL\x1dRA100,00",
+                "LAL\x1dQAAInna firma",
+            ]);
+            assert_eq!(
+                log.commands,
+                ["LOR", "LNP", "LIT", "LDS", "LBP", "LCL", "LAL"]
+            );
+            assert!(!sim.transaction_open());
+        }
+        assert_eq!(fiscal(&sim), frames);
     }
 }
 
@@ -86,4 +89,42 @@ fn acceptance_does_not_promote_daily_report_ack_to_completion() {
     ));
     assert_eq!(log.commands, ["RRP"]);
     assert_eq!(fiscal(&sim), ["RRP\x1dI1\x1dJ1"]);
+}
+
+#[test]
+fn unqualified_footer_faults_keep_the_printed_effect_and_do_not_replay() {
+    for fault in [
+        Fault::LoseReply,
+        Fault::CorruptReply,
+        Fault::Disconnect,
+        Fault::Device(450),
+        Fault::Transport("SL".to_owned()),
+    ] {
+        let sim = Simulator::start();
+        let driver = printer(&sim);
+        let expected = driver.probe().unwrap();
+        sim.fault("LAL", fault);
+        let mut log = Log::default();
+        assert!(matches!(
+            driver.print_receipt(&receipt(2346, true), &expected, &mut log),
+            Err(Error::Uncertain(_))
+        ));
+        assert_eq!(
+            log.commands,
+            ["LOR", "LNP", "LIT", "LDS", "LBP", "LCL", "LAL"]
+        );
+        assert_eq!(
+            fiscal(&sim),
+            [
+                "LOR\x1dC0",
+                "LNP\x1dOA1234567890",
+                "LIT\x1dGAŁożysko\x1eBA\x1eC1,23456\x1eD100,00\x1eE123,46",
+                "LDS\x1dIAA1\x1fB23,46\x1fDZaliczka\x1eCA\x1eD",
+                "LBP\x1dKA1\x1eBKARTA\x1eC100,00\x1eX2",
+                "LCL\x1dRA100,00",
+                "LAL\x1dQAAInna firma",
+            ]
+        );
+        assert_eq!((sim.receipts(), sim.transaction_open()), (1, false));
+    }
 }

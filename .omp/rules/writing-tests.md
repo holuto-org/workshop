@@ -26,9 +26,9 @@ how to build the test.
 
 - Module unit tests: `foo/tests.rs`, declared from `foo.rs`. Scenarios spanning
   modules of one crate: `src/tests.rs` and `src/tests/`. No top-level `tests/`
-  directories; the harness-free `src/bin_tests/macos_quit.rs` is the only
-  exception (real AppKit on the main thread). Throwaway probes live outside the
-  repository ([shared checkout](../../AGENTS.md#shared-checkout)).
+  directories. The harness-free `src/bin_tests/macos_quit.rs` runs real AppKit
+  on the main thread as an explicit Cargo test target. Throwaway probes live
+  outside the repository ([shared checkout](../../AGENTS.md#shared-checkout)).
 - One module's fixture helpers stay with it; cross-module helpers live in the
   crate's `src/testing.rs`. Cross-crate tests reuse the brand's simulator and
   feature-gated `agent::testing`; never copy an HTTP fake into desktop tests.
@@ -73,8 +73,8 @@ how to build the test.
   scenarios too; sequential models do not prove races.
 - **Snapshots:** `insta` only for binding receipt/report output with fixed
   clock/text/IDs. Review every diff against the protocol; never blanket-accept or
-  redact fiscal fields. Accept only your crate's snapshots
-  (`cargo insta review -p <crate>`); `--workspace` also accepts others'.
+  redact fiscal fields. Use the crate-scoped review procedure in
+  [workflows](../../docs/workflows.md#finishing-a-change).
 - **Concurrency:** order contenders with channels and simulator `hold`/`reached`;
   prove one effect and the final state; release holds and join threads on
   failure. Stress worker/race tests before integration

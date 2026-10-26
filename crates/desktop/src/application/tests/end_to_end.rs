@@ -18,6 +18,10 @@ use super::*;
     clippy::panic_in_result_fn,
     reason = "End-to-end tests assert while propagating fixture errors"
 )]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One UI-to-print lifecycle proves callback ordering and exact server effects"
+)]
 fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<dyn Error>> {
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
@@ -62,6 +66,13 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
                     // Wait for the queued selection and queue callbacks before confirming.
                     with_app(|app| {
                         let window = app.window.as_ref().ok_or("missing confirmation window")?;
+                        assert_eq!(
+                            window.get_confirm_text(),
+                            concat!(
+                                "Sprzedaż · zlecenie 10 · 250,00 zł\nNIP: —\n",
+                                "Zatwierdzenie wystawi paragon fiskalny."
+                            )
+                        );
                         let confirmation =
                             ElementHandle::find_by_accessible_label(window, "Dodaj do wydruku")
                                 .filter(|element| {
@@ -69,6 +80,7 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
                                 })
                                 .last()
                                 .ok_or("missing confirmation")?;
+                        confirmation.invoke_accessible_default_action();
                         confirmation.invoke_accessible_default_action();
                         Ok(())
                     });
@@ -113,6 +125,16 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
         simulator.receipts().len(),
         1,
         "the queued document leaves one printed receipt"
+    );
+    assert_eq!(
+        holuto
+            .requests()
+            .into_iter()
+            .filter(|request| request.method == "POST" && request.path == "/agent/jobs")
+            .map(|request| request.body)
+            .collect::<Vec<_>>(),
+        [json!({"kind":"sale", "orderId": ORDER_ID, "allocationId":null, "buyerNip":null})],
+        "a second accessible confirmation cannot queue a second fiscal job"
     );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())

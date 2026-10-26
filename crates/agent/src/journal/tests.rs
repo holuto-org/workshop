@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fs};
+use std::{error::Error as StdError, fs, io::ErrorKind};
 
 use fiscal::{
     device::Vendor,
@@ -302,15 +302,16 @@ fn journaled_done_sends_a_canonical_receipt_number() -> TestResult {
     let dir = StateDir::open(temporary.path().join("state"))?;
     let journal = Journal::new(&dir);
     for (raw, canonical) in [
-        (" 12\u{a0}34 ", "12 34"),
-        ("１２３／２０２６", "123/2026"),
-        (" A\u{2003}\u{2003}B ", "A B"),
+        (" 12\u{a0}34 ".to_owned(), "12 34".to_owned()),
+        ("１２３／２０２６".to_owned(), "123/2026".to_owned()),
+        (" A\u{2003}\u{2003}B ".to_owned(), "A B".to_owned()),
+        ("1".repeat(64), "1".repeat(64)),
     ] {
         let device = Device::Completed {
-            receipt_number: Some(raw.to_owned()),
+            receipt_number: Some(raw.clone()),
         };
         journal.save(&Operation::Receipt(ReceiptOperation {
-            result: Some(JobResult::done(Some(raw.to_owned()), "Brak numeru.")),
+            result: Some(JobResult::done(Some(raw), "Brak numeru.")),
             ..receipt(device.clone())?
         }))?;
         let Some(Operation::Receipt(restored)) = journal.load()? else {
@@ -318,7 +319,7 @@ fn journaled_done_sends_a_canonical_receipt_number() -> TestResult {
         };
         let form = restored.result_form().ok_or("missing result")?;
         assert_eq!(form.state, Outcome::Done);
-        assert_eq!(form.receipt_number.as_deref(), Some(canonical));
+        assert_eq!(form.receipt_number, Some(canonical));
         assert_eq!(form.issued_at, Some(restored.issued_at));
         assert_eq!(form.result, None);
         assert_eq!(
@@ -330,46 +331,53 @@ fn journaled_done_sends_a_canonical_receipt_number() -> TestResult {
 }
 
 #[test]
-fn new_completion_results_normalize_receipt_numbers() {
-    for (raw, canonical) in [
-        (" １２\u{a0}34 ".to_owned(), "12 34".to_owned()),
-        ("1".repeat(64), "1".repeat(64)),
-    ] {
-        assert_eq!(
-            JobResult::done(Some(raw), "Brak numeru."),
-            JobResult::Done {
-                receipt_number: canonical
-            }
-        );
-    }
-}
-
-#[test]
-fn new_completion_results_require_staff_for_unusable_receipt_numbers() {
-    assert_eq!(
-        JobResult::done(None, "Brak numeru."),
-        JobResult::Unknown {
-            reason: "Brak numeru.".to_owned()
-        }
-    );
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Persisted result assertions use Result for setup."
+)]
+fn unusable_completion_numbers_preserve_raw_evidence_and_request_staff_resolution() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
     for raw in [
-        String::new(),
-        " ".to_owned(),
-        "1".repeat(65),
-        "\u{fb03}".repeat(22),
-        "12\u{200b}34".to_owned(),
-        "12\u{0}34".to_owned(),
-        "12\n34".to_owned(),
-        "12\u{2028}34".to_owned(),
+        None,
+        Some(String::new()),
+        Some(" ".to_owned()),
+        Some("1".repeat(65)),
+        Some("\u{fb03}".repeat(22)),
+        Some("12\u{200b}34".to_owned()),
+        Some("12\u{0}34".to_owned()),
+        Some("12\n34".to_owned()),
+        Some("12\u{2028}34".to_owned()),
     ] {
+        let expected = if raw.is_none() {
+            "Brak numeru."
+        } else {
+            "Nieprawidłowy numer wydrukowanego paragonu. Uzupełnij numer w Holuto."
+        };
+        let device = Device::Completed {
+            receipt_number: raw.clone(),
+        };
+        let journal = Journal::new(&dir);
+        journal.save(&Operation::Receipt(ReceiptOperation {
+            result: Some(JobResult::done(raw, "Brak numeru.")),
+            ..receipt(device.clone())?
+        }))?;
+        let Some(Operation::Receipt(restored)) = journal.load()? else {
+            return Err("missing receipt evidence".into());
+        };
+        assert_eq!(restored.device, device);
+        assert_eq!(format!("{:?}", restored.device), "Completed([REDACTED])");
         assert_eq!(
-            JobResult::done(Some(raw), "Brak numeru."),
-            JobResult::Unknown {
-                reason: "Nieprawidłowy numer wydrukowanego paragonu. Uzupełnij numer w Holuto."
-                    .to_owned()
-            }
+            format!("{:?}", restored.result.as_ref().ok_or("missing result")?),
+            "Unknown([REDACTED])"
         );
+        let form = restored.result_form().ok_or("missing result form")?;
+        assert_eq!(form.state, Outcome::Unknown);
+        assert_eq!(form.receipt_number, None);
+        assert_eq!(form.issued_at, None);
+        assert_eq!(form.result.as_deref(), Some(expected));
     }
+    Ok(())
 }
 
 #[test]
@@ -491,5 +499,94 @@ fn every_stored_settlement_state_and_payment_form_keeps_its_name() -> TestResult
         assert_eq!(serde_json::to_value(&payment)?, stored);
         assert_eq!(serde_json::from_value::<Payment>(stored)?, payment);
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Failed writes must preserve exact fiscal evidence."
+)]
+fn failed_journal_replacement_retains_previous_evidence_across_restart() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("state");
+    let dir = StateDir::open(path.clone())?;
+    let previous = Operation::Receipt(receipt(Device::Dispatching {
+        stage: "trline".to_owned(),
+    })?);
+    let journal = Journal::new(&dir);
+    journal.save(&previous)?;
+    let bytes = fs::read(dir.file("operation.json"))?;
+    let next = Operation::Receipt(receipt(Device::Completed {
+        receipt_number: Some("123".to_owned()),
+    })?);
+    journal.fail_write_after(0);
+    let error = journal
+        .save(&next)
+        .err()
+        .ok_or("injected failure ignored")?;
+    let crate::Error::Store {
+        action,
+        path: failed_path,
+        source,
+    } = error
+    else {
+        return Err("write failure must remain a storage error".into());
+    };
+    assert_eq!(action, "Nie można zapisać rejestru operacji");
+    assert_eq!(failed_path, dir.file("operation.json"));
+    assert_eq!(source.kind(), ErrorKind::PermissionDenied);
+    assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
+    assert_eq!(journal.load()?, Some(previous.clone()));
+    drop(dir);
+    let reopened = StateDir::open(path)?;
+    let restored = Journal::new(&reopened).load()?.ok_or("lost journal")?;
+    assert_eq!(restored, previous);
+    assert!(restored.blocks());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Unreadable evidence is never reset as recovery."
+)]
+fn unreadable_journal_blocks_without_removing_its_contents() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let path = dir.file("operation.json");
+    fs::create_dir(&path)?;
+    fs::write(path.join("evidence"), b"keep fiscal record")?;
+    assert!(matches!(
+        Journal::new(&dir).load(),
+        Err(crate::Error::Store {
+            action: "Nie można odczytać rejestru operacji. Drukowanie zablokowane",
+            ..
+        })
+    ));
+    assert_eq!(fs::read(path.join("evidence"))?, b"keep fiscal record");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Unix journal privacy assertions use Result."
+)]
+fn journal_creation_and_replacement_are_private_but_reads_do_not_repair_modes() -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let journal = Journal::new(&dir);
+    let operation = Operation::Receipt(receipt(Device::NotStarted)?);
+    journal.save(&operation)?;
+    let path = dir.file("operation.json");
+    assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
+    assert_eq!(journal.load()?, Some(operation.clone()));
+    assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o644);
+    journal.save(&operation)?;
+    assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
     Ok(())
 }

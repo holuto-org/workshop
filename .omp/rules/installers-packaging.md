@@ -14,15 +14,11 @@ interruptMode: never
 Use [platform procedures](../../docs/testing/platforms.md) and
 [CI](../../docs/ci.md); workflow YAML owns the commands and native matrix.
 
-- Match CI for the changed area:
-  - `shellcheck packaging/*.sh scripts/*.sh` and `actionlint`.
-  - Unix: `bash scripts/test-install.sh`, then
-    `bash scripts/install.sh --release v0.0.0 --dry-run`.
-  - Windows: `./scripts/test-install.ps1`, then
-    `./scripts/install.ps1 -Release v0.0.0 -DryRun` in pwsh; also run
-    `./scripts/test-install.ps1` in Windows PowerShell 5.1.
-  - Native packages: `bash packaging/build.sh`, `bash packaging/verify.sh`;
-    retain Package's simulator-release rejection check.
+- Run the changed area's commands from
+  [Checks](../../.github/workflows/checks.yml) and
+  [Package](../../.github/workflows/package.yml); retain Package's
+  simulator-release rejection check. Native package procedures live in
+  [platforms](../../docs/testing/platforms.md#package-checks).
 - If ShellCheck is missing, use `uvx --from shellcheck-py shellcheck` with the
   same arguments; a PowerShell container can run non-Windows fixture branches.
   Neither substitutes for native Windows/macOS coverage or release publishing.

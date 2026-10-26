@@ -1,6 +1,8 @@
 //! Holuto `/agent` pairing and authenticated device API.
-//! Rejects malformed responses; refuses redirects to protect the token.
+//!
+//! Rejects malformed responses and bodies over 4 MiB; refuses redirects to protect the token.
 //! Retry decisions belong to the agent.
+//! TLS diagnostics retain only a category, including certificate errors wrapped in I/O.
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod contract;
@@ -8,7 +10,12 @@ pub mod model;
 
 use fiscal::device::valid_unique_number;
 
-use std::{fmt, io::ErrorKind, time::Duration};
+use std::{
+    error::Error as StdError,
+    fmt,
+    io::{ErrorKind, Read as _},
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::field::Empty;
@@ -93,7 +100,12 @@ impl From<ureq::Error> for ApiError {
             ureq::Error::ConnectionFailed => TransportFailure::Connection,
             ureq::Error::Io(error) => {
                 let kind = error.kind();
-                if kind == ErrorKind::TimedOut {
+                if error
+                    .get_ref()
+                    .is_some_and(<dyn StdError + Send + Sync>::is::<rustls::Error>)
+                {
+                    TransportFailure::Tls
+                } else if kind == ErrorKind::TimedOut {
                     TransportFailure::Timeout
                 } else if kind == ErrorKind::ConnectionRefused {
                     TransportFailure::ConnectionRefused
@@ -459,12 +471,18 @@ fn decode<T: DeserializeOwned>(response: Response<Body>) -> Result<Option<T>, Ap
     if status == StatusCode::UNAUTHORIZED {
         return Err(ApiError::Unauthorized);
     }
-    let bytes = response
+    let mut bytes = Vec::new();
+    let _read = response
         .into_body()
-        .with_config()
-        .limit(MAX_RESPONSE)
-        .read_to_vec()
-        .map_err(ApiError::from)?;
+        .into_reader()
+        .take(MAX_RESPONSE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(ureq::Error::from)?;
+    if !u64::try_from(bytes.len()).is_ok_and(|length| length <= MAX_RESPONSE) {
+        return Err(ApiError::Response(
+            "przekroczony limit rozmiaru odpowiedzi".to_owned(),
+        ));
+    }
     match status {
         StatusCode::NO_CONTENT => Ok(None),
         StatusCode::OK | StatusCode::CREATED => serde_json::from_slice(&bytes)

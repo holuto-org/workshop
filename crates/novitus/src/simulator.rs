@@ -27,6 +27,7 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
     LoseReply,
+    /// Execute, then damage framing; changing a checksumless ACK digit could fake a refusal.
     CorruptReply,
     Disconnect,
     /// Matched refusal without executing the command.
@@ -501,7 +502,7 @@ fn ignore_foreign(pending: &mut Vec<u8>, state: &Mutex<State>) -> bool {
 }
 
 fn corrupt_response(mut response: Vec<u8>) -> Vec<u8> {
-    if let Some(byte) = response.get_mut(2) {
+    if let Some(byte) = response.first_mut() {
         *byte ^= 1;
     }
     response

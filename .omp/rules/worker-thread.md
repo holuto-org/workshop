@@ -22,9 +22,10 @@ interruptMode: never
   processing; **Zakończ**, tray quit, macOS Dock/⌘Q quit, logout, restart and
   shutdown, and Unix SIGTERM/SIGHUP/SIGINT route through `Worker::stop` and
   join only after the final `Event::Stopped`. macOS termination is held
-  (`TerminateLater`), never refused: a refusal would cancel the logout. On
-  macOS no worker (including pairing) starts unless `macos::install()`
-  succeeds. A failed status write never keeps quit waiting.
+  (`TerminateLater`), never
+  refused: a refusal would cancel the logout. On macOS no worker (including
+  pairing) starts unless `macos::install()` succeeds. A failed status write
+  never keeps quit waiting.
 - CLI commands never open a printer; mutations take the same instance lock and
   the validated atomic settings store. Autostart is explicit per-user opt-in and
   never bypasses preflight or an unresolved journal.

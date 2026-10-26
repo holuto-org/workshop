@@ -16,7 +16,8 @@ measurement remains `UNPROVEN`; never substitute a simulator trace.
 
 Record the Workshop commit/build hash, Rust toolchain, acceptance cfg present
 or absent, OS/version/architecture, driver version, printer label/model,
-firmware, masked serial, demo/fiscal status, paper width/font, physical socket,
+firmware, masked fiscal unique number, demo/fiscal status, paper width/font,
+physical socket,
 port path, USB descriptors and menu configuration. Keep full identity and raw
 wire captures in an access-controlled evidence store, not source control,
 Sentry or chat. Use approved synthetic company/NIP data on demo units.
@@ -65,7 +66,7 @@ relaxed by the cfg are excluded; the ordinary workspace run still exercises them
 Production tests named `non_fiscal_device_is_not_ready_without_acceptance`
 run for all three brands. Novitus and Elzab also run
 `unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command`;
-Elzab advances are already qualified, so its refusals cover zero total/footer.
+Elzab advances are enabled in production, so its refusals cover zero total/footer.
 Simulator `frames()` must contain no fiscal command after each refusal.
 Separate cfg-gated `acceptance` modules exercise the actual driver, not only
 command builders. Elzab's simulator still rejects zero close with 1008:
@@ -117,9 +118,9 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
    there is no profile field for modem-line behavior.
 3. **Identity.** Save literal original replies: Posnet `getrealid`; Novitus
    `30#v` and unique number from `23#s`; Elzab `XTR` fields B/D and `FNR` B.
-   Expected: exact brand/model/firmware and a stable matching unit serial.
+   Expected: exact brand/model/firmware and a stable matching fiscal unique number.
    Elzab numeric XTR IDs alone cannot distinguish legacy from ONLINE.
-   **Fills:** `Device.{vendor,model,firmware,serial}`, Novitus
+   **Fills:** `Device.{vendor,model,firmware,unique_number}`, Novitus
    `profile::lookup(model, firmware)` allowlist; Elzab `lookup(model)` exact
    names. Elzab currently has no firmware gate: record actual D versions and
    require a reviewed profile change before asserting firmware qualification.
@@ -152,11 +153,12 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
 7. **Code page and repertoire.** Read Novitus options 91/92: both `1`;
    `52$i` attr1 bit `0x0200` enables full CP1250, otherwise ASCII only.
    Elzab `XHR` w must be `ACP1250`; Posnet `pccfgget` `pi1` and `pi2` must
-   report `cp0` on every enabled POSNET-protocol interface, and the
-   connected interface must be one of them. Record any
-   input/output asymmetry, unsupported glyphs, undefined bytes and font effects.
+   report `cp0` on every enabled POSNET-protocol interface. The driver cannot
+   identify the connected PC interface, so record its configuration separately.
+   Record input/output asymmetry, unsupported glyphs, undefined bytes and font
+   effects.
    Expected: no translation, substitution or truncation. **Fills:**
-   `Capabilities.allowed_characters` and Novitus `enable_full_cp1250` evidence;
+   `Capabilities.allowed_characters` and Novitus `printer::read_repertoire`;
    selected CP1250 alone does not establish every printable glyph.
 8. **Printer clock.** Capture `rtcget` / `#c` / `XCR` and compare with the
    operator-observed local date/time in Europe/Warsaw. Record precision, YY
@@ -227,10 +229,9 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    implemented candidate is `LCL` then `LAL`.
    Expected attached label-free text, correct cut and final completion, not
    a detached non-fiscal page. Test different daily company names and widths.
-   **Fills:** `Capabilities.company_footer`, Novitus `max_company_name`
-   (HD II 40, Bono/Deon 42, Point 44), Elzab `max_company_name` 42 and
-   `Profile.open` (`LOR GS C0` ONLINE variant). No timing/placement proof means
-   footer remains false; do not invent an end-footer command.
+   **Fills:** `Capabilities.company_footer`, `max_company_name` and Elzab's
+   `receipt::steps` open variant (`LOR GS C0`). No timing/placement proof means
+   footer remains false; do not invent a profile field or end-footer command.
 6. **Reports.** Daily, completed calendar month, periodic detail and summary;
    record future-date guards and current-month behavior **per brand**, not a
    universal refusal. Use the
@@ -250,8 +251,9 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    cable pull and power loss at approved points. Capture bytes already sent,
    physical effects, persisted intent/result, operator notice and reconnect
    state. Expected: each fiscal command sent once; no hidden transport retry,
-   cancel, resume or reprint. Novitus waits observe DLE/ENQ/DLE2; record byte
-   order by known physical state. Elzab paper-out may auto-cancel, but still
+   cancel, resume or reprint. Novitus waits observe DLE2/DLE, not ENQ while a
+   fiscal command is pending; record byte order by known physical state.
+   Elzab paper-out may auto-cancel, but still
    leaves uncertainty; record each Elzab reply delay and whether a paper or
    operator wait withholds the reply. **Fills:** fault/wait/readiness masks,
    Elzab `receipt.rs` line/end and `printer.rs` report timeouts, and narrow
@@ -260,7 +262,7 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    same journal and show all receipts/reports blocked, with no scan or device
    switch. Inspect read-only last-document/counter evidence before and after
    reboot/day change; record number scope, persistence and attribution limits.
-   Resolve through the documented human path on the same vendor and serial;
+   Resolve through the documented human path on the same vendor/unique number;
    expected zero fiscal commands and no reprint. **Fills:** journal/recovery
    and number-readback evidence, not automatic resolution. Novitus system IDs,
    protected-memory/JPK metadata and Elzab JWS/`SER`/`RNR` counters are not
@@ -321,8 +323,9 @@ version. The owner and fiscal operator approve exact real Holuto records and
 amounts first. No destructive scenarios in this phase.
 
 1. Re-run Phase A on the fiscalized unit. Expected: all production readiness
-   checks pass and session/heartbeat vendor, serial, VAT, limits and qualified
-   flags match the profile. **Fills:** production profile/telemetry sign-off.
+   checks pass and session vendor, unique number, VAT, limits and qualified
+   flags match the profile; heartbeat carries the same unique-number header.
+   **Fills:** production profile/telemetry sign-off.
 2. Print one authorized receipt per payment form, mixed VAT and buyer NIP;
    include partial advance only if enabled, and zero-total/footer only if
    specifically qualified and approved. Expected exact full text, amounts,

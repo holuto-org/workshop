@@ -395,10 +395,9 @@ fn envelopes_follow_the_environment_proxy() -> Result<(), Box<dyn Error>> {
         .env("no_proxy", "")
         .status()?;
     assert!(status.success(), "proxied child sends without failing");
-    assert!(
-        request
-            .recv_timeout(WAIT)?
-            .starts_with("CONNECT ingest.example.invalid:443 "),
+    assert_eq!(
+        request.recv_timeout(WAIT)?,
+        "CONNECT ingest.example.invalid:443 HTTP/1.1\r\n",
         "diagnostics reach Sentry through the configured proxy"
     );
     Ok(())

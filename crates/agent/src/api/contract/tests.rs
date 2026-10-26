@@ -1,93 +1,13 @@
-use std::{collections::BTreeSet, fmt::Debug};
+use std::fmt::Debug;
 
 use fiscal::device::Vendor;
 use serde_json::{Value, json};
 
 use super::{validate_request, validate_response};
 use crate::{
-    api::{
-        Api,
-        model::{
-            Job, Outcome, Page, PrinterStatus, QueueForm, ResultForm, Telemetry, VatRateMapping,
-        },
-    },
-    documents::{Document, ReceiptKind},
-    testing::{Holuto, JOB_ID, ORDER_ID, job_json, status_json, telemetry},
+    api::model::{Job, Page, PrinterStatus, QueueForm, ResultForm, Telemetry, VatRateMapping},
+    testing::{JOB_ID, ORDER_ID, job_json, status_json},
 };
-
-#[test]
-fn every_client_operation_matches_the_vendored_method_path_and_success_statuses() {
-    let server = Holuto::new();
-    let mut api = Api::new(server.url(), server.token(), "TST0000000001").unwrap();
-    let telemetry = telemetry("TST0000000001");
-    api.session(&telemetry).unwrap();
-    api.heartbeat().unwrap();
-    let page = api.documents(None).unwrap();
-    assert_eq!(page.items, Vec::<Document>::new());
-    assert_eq!(page.next_cursor, None);
-    assert_eq!(api.take().unwrap(), None);
-    api.queue(&QueueForm {
-        allocation_id: None,
-        buyer_nip: None,
-        kind: ReceiptKind::Sale,
-        order_id: ORDER_ID,
-    })
-    .unwrap();
-    let taken = api.take().unwrap().expect("queued job");
-    assert_eq!(api.job(taken.id).unwrap(), taken);
-    api.report(
-        taken.id,
-        &ResultForm {
-            attempt: taken.attempt.unwrap(),
-            issued_at: None,
-            receipt_number: None,
-            result: Some("Odmowa przed drukiem".into()),
-            state: Outcome::Failed,
-        },
-    )
-    .unwrap();
-    let observed: BTreeSet<_> = server
-        .requests()
-        .into_iter()
-        .map(|request| {
-            let path = request.path.split('?').next().unwrap();
-            let path = path.replace(&taken.id.to_string(), "{jobId}");
-            (request.method, path)
-        })
-        .collect();
-    let document: Value =
-        serde_json::from_str(include_str!("../../../../../openapi/agent.json")).unwrap();
-    let expected = [
-        ("POST", "/agent/session", vec!["200"]),
-        ("POST", "/agent/heartbeat", vec!["204"]),
-        ("GET", "/agent/documents", vec!["200"]),
-        ("POST", "/agent/jobs", vec!["201"]),
-        ("POST", "/agent/jobs/take", vec!["200", "204"]),
-        ("GET", "/agent/jobs/{jobId}", vec!["200"]),
-        ("POST", "/agent/jobs/{jobId}/result", vec!["200"]),
-    ];
-    assert_eq!(
-        observed,
-        expected
-            .iter()
-            .map(|(method, path, _)| (String::from(*method), String::from(*path)))
-            .collect()
-    );
-    for (method, path, statuses) in expected {
-        let responses = document["paths"][path][method.to_ascii_lowercase()]["responses"]
-            .as_object()
-            .unwrap();
-        assert_eq!(
-            responses
-                .keys()
-                .filter(|status| status.starts_with('2'))
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-            statuses,
-            "{method} {path}"
-        );
-    }
-}
 
 #[test]
 fn generated_nullable_response_fields_require_presence_and_keep_per_job_amount_validation() {
@@ -136,6 +56,10 @@ fn fake_validation_enforces_schema_patterns_enums_and_nullable_presence() {
     let valid = job_json();
     let path = format!("/agent/jobs/{JOB_ID}");
     validate_response("GET", &path, 200, &valid).unwrap();
+    assert_eq!(
+        validate_response("GET", "/agent/jobs/not-a-uuid", 200, &valid),
+        Err("operation absent from OpenAPI: GET /agent/jobs/not-a-uuid".to_owned())
+    );
     for (field, value) in [
         ("total", json!("garbage")),
         ("state", json!("invented")),

@@ -256,9 +256,10 @@ alias unless the person explicitly chooses it.
 
 For the first unsigned/unnotarized launch, let the person try opening it and
 then use **System Settings → Privacy & Security → Open Anyway → Open** if they
-choose to trust it. On **macOS 15+ Control/right-click → Open no longer
-overrides Gatekeeper**. No `xattr -d`, `spctl --master-disable` or automated
-approval. A malware, revoked- signature or damaged-app warning is a stop, not an
+choose to trust it. On macOS 15+,
+[Control/right-click → Open no longer overrides Gatekeeper][gatekeeper].
+No `xattr -d`, `spctl --master-disable` or automated approval.
+A malware, revoked-signature or damaged-app warning is a stop, not an
 unsigned-app exception.
 
 ### Windows: native x64, per-user
@@ -360,9 +361,10 @@ after a running-app refusal, then repeat only the requested configuration.
 | 7    | Pairing throttled (HTTP 429)                             |
 
 JSON errors use
-`{"ok":false,"error":{"code":"...","message":"Polish safe text"}}`; `check`
-instead reports `ok`, `configured`, `appRunning` and an `errors` array. Never
-infer a successful print from any CLI result.
+`{"ok":false,"error":{"code":"...","message":"Polish safe text"}}`.
+Configuration validation by `check` reports `ok`, `configured`, `appRunning`
+and an `errors` array; local read failures use the error envelope above.
+Never infer a successful print from any CLI result.
 
 On Windows the single executable uses the GUI subsystem to avoid a console
 flashing when opened from Explorer (Windows 10 and 11). CLI mode attaches to the
@@ -388,9 +390,9 @@ requires Windows 11 24H2 and does not solve Windows 10; see
    this install flow never builds or runs hardware acceptance mode.
 2. Obtain the correct final **HTTPS API URL**, preserving any path prefix.
    Redirects are rejected; plain HTTP is only for loopback development. Ask the
-   person for the diagnostics choice. Diagnostics default on; release configuration
-   targets EU Sentry. Structured diagnostics exclude token/fiscal payloads, but
-   native crash dumps can include sensitive process memory. See the release-tag
+   person for the diagnostics choice. Diagnostics default on. Structured
+   diagnostics exclude token/fiscal payloads, but native crash dumps can include
+   sensitive process memory. See the release-tag
    version of `docs/telemetry.md` in the repository. Never silently choose for
    the person.
 3. If the GUI is running, ask for **Zakończ** after current operations finish.
@@ -482,3 +484,5 @@ changes; redacted configuration/check result; pairing success/failure (never
 code/token); autostart choice; launch outcome; remaining human steps. If
 chat-only, say **manual steps provided, not installed**. Never claim printer
 testing or configuration proves a fiscal operation succeeded.
+
+[gatekeeper]: https://developer.apple.com/news/?id=saqachfa

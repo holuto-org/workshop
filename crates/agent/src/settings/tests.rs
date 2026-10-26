@@ -137,8 +137,16 @@ fn rejected_settings_leave_the_previous_pairing_untouched() -> TestResult {
         "ftp://server",
         "http://server",
         "https://user:pass@server",
+        "https://:secret@server",
         "https://server?token=secret",
         "https://server/#fragment",
+        "http://localhost.evil.invalid",
+        "http://localhost.",
+        "http://126.255.255.255",
+        "http://128.0.0.0",
+        "http://[::]",
+        "http://[::2]",
+        "http://[::ffff:127.0.0.1]",
         "not a url",
     ] {
         let invalid = Settings {
@@ -172,6 +180,9 @@ fn secure_and_loopback_api_addresses_remain_usable() -> TestResult {
         "https://api.example/v1/",
         "http://localhost:8000",
         "http://127.0.0.1:8000/",
+        "http://127.0.0.0",
+        "http://127.255.255.255",
+        "http://LOCALHOST",
         "http://[::1]:8000",
     ] {
         let expected = Settings {
@@ -236,12 +247,14 @@ fn startup_reads_opt_out_without_locking_or_creating_state() -> TestResult {
         .env("HOME", temporary.path())
         .env("XDG_STATE_HOME", temporary.path().join("stan"));
     let child = command.output()?;
-    let stdout = String::from_utf8_lossy(&child.stdout);
-    let stderr = String::from_utf8_lossy(&child.stderr);
-    assert!(
-        child.status.success() && stdout.contains("1 passed"),
-        "startup child failed:\n{stdout}\n{stderr}"
-    );
+    assert!(child.status.success(), "startup child failed: {child:?}");
+    #[cfg(target_os = "macos")]
+    let state = temporary
+        .path()
+        .join("Library/Application Support/workshop");
+    #[cfg(not(target_os = "macos"))]
+    let state = temporary.path().join("stan/workshop");
+    assert_eq!(fs::read(state.join("settings.json"))?, b"{");
     Ok(())
 }
 
@@ -455,5 +468,113 @@ fn vendor_preferences_roundtrip_and_invalid_vendors_do_not_load() -> TestResult 
         assert!(matches!(Settings::load(&dir), Err(Error::Store { .. })));
         assert_eq!(fs::read(dir.file("settings.json"))?, text.as_bytes());
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Stored credential assertions use Result for setup."
+)]
+fn changing_the_api_forgets_pairing_but_equivalent_addresses_preserve_it() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    for (address, keeps_token) in [
+        (" https://API.EXAMPLE:443/v1/// ", true),
+        ("https://api.example/v1", true),
+        ("https://api.example/v2", false),
+        ("https://other.example/v1/", false),
+        ("http://localhost/v1/", false),
+    ] {
+        let mut changed = settings();
+        changed.set_api_url(address);
+        changed.save(&dir)?;
+        let restored = Settings::load(&dir)?.ok_or("missing settings")?;
+        assert_eq!(restored.api_url, address);
+        assert_eq!(
+            restored.token.as_str(),
+            if keeps_token { "secret-token" } else { "" }
+        );
+    }
+    for (address, keeps_token) in [("not a url", true), ("another invalid URL", false)] {
+        let mut changed = Settings {
+            api_url: "not a url".to_owned(),
+            ..settings()
+        };
+        changed.set_api_url(address);
+        assert_eq!(
+            changed.token.as_str(),
+            if keeps_token { "secret-token" } else { "" }
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Missing-state and validation assertions use Result."
+)]
+fn settings_reads_create_nothing_and_unpaired_preferences_cannot_start() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("absent");
+    assert_eq!(Settings::load_at(&path)?, None);
+    assert!(!path.exists());
+    let dir = StateDir::open(path)?;
+    for (url, expected) in [
+        ("", "Wpisz adres API w Ustawieniach."),
+        (
+            "https://api.example",
+            "Sparuj drukarkę kodem z Holuto w Ustawieniach.",
+        ),
+    ] {
+        let preferences = Settings {
+            api_url: url.to_owned(),
+            ..Settings::default()
+        };
+        preferences.save(&dir)?;
+        let loaded = Settings::load(&dir)?.ok_or("missing preferences")?;
+        assert!(matches!(loaded.validate(), Err(Error::Invalid(message)) if message == expected));
+        assert!(loaded.telemetry_enabled);
+        assert!(!loaded.start_on_launch);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Unix privacy assertions use Result for setup."
+)]
+fn settings_creation_and_replacement_are_private_but_reads_do_not_repair_modes() -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let path = dir.file("settings.json");
+    settings().save(&dir)?;
+    assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
+    assert_eq!(Settings::load(&dir)?, Some(settings()));
+    assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o644);
+    settings().save(&dir)?;
+    assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "The documented token-size boundary must remain usable."
+)]
+fn the_largest_permitted_credential_saves_without_truncation() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let preferences = Settings {
+        token: "x".repeat(4096).into(),
+        ..settings()
+    };
+    preferences.save(&dir)?;
+    assert_eq!(Settings::load(&dir)?, Some(preferences));
     Ok(())
 }

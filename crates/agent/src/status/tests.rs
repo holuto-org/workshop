@@ -235,6 +235,8 @@ fn new_and_replaced_snapshots_are_owner_only() -> TestResult {
     let path = dir.file("status.json");
     assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
     fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
+    assert_eq!(Snapshot::load_at(dir.path())?, Some(current.clone()));
+    assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o644);
     current.save(&dir)?;
     assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
     assert_eq!(Snapshot::load_at(dir.path())?, Some(current));

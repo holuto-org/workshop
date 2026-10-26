@@ -24,7 +24,7 @@ pub trait Driver: Send + fmt::Debug {
     fn probe(&self) -> Result<Device, Error>;
 
     /// Requires the paired device `unique_number` to be connected and ready, except for an
-    /// overdue daily report, before an interrupted operation is resolved.
+    /// overdue daily report or read-only mode, before an interrupted operation is resolved.
     fn verify(&self, unique_number: &str) -> Result<Device, Error>;
 
     /// Rechecks identity, readiness and the VAT table `expected` before printing.

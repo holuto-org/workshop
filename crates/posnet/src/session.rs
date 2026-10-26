@@ -1,4 +1,4 @@
-//! Exclusive printer connection and reply correlation.
+//! Exclusive printer connection and reply correlation; EOF ends a reply immediately.
 
 use std::{
     fmt, io,
@@ -92,13 +92,12 @@ impl Session {
             if reply.get("@").is_some() {
                 continue;
             }
-            let reply = reply.into_result(&answered)?;
-            if answered != command {
+            if answered != command && answered != "ERR" {
                 return Err(Error::Protocol(format!(
                     "Oczekiwano odpowiedzi {command}, otrzymano {answered}."
                 )));
             }
-            return Ok(reply);
+            return reply.into_result(&answered);
         }
     }
 
@@ -149,6 +148,9 @@ impl Session {
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 result => result.map_err(|error| io_error(command, error))?,
             };
+            if read == 0 {
+                return Err(Error::Io(io::ErrorKind::UnexpectedEof.into()));
+            }
             self.pending
                 .extend_from_slice(chunk.get(..read).unwrap_or_default());
         }

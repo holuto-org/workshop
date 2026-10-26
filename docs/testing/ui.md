@@ -70,8 +70,9 @@ No sleep after clicking and no layout-coordinate search.
 - Stop/quit during a held print completes it once, receives `Stopped`, joins,
   then exits. Do not test shutdown by killing the worker mid-operation.
 - On macOS, `macos_quit` is a deliberate exception: a harness-free test target
-  runs real AppKit/winit on the main thread. Its child must reach the
-  post-`Stopped` completion marker; an early native exit is a failure.
+  runs real AppKit/winit on the main thread. Its child must emit the held-quit
+  marker; after exit, the parent checks stopped status, history and journal
+  settlement. An early native exit is a failure.
 
 Backend tests prove semantics and accessibility, not fonts, pixels, compositor
 integration or packaged startup. Those need

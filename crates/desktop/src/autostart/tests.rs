@@ -44,10 +44,10 @@ fn linux_login_entry_after_a_package_upgrade_launches_the_installed_executable()
     let artifact = temp.path().join("autostart/workshop.desktop");
     // `/proc/self/exe` once dpkg has renamed a new binary over the running one.
     set_at(&artifact, Path::new("/usr/bin/workshop (deleted)"), true)?;
-    let entry = fs::read_to_string(&artifact)?;
-    assert!(
-        entry.contains("\nExec=\"/usr/bin/workshop\"\n"),
-        "the login entry must name the installed path: {entry}"
+    assert_eq!(
+        fs::read_to_string(&artifact)?,
+        "[Desktop Entry]\nType=Application\nName=Holuto Workshop\n\
+         Exec=\"/usr/bin/workshop\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
     );
     Ok(())
 }
@@ -70,9 +70,14 @@ fn desktop_exec_launches_paths_with_field_codes_and_shell_metacharacters() -> Te
             .ok_or("missing Exec key")?;
         assert_eq!(exec_path(exec)?, path, "{exec}");
     }
-    assert!(
-        set_at(&artifact, Path::new("/tmp/work\tshop"), true).is_err(),
-        "control characters are refused, never written raw"
+    let before = fs::read(&artifact)?;
+    let error = set_at(&artifact, Path::new("/tmp/work\tshop"), true).unwrap_err();
+    assert!(matches!(error, agent::Error::Invalid(message)
+        if message == "Ścieżka aplikacji nie nadaje się do autostartu."));
+    assert_eq!(
+        fs::read(&artifact)?,
+        before,
+        "refusal preserves the existing registration"
     );
     Ok(())
 }
@@ -259,5 +264,86 @@ fn windows_login_value_contains_only_the_quoted_executable_and_is_removable() ->
         let _closed = unsafe { RegCloseKey(handle) };
     }
     assert_eq!(reopened, ERROR_FILE_NOT_FOUND, "no disposable key remains");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Autostart rollback and path selection are exercised in an isolated child HOME"
+)]
+fn failed_preference_save_restores_registration_and_relative_xdg_uses_home() -> TestResult {
+    use agent::{Error as AgentError, settings::Settings, store::StateDir};
+    use std::{env, process::Command};
+    const CHILD: &str = "WORKSHOP_AUTOSTART_ROLLBACK_CHILD";
+    if let Some(home) = env::var_os(CHILD) {
+        let home = Path::new(&home);
+        let dir = StateDir::open(home.join("state"))?;
+        fs::create_dir(dir.path().join("settings.json"))?;
+        let artifact = home.join(".config/autostart/workshop.desktop");
+        for previous in [false, true] {
+            super::set_enabled(previous)?;
+            let before = fs::read(&artifact).ok();
+            let error = super::configure(
+                &dir,
+                Settings {
+                    start_on_launch: previous,
+                    ..Settings::default()
+                },
+                !previous,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, AgentError::Store { action: "Nie można zapisać ustawień", path, .. }
+                if path == dir.path().join("settings.json"))
+            );
+            assert_eq!(
+                fs::read(&artifact).ok(),
+                before,
+                "failed save restores the previous opt-in"
+            );
+            assert!(dir.path().join("settings.json").is_dir());
+        }
+        super::set_enabled(false)?;
+        fs::write(home.join("outcome"), "rolled back off and on; removed\n")?;
+        return Ok(());
+    }
+    for xdg in [None, Some("relative-config"), Some("")] {
+        let temporary = tempfile::tempdir()?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "Never change the operator's autostart"
+        )]
+        let mut child = Command::new(env::current_exe()?);
+        let _command = child
+            .args([
+                "--exact",
+                concat!(
+                    "autostart::tests::",
+                    "failed_preference_save_restores_registration_and_relative_xdg_uses_home"
+                ),
+                "--nocapture",
+            ])
+            .env(CHILD, temporary.path())
+            .env("HOME", temporary.path());
+        if let Some(xdg) = xdg {
+            let _command = child.env("XDG_CONFIG_HOME", xdg);
+        } else {
+            let _command = child.env_remove("XDG_CONFIG_HOME");
+        }
+        let output = child.output()?;
+        assert!(output.status.success(), "{xdg:?}: {output:?}");
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("outcome"))?,
+            "rolled back off and on; removed\n"
+        );
+        assert!(
+            !temporary
+                .path()
+                .join(".config/autostart/workshop.desktop")
+                .exists()
+        );
+    }
     Ok(())
 }

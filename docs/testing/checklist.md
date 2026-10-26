@@ -114,9 +114,9 @@ drivers, using that brand's simulator through the real driver.
     IDs/attempt/echo rejected
   - Test shape: Loopback Holuto fake request log + exact result/error
 - **Session and heartbeat**
-  - Required guarantee: Vendor + serial binding, current per-profile VAT/limits,
-    quantity decimals and receipt capability flags, pairing conflict; heartbeat
-    when unready but describable; 401 stops without refresh
+  - Required guarantee: Session vendor + serial binding and current per-profile
+    VAT/limits, quantity decimals and receipt capability flags; pairing conflict;
+    identity-bound heartbeat when unready but describable; 401 stops without refresh
   - Test shape: Stateful HTTP fake + simulator + worker events
 - **Documents and queue**
   - Required guarantee: Limit 100, opaque cursor encoded once,
@@ -256,8 +256,8 @@ drivers, using that brand's simulator through the real driver.
   - Test shape: Capturing transport + malicious synthetic canaries +
     child-process panic/crash test where supported
 - **Production features**
-  - Required guarantee: Default serial build compiled; simulator/testing
-    rejected in release; separate simulator state
+  - Required guarantee: Default serial build compiled; desktop `simulator` and
+    agent `testing` rejected without debug assertions; separate simulator state
   - Test shape: Feature-matrix build check + isolated process fixture
 - **Packages**
   - Required guarantee: Workshop

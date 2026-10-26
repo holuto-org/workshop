@@ -159,6 +159,9 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "registry"] }
 # Use OS trust roots, including corporate CAs.
 ureq = { version = "3.5.0", default-features = false, features = ["json", "platform-verifier", "rustls"] }
+# ureq wraps certificate failures in io::Error; downcasting the typed rustls error
+# reports them as TLS, not protocol. Tests also run a local untrusted TLS server.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 # Parses the API URL for the scheme, loopback and credential checks guarding the token.
 url = "2.5.8"
 uuid = { version = "1.29.0", features = ["serde"] }

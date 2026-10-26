@@ -20,6 +20,7 @@ jiff.workspace = true
 jsonschema = { workspace = true, optional = true }
 novitus.workspace = true
 posnet.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sentry-core.workspace = true

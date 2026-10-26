@@ -1,9 +1,9 @@
-use std::{collections::BTreeMap, error::Error as StdError, fs, io::ErrorKind};
+use std::{collections::BTreeMap, error::Error as StdError, fs, io::ErrorKind, str};
 
 use fiscal::{device::Vendor, error::Error as PrinterError, money::Grosze, report::Report};
 use posnet::{
     capabilities::capabilities,
-    simulator::{Fault as DeviceFault, Simulator, UNIQUE_NUMBER},
+    simulator::{Fault as DeviceFault, SimReport, Simulator, UNIQUE_NUMBER},
 };
 use serde_json::json;
 
@@ -77,19 +77,6 @@ const RECEIPT_COMMANDS: [&str; 8] = [
     "trftrln",
     "trftrend",
 ];
-fn interrupted_report() -> Result<ReportOperation, Box<dyn StdError>> {
-    Ok(ReportOperation {
-        report: Report::Daily,
-        vendor: Vendor::Posnet,
-        device_unique_number: UNIQUE_NUMBER.to_owned(),
-        started_at: "2025-01-02T12:00:00Z".parse()?,
-        device: Device::Dispatching {
-            stage: "dailyrep".to_owned(),
-        },
-        acknowledged_at: None,
-    })
-}
-
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -155,29 +142,6 @@ fn printer_time_and_original_receipt_values_reach_holuto_and_history() -> TestRe
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn not_started_crash_reports_failed_without_blocking() -> TestResult {
-    let sim = Simulator::start();
-    let server = Holuto::new();
-    server.insert(job_json());
-    let (_temporary, dir) = state_dir();
-    Journal::new(&dir).save(&Operation::Receipt(claimed(Device::NotStarted, None)?))?;
-    let mut agent = agent(&sim, &dir, &server)?;
-    assert_eq!(agent.settle()?, None);
-    assert_eq!(server.job(JOB_ID)["state"], "failed");
-    assert_eq!(stored(&dir)?.device, Device::NotStarted);
-    assert!(
-        stored(&dir)?.settled.is_some(),
-        "no dispatch proof settles safely"
-    );
-    assert!(sim.receipts().is_empty(), "recovery never prints");
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
 fn not_started_expired_attempt_waits_for_staff_with_explicit_no_dispatch_notice() -> TestResult {
     let sim = Simulator::start();
     let server = Holuto::new();
@@ -187,57 +151,18 @@ fn not_started_expired_attempt_waits_for_staff_with_explicit_no_dispatch_notice(
     Journal::new(&dir).save(&Operation::Receipt(claimed(Device::NotStarted, None)?))?;
     let mut agent = agent(&sim, &dir, &server)?;
     assert_eq!(agent.settle()?, Some(Blocked::Receipt));
-    assert!(
-        agent
-            .take_news()
-            .notices
-            .iter()
-            .any(|notice| notice.contains("nie wysłano żadnego polecenia fiskalnego")),
-        "staff need the journal's certain evidence"
+    assert_eq!(
+        agent.take_news().notices,
+        [format!(
+            "Zlecenie 10 (zadanie {JOB_ID}): rejestr drukarki potwierdza, że nie wysłano żadnego \
+             polecenia fiskalnego. Rozstrzygnij zadanie jako niewydrukowane w Holuto."
+        )]
     );
     server.resolve(JOB_ID, None)?;
     assert_eq!(agent.settle()?, None);
     assert!(
         stored(&dir)?.settled.is_some(),
         "staff resolution unblocks without a command"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
-fn completed_crash_recovers_done_and_preserves_printer_issue_time() -> TestResult {
-    let sim = Simulator::start();
-    let server = Holuto::new();
-    server.insert(job_json());
-    let (_temporary, dir) = state_dir();
-    let operation = claimed(
-        Device::Completed {
-            receipt_number: Some("41".to_owned()),
-        },
-        None,
-    )?;
-    Journal::new(&dir).save(&Operation::Receipt(operation))?;
-    let mut agent = agent(&sim, &dir, &server)?;
-    assert_eq!(agent.settle()?, None);
-    assert_eq!(server.job(JOB_ID)["receiptNumber"], "41");
-    let reported: Vec<_> = server
-        .requests()
-        .into_iter()
-        .filter(|request| request.path.ends_with("/result"))
-        .map(|request| request.body["issuedAt"].clone())
-        .collect();
-    assert_eq!(
-        reported,
-        [json!("2025-01-02T12:00:00Z")],
-        "recovery reports the journaled printer time, not the recovery time"
-    );
-    assert!(
-        sim.receipts().is_empty(),
-        "recovery records evidence without printing"
     );
     Ok(())
 }
@@ -362,31 +287,6 @@ fn committed_result_with_lost_acknowledgement_settles_after_restart_without_repr
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn dispatching_crash_stays_unknown_until_staff_resolution() -> TestResult {
-    let sim = Simulator::start();
-    let server = Holuto::new();
-    server.insert(job_json());
-    let (_temporary, dir) = state_dir();
-    Journal::new(&dir).save(&Operation::Receipt(claimed(
-        Device::Dispatching {
-            stage: "trend".to_owned(),
-        },
-        None,
-    )?))?;
-    let mut agent = agent(&sim, &dir, &server)?;
-    assert_eq!(agent.settle()?, Some(Blocked::Receipt));
-    assert_eq!(server.job(JOB_ID)["state"], "unknown");
-    server.resolve(JOB_ID, Some("P123"))?;
-    assert_eq!(agent.settle()?, None);
-    assert!(sim.receipts().is_empty(), "human resolution prints nothing");
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
 fn terminal_failed_or_expired_print_needs_same_device_local_acknowledgement() -> TestResult {
     for state in ["failed", "expired"] {
         let sim = Simulator::start();
@@ -401,15 +301,17 @@ fn terminal_failed_or_expired_print_needs_same_device_local_acknowledgement() ->
         )?))?;
         let mut agent = agent(&sim, &dir, &server)?;
         assert_eq!(agent.settle()?, Some(Blocked::OrphanedReceipt));
-        assert!(
-            agent
-                .take_news()
-                .notices
-                .iter()
-                .any(|notice| notice.contains("Paragon 41")
-                    && notice.contains("zlecenia 10")
-                    && notice.contains(&JOB_ID.to_string())),
-            "operator gets job, order and physical receipt evidence"
+        let state_label = if state == "failed" {
+            "Failed"
+        } else {
+            "Expired"
+        };
+        assert_eq!(
+            agent.take_news().notices,
+            [format!(
+                "Paragon 41 został wydrukowany dla zlecenia 10 (zadanie {JOB_ID}), ale Holuto \
+                 oznaczyło zadanie jako {state_label}. Sprawdź wydruk i użyj „Wyjaśnij paragon”."
+            )]
         );
         sim.set_paper(false);
         assert!(
@@ -485,38 +387,11 @@ fn different_attempt_cannot_settle_or_reprint_a_journal() -> TestResult {
     let operation = claimed(Device::NotStarted, None)?;
     Journal::new(&dir).save(&Operation::Receipt(operation.clone()))?;
     let mut agent = agent(&sim, &dir, &server)?;
-    assert!(
-        matches!(agent.settle(), Err(Error::Blocked(message)) if message.contains("inną próbę")),
-        "attempt mismatch fails closed"
-    );
+    assert!(matches!(agent.settle(), Err(Error::Blocked(message))
+            if message == "Nie można uzgodnić niepotwierdzonego paragonu z Holuto: \
+                           Holuto zna inną próbę wykonania tego zadania. Drukowanie zablokowane."));
     assert_eq!(stored(&dir)?, operation);
     assert!(sim.receipts().is_empty(), "attempt mismatch never prints");
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
-fn telemetry_reports_device_vendor_capabilities_and_precision() -> TestResult {
-    let sim = Simulator::start();
-    let server = Holuto::new();
-    let (_temporary, dir) = state_dir();
-    let mut agent = agent(&sim, &dir, &server)?;
-    let _delay = agent.step()?;
-    for request in server
-        .requests()
-        .iter()
-        .filter(|request| request.path == "/agent/session")
-    {
-        assert_eq!(request.body["vendor"], "posnet");
-        assert_eq!(request.body["capabilities"]["maxQuantityDecimals"], 8);
-        assert_eq!(
-            request.body["capabilities"],
-            serde_json::to_value(&agent.telemetry.capabilities)?
-        );
-    }
     Ok(())
 }
 
@@ -616,11 +491,16 @@ fn oversized_claim_fails_without_fiscal_commands_and_frees_the_queue() -> TestRe
         "name": "Pozycja", "quantity": "1", "unitPrice": "0.01",
         "total": "0.01", "vatRate": "23", "vatLetter": "A"
     });
-    let changes = json!({"lines": vec![line; 501], "total": "5.01"});
+    let changes = json!({"lines": vec![line.clone(); 501], "total": "5.01"});
     let oversized = server.enqueue(with(job_json(), &changes));
     let next = server.enqueue(with(
         job_json(),
-        &json!({"id": "00000000-0000-0000-0000-000000000063"}),
+        &json!({
+            "id": "00000000-0000-0000-0000-000000000063",
+            "lines": vec![line; 500],
+            "total": "5.00",
+            "payments": [{"form": "card", "amount": "5.00"}]
+        }),
     ));
     let (_temporary, dir) = state_dir();
     let mut agent = agent(&sim, &dir, &server)?;
@@ -643,6 +523,29 @@ fn oversized_claim_fails_without_fiscal_commands_and_frees_the_queue() -> TestRe
         "the next job is claimed and printed"
     );
     assert_eq!(sim.receipts().len(), 1);
+    let receipts = sim.receipts();
+    let receipt = receipts.first().ok_or("missing maximum-size receipt")?;
+    assert_eq!(receipt.total, 500);
+    assert_eq!(
+        receipt.lines,
+        vec![
+            BTreeMap::from([
+                ("na".to_owned(), "Pozycja".to_owned()),
+                ("il".to_owned(), "1".to_owned()),
+                ("vt".to_owned(), "0".to_owned()),
+                ("pr".to_owned(), "1".to_owned()),
+                ("wa".to_owned(), "1".to_owned()),
+            ]);
+            500
+        ]
+    );
+    assert_eq!(
+        receipt.payments,
+        [BTreeMap::from([
+            ("ty".to_owned(), "2".to_owned()),
+            ("wa".to_owned(), "500".to_owned()),
+        ])]
+    );
     Ok(())
 }
 
@@ -685,29 +588,47 @@ fn malformed_claim_with_lost_failure_acknowledgement_settles_after_restart() -> 
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
 fn invalid_money_vat_or_text_fails_before_fiscal_commands() -> TestResult {
-    for changes in [
-        json!({"total":"249.99"}),
-        json!({"lines": [{
-            "name": "Pozycja", "quantity": "1", "unitPrice": "250.001",
-            "total": "250.00", "vatRate": "23", "vatLetter": "A"
-        }]}),
-        json!({"lines": [{
-            "name": "Pozycja", "quantity": "1", "unitPrice": "250.00",
-            "total": "250.00", "vatRate": "8", "vatLetter": "A"
-        }]}),
-        // Each line must equal rounded quantity × price even when the job total still matches.
-        json!({"lines": [
-            {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100.00",
-             "total": "199.99", "vatRate": "23", "vatLetter": "A"},
-            {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
-             "total": "50.01", "vatRate": "8", "vatLetter": "B"}
-        ]}),
-        // A deducted advance must match the printer's rate in its slot, like every line.
-        json!({
-            "advances": [{"vatLetter": "A", "vatRate": "8", "amount": "100.00"}],
-            "payments": [{"form": "card", "amount": "150.00"}]
-        }),
-        json!({"companyName":"Firma 🛠"}),
+    for (changes, reason) in [
+        (
+            json!({"total":"249.99"}),
+            "Suma pozycji nie odpowiada wartości zadania.",
+        ),
+        (
+            json!({"lines": [{
+                "name": "Pozycja", "quantity": "1", "unitPrice": "250.001",
+                "total": "250.00", "vatRate": "23", "vatLetter": "A"
+            }]}),
+            "Cena: Kwota musi być zapisana cyframi, z najwyżej 2 miejscami po przecinku. \
+             (\"250.001\")",
+        ),
+        (
+            json!({"lines": [{
+                "name": "Pozycja", "quantity": "1", "unitPrice": "250.00",
+                "total": "250.00", "vatRate": "8", "vatLetter": "A"
+            }]}),
+            "Stawka VAT 8% zadania nie odpowiada slotowi 0 drukarki. Odśwież stawki w Holuto.",
+        ),
+        (
+            json!({"lines": [
+                {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100.00",
+                 "total": "199.99", "vatRate": "23", "vatLetter": "A"},
+                {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
+                 "total": "50.01", "vatRate": "8", "vatLetter": "B"}
+            ]}),
+            "Wartość pozycji nie zgadza się z zaokrąglonym iloczynem ilości i ceny.",
+        ),
+        (
+            json!({
+                "advances": [{"vatLetter": "A", "vatRate": "8", "amount": "100.00"}],
+                "payments": [{"form": "card", "amount": "150.00"}]
+            }),
+            "Stawka VAT 8% zadania nie odpowiada slotowi 0 drukarki. Odśwież stawki w Holuto.",
+        ),
+        (
+            json!({"companyName":"Firma 🛠"}),
+            "Nazwa firmy musi mieć od 1 do 40 znaków obsługiwanych przez drukarkę. Zmień ją \
+             w profilu firmy w Holuto.",
+        ),
     ] {
         let sim = Simulator::start();
         let server = Holuto::new();
@@ -720,6 +641,9 @@ fn invalid_money_vat_or_text_fails_before_fiscal_commands() -> TestResult {
             "failed",
             "invalid fiscal input gets a certain failure"
         );
+        assert_eq!(server.job(JOB_ID)["result"], reason);
+        assert_eq!(stored(&dir)?.result, Some(JobResult::failed(reason)));
+        assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
         assert!(sim.receipts().is_empty(), "invalid input never prints");
         assert_eq!(
             stored(&dir)?.device,
@@ -742,88 +666,30 @@ fn corrupt_journal_blocks_receipts_and_reports_without_touching_printer() -> Tes
     let (_temporary, dir) = state_dir();
     fs::write(dir.file("operation.json"), b"broken")?;
     let mut agent = agent(&sim, &dir, &server)?;
+    let expected = "Uszkodzony rejestr operacji lub nieobsługiwany format. \
+                    Drukowanie zablokowane; nie usuwaj pliku.";
     assert!(
-        matches!(agent.step(), Err(Error::Blocked(_))),
+        matches!(agent.step(), Err(Error::Blocked(message)) if message == expected),
         "corrupt journal blocks receipt"
     );
+    let refused = agent.run_report(Report::Daily);
     assert!(
-        matches!(agent.run_report(Report::Daily), Err(Error::Blocked(_))),
+        matches!(refused, Err(Error::Blocked(message)) if message == expected),
         "corrupt journal blocks reports"
     );
     assert!(
         sim.receipts().is_empty() && sim.reports().is_empty(),
         "corrupt intent cannot reach device"
     );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
-fn interrupted_report_is_acknowledged_without_reissuing_it() -> TestResult {
-    let sim = Simulator::start();
-    let server = Holuto::new();
-    let (_temporary, dir) = state_dir();
-    let operation = ReportOperation {
-        report: Report::Daily,
-        vendor: Vendor::Posnet,
-        device_unique_number: UNIQUE_NUMBER.to_owned(),
-        started_at: "2025-01-02T12:00:00Z".parse()?,
-        device: Device::Dispatching {
-            stage: "dailyrep".to_owned(),
-        },
-        acknowledged_at: None,
-    };
-    Journal::new(&dir).save(&Operation::Report(operation))?;
-    let agent = agent(&sim, &dir, &server)?;
-    agent.resolve_report()?;
-    assert_eq!(agent.blocked()?, None);
-    assert!(
-        sim.reports().is_empty(),
-        "resolution never prints the report again"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
-fn interrupted_report_blocks_claims_and_new_reports_until_resolved() -> TestResult {
-    let sim = Simulator::start();
-    let server = Holuto::new();
-    let _id = server.enqueue(job_json());
-    let (_temporary, dir) = state_dir();
-    let operation = Operation::Report(interrupted_report()?);
-    Journal::new(&dir).save(&operation)?;
-    let mut agent = agent(&sim, &dir, &server)?;
-    assert_eq!(agent.step()?, super::RETRY);
-    assert!(
-        agent
-            .take_news()
-            .notices
-            .iter()
-            .any(|notice| notice.starts_with("Przerwany raport.")),
-        "the operator is told why nothing prints"
-    );
+    assert_eq!(fs::read(dir.file("operation.json"))?, b"broken");
+    assert_eq!(server.job(JOB_ID)["state"], "queued");
     assert!(
         server
             .requests()
             .iter()
-            .all(|request| request.path != "/agent/jobs/take"),
-        "no job is claimed over an interrupted report"
+            .all(|request| request.path != "/agent/jobs/take")
     );
-    assert_eq!(server.job(JOB_ID)["state"], "queued");
-    assert!(matches!(
-        agent.run_report(Report::Daily),
-        Err(Error::Blocked(message)) if message == "Najpierw wyjaśnij przerwany raport."
-    ));
     assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
-    assert_eq!(sent(&sim, &["dailyrep"]), Vec::<Vec<u8>>::new());
-    assert_eq!(Journal::new(&dir).load()?, Some(operation));
     Ok(())
 }
 
@@ -840,17 +706,32 @@ fn history_error_does_not_block_server_accepted_result() -> TestResult {
     fs::create_dir(dir.file("history.jsonl"))?;
     let mut agent = agent(&sim, &dir, &server)?;
     let _delay = agent.step()?;
-    assert!(
-        stored(&dir)?.settled.is_some(),
-        "history is only a display cache"
+    let saved = stored(&dir)?;
+    assert_eq!(
+        saved.settled.map(|settled| settled.state),
+        Some(JobState::Done)
+    );
+    assert_eq!(
+        saved.device,
+        Device::Completed {
+            receipt_number: Some("1".to_owned())
+        }
+    );
+    assert_eq!(server.job(JOB_ID)["state"], "done");
+    assert_eq!(server.job(JOB_ID)["receiptNumber"], "1");
+    assert_eq!(sim.receipts().len(), 1);
+    let notices = agent.take_news().notices;
+    assert_eq!(notices.len(), 1);
+    let notice = notices.first().ok_or("missing history failure")?;
+    let prefix = format!(
+        "Nie można zapisać historii ({}): ",
+        dir.file("history.jsonl").display()
     );
     assert!(
-        agent
-            .take_news()
-            .notices
-            .iter()
-            .any(|notice| notice.contains("histor")),
-        "operator sees history failure"
+        notice
+            .strip_prefix(&prefix)
+            .is_some_and(|source| !source.is_empty()),
+        "history failure identifies the cache and includes the OS error: {notice}"
     );
     Ok(())
 }
@@ -1102,25 +983,33 @@ fn a_reoffered_job_is_never_printed_again() -> TestResult {
     let server = Holuto::new();
     let _id = server.enqueue(job_json());
     let (_temporary, dir) = state_dir();
-    let mut printed = claimed(
-        Device::Completed {
-            receipt_number: Some("41".to_owned()),
+    let mut first = agent(&sim, &dir, &server)?;
+    let _delay = first.step()?;
+    let printed = stored(&dir)?;
+    let frames = sent(&sim, &RECEIPT_COMMANDS);
+    let history = history::load(&dir)?;
+    let replay = server.job(JOB_ID);
+    drop(first);
+    server.fault(
+        "POST",
+        "/agent/jobs/take",
+        Fault::Body {
+            status: 200,
+            body: serde_json::to_vec(&with(replay, &json!({"state": "taken"})))?,
         },
-        Some(JobResult::Done {
-            receipt_number: "41".to_owned(),
-        }),
-    )?;
-    printed.settled = Some(Settlement {
-        at: "2025-01-02T12:01:00Z".parse()?,
-        state: JobState::Done,
-    });
-    Journal::new(&dir).save(&Operation::Receipt(printed.clone()))?;
-    let mut agent = agent(&sim, &dir, &server)?;
+    );
+    let mut recovered = agent(&sim, &dir, &server)?;
     assert!(matches!(
-        agent.step(),
-        Err(Error::Blocked(message)) if message.contains("było już wykonywane")
+        recovered.step(),
+        Err(Error::Blocked(message))
+            if message == format!(
+                "Zadanie {JOB_ID} było już wykonywane na tej drukarce; \
+                 nie zostanie wydrukowane ponownie."
+            )
     ));
-    assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
+    assert_eq!(sent(&sim, &RECEIPT_COMMANDS), frames);
+    assert_eq!(sim.receipts().len(), 1);
+    assert_eq!(history::load(&dir)?, history);
     assert_eq!(stored(&dir)?, printed, "the printed evidence is kept");
     Ok(())
 }
@@ -1653,7 +1542,10 @@ fn a_printer_swapped_mid_session_claims_no_job_and_prints_nothing() -> TestResul
     assert!(matches!(
         agent.step(),
         Err(Error::Blocked(message))
-            if message.contains(UNIQUE_NUMBER) && message.contains(PAIRED)
+            if message == format!(
+                "Podłączona drukarka {UNIQUE_NUMBER} nie jest drukarką {PAIRED} sparowaną przy \
+                 uruchomieniu. Podłącz ją ponownie albo zatrzymaj i uruchom obsługę."
+            )
     ));
     assert!(
         server
@@ -1721,5 +1613,352 @@ fn a_claim_for_another_printer_or_without_an_attempt_is_never_printed() -> TestR
             "{changes}"
         );
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn journal_failures_after_print_preserve_the_last_durable_evidence_for_restart() -> TestResult {
+    // Claim, trinit, two lines, payment and trend are six durable writes.
+    for (successes, remote, device, result, blocked) in [
+        (
+            6,
+            "taken",
+            Device::Dispatching {
+                stage: "trend".to_owned(),
+            },
+            None,
+            true,
+        ),
+        (
+            7,
+            "taken",
+            Device::Completed {
+                receipt_number: Some("1".to_owned()),
+            },
+            None,
+            false,
+        ),
+        (
+            8,
+            "done",
+            Device::Completed {
+                receipt_number: Some("1".to_owned()),
+            },
+            Some(JobResult::Done {
+                receipt_number: "1".to_owned(),
+            }),
+            false,
+        ),
+    ] {
+        let sim = Simulator::start();
+        sim.set_clock("2025-01-02T12:34:00Z".parse()?);
+        let server = Holuto::new();
+        let id = server.enqueue(job_json());
+        let (_temporary, dir) = state_dir();
+        let mut first = agent(&sim, &dir, &server)?;
+        first.journal.fail_write_after(successes);
+        assert!(
+            matches!(
+                first.step(),
+                Err(Error::Store { source, .. }) if source.kind() == ErrorKind::PermissionDenied
+            ),
+            "write after {successes}"
+        );
+        let before = stored(&dir)?;
+        assert_eq!(before.device, device);
+        assert_eq!(before.result, result);
+        assert_eq!(before.settled, None);
+        assert_eq!(server.job(id)["state"], remote);
+        assert_eq!(sim.receipts().len(), 1);
+        let frames = sent(&sim, &RECEIPT_COMMANDS);
+        let results = server
+            .requests()
+            .into_iter()
+            .filter(|request| request.path.ends_with("/result"))
+            .map(|request| request.body)
+            .collect::<Vec<_>>();
+        let done = json!({
+            "attempt": before.attempt, "state": "done", "receiptNumber": "1",
+            "issuedAt": "2025-01-02T12:34:00Z", "result": null
+        });
+        assert_eq!(results, if successes == 8 { vec![done] } else { vec![] });
+        drop(first);
+
+        let mut recovered = agent(&sim, &dir, &server)?;
+        assert_eq!(recovered.settle()?, blocked.then_some(Blocked::Receipt));
+        let saved = stored(&dir)?;
+        assert_eq!(saved.device, before.device);
+        assert_eq!(saved.attempt, before.attempt);
+        assert_eq!(
+            saved.settled.as_ref().map(|settled| settled.state),
+            if blocked { None } else { Some(JobState::Done) }
+        );
+        assert_eq!(
+            server.job(id)["state"],
+            if blocked { "unknown" } else { "done" }
+        );
+        if !blocked {
+            assert_eq!(saved.issued_at.to_string(), "2025-01-02T12:34:00Z");
+            let entries = history::load(&dir)?;
+            assert_eq!(entries.len(), 1);
+            let entry = entries.first().ok_or("missing recovered history")?;
+            assert_eq!(entry.receipt_number.as_deref(), Some("1"));
+            assert_eq!(entry.printed_at.to_string(), "2025-01-02T12:34:00Z");
+        }
+        assert_eq!(sim.receipts().len(), 1);
+        assert_eq!(
+            sent(&sim, &RECEIPT_COMMANDS),
+            frames,
+            "restart never reprints"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_failed_later_intent_write_keeps_the_previous_dispatch_blocked_after_restart() -> TestResult {
+    for (successes, stage, expected) in [
+        (2, "trinit", vec!["trinit"]),
+        (
+            5,
+            "trpayment",
+            vec!["trinit", "trline", "trline", "trpayment"],
+        ),
+    ] {
+        let sim = Simulator::start();
+        let server = Holuto::new();
+        let id = server.enqueue(job_json());
+        let (_temporary, dir) = state_dir();
+        let mut first = agent(&sim, &dir, &server)?;
+        first.journal.fail_write_after(successes);
+        let _delay = first.step()?;
+        let operation = stored(&dir)?;
+        assert_eq!(
+            operation.device,
+            Device::Dispatching {
+                stage: stage.to_owned()
+            }
+        );
+        assert!(matches!(operation.result, Some(JobResult::Unknown { .. })));
+        assert_eq!(operation.settled, None);
+        assert_eq!(server.job(id)["state"], "unknown");
+        let frames = sent(&sim, &RECEIPT_COMMANDS);
+        let commands = frames
+            .iter()
+            .map(|frame| {
+                let name = frame
+                    .strip_prefix(&[0x02])
+                    .ok_or("missing STX")?
+                    .split(|byte| *byte == b'\t')
+                    .next()
+                    .ok_or("missing command")?;
+                str::from_utf8(name).map_err(Into::<Box<dyn StdError>>::into)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(commands, expected);
+        assert_eq!(sim.receipts(), []);
+        drop(first);
+        let mut recovered = agent(&sim, &dir, &server)?;
+        assert_eq!(recovered.settle()?, Some(Blocked::Receipt));
+        assert_eq!(stored(&dir)?, operation);
+        assert_eq!(sent(&sim, &RECEIPT_COMMANDS), frames);
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_report_completion_write_failure_requires_resolution_without_reprinting() -> TestResult {
+    let sim = Simulator::start();
+    sim.set_clock("2025-01-02T12:34:00Z".parse()?);
+    let server = Holuto::new();
+    let (_temporary, dir) = state_dir();
+    let mut first = agent(&sim, &dir, &server)?;
+    first.journal.fail_write_after(1);
+    assert!(matches!(
+        first.run_report(Report::Daily),
+        Err(Error::Store { source, .. }) if source.kind() == ErrorKind::PermissionDenied
+    ));
+    let saved = Journal::new(&dir).load()?;
+    let Some(Operation::Report(operation)) = &saved else {
+        return Err("completed report must retain its dispatch intent".into());
+    };
+    assert_eq!(
+        operation.device,
+        Device::Dispatching {
+            stage: "dailyrep".to_owned()
+        }
+    );
+    assert_eq!(operation.acknowledged_at, None);
+    let reports = sim.reports();
+    assert_eq!(
+        reports,
+        [SimReport {
+            command: "dailyrep".to_owned(),
+            params: BTreeMap::from([("da".to_owned(), "2025-01-02".to_owned())]),
+        }]
+    );
+    let frames = sent(&sim, &["dailyrep"]);
+    drop(first);
+    let recovered = agent(&sim, &dir, &server)?;
+    assert_eq!(recovered.blocked()?, Some(Blocked::Report));
+    recovered.resolve_report()?;
+    assert_eq!(recovered.blocked()?, None);
+    let resolved = fs::read(dir.file("operation.json"))?;
+    assert!(matches!(
+        recovered.resolve_report(),
+        Err(Error::Invalid(message)) if message == "Brak przerwanego raportu do wyjaśnienia."
+    ));
+    assert_eq!(fs::read(dir.file("operation.json"))?, resolved);
+    assert_eq!(sim.reports(), reports);
+    assert_eq!(sent(&sim, &["dailyrep"]), frames);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn a_refusal_outbox_replays_while_taken_but_requires_staff_after_expiry() -> TestResult {
+    for expired in [false, true] {
+        let sim = Simulator::start();
+        sim.fault("trinit", DeviceFault::Error);
+        let server = Holuto::new();
+        let id = server.enqueue(job_json());
+        server.fault(
+            "POST",
+            &format!("/agent/jobs/{id}/result"),
+            Fault::Problem {
+                status: 503,
+                code: "unavailable".to_owned(),
+                detail: "temporary".to_owned(),
+            },
+        );
+        let (_temporary, dir) = state_dir();
+        let mut first = agent(&sim, &dir, &server)?;
+        assert!(matches!(
+            first.step(),
+            Err(Error::Api(ApiError::Status { status: 503, .. }))
+        ));
+        let saved = stored(&dir)?;
+        assert_eq!(
+            saved.device,
+            Device::Dispatching {
+                stage: "trinit".to_owned()
+            }
+        );
+        assert_eq!(
+            saved.result,
+            Some(JobResult::failed("Drukarka zwróciła błąd 2000 (trinit)."))
+        );
+        assert_eq!(server.job(id)["state"], "taken");
+        let frames = sent(&sim, &RECEIPT_COMMANDS);
+        if expired {
+            server.expire(id);
+        }
+        drop(first);
+        let mut recovered = agent(&sim, &dir, &server)?;
+        assert_eq!(recovered.settle()?, expired.then_some(Blocked::Receipt));
+        let results = server
+            .requests()
+            .into_iter()
+            .filter(|request| request.path.ends_with("/result"))
+            .map(|request| request.body)
+            .collect::<Vec<_>>();
+        let expected = json!({
+            "attempt": saved.attempt, "state": "failed", "receiptNumber": null,
+            "issuedAt": null, "result": "Drukarka zwróciła błąd 2000 (trinit)."
+        });
+        assert_eq!(
+            results,
+            if expired {
+                vec![expected]
+            } else {
+                vec![expected.clone(), expected]
+            }
+        );
+        if expired {
+            assert_eq!(stored(&dir)?, saved);
+            assert_eq!(server.job(id)["state"], "unknown");
+            server.resolve(id, None)?;
+            assert_eq!(recovered.settle()?, None);
+        }
+        assert_eq!(server.job(id)["state"], "failed");
+        assert_eq!(
+            stored(&dir)?.settled.map(|settled| settled.state),
+            Some(JobState::Failed)
+        );
+        assert_eq!(sim.receipts(), []);
+        assert_eq!(sent(&sim, &RECEIPT_COMMANDS), frames);
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn an_uncertain_outbox_replays_after_http_failure_without_resending_the_print() -> TestResult {
+    let sim = Simulator::start();
+    sim.fault("trend", DeviceFault::LoseReply);
+    let server = Holuto::new();
+    let id = server.enqueue(job_json());
+    server.fault(
+        "POST",
+        &format!("/agent/jobs/{id}/result"),
+        Fault::Problem {
+            status: 503,
+            code: "unavailable".to_owned(),
+            detail: "temporary".to_owned(),
+        },
+    );
+    let (_temporary, dir) = state_dir();
+    let mut first = agent(&sim, &dir, &server)?;
+    assert!(matches!(
+        first.step(),
+        Err(Error::Api(ApiError::Status { status: 503, .. }))
+    ));
+    let saved = stored(&dir)?;
+    assert_eq!(
+        saved.device,
+        Device::Dispatching {
+            stage: "trend".to_owned()
+        }
+    );
+    assert!(matches!(saved.result, Some(JobResult::Unknown { .. })));
+    assert_eq!(server.job(id)["state"], "taken");
+    let frames = sent(&sim, &RECEIPT_COMMANDS);
+    drop(first);
+    let mut recovered = agent(&sim, &dir, &server)?;
+    assert_eq!(recovered.settle()?, Some(Blocked::Receipt));
+    assert_eq!(server.job(id)["state"], "unknown");
+    assert_eq!(stored(&dir)?, saved);
+    let results = server
+        .requests()
+        .into_iter()
+        .filter(|request| request.path.ends_with("/result"))
+        .map(|request| request.body)
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert_eq!(
+        results.first(),
+        results.last(),
+        "only the identical unknown result is replayed"
+    );
+    assert_eq!(sim.receipts().len(), 1);
+    assert_eq!(sent(&sim, &RECEIPT_COMMANDS), frames);
     Ok(())
 }

@@ -144,7 +144,7 @@ reconciliation; acceptance is not proof of completion.
 
 Profiles are not hardware certificates. The
 [supervised acceptance checklist](docs/testing/hardware-acceptance.md) records
-evidence per model/firmware before qualification; agents never run it.
+evidence per model/firmware before qualification; physical checks are human-only.
 Typical ports: Linux `/dev/ttyACM0` (prefer `/dev/serial/by-id/...`), Windows
 `COM3`, macOS `/dev/cu.usbmodem…`. The user needs read/write access
 (`dialout` group on Linux); never run with sudo.
