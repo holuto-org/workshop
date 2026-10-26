@@ -1,0 +1,3 @@
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+# The distributed EXE must run without installing a Visual C++ runtime.
+rustflags = ["-C", "target-feature=+crt-static"]

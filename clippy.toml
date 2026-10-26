@@ -1,0 +1,41 @@
+# Internal crates with no external consumers.
+avoid-breaking-exported-api = false
+pub-underscore-fields-behavior = "AllPubFields"
+
+# Test exemptions exclude the simulator used by other crates.
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-unwrap-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-expect-in-consts = false
+allow-unwrap-in-consts = false
+check-incompatible-msrv-in-tests = true
+
+disallowed-methods = [
+    { path = "std::thread::spawn", reason = "unnamed and panics when the OS refuses a thread; use `std::thread::Builder::new().name(..).spawn`, keep the handle and join it" },
+    { path = "std::thread::sleep", reason = "a fixed delay hides races and blocks a stop request; wait on the worker's command channel with `recv_timeout`" },
+    { path = "std::process::Command::new", reason = "the app never shells out" },
+]
+
+disallowed-types = [
+    { path = "std::sync::mpsc::SyncSender", reason = "`send` blocks while the buffer is full; the GUI thread must never wait on the worker" },
+]
+
+# Replace the default ["bytes::Bytes"] exemption to check every type.
+ignore-interior-mutability = []
+
+allow-mixed-uninlined-format-args = false
+allow-renamed-params-for = []
+check-inconsistent-struct-field-initializers = true
+enforce-iter-loop-reborrow = true
+lint-commented-code = true
+matches-for-let-else = "AllTypes"
+upper-case-acronyms-aggressive = true
+warn-on-all-wildcard-imports = true
+
+# Check private safety docs if unsafe code is ever permitted.
+check-private-items = true
+accept-comment-above-attributes = false
+accept-comment-above-statement = false
+enable-raw-pointer-heuristic-for-send = false
+warn-unsafe-macro-metavars-in-private-macros = true

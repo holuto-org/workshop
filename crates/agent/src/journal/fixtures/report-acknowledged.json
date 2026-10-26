@@ -1,0 +1,16 @@
+{
+  "report": {
+    "report": {
+      "kind": "daily"
+    },
+    "vendor": "posnet",
+    "device_unique_number": "POS0000123456",
+    "started_at": "2026-10-16T10:00:00Z",
+    "device": {
+      "dispatching": {
+        "stage": "dailyrep"
+      }
+    },
+    "acknowledged_at": "2026-10-16T10:02:00Z"
+  }
+}

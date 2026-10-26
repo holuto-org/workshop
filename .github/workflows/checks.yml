@@ -4,110 +4,224 @@ on:
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened, ready_for_review, edited]
+  merge_group:
   workflow_call:
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: checks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  changes:
-    name: Changes
-    runs-on: ubuntu-slim
-    timeout-minutes: 1
-    outputs:
-      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
-
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dorny/paths-filter@v4
-        id: filter
-        with:
-          filters: |
-            code:
-              - ".github/workflows/**"
-              - "packages/**"
-              - ".python-version"
-              - "pyproject.toml"
-              - "uv.lock"
-
-  static:
-    name: Static analysis
-    needs: changes
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Verify change detection
-        if: needs.changes.result != 'success'
-        run: exit 1
-
-      - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
-        with:
-          persist-credentials: false
-
-      - name: Ruff format
-        if: needs.changes.outputs.code == 'true'
-        uses: astral-sh/ruff-action@v4.1.0
-        with:
-          src: packages
-          args: format --check --diff
-
-      - name: Ruff check
-        if: needs.changes.outputs.code == 'true'
-        uses: astral-sh/ruff-action@v4.1.0
-        with:
-          src: packages
-          args: check
-
-      - name: ShellCheck
-        if: needs.changes.outputs.code == 'true'
-        run: shellcheck packages/desktop/build.sh packages/agent/build.sh
-
-  test:
-    name: Test suite (${{ matrix.os }})
-    needs: changes
-    if: ${{ !cancelled() }}
+  installer:
+    name: Installer dry run (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
-      - name: Verify change detection
-        if: needs.changes.result != 'success'
-        run: exit 1
-
       - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
         with:
           persist-credentials: false
 
-      - name: Install uv
-        if: needs.changes.outputs.code == 'true'
-        uses: astral-sh/setup-uv@v10.1.0
+      - name: Check Unix installer without installing
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash scripts/test-install.sh
+          bash scripts/install.sh --release v0.0.0 --dry-run
+
+      - name: Check Windows installer without installing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/test-install.ps1
+          ./scripts/install.ps1 -Release v0.0.0 -DryRun
+
+      - name: Check Windows PowerShell 5.1 installer functions
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/test-install.ps1
+
+  static:
+    name: Static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
         with:
-          quiet: true
-          enable-cache: true
+          persist-credentials: false
 
-      - name: Install Qt runtime
-        if: needs.changes.outputs.code == 'true' && runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1 libfontconfig1 libxkbcommon0 libdbus-1-3 libglib2.0-0t64
+      - name: Install toolchains
+        run: |
+          rustup toolchain install
+          rustup toolchain install nightly-2026-10-06 --profile minimal --component rustfmt
 
-      - name: Install dependencies
-        if: needs.changes.outputs.code == 'true'
-        run: uv sync --locked
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: static-x86_64-unknown-linux-gnu
 
-      - name: Run tests
-        if: needs.changes.outputs.code == 'true'
-        run: uv run pytest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2,cargo-shear@1.14.0
+
+      # install-action has no actionlint manifest, and its cargo-binstall
+      # fallback cannot find this Go tool, so fetch the pinned release.
+      - name: Install actionlint
+        run: |
+          archive=actionlint_1.7.12_linux_amd64.tar.gz
+          curl -sSfLo "$RUNNER_TEMP/$archive" "https://github.com/rhysd/actionlint/releases/download/v1.7.12/$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$HOME/.cargo/bin" actionlint
+
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libfontconfig1-dev shellcheck
+
+      - run: cargo +nightly-2026-10-06 fmt --check
+
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - run: cargo deny --locked check
+
+      - run: cargo shear --deny-warnings
+
+      - run: shellcheck packaging/*.sh scripts/*.sh
+
+      - run: actionlint
+
+      - run: jq empty openapi/agent.json
+
+  clippy:
+    name: Clippy (${{ matrix.os }}, ${{ matrix.features || 'default' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        features: ['', '--all-features']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-${{ runner.os }}-${{ runner.arch }}-${{ matrix.features }}
+
+      - run: |
+          features=()
+          if [[ -n $FEATURES ]]; then features=("$FEATURES"); fi
+          cargo clippy --locked --workspace --all-targets "${features[@]}" -- -D warnings
         env:
-          QT_QPA_PLATFORM: offscreen
+          FEATURES: ${{ matrix.features }}
+
+  test:
+    name: Test suite (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest, macos-26-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ runner.os }}-${{ runner.arch }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libfontconfig1-dev fonts-dejavu-core dbus-x11
+
+      - name: Install signed virtual serial pair
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./.github/scripts/com0com.ps1
+
+      - if: runner.os == 'Linux'
+        run: dbus-run-session -- cargo nextest run --locked --workspace --all-features --profile ci --no-fail-fast
+
+      - if: runner.os != 'Linux'
+        run: cargo nextest run --locked --workspace --all-features --profile ci --no-fail-fast
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: junit-${{ runner.os }}-${{ runner.arch }}
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  acceptance:
+    name: Debug-only printer acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: --cfg workshop_acceptance
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: acceptance-x86_64-unknown-linux-gnu
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libfontconfig1-dev fonts-dejavu-core dbus-x11
+
+      - run: cargo build --locked -p workshop
+
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - run: dbus-run-session -- cargo nextest run --locked --workspace --all-features --profile ci --no-fail-fast
+
+      - name: Reject acceptance without debug assertions
+        run: |
+          if cargo build --locked --release -p fiscal > acceptance-release.log 2>&1; then
+            cat acceptance-release.log
+            echo "Release acceptance unexpectedly compiled"
+            exit 1
+          fi
+          cat acceptance-release.log
+          grep -F "workshop_acceptance is restricted to local debug builds." acceptance-release.log
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: junit-acceptance
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: error
+          retention-days: 7

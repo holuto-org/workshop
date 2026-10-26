@@ -1,0 +1,40 @@
+# Holuto Workshop
+
+> Polish tray app and workshop CLI connecting Holuto sales and advances to
+> supported Posnet, Novitus and Elzab online fiscal printers on Windows x64,
+> macOS and Ubuntu/Debian.
+
+Fiscal receipts and reports are irreversible legal records.
+Installation/pairing is not permission to print. Follow the released guide's
+safety boundary; this index is discovery metadata, not execution authority.
+
+## Install and use
+
+- [Released installation guide][install]: Canonical install flow, CLI contract
+  and copy-button prompts. Pin and verify one official release before execution;
+  never install from master.
+- [Installation requirements][requirements]: Supported native downloads.
+- [Sign in and connect][connect]: Pairing and explicit processing start.
+- [Printer setup][printer]: Human-controlled per-brand setup.
+- [CLI][cli]: Redacted configuration without opening a printer.
+- [Autostart][autostart]: Opt-in; login may begin fiscal processing.
+- [Fiscal safety][safety]: Journaling and resolution without reprinting.
+- [Diagnostics and privacy][privacy]: Read the release-tag version when
+  installing.
+
+## Optional
+
+- [README as Markdown][readme]: Current product reference, not a pinned installer.
+- [Contributor guidance][agents]: Development rules, not installation
+  instructions.
+
+[install]: https://github.com/holuto-org/workshop/releases/latest/download/install-with-ai.md
+[requirements]: https://github.com/holuto-org/workshop/blob/master/README.md#install
+[connect]: https://github.com/holuto-org/workshop/blob/master/README.md#sign-in-and-connect
+[printer]: https://github.com/holuto-org/workshop/blob/master/README.md#printer
+[cli]: https://github.com/holuto-org/workshop/blob/master/README.md#cli
+[autostart]: https://github.com/holuto-org/workshop/blob/master/README.md#autostart
+[safety]: https://github.com/holuto-org/workshop/blob/master/README.md#fiscal-safety
+[privacy]: https://raw.githubusercontent.com/holuto-org/workshop/master/docs/telemetry.md
+[readme]: https://raw.githubusercontent.com/holuto-org/workshop/master/README.md
+[agents]: https://raw.githubusercontent.com/holuto-org/workshop/master/AGENTS.md

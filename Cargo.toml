@@ -1,0 +1,235 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+publish = false
+repository = "https://github.com/holuto-org/workshop"
+rust-version = "1.99"
+# A version bump on master releases `v<version>`.
+version = "0.2.0"
+
+# CI treats warnings as errors.
+[workspace.lints.rust]
+ambiguous_negative_literals = "warn"
+deprecated_in_future = "warn"
+deref_into_dyn_supertrait = "warn"
+impl_trait_redundant_captures = "warn"
+let_underscore_drop = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_debug_implementations = "warn"
+non_ascii_idents = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unnameable_types = "warn"
+unreachable_pub = "warn"
+# Slint-generated code overrides this lint; handwritten crates forbid unsafe code.
+unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(workshop_acceptance)"] }
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
+unused_results = "warn"
+
+[workspace.lints.clippy]
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Internal crates need no error or panic sections.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Avoid annotating nearly every internal getter.
+must_use_candidate = "allow"
+# Keep explicit pub(crate) visibility in private modules.
+redundant_pub_crate = "allow"
+return_self_not_must_use = "allow"
+# Early drops would release the printer's instance lock and journal guards.
+significant_drop_tightening = "allow"
+
+absolute_paths = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+as_conversions = "warn"
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+deref_by_slicing = "warn"
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+exit = "warn"
+expect_used = "warn"
+filetype_is_file = "warn"
+# Fiscal amounts use integer grosze, never floats.
+float_arithmetic = "warn"
+float_cmp_const = "warn"
+fn_to_numeric_cast_any = "warn"
+format_push_string = "warn"
+get_unwrap = "warn"
+if_then_some_else_none = "warn"
+impl_trait_in_params = "warn"
+indexing_slicing = "warn"
+infinite_loop = "warn"
+let_underscore_must_use = "warn"
+let_underscore_untyped = "warn"
+lossy_float_literal = "warn"
+# Preserve causes of uncertain fiscal outcomes.
+map_err_ignore = "warn"
+mem_forget = "warn"
+missing_assert_message = "warn"
+mixed_read_write_in_expression = "warn"
+mod_module_files = "warn"
+multiple_inherent_impl = "warn"
+mutex_atomic = "warn"
+needless_raw_strings = "warn"
+panic = "warn"
+panic_in_result_fn = "warn"
+partial_pub_fields = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+pub_use = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+semicolon_outside_block = "warn"
+string_lit_chars_any = "warn"
+# Byte slicing can split Polish characters.
+string_slice = "warn"
+suspicious_xor_used_as_pow = "warn"
+tests_outside_test_module = "warn"
+todo = "warn"
+try_err = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_self_imports = "warn"
+unneeded_field_pattern = "warn"
+unreachable = "warn"
+unused_result_ok = "warn"
+unwrap_in_result = "warn"
+unwrap_used = "warn"
+verbose_file_reads = "warn"
+# New journal or job states must be handled explicitly.
+wildcard_enum_match_arm = "warn"
+
+[workspace.dependencies]
+agent = { path = "crates/agent" }
+elzab = { path = "crates/elzab" }
+fiscal = { path = "crates/fiscal" }
+novitus = { path = "crates/novitus" }
+posnet = { path = "crates/posnet" }
+
+# Durable replace with directory fsync on Unix. Windows uses std's POSIX-semantics rename:
+# atomicwrites' MoveFileExW fails while a reader or scanner has the target open.
+atomicwrites = "0.4.4"
+# Europe/Warsaw civil time and DST folds for printer clocks, reports and history.
+jiff = { version = "0.2.38", features = ["serde"] }
+# Resolve Windows state paths with SHGetKnownFolderPath, not overridable LOCALAPPDATA.
+known-folders = "1.4.2"
+# deny_unknown_fields, tagged enums and try_from keep stored formats fail closed.
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+# sysfs enumeration avoids a libudev dependency; a native port layer would need unsafe Win32.
+serialport = { version = "4.10.1", default-features = false }
+# Desktop telemetry. The transport reuses our ureq agent (OS trust roots); no reqwest or tokio.
+sentry = { version = "0.49.3", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "debug-images",
+    "logs",
+    "minidump",
+    "panic",
+    "release-health",
+    "tracing",
+    "ureq",
+] }
+# Agent reads trace propagation headers from the same Hub; no transports or integrations.
+sentry-core = { version = "0.49.3", default-features = false, features = ["client"] }
+thiserror = "2.0.21"
+# The only instrumentation API; the desktop forwards it to Sentry.
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["std", "registry"] }
+# Use OS trust roots, including corporate CAs.
+ureq = { version = "3.5.0", default-features = false, features = ["json", "platform-verifier", "rustls"] }
+# ureq wraps certificate failures in io::Error; downcasting the typed rustls error
+# reports them as TLS, not protocol. Tests also run a local untrusted TLS server.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+# Parses the API URL for the scheme, loopback and credential checks guarding the token.
+url = "2.5.8"
+uuid = { version = "1.29.0", features = ["serde"] }
+
+# Build-time JSON Schema → Rust wire types; schemars is typify's input model, so
+# its version follows typify's (0.8), not schemars' latest.
+typify = { version = "0.8.0", default-features = false }
+schemars = { version = "0.8.22", default-features = false }
+# Fix typify's serde helper-attribute ordering structurally, at build time only.
+syn = { version = "3.0.9", features = ["full"] }
+quote = "1.0.47"
+# The feature-gated loopback fake validates the vendored OpenAPI 3.1 contract offline.
+jsonschema = { version = "0.60.1", default-features = false }
+
+# Unicode normalization and properties for the journal's result notes and the
+# loopback fake's `/agent` text rules (already in the tree via url/idna).
+icu_normalizer = { version = "2.4.0", default-features = false, features = ["compiled_data"] }
+icu_properties = { version = "2.4.0", default-features = false, features = ["compiled_data"] }
+
+# Tests only.
+# Slint's headless testing backend; unstable API, must equal the slint version.
+i-slint-backend-testing = "=1.18.1"
+insta = { version = "1.49.0", default-features = false }
+proptest = "1.12.0"
+proptest-state-machine = "0.9.0"
+tempfile = "3.27.0"
+# Loopback Holuto fake for `agent::testing`, answered through the production ureq client.
+tiny_http = "0.12.0"
+
+# Software rendering needs no GPU/OpenGL (RDP, VMs, old PCs). FemtoVG/WGPU used
+# ~4× the memory with the window open and ~2.3× in the tray.
+slint = { version = "1.18.1", default-features = false, features = [
+    "accessibility",
+    "backend-winit",
+    "compat-1-2",
+    "renderer-software",
+    "std",
+    "system-tray",
+] }
+winresource = "0.1.34"
+# One windowless GUI/CLI executable and native per-user Windows login registration.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_Registry"] }
+# macOS only: hook `applicationShouldTerminate:` so Dock/Cmd+Q quit waits for the worker.
+# Versions match the ones winit already pulls in.
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+# Probe StatusNotifierWatcher using Slint's existing async-io zbus dependency.
+# Stay on the zbus major Slint's tray (ksni) uses; zbus 6 replaces async-io.
+zbus = { version = "5.19.0", default-features = false, features = ["async-io"] }
+# Unix session end (SIGTERM/SIGHUP) and Ctrl+C quit cooperatively; versions match
+# the ones zbus already pulls in.
+async-signal = "0.2.14"
+futures-lite = { version = "2.6.1", default-features = false }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
+[profile.release]
+debug = 2
+split-debuginfo = "packed"
+codegen-units = 1
+lto = "fat"
+# Overflow must stop fiscal operations, never wrap amounts.
+overflow-checks = true
+# Packaging separates native debug files before stripping only the shipped copy.
+strip = "none"

@@ -1,0 +1,26 @@
+[package]
+name = "posnet"
+description = "Posnet Temo Online fiscal printer driver: framing, CP1250, printer state, receipts and reports"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+simulator = ["fiscal/simulator"]
+
+[dependencies]
+fiscal.workspace = true
+jiff.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+fiscal = { workspace = true, features = ["simulator"] }
+serialport.workspace = true
+insta.workspace = true
+proptest.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

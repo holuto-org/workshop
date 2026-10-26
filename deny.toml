@@ -1,0 +1,84 @@
+[graph]
+# Keep aligned with package.yml.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+all-features = true
+
+[advisories]
+yanked = "deny"
+unsound = "all"
+unused-ignored-advisory = "deny"
+# Unmaintained, not vulnerable; required by Slint 1.18's fonts and Linux tray.
+# Remove as Slint upgrades. The desktop probe shares the tray's zbus 5.
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser via Slint's font stack" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant via zbus 5 (Slint tray)" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names via zbus 5 (Slint tray)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive via zbus 5 (Slint tray)" },
+]
+
+[licenses]
+include-dev = true
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    # borrow-or-share via the OpenAPI contract validator.
+    "MIT-0",
+    # serialport: file-level copyleft permits unmodified use.
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    # Requires the attribution badge in README.
+    "LicenseRef-Slint-Royalty-free-2.0",
+]
+confidence-threshold = 1.0
+unused-allowed-license = "deny"
+unused-license-exception = "deny"
+
+[licenses.private]
+ignore = true
+
+[bans]
+# Duplicate skip lists would hide future duplicates.
+wildcards = "deny"
+# Workspace path dependencies are unversioned.
+allow-wildcard-paths = true
+deny = [
+    { crate = "openssl-sys", use-instead = "rustls" },
+    { crate = "native-tls", use-instead = "rustls" },
+    { crate = "reqwest", reason = "the worker is one blocking thread; ureq needs no async runtime" },
+    { crate = "tokio", reason = "the worker is one blocking thread; an async runtime would add threads the fiscal invariants do not cover" },
+]
+workspace-default-features = "deny"
+
+# Empty tables enable checks with default settings.
+[bans.workspace-dependencies]
+
+# Transitive replacements belong upstream.
+[bans.std-replacements]
+
+[bans.build]
+
+# Upstream minidump parser fixture, never executed by this application.
+[[bans.build.bypass]]
+crate = "minidump-writer@0.12.0"
+allow = [
+    { path = "tests/tiny.elf", checksum = "9ccd1d7a8b4d4347f623081ad4a74fade764fa7c8f76495b010bc302fb66e69f" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"
+unused-allowed-source = "deny"

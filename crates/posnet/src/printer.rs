@@ -1,0 +1,662 @@
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use fiscal::{
+    decimal,
+    device::{Device, Problem, VatKind, VatRate, Vendor, valid_unique_number},
+    driver::Driver,
+    error::Error,
+    journal::{Journal, Printed},
+    link::{Connection, DEFAULT_TIMEOUT, Link},
+    receipt::{Receipt, VAT_SLOTS},
+    report::Report,
+};
+use jiff::{
+    Timestamp,
+    civil::Date,
+    fmt::strtime::BrokenDownTime,
+    tz::{AmbiguousOffset, TimeZone},
+};
+
+use crate::{
+    capabilities::capabilities,
+    frame::Reply,
+    receipt::{self, Step},
+    session::{self, Session},
+    text,
+};
+
+const TEMO: &str = "POSNET TEMO ONLINE";
+/// Temo answers `getrealid` within this limit; silent ports must not stall detection.
+const SCAN_TIMEOUT: Duration = Duration::from_millis(500);
+const REPORT_TIMEOUT: Duration = Duration::from_secs(120);
+const PERIODIC_REPORT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Paper, cover and keypad waits share this limit.
+const OPERATOR_WAIT: Duration = Duration::from_secs(600);
+const WATCH_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const PRINTER_ZONE: &str = "Europe/Warsaw";
+/// The printer encodes VAT exemption as 100 %.
+const EXEMPT_BASIS_POINTS: u32 = 10_000;
+/// Above 99.99 %, only the exempt 100 % slot is active.
+const MAX_ACTIVE_BASIS_POINTS: u32 = 9_999;
+/// `ERR_RD_ZERO`: the printer refuses a second consecutive zero daily report before printing.
+const ZERO_DAILY_REPORT: u32 = 382;
+/// Non-letter, non-digit characters the printer compares; a name with none of these, no
+/// letter and no digit equals an empty name (p. 430).
+const SIGNIFICANT_SYMBOLS: &str = ",./\\%";
+/// `pccfgget` `pi` numbers of the PC1 and PC2 interfaces (p. 155).
+const PC_INTERFACES: [&str; 2] = ["1", "2"];
+
+#[derive(Debug)]
+pub struct Printer {
+    link: Arc<dyn Link>,
+    connection: Connection,
+}
+
+impl Printer {
+    pub fn new(link: Arc<dyn Link>, connection: Connection) -> Self {
+        Self { link, connection }
+    }
+
+    fn session(&self) -> Result<Session, Error> {
+        Session::open(self.link.as_ref(), &self.connection)
+    }
+}
+
+impl Driver for Printer {
+    fn vendor(&self) -> Vendor {
+        Vendor::Posnet
+    }
+
+    fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    fn probe(&self) -> Result<Device, Error> {
+        read_device(&mut self.session()?)
+    }
+
+    #[tracing::instrument(skip_all, fields(sentry.op = "device.receipt"))]
+    fn print_receipt(
+        &self,
+        receipt: &Receipt,
+        expected: &Device,
+        journal: &mut dyn Journal,
+    ) -> Result<Printed, Error> {
+        if receipt.lines().iter().any(|line| {
+            !line.name().chars().any(|character| {
+                character.is_alphabetic()
+                    || character.is_ascii_digit()
+                    || SIGNIFICANT_SYMBOLS.contains(character)
+            })
+        }) {
+            return Err(Error::Invalid(
+                "Nazwa usługi musi zawierać literę, cyfrę lub jeden ze znaków , . / \\ %."
+                    .to_owned(),
+            ));
+        }
+        let mut session = self.session()?;
+        let device = read_device(&mut session)?;
+        device.require_ready()?;
+        device.require_unique_number(&expected.unique_number)?;
+        if device.vat != expected.vat {
+            return Err(Error::Invalid(
+                "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
+                    .to_owned(),
+            ));
+        }
+        let inactive = receipt.sales().keys().any(|slot| {
+            device
+                .vat
+                .get(usize::from(slot.get()))
+                .is_none_or(|rate| !rate.active())
+        });
+        if inactive {
+            return Err(Error::Invalid(
+                "Wybrana stawka VAT jest nieaktywna na drukarce.".to_owned(),
+            ));
+        }
+        let header = session.command("hdrget", &[], DEFAULT_TIMEOUT)?;
+        let header = text::header_text(header.get("tx").unwrap_or_default());
+        let footer = (!receipt.brand_in_header(&header)).then_some(receipt.brand());
+        let issued_at = clock(&mut session)?;
+        let steps = receipt::steps(receipt, footer);
+        dispatch(&mut session, &steps.fiscal, journal)?;
+        print_footer(&mut session, &steps.footer, journal);
+        // Printing succeeded; an unreadable counter must not trigger a retry.
+        let receipt_number = session
+            .command("scnt", &[], DEFAULT_TIMEOUT)
+            .ok()
+            .and_then(|counters| counters.get("bt").map(str::to_owned))
+            .filter(|number| !number.is_empty());
+        tracing::info!("Receipt printed");
+        Ok(Printed {
+            receipt_number,
+            issued_at,
+        })
+    }
+
+    #[tracing::instrument(skip_all, fields(sentry.op = "device.report", report = report.label()))]
+    fn print_report(
+        &self,
+        report: Report,
+        unique_number: &str,
+        journal: &mut dyn Journal,
+    ) -> Result<(), Error> {
+        if let Report::Periodic { from, to, .. } = report
+            && from > to
+        {
+            return Err(Error::Invalid(
+                "Data początkowa nie może być późniejsza niż końcowa.".to_owned(),
+            ));
+        }
+        let mut session = self.session()?;
+        let (device, fiscal) = read_status(&mut session)?;
+        if matches!(report, Report::Daily) {
+            device.require_ready()?;
+        } else {
+            device.require_periodic_reports()?;
+        }
+        device.require_unique_number(unique_number)?;
+        let today = civil_date(&session.command("rtcget", &[], DEFAULT_TIMEOUT)?)
+            .ok_or_else(|| Error::Protocol("Nie można odczytać daty drukarki.".to_owned()))?;
+        let step = match report {
+            Report::Daily => Step {
+                command: "dailyrep",
+                params: vec![("da", today.to_string())],
+                timeout: REPORT_TIMEOUT,
+            },
+            Report::Monthly { year, month } => {
+                let first = Date::new(year, month, 1).map_err(|error| {
+                    Error::Invalid(format!("Nieprawidłowy miesiąc raportu: {error}."))
+                })?;
+                require_report_dates(&mut session, fiscal, first, first.last_of_month(), today)?;
+                // A monthly report prints the periodic report for that month (p. 216).
+                Step {
+                    command: "monthlyrep",
+                    params: vec![("da", first.to_string()), ("su", "0".to_owned())],
+                    timeout: PERIODIC_REPORT_TIMEOUT,
+                }
+            },
+            Report::Periodic { from, to, summary } => {
+                require_report_dates(&mut session, fiscal, from, to, today)?;
+                Step {
+                    command: "periodicrepbydates",
+                    params: vec![
+                        ("fd", from.to_string()),
+                        ("td", to.to_string()),
+                        ("su", if summary { "1" } else { "0" }.to_owned()),
+                    ],
+                    timeout: PERIODIC_REPORT_TIMEOUT,
+                }
+            },
+        };
+        dispatch(&mut session, &[step], journal)?;
+        tracing::info!("Report printed");
+        Ok(())
+    }
+}
+
+/// Validate dates before dispatch: these pre-print refusals leave an uncertain outcome
+/// (`ERR_REP_PER_DATE_START_GT_CURR`, `ERR_REP_PER_DATE_END_GT_FISK`, p. 441).
+fn require_report_dates(
+    session: &mut Session,
+    fiscal: bool,
+    from: Date,
+    to: Date,
+    today: Date,
+) -> Result<(), Error> {
+    if from > today {
+        return Err(Error::Invalid(format!(
+            "Raport nie może zaczynać się po dacie drukarki ({}).",
+            today.strftime("%d.%m.%Y")
+        )));
+    }
+    // Only a fiscal printer has a fiscalisation record (p. 405); demo mode is acceptance-only.
+    if fiscal {
+        let fiscalised = civil_date(&session.command("fmrecfisc", &[], DEFAULT_TIMEOUT)?)
+            .ok_or_else(|| {
+                Error::Protocol("Nie można odczytać daty fiskalizacji drukarki.".to_owned())
+            })?;
+        if to < fiscalised {
+            return Err(Error::Invalid(format!(
+                "Raport nie może kończyć się przed fiskalizacją drukarki ({}).",
+                fiscalised.strftime("%d.%m.%Y")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// `da` is `YYYY-MM-DD;HH:MM` printer civil time; reports take only the date.
+fn civil_date(reply: &Reply) -> Option<Date> {
+    reply
+        .get("da")
+        .and_then(|value| BrokenDownTime::parse_prefix("%Y-%m-%d", value).ok())
+        .and_then(|(time, _)| time.to_date().ok())
+}
+
+/// After dispatch, failures are uncertain unless no fiscal record can have been issued.
+fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) -> Result<(), Error> {
+    for (index, step) in steps.iter().enumerate() {
+        if let Err(error) = journal.dispatching(step.command) {
+            return Err(if index == 0 {
+                Error::Journal(error)
+            } else {
+                uncertain(Error::Journal(error))
+            });
+        }
+        match execute(session, step, journal) {
+            Ok(_reply) => {},
+            Err(error) if index == 0 && refusal_is_certain(&error, step.command) => {
+                return Err(error);
+            },
+            Err(error) => return Err(uncertain(error)),
+        }
+    }
+    Ok(())
+}
+
+/// After `trend`, the receipt is issued; a footer failure leaves `strns.fe` set, which the
+/// next preflight reports, and never makes the receipt uncertain.
+fn print_footer(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) {
+    for step in steps {
+        let sent = journal
+            .dispatching(step.command)
+            .map_err(Error::Journal)
+            .and_then(|()| execute(session, step, journal));
+        if sent.is_err() {
+            tracing::warn!(
+                command = step.command,
+                "Receipt footer incomplete after the fiscal record"
+            );
+            return;
+        }
+    }
+}
+
+fn refusal_is_certain(error: &Error, sent: &str) -> bool {
+    // Only trend creates the receipt; preflight blocks any transaction left open by trinit.
+    // Never reissue it. Reports create the record, so only an ERR rejection or a documented
+    // pre-print refusal is certain (pp. 13–15, 441).
+    refuses(error, sent)
+        && (sent == "trinit"
+            || (matches!(sent, "dailyrep" | "monthlyrep" | "periodicrepbydates")
+                && matches!(error, Error::Device { rejected: true, .. }))
+            || (sent == "dailyrep"
+                && matches!(
+                    error,
+                    Error::Device {
+                        code: ZERO_DAILY_REPORT,
+                        ..
+                    }
+                )))
+}
+
+fn refuses(error: &Error, sent: &str) -> bool {
+    matches!(error, Error::Device { command, .. } if command == sent)
+}
+
+fn uncertain(error: Error) -> Error {
+    tracing::error!("Printer operation has an uncertain outcome");
+    Error::Uncertain(Box::new(error))
+}
+
+/// Replies follow execution (spec p. 15); a command is never resent.
+///
+/// On timeout, query operator-wait status and notify `journal` while waiting, capped by
+/// [`OPERATOR_WAIT`]; intervention resets the step timeout. Silence or no operator-wait state
+/// remains a timeout.
+fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Result<Reply, Error> {
+    let command = step.command;
+    let mut deadline = session.send(command, &step.params, step.timeout)?;
+    let mut since: Option<(Instant, Duration)> = None;
+    let mut shown: Option<String> = None;
+    let answered = (|| {
+        loop {
+            let cap = since.map(|(since, limit)| since + limit);
+            if let Some(cap) = cap {
+                if Instant::now() >= cap {
+                    return Err(Error::Timeout(command));
+                }
+                deadline = deadline.min(cap);
+            }
+            match session.receive(command, deadline) {
+                Err(Error::Timeout(_)) => {
+                    tracing::debug!(command, "Printer reply deadline elapsed");
+                },
+                answered => break answered,
+            }
+            match watch(session, command, cap)? {
+                Watch::Answered(answered) => break answered,
+                Watch::Waiting(problem) => {
+                    let (since, limit) = since.get_or_insert_with(|| {
+                        (Instant::now(), session.operator_wait_limit(OPERATOR_WAIT))
+                    });
+                    if since.elapsed() >= *limit {
+                        return Err(Error::Timeout(command));
+                    }
+                    if shown.as_ref() != Some(&problem) {
+                        tracing::warn!(command, "Printer needs operator intervention");
+                        journal.waiting(Some(&problem));
+                        shown = Some(problem);
+                    }
+                    deadline = Instant::now() + session.timeout(WATCH_INTERVAL);
+                },
+                Watch::Ready if shown.is_some() => {
+                    shown = None;
+                    journal.waiting(None);
+                    tracing::info!(command, "Printer resumed after operator intervention");
+                    deadline = Instant::now() + session.timeout(step.timeout);
+                },
+                Watch::Ready | Watch::Unanswered => return Err(Error::Timeout(command)),
+            }
+        }
+    })();
+    if shown.is_some() {
+        journal.waiting(None);
+    }
+    if let Err(Error::Device { code, .. }) = &answered {
+        tracing::warn!(command, device_error_code = code, "Printer refused command");
+    }
+    answered
+}
+
+enum Watch {
+    /// The command's own reply arrived meanwhile.
+    Answered(Result<Reply, Error>),
+    Waiting(String),
+    Ready,
+    /// At least one status query went unanswered.
+    Unanswered,
+}
+
+/// `!sprn` and `!sdev` answer during execution (spec p. 15).
+/// Echoed tokens distinguish their replies (p. 11).
+fn watch(
+    session: &mut Session,
+    command: &'static str,
+    cap: Option<Instant>,
+) -> Result<Watch, Error> {
+    let mechanism_token = query(session, "!sprn")?;
+    let device_token = query(session, "!sdev")?;
+    let deadline = Instant::now() + session.timeout(DEFAULT_TIMEOUT);
+    let deadline = cap.map_or(deadline, |cap| deadline.min(cap));
+    let (mut mechanism, mut device, mut answered) = (None, None, None);
+    let mut outstanding = 2_u8;
+    while outstanding > 0 {
+        let (name, reply) = match session.next_frame(command, deadline) {
+            Ok(frame) => frame,
+            Err(Error::Timeout(_)) => break,
+            // Later status anomalies cannot undo the command's own correlated reply.
+            Err(_) if answered.is_some() => break,
+            Err(error) => return Err(error),
+        };
+        let token = reply.get("@");
+        if token == Some(mechanism_token.as_str()) {
+            mechanism = reply.into_result(&name).ok();
+            outstanding = outstanding.saturating_sub(1);
+        } else if token == Some(device_token.as_str()) {
+            device = reply.into_result(&name).ok();
+            outstanding = outstanding.saturating_sub(1);
+        } else if token.is_none() {
+            let result = reply.into_result(&name);
+            if name == command
+                || (name == "ERR" && result.as_ref().is_err_and(|error| refuses(error, command)))
+            {
+                answered = Some(result);
+            } else if answered.is_none() {
+                return Err(Error::Protocol(format!(
+                    "Oczekiwano odpowiedzi {command}, otrzymano {name}."
+                )));
+            }
+        }
+    }
+    if let Some(answered) = answered {
+        return Ok(Watch::Answered(answered));
+    }
+    Ok(match (mechanism, device) {
+        (Some(mechanism), Some(device)) => {
+            operator_problem(&mechanism, &device).map_or(Watch::Ready, Watch::Waiting)
+        },
+        _ => Watch::Unanswered,
+    })
+}
+
+fn query(session: &mut Session, query: &'static str) -> Result<String, Error> {
+    let token = session::token();
+    let _deadline = session.send(query, &[("@", token.clone())], DEFAULT_TIMEOUT)?;
+    Ok(token)
+}
+
+/// Operator-fixable mechanism or keypad state (spec pp. 384-385); `None` when ready.
+fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<String> {
+    let code = mechanism.get("pr").unwrap_or_default();
+    if matches!(code, "1" | "3" | "5" | "6") {
+        return mechanism_problem(code);
+    }
+    matches!(device.get("ds"), Some("2" | "3")).then(|| "Drukarka oczekuje na operatora".to_owned())
+}
+
+/// An unlisted model named POSNET is reported by name instead of as an absent printer;
+/// other names are not Posnet. Either way no further command is sent.
+pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Device>, Error> {
+    let mut session = Session::open(link, connection)?;
+    let identity = session.command("getrealid", &[], SCAN_TIMEOUT)?;
+    let model = identity.get("nm").unwrap_or_default();
+    if model != TEMO {
+        if !model
+            .get(..6)
+            .is_some_and(|brand| brand.eq_ignore_ascii_case("POSNET"))
+        {
+            return Ok(None);
+        }
+        return Err(Error::Unsupported(format!(
+            "Nieobsługiwany model drukarki Posnet: {model} (oprogramowanie {}). Obsługiwana \
+             jest Posnet Temo Online.",
+            identity.get("vr").unwrap_or("nieznane")
+        )));
+    }
+    read_device(&mut session).map(Some)
+}
+
+/// Prefer ISO8601 `tm` (spec p. 17), preserving the autumn-hour offset; seconds round down.
+/// Older replies with only civil `da` reject gaps and choose the earlier repeated instant.
+fn clock(session: &mut Session) -> Result<Timestamp, Error> {
+    let unreadable = |problem: String| {
+        Error::Protocol(format!("Nie można odczytać zegara drukarki: {problem}."))
+    };
+    let reply = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
+    if let Some(value) = reply.get("tm") {
+        let timestamp = value
+            .parse::<Timestamp>()
+            .map_err(|error| unreadable(error.to_string()))?;
+        return Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
+            .map_err(|error| unreadable(error.to_string()));
+    }
+    let value = reply
+        .get("da")
+        .ok_or_else(|| unreadable("brak parametru da".to_owned()))?;
+    let (time, _rest) = BrokenDownTime::parse_prefix("%Y-%m-%d;%H:%M", value)
+        .map_err(|error| unreadable(error.to_string()))?;
+    let time = time
+        .to_datetime()
+        .map_err(|error| unreadable(error.to_string()))?;
+    let zone = TimeZone::get(PRINTER_ZONE).map_err(|error| unreadable(error.to_string()))?;
+    let timestamp = zone.to_ambiguous_timestamp(time);
+    if matches!(timestamp.offset(), AmbiguousOffset::Gap { .. }) {
+        return Err(unreadable(
+            "czas lokalny nie istnieje w strefie Europe/Warsaw".to_owned(),
+        ));
+    }
+    timestamp
+        .earlier()
+        .map_err(|error| unreadable(error.to_string()))
+}
+
+fn read_device(session: &mut Session) -> Result<Device, Error> {
+    read_status(session).map(|(device, _fiscal)| device)
+}
+
+/// The device and its `scomm.fs` fiscal mode, which acceptance builds do not require.
+fn read_status(session: &mut Session) -> Result<(Device, bool), Error> {
+    let identity = session.command("getrealid", &[], DEFAULT_TIMEOUT)?;
+    let device = session.command("sdev", &[], DEFAULT_TIMEOUT)?;
+    let mechanism = session.command("sprn", &[], DEFAULT_TIMEOUT)?;
+    let common = session.command("scomm", &[], DEFAULT_TIMEOUT)?;
+    let transaction = session.command("strns", &[], DEFAULT_TIMEOUT)?;
+    let vat = session.command("vatget", &[], DEFAULT_TIMEOUT)?;
+    let interfaces = PC_INTERFACES
+        .iter()
+        .map(|number| session.command("pccfgget", &[("pi", (*number).to_owned())], DEFAULT_TIMEOUT))
+        .collect::<Result<Vec<_>, Error>>()?;
+    device_from(
+        &identity,
+        &device,
+        &mechanism,
+        &common,
+        &transaction,
+        &vat,
+        &interfaces,
+    )
+    .map_err(|error| {
+        Error::Protocol(format!(
+            "Niepełna lub nieprawidłowa odpowiedź statusu drukarki: {error}"
+        ))
+    })
+}
+
+fn device_from(
+    identity: &Reply,
+    device: &Reply,
+    mechanism: &Reply,
+    common: &Reply,
+    transaction: &Reply,
+    vat: &Reply,
+    interfaces: &[Reply],
+) -> Result<(Device, bool), Error> {
+    let name = identity.require("nm")?.to_owned();
+    let version = identity.require("vr")?.to_owned();
+    let unique_number = canonical_unique_number(identity.require("nu")?);
+    let fiscal = boolean(common.require("fs")?)?;
+    let header = boolean(common.require("hr")?)?;
+    let queue_empty = boolean(device.require("qe")?)?;
+    let transaction_open =
+        transaction.require("to")? != "0" || boolean(transaction.require("fe")?)?;
+    let rates = (0..VAT_SLOTS)
+        .map(|slot| {
+            let key = format!("v{}", char::from(b'a'.saturating_add(slot)));
+            let raw = vat.require(&key)?;
+            let basis_points = decimal::parse(&raw.replace(',', "."), 2)
+                .and_then(|units| u32::try_from(units).ok())
+                .ok_or_else(|| Error::Protocol(format!("nieprawidłowa stawka VAT {raw:?}")))?;
+            let kind = match basis_points {
+                EXEMPT_BASIS_POINTS => VatKind::Exempt,
+                ..=MAX_ACTIVE_BASIS_POINTS => VatKind::Rate { basis_points },
+                _ => VatKind::Inactive,
+            };
+            Ok(VatRate { slot, kind })
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+    let mut problems = Vec::new();
+    if name != TEMO || unique_number.trim().is_empty() {
+        problems.push("Wybrane urządzenie nie jest drukarką Temo Online".into());
+    }
+    if !fiscal && !cfg!(workshop_acceptance) {
+        problems.push("Drukarka nie jest w trybie fiskalnym".into());
+    }
+    if !header {
+        problems.push("Drukarka nie ma zaprogramowanego nagłówka".into());
+    }
+    if device.require("ds")? != "0" {
+        problems.push("Drukarka oczekuje na operatora lub jest w menu".into());
+    }
+    if !queue_empty {
+        problems.push("Drukarka ma oczekujące polecenia".into());
+    }
+    problems.extend(mechanism_problem(mechanism.require("pr")?).map(Problem::Blocking));
+    // The specification permits monthly and periodic reports in read-only mode.
+    if boolean(common.require("td")?)? {
+        problems.push(Problem::ReadOnly {
+            periodic_reports: true,
+        });
+    }
+    if device.require("tl")? != "0" {
+        problems.push("Zasoby transakcji są zajęte przez inny interfejs".into());
+    }
+    if transaction_open || common.require("ts")? != "0" {
+        problems.push("Otwarta transakcja. Dokończ lub anuluj ją na drukarce".into());
+    }
+    if !rates.iter().any(|rate| rate.active()) {
+        problems.push("Brak aktywnych stawek VAT".into());
+    }
+    if interfaces
+        .iter()
+        .map(foreign_code_page)
+        .collect::<Result<Vec<_>, Error>>()?
+        .contains(&true)
+    {
+        problems.push("Drukarka nie używa strony kodowej Windows-1250".into());
+    }
+    let device = Device {
+        vendor: Vendor::Posnet,
+        model: name,
+        firmware: version,
+        unique_number,
+        problems,
+        vat: rates,
+        capabilities: capabilities(),
+    };
+    Ok((device, fiscal))
+}
+
+/// The session's PC interface is not identifiable, so every enabled Posnet-protocol
+/// interface must use WIN1250 (`cp0`, pp. 153–155); text is always sent in Windows-1250.
+fn foreign_code_page(interface: &Reply) -> Result<bool, Error> {
+    Ok(interface.require("id")? != "0"
+        && interface.require("pr")? == "0"
+        && interface.require("cp")? != "0")
+}
+
+/// Mechanism `pr` codes (spec p. 384); `None` when ready.
+fn mechanism_problem(code: &str) -> Option<String> {
+    Some(match code {
+        "0" => return None,
+        "1" => "Podniesiona dźwignia".to_owned(),
+        "3" => "Otwarta pokrywa".to_owned(),
+        "5" => "Brak papieru".to_owned(),
+        "6" => "Nieprawidłowa temperatura lub zasilanie".to_owned(),
+        other => format!("Błąd mechanizmu: {other}"),
+    })
+}
+
+/// `getrealid` may separate the prefix as in `ABC 1234567890` (pp. 378, 391); Holuto binds
+/// `ABC1234567890`. Anything else stays verbatim, so readiness still rejects it.
+fn canonical_unique_number(raw: &str) -> String {
+    match raw.split_once(' ') {
+        Some((prefix, digits)) if prefix.len() == 3 => {
+            let joined = format!("{prefix}{digits}");
+            if valid_unique_number(&joined) {
+                joined
+            } else {
+                raw.to_owned()
+            }
+        },
+        _ => raw.to_owned(),
+    }
+}
+
+fn boolean(value: &str) -> Result<bool, Error> {
+    match value {
+        "1" | "y" | "Y" | "t" | "T" => Ok(true),
+        "0" | "n" | "N" => Ok(false),
+        _ => Err(Error::Protocol(format!(
+            "nieprawidłowy status logiczny {value:?}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests;
