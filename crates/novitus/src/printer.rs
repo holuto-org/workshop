@@ -95,6 +95,7 @@ impl Driver for Printer {
             ));
         }
         let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
+        let issued_at = timestamp(checked.clock)?;
         let steps = receipt::steps(receipt, footer, &checked.device.capabilities)?;
         dispatch(&mut session, &steps, journal)?;
         // Failed readback must not turn a completed print into a retry.
@@ -111,7 +112,7 @@ impl Driver for Printer {
         tracing::info!("Receipt printed");
         Ok(Printed {
             receipt_number,
-            issued_at: checked.clock,
+            issued_at,
         })
     }
 
@@ -126,7 +127,7 @@ impl Driver for Printer {
         let checked = preflight(&mut session)?;
         checked.device.require_ready()?;
         checked.device.require_unique_number(unique_number)?;
-        let today = checked.date;
+        let today = checked.clock.date();
         let (command, body, timeout) = match report {
             Report::Daily => (
                 "#r",
@@ -201,8 +202,8 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
 struct Checked {
     device: Device,
     header: String,
-    clock: Timestamp,
-    date: Date,
+    /// Civil printer time; only receipts need it as an instant.
+    clock: DateTime,
 }
 fn identity(session: &mut Session) -> Result<(String, String), Error> {
     let reply = session.command("30#v", TIMEOUT)?;
@@ -248,8 +249,7 @@ fn preflight_identity(
         return Ok(Checked {
             device,
             header: String::new(),
-            clock: Timestamp::UNIX_EPOCH,
-            date: Date::ZERO,
+            clock: DateTime::ZERO,
         });
     }
     let dialect = session.command("0;1^c5/5/", TIMEOUT)?;
@@ -297,7 +297,7 @@ fn preflight_identity(
     if !device.vat.iter().any(|rate| rate.active()) {
         device.problems.push("Brak aktywnych stawek VAT".into());
     }
-    let (clock, date) = clock(session)?;
+    let clock = clock(session)?;
     if known {
         read_repertoire(session, &mut device);
     }
@@ -305,7 +305,6 @@ fn preflight_identity(
         device,
         header,
         clock,
-        date,
     })
 }
 
@@ -438,7 +437,7 @@ fn vat_table(body: &str) -> Result<(Vec<VatRate>, String, bool), Error> {
             && status.get(2) == Some(&"0"),
     ))
 }
-fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
+fn clock(session: &mut Session) -> Result<DateTime, Error> {
     let body = session.command("#c", TIMEOUT)?.body;
     let fields = body
         .strip_prefix("1#C")
@@ -460,7 +459,7 @@ fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
     if !(0..=49).contains(year) {
         return Err(frame::corrupt());
     }
-    let datetime = DateTime::new(
+    DateTime::new(
         2000 + i16::from(*year),
         *month,
         *day,
@@ -469,14 +468,15 @@ fn clock(session: &mut Session) -> Result<(Timestamp, Date), Error> {
         *second,
         0,
     )
-    .map_err(|_error| frame::corrupt())?;
+    .map_err(|_error| frame::corrupt())
+}
+fn timestamp(datetime: DateTime) -> Result<Timestamp, Error> {
     // The wire has no UTC offset: reject DST gaps/folds instead of guessing.
     let timestamp = TimeZone::get("Europe/Warsaw")
         .and_then(|zone| zone.to_ambiguous_timestamp(datetime).unambiguous())
         .map_err(|error| Error::Protocol(format!("Nieprawidłowy zegar drukarki: {error}.")))?;
-    let rounded = Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
-        .map_err(|_error| frame::corrupt())?;
-    Ok((rounded, datetime.date()))
+    Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
+        .map_err(|_error| frame::corrupt())
 }
 fn date_fields(date: Date) -> Result<String, Error> {
     if !(2000..=2099).contains(&date.year()) {

@@ -153,9 +153,9 @@ drivers, using that brand's simulator through the real driver.
     required to resolve; resolution sends no fiscal command
   - Test shape: Simulator + journal scenario
 - **Worker start/retry**
-  - Required guarantee: Start printer detection/network/408/429/5xx failures
-    remain active with notice and 15 s retry policy; every 401 stops; no
-    busy-loop retry or device resend
+  - Required guarantee: Start printer detection/network/403/408/429/5xx
+    failures remain active with notice and 15 s retry policy; every 401 stops;
+    no busy-loop retry or device resend
   - Test shape: Production worker + scripted fake; scheduling policy tested
     without sleeps
 - **Worker serialization/stop**

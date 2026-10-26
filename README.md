@@ -188,8 +188,9 @@ It never scans with an unresolved operation: the device must not change.
 
 Polling runs every **3 seconds**, or **15 seconds** after errors or while
 blocked. If the printer does not answer, or Holuto is unreachable, times out
-(408), rate-limits (429) or answers 5xx when processing starts, the app retries
-every 15 seconds and shows a notice; a 401 stops processing. A confirmed receipt
+(408), rate-limits (429), refuses an unavailable branch or company (403) or
+answers 5xx when processing starts, the app retries every 15 seconds and shows
+a notice; a 401 stops processing. A confirmed receipt
 or report stays disabled until the
 worker finishes that command, so a second click cannot queue it twice. Closing
 the window hides it in the tray and releases its memory without stopping

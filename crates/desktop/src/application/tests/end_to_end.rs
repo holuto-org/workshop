@@ -363,6 +363,76 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// A lost display server (logout) ends the event loop without `finish_quit`.
+#[cfg(not(target_os = "macos"))]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "End-to-end tests assert while propagating fixture errors"
+)]
+fn event_loop_ending_without_quit_still_finishes_the_held_print() -> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let simulator = Arc::new(Simulator::start());
+    simulator.set_clock("2025-10-24T10:00:00Z".parse()?);
+    let held = simulator.hold("trend");
+    let holuto = Arc::new(Holuto::new());
+    let job = holuto.enqueue(testing::job_json());
+    let settings = Settings {
+        api_url: holuto.url().into(),
+        token: holuto.token().into(),
+        port: simulator.address().into(),
+        ..Settings::default()
+    };
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
+    let worker = Worker::spawn(dir, settings, simulator.link(), Application::worker_event)?;
+    let mut state = app.borrow_mut();
+    state.worker = Some(worker);
+    state.model.running = true;
+    drop(state);
+    let (loop_ended, ended) = mpsc::channel();
+    let coordinator = thread::Builder::new()
+        .name("display loss".into())
+        .spawn(move || {
+            assert!(
+                held.reached(Duration::from_secs(10)),
+                "receipt reaches held final fiscal command"
+            );
+            let _scheduled = slint::invoke_from_event_loop(|| {
+                let _event_loop_closed = slint::quit_event_loop();
+            });
+            assert_eq!(
+                ended.recv_timeout(Duration::from_secs(10)),
+                Ok(()),
+                "the event loop ends while the print is held"
+            );
+            held.release();
+        })?;
+    slint::run_event_loop_until_quit()?;
+    loop_ended.send(())?;
+    app.borrow_mut().finish_after_event_loop();
+    coordinator
+        .join()
+        .map_err(|_panic| "display-loss coordinator panicked")?;
+    assert!(
+        app.borrow().worker.is_none(),
+        "exit never leaves the worker running"
+    );
+    assert_eq!(
+        simulator.receipts().len(),
+        1,
+        "the in-flight receipt completes exactly once"
+    );
+    assert_eq!(
+        holuto.job(job)["state"],
+        "done",
+        "the printed result settles before exit"
+    );
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
+}
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,

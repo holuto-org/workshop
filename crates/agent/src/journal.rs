@@ -260,13 +260,15 @@ impl<'dir> Journal<'dir> {
         let Some(bytes) = bytes else {
             return Ok(None);
         };
-        serde_json::from_slice(&bytes).map(Some).map_err(|_invalid_json| {
-            Error::Blocked(
-                "Uszkodzony rejestr operacji lub nieobsługiwany format. \
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_invalid_json| {
+                Error::Blocked(
+                    "Uszkodzony rejestr operacji lub nieobsługiwany format. \
              Drukowanie zablokowane; nie usuwaj pliku."
-                    .to_owned(),
-            )
-        })
+                        .to_owned(),
+                )
+            })
     }
 
     pub(crate) fn save(&self, operation: &Operation) -> Result<(), Error> {

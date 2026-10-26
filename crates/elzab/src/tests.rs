@@ -223,6 +223,7 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
     }
 }
 /// Names the fix: the printer header must contain the Holuto company name.
+#[cfg(not(workshop_acceptance))]
 const FOOTER_REFUSAL: &str = "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka \
                               nie drukuje jej w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem \
                               drukarki.";

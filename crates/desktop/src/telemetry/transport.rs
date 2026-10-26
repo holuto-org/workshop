@@ -160,15 +160,18 @@ impl Transport for DetachedTransport {
 
     fn shutdown(&self, timeout: Duration) -> bool {
         let deadline = Deadline::new(timeout);
-        if self.closed.swap(true, Ordering::SeqCst) {
+        if self.closed.load(Ordering::SeqCst) {
             return false;
         }
         let (sender, receiver) = mpsc::channel();
-        if self
+        // Queue before closing admission: an owner that sees `closed` rechecks the queue once
+        // and exits if empty, so the task must already be there.
+        let queued = self
             .sender
             .try_send(Task::Shutdown(deadline, sender))
-            .is_err()
-        {
+            .is_ok();
+        self.closed.store(true, Ordering::SeqCst);
+        if !queued {
             // Wake the owner to observe closure even when the shutdown task cannot fit.
             self.wake();
             return false;
@@ -186,14 +189,28 @@ impl Drop for DetachedTransport {
 
 fn own_transport<T: Transport>(transport: T, receiver: &Receiver<Task>, closed: &AtomicBool) {
     loop {
-        match receiver.try_recv() {
-            Ok(Task::Envelope(envelope)) => transport.send_envelope(envelope),
-            Ok(Task::Flush(deadline, acknowledge)) => {
+        let task = match receiver.try_recv() {
+            Ok(task) => task,
+            Err(TryRecvError::Empty) if !closed.load(Ordering::SeqCst) => {
+                // unpark retains a token, preventing a send/park race.
+                thread::park();
+                continue;
+            },
+            // A shutdown task queued after the empty read is visible once `closed` is.
+            Err(TryRecvError::Empty) => match receiver.try_recv() {
+                Ok(task) => task,
+                Err(_) => return,
+            },
+            Err(TryRecvError::Disconnected) => return,
+        };
+        match task {
+            Task::Envelope(envelope) => transport.send_envelope(envelope),
+            Task::Flush(deadline, acknowledge) => {
                 let remaining = deadline.remaining();
                 let flushed = !remaining.is_zero() && transport.flush(remaining);
                 let _caller_gone = acknowledge.send(flushed);
             },
-            Ok(Task::Shutdown(deadline, acknowledge)) => {
+            Task::Shutdown(deadline, acknowledge) => {
                 let remaining = deadline.remaining();
                 let stopped = !remaining.is_zero() && transport.shutdown(remaining);
                 // SDK Drop may join HTTP; acknowledge success only after it finishes.
@@ -201,14 +218,6 @@ fn own_transport<T: Transport>(transport: T, receiver: &Receiver<Task>, closed: 
                 let _caller_gone = acknowledge.send(stopped);
                 return;
             },
-            Err(TryRecvError::Empty) => {
-                if closed.load(Ordering::SeqCst) {
-                    return;
-                }
-                // unpark retains a token, preventing a send/park race.
-                thread::park();
-            },
-            Err(TryRecvError::Disconnected) => return,
         }
     }
 }

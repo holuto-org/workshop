@@ -175,12 +175,11 @@ printer date); periodic reports require `from ≤ to ≤ printer date`.
 
 Receipt issue times must identify a Warsaw instant. Posnet prefers
 offset-bearing `rtcget.tm`; legacy civil `da` chooses the earlier repeated
-instant. Elzab requires an unambiguous `XCR` instant only for receipts:
-probe, identify, verify and reports validate civil time and use its date, so
-the repeated autumn hour does not itself block them. Novitus currently converts
-`#c` to an unambiguous instant in shared preflight; repeated or skipped Warsaw
-times therefore also reject its probe, identify, verify and reports. Both native
-two-digit clock parsers currently accept 2000–2049.
+instant. Novitus (`#c`) and Elzab (`XCR`) send civil time without an offset:
+only receipts require it to be an unambiguous Warsaw instant. Probe, identify,
+verify and reports validate civil time and use its date, so the repeated or
+skipped hour does not block them. Both native two-digit clock parsers currently
+accept 2000–2049.
 
 ## Specification sources
 

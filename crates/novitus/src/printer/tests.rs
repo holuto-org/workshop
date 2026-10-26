@@ -209,8 +209,10 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new(), "case {case}");
     }
 }
+#[cfg(not(workshop_acceptance))]
 const ADVANCE_REFUSAL: &str = "Drukarka nie obsługuje rozliczenia zaliczek.";
 /// Names the fix: the printer header must contain the Holuto company name.
+#[cfg(not(workshop_acceptance))]
 const FOOTER_REFUSAL: &str = "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka \
                               nie drukuje jej w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem \
                               drukarki.";
@@ -897,7 +899,12 @@ fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
 
 #[test]
 fn invalid_printer_clock_blocks_every_operation() {
-    for clock in ["26;2;30;12;0;0", "50;1;1;12;0;0"] {
+    for clock in [
+        "26;2;30;12;0;0",
+        "50;1;1;12;0;0",
+        "26;+1;24;12;0;0",
+        "26;010;24;12;0;0",
+    ] {
         let sim = Simulator::start();
         supported(&sim);
         sim.set_clock(clock);
@@ -915,10 +922,14 @@ fn dst_fold_or_gap_clock_blocks_only_receipt_timestamps() {
         let driver = printer(&sim);
         let expected = driver.probe().unwrap();
         assert!(expected.ready(), "{clock}: {}", expected.description());
-        driver.verify("ABC1234567890").unwrap();
+        let _resolvable = driver.verify("ABC1234567890").unwrap();
         driver
             .print_report(
-                periodic("2026-09-01", "2026-09-30"),
+                Report::Periodic {
+                    from: "2026-01-01".parse().unwrap(),
+                    to: "2026-01-31".parse().unwrap(),
+                    summary: false,
+                },
                 "ABC1234567890",
                 &mut Log::default(),
             )
@@ -929,7 +940,7 @@ fn dst_fold_or_gap_clock_blocks_only_receipt_timestamps() {
             Err(Error::Protocol(_))
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
-        assert_eq!(fiscal_bodies(&sim), ["26;9;1;26;9;30;0#o"]);
+        assert_eq!(fiscal_bodies(&sim), ["26;1;1;26;1;31;0#o"]);
     }
 }
 

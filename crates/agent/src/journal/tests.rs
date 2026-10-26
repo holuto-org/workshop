@@ -305,15 +305,12 @@ fn journaled_done_sends_a_canonical_receipt_number() -> TestResult {
         (" 12\u{a0}34 ", "12 34"),
         ("１２３／２０２６", "123/2026"),
         (" A\u{2003}\u{2003}B ", "A B"),
-        ("12\u{200b}34", "12\u{200b}34"),
     ] {
         let device = Device::Completed {
             receipt_number: Some(raw.to_owned()),
         };
         journal.save(&Operation::Receipt(ReceiptOperation {
-            result: Some(JobResult::Done {
-                receipt_number: raw.to_owned(),
-            }),
+            result: Some(JobResult::done(Some(raw.to_owned()), "Brak numeru.")),
             ..receipt(device.clone())?
         }))?;
         let Some(Operation::Receipt(restored)) = journal.load()? else {

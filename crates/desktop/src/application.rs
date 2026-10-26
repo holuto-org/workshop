@@ -83,6 +83,7 @@ pub(crate) fn run(
     app.borrow_mut().tray = Some(tray);
     app.borrow_mut().launch()?;
     let result = slint::run_event_loop_until_quit();
+    app.borrow_mut().finish_after_event_loop();
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     result
 }
@@ -656,6 +657,16 @@ impl Application {
                     .into(),
                 Tone::Error,
             );
+        }
+    }
+
+    /// A lost display server (Wayland logout) ends the event loop without `finish_quit`, so
+    /// `Event::Stopped` can no longer arrive. With no GUI left to freeze, stop and wait for the
+    /// worker here; `join` returns only after it has emitted `Stopped`.
+    fn finish_after_event_loop(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            worker.stop();
+            worker.join();
         }
     }
 }

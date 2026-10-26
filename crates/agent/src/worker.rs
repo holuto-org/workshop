@@ -575,13 +575,16 @@ fn publish_device(agent: &Agent<'_>, sink: &dyn Fn(Event)) {
 }
 
 /// Transient Holuto failures must not end processing started unattended at login.
+///
+/// A 403 is an inactive branch or suspended company: the pairing stays valid, so the agent waits
+/// for it to become available again, as it already does after its session started.
 const fn retry_start(error: &Error) -> bool {
     matches!(
         error,
         Error::Api(
             ApiError::Transport(_)
                 | ApiError::Status {
-                    status: 408 | 429 | 500..=599,
+                    status: 403 | 408 | 429 | 500..=599,
                     ..
                 }
         )
