@@ -12,7 +12,6 @@
 //! Diagnostics from those failures never contain interpolation values.
 
 use std::{
-    borrow::Cow,
     error::Error,
     fmt, iter,
     sync::{Arc, LazyLock},
@@ -58,16 +57,6 @@ pub enum LanguagePreference {
 
 impl LanguagePreference {
     pub const ALL: [Self; 5] = [Self::System, Self::En, Self::Pl, Self::Es, Self::Ru];
-
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::En => "en",
-            Self::Pl => "pl",
-            Self::Es => "es",
-            Self::Ru => "ru",
-        }
-    }
 
     pub fn resolve(self) -> Language {
         match self {
@@ -266,7 +255,7 @@ impl Message {
                         },
                     }
                 }
-                output.push_str(&format_catalog(bundle, id, Some(&fluent_arguments)));
+                write_catalog(bundle, id, Some(&fluent_arguments), output);
             },
             MessageKind::Join {
                 messages,
@@ -322,7 +311,9 @@ impl Error for Message {}
 
 /// Render an argument-free dynamic UI key without allocating an owned key.
 pub fn text(id: &str, language: Language) -> String {
-    format_catalog(&bundles(language).ui, id, None).into_owned()
+    let mut output = String::new();
+    write_catalog(&bundles(language).ui, id, None, &mut output);
+    output
 }
 
 type Bundle = FluentBundle<Arc<FluentResource>>;
@@ -387,11 +378,12 @@ fn make_bundle(language: Language, isolating: bool, resources: &[Arc<FluentResou
     clippy::panic,
     reason = "Broken catalog references must not leak partial operator instructions or values."
 )]
-fn format_catalog<'bundle>(
-    bundle: &'bundle Bundle,
+fn write_catalog(
+    bundle: &Bundle,
     id: &str,
     arguments: Option<&FluentArgs<'_>>,
-) -> Cow<'bundle, str> {
+    output: &mut String,
+) {
     let Some(message) = bundle.get_message(id) else {
         panic!("missing embedded Fluent message: {id}");
     };
@@ -399,12 +391,11 @@ fn format_catalog<'bundle>(
         panic!("embedded Fluent message has no value: {id}");
     };
     let mut errors = Vec::new();
-    let rendered = bundle.format_pattern(pattern, arguments, &mut errors);
+    let written = bundle.write_pattern(output, pattern, arguments, &mut errors);
     assert!(
-        errors.is_empty(),
+        written.is_ok() && errors.is_empty(),
         "embedded Fluent message failed to format: {id}"
     );
-    rendered
 }
 
 const fn sources(language: Language) -> [(&'static str, &'static str); 4] {

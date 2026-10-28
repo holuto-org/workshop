@@ -65,11 +65,11 @@ Use these as scenario boundaries, not a claim that every case runs on every OS:
   silently reconfigure a running worker. A background completion must not
   overwrite edits made meanwhile; live telemetry opt-out persists.
 - Set the fixture language explicitly when locating translated labels. Exercise
-  real language selection before pairing and during processing: preserve input,
-  update existing warnings/dialogs and the tray, persist without a printer, and
-  reopen in the chosen language. Fiscal output and diagnostic evidence must not
-  change. Check system negotiation and English fallback independently of the
-  test runner's locale.
+  real language selection before pairing and during processing: preserve input
+  and the selected report month, update month labels, existing warnings/dialogs
+  and the tray, persist without a printer, and reopen in the chosen language.
+  Fiscal output and diagnostic evidence must not change. Check system
+  negotiation and English fallback independently of the test runner's locale.
 - Pairing uses the real callback and background request without opening a
   printer. Success clears the pairing code; synthetic token canaries must
   never appear in UI text/accessibility values. Refused/expired pairing

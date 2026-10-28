@@ -6,6 +6,11 @@ output and catalog invariants; the
 [desktop bridge](../crates/desktop/src/localization.rs) owns Slint integration.
 User language selection belongs in the [README](../README.md#ui-language).
 
+The shared catalogs are intentional: Slint's bundled translations do not expose
+a public Rust lookup API in the pinned version
+([upstream tracking](https://github.com/slint-ui/slint/issues/7949)). A separate
+UI-only catalog would not replace the deferred worker notices.
+
 ## Change the message
 
 1. Find the message ID and the action or error that displays it. Decide whether

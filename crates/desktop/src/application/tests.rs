@@ -1328,3 +1328,52 @@ fn language_selection_translates_the_open_window_and_persists_before_pairing()
     assert!(!app.borrow().model.running);
     Ok(())
 }
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "A language change must preserve the operator's selected report period"
+)]
+fn report_months_retranslate_without_changing_the_selected_period() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture_with_event_loop()?;
+    ready(&app);
+    window.set_tab(1);
+    let months = window.get_months().iter().collect::<Vec<_>>();
+    assert_eq!(months.len(), 24);
+    assert_eq!(
+        visible_text(months.first().ok_or("missing newest month")?),
+        "wrzesień 2025"
+    );
+    assert_eq!(
+        visible_text(months.last().ok_or("missing oldest month")?),
+        "październik 2023"
+    );
+    let chosen = months
+        .iter()
+        .find(|month| visible_text(month.as_str()) == "kwiecień 2025")
+        .ok_or("missing April 2025")?;
+    control(&window, "Raport miesięczny", AccessibleRole::Combobox)?
+        .invoke_accessible_expand_action();
+    ElementHandle::find_by_accessible_label(&window, chosen.as_str())
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing April choice")?
+        .mock_single_click(PointerEventButton::Left);
+    window.set_tab(2);
+    control(&window, "Język", AccessibleRole::Combobox)?.invoke_accessible_expand_action();
+    ElementHandle::find_by_accessible_label(&window, "Русский")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing Russian language choice")?
+        .mock_single_click(PointerEventButton::Left);
+    window.set_tab(1);
+    let selected = control(&window, "Месячный отчёт", AccessibleRole::Combobox)?
+        .accessible_value()
+        .ok_or("missing selected month")?;
+    assert_eq!(visible_text(selected.as_str()), "апрель 2025");
+    button(&window, "Печать месячного отчёта")?.invoke_accessible_default_action();
+    assert!(window.get_confirming());
+    assert!(visible_text(window.get_confirm_text().as_str()).contains("апрель 2025"));
+    button(&window, "Отмена")?.invoke_accessible_default_action();
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    Ok(())
+}

@@ -257,19 +257,16 @@ impl Model {
         window.set_language_index(localization::preference_index(self.settings.language));
         window.set_status(self.message.render(self.language).into());
         // The header speaks only when something is wrong; a working setup shows nothing.
+        let holuto_state: SharedString = self.holuto_text().render(self.language).into();
         window.set_holuto_text(if self.connected {
             SharedString::default()
         } else {
-            self.holuto_text().render(self.language).into()
+            holuto_state.clone()
         });
-        let printer_problem = self.printer_problem();
-        window.set_printer_text(
-            printer_problem
-                .as_ref()
-                .map(|problem| problem.render(self.language))
-                .unwrap_or_default()
-                .into(),
-        );
+        let printer_problem = self
+            .printer_problem()
+            .map(|problem| SharedString::from(problem.render(self.language)));
+        window.set_printer_text(printer_problem.clone().unwrap_or_default());
         window.set_printer_tone(
             if self.blocked || self.device.as_ref().is_some_and(|status| !status.ready()) {
                 2
@@ -278,13 +275,10 @@ impl Model {
             },
         );
         window.set_processing_state(self.processing_text().render(self.language).into());
-        window.set_holuto_state(self.holuto_text().render(self.language).into());
+        window.set_holuto_state(holuto_state);
         window.set_printer_identity(self.printer_identity().into());
         window.set_printer_state(
-            printer_problem
-                .unwrap_or_else(|| Message::new("desktop-ready"))
-                .render(self.language)
-                .into(),
+            printer_problem.unwrap_or_else(|| i18n::text("desktop-ready", self.language).into()),
         );
         window.set_start_hint(self.start_hint().render(self.language).into());
         window.set_pairing_code(self.pairing_code.as_str().into());
