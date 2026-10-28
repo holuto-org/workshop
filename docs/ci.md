@@ -23,9 +23,8 @@
     to workflow safeguards.
 
 The workflow YAML is authoritative for triggers, permissions, pinned tools and
-job dependencies. There is **no weekly workflow**. Mutation testing is a
-finishing-change policy; coverage is a local report, not a merge percentage
-target.
+job dependencies. There is **no weekly workflow**. Coverage is a local report,
+not a merge percentage target.
 
 ## Native matrix
 

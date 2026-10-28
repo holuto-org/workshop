@@ -1,5 +1,4 @@
 [graph]
-# Keep aligned with package.yml.
 targets = [
     "x86_64-pc-windows-msvc",
     "aarch64-apple-darwin",

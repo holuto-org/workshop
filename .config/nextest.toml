@@ -30,8 +30,3 @@ fail-fast = false
 
 [profile.ci.junit]
 path = "junit.xml"
-
-[profile.mutants]
-default-filter = 'not test(com_pair)'
-fail-fast = true
-slow-timeout = { period = "10s", terminate-after = 2, grace-period = "2s" }

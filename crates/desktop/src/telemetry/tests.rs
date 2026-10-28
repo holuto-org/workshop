@@ -483,6 +483,32 @@ fn fixed_driver_and_worker_warnings_reach_sentry_with_their_meaning() -> Result<
 }
 
 #[test]
+fn safe_transport_shutdown_preserves_the_underlying_outcome_and_deadline() {
+    struct Shutdown {
+        result: bool,
+        calls: Mutex<Vec<Duration>>,
+    }
+    impl Transport for Shutdown {
+        fn send_envelope(&self, _envelope: Envelope) {}
+
+        fn shutdown(&self, timeout: Duration) -> bool {
+            self.calls.lock().unwrap().push(timeout);
+            self.result
+        }
+    }
+    for result in [false, true] {
+        let capture = Arc::new(Shutdown {
+            result,
+            calls: Mutex::new(Vec::new()),
+        });
+        let captured = Arc::clone(&capture);
+        let transport = SafeTransport(captured);
+        assert_eq!(transport.shutdown(Duration::from_millis(37)), result);
+        assert_eq!(*capture.calls.lock().unwrap(), [Duration::from_millis(37)]);
+    }
+}
+
+#[test]
 fn consent_changes_gate_outgoing_events_and_simulators_never_enable_capture() {
     let capture = Arc::new(Capture::default());
     let client = Arc::new(Client::from(

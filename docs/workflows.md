@@ -2,40 +2,8 @@
 
 ## Finishing a change
 
-Run [the Verify commands](../AGENTS.md#verify) on the integrated change, then
-the mutation step below. Never run the app against a real printer as
-verification.
-
-```sh
-# Diff the working tree against the branch point (committed, staged and
-# unstaged); regenerate it right before each run.
-git diff "$(git merge-base origin/master HEAD)" > /tmp/workshop-changes.diff
-TMPDIR=<disk-backed scratch> cargo mutants --all-features \
-  --in-diff /tmp/workshop-changes.diff -p <changed-package> \
-  --output <scratch directory>
-```
-
-Use `fiscal`, `posnet`, `novitus`, `elzab`, `agent` or `workshop` as the changed
-package; repeat mutation runs for each changed product package.
-`.cargo/mutants.toml` selects nextest and
-workspace tests so dependent-crate scenarios can kill driver/agent mutants; its
-`mutants` profile excludes unavailable COM-pair tests. It excludes
-simulator/testing fixtures, not fiscal production behavior. Set `TMPDIR` per
-command (never export it into a shell you keep using) when `/tmp` is
-RAM-backed. In a shared checkout the diff also holds other sessions' edits:
-restrict the run to your files with `-f <file>` (and `-F <regex>` for one
-function), and keep `--output` out of the repository.
-
-No observable mutant of changed product code may survive. Add the missing
-boundary assertion, delete code with no observable effect, or document a
-genuinely equivalent/unreachable mutation in the configuration with its reason.
-Do not exclude a hard-to-test safety path to make the run green. Inspect
-timed-out, unviable and baseline failures separately.
-[cargo-mutants' diff documentation](https://mutants.rs/in-diff.html) warns that
-changing/removing only tests selects no mutants: widen to the affected
-package/full safety path when reducing tests or changing shared harnesses. The
-same scoped `-f` run shows whether a new test over existing code bites, and
-whether existing tests guard a safety check: an audit by test names does not.
+Run [the Verify commands](../AGENTS.md#verify) on the integrated change. Never
+run the app against a real printer as verification.
 
 Additional finish evidence by changed area:
 
@@ -103,9 +71,9 @@ cargo llvm-cov nextest --workspace --all-features --html
 The HTML report is under `target/llvm-cov/html`. Use it to find unexecuted error
 branches, not to claim correctness or meet a percentage. Install project tools
 with
-`cargo binstall cargo-nextest cargo-mutants cargo-llvm-cov cargo-insta lychee`
-if cargo-binstall is available, otherwise use their documented installation
-procedure. No weekly coverage/mutation workflow is required.
+`cargo binstall cargo-nextest cargo-llvm-cov cargo-insta lychee` if
+cargo-binstall is available, otherwise use their documented installation
+procedure. No weekly coverage workflow is required.
 
 ## Sentry release check
 

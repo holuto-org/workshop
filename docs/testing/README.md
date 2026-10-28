@@ -110,12 +110,6 @@ integration.
 
 ## Measuring the suite
 
-- **Mutation testing:** a changed condition/value must make a test fail. Resolve
-  survivors with a missing boundary assertion or delete behaviorless code; see
-  [finishing a change](../workflows.md#finishing-a-change). A mutant that fails
-  to build is not proof. Diff-only mutation misses test-only regressions; widen
-  the run when deleting tests
-  ([cargo-mutants](https://mutants.rs/in-diff.html)).
 - **Coverage:** local `cargo-llvm-cov` reports identify unexecuted paths; a
   covered line is not a proven one. No percentage target or coverage workflow.
 - **Stress:** repeat controlled worker/race tests with nextest; repetitions

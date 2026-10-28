@@ -175,7 +175,7 @@ not attribute them to the user.
   /tmp/workshop-<task>`, apply your diff, remove the worktree afterwards).
 - Every copy, probe or `RUSTFLAGS` variant uses its own `CARGO_TARGET_DIR`
   (for example `target/acceptance`), never the shared `target/`.
-- Experiments never edit tracked files: hand mutations go in a copy, probes in
+- Experiments never edit tracked files: trial code edits go in a copy, probes in
   a throwaway crate outside the repository that depends on workspace crates by
   path. Probes under `crates/*/tests` or `examples` get swept into commits and
   break workspace clippy.

@@ -305,8 +305,3 @@ process memory and may expose sensitive data despite those hooks. See
 [testing guide](docs/testing/README.md), [workflows](docs/workflows.md) and
 [CI](docs/ci.md) cover verification and releases. Printer behavior is exercised
 only through offline simulators, **never real fiscal commands**.
-
-`bash packaging/build.sh` writes the host OS/CPU package to `release/`. A push to
-`master` publishes only when the root `Cargo.toml` `[workspace.package] version`
-increases above the previous version and all published releases. Manual
-**Release** runs create Actions artifacts without publishing.

@@ -35,8 +35,7 @@ how to build the test.
 - A regression drives the boundary where its consumer sees the bug (driver,
   session, worker, `Api`, UI), never a private helper or constant. Run it
   against the unfixed code and see it fail for the stated reason; prove that
-  in a copy or with a scoped `cargo mutants -f <file>`, never by editing the
-  shared checkout.
+  in a copy, never by editing the shared checkout.
 
 ## Harnesses
 
