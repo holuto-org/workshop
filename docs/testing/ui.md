@@ -68,6 +68,9 @@ Use these as scenario boundaries, not a claim that every case runs on every OS:
   real language selection before pairing and during processing: preserve input
   and the selected report month, update month labels, existing warnings/dialogs
   and the tray, persist without a printer, and reopen in the chosen language.
+  Keep keyboard focus on the language selector while saving: Space must not
+  toggle diagnostics, Return must reopen the choices, and a second selection
+  before the first save completes must persist as the final choice.
   Fiscal output and diagnostic evidence must not change. Check system
   negotiation and English fallback independently of the test runner's locale.
 - Pairing uses the real callback and background request without opening a

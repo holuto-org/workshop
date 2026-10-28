@@ -1332,6 +1332,50 @@ fn language_selection_translates_the_open_window_and_persists_before_pairing()
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
+    reason = "Language selection must retain keyboard focus while preferences are saved"
+)]
+fn language_selection_keeps_focus_during_save() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
+    control(&window, "Język", AccessibleRole::Combobox)?
+        .mock_single_click(PointerEventButton::Left);
+    ElementHandle::find_by_accessible_label(&window, "English")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing English language choice")?
+        .mock_single_click(PointerEventButton::Left);
+    // No writer completion has reached the UI yet. Space must not toggle the
+    // diagnostics checkbox; Return must still open the language choices.
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyReleased { text: " ".into() });
+    assert!(
+        window.get_telemetry_enabled(),
+        "Space must not change consent"
+    );
+    let enter = SharedString::from(Key::Return);
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: enter.clone(),
+    });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyReleased { text: enter });
+    ElementHandle::find_by_accessible_label(&window, "Polski")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("Language lost focus instead of reopening its choices")?
+        .mock_single_click(PointerEventButton::Left);
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    let saved = Settings::load(&app.borrow().dir)?.ok_or("missing language preference")?;
+    assert_eq!(saved.language, i18n::LanguagePreference::Pl);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
     reason = "A language change must preserve the operator's selected report period"
 )]
 fn report_months_retranslate_without_changing_the_selected_period() -> Result<(), Box<dyn Error>> {

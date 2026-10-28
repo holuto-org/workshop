@@ -288,7 +288,7 @@ impl Application {
     }
 
     fn change_language(&mut self, index: i32) {
-        if self.model.pairing || self.model.saving || self.quitting {
+        if self.model.pairing || self.quitting {
             return;
         }
         let Some(preference) = localization::preference_at(index) else {
