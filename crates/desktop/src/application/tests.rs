@@ -26,7 +26,10 @@ use std::{
     time::Duration,
 };
 
-use agent::documents::{Document, ReceiptKind};
+use agent::{
+    api::model::JobView,
+    documents::{Document, ReceiptKind},
+};
 use fiscal::device::{Device, Vendor};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use jiff::Timestamp;
@@ -142,10 +145,33 @@ fn ready(app: &Rc<RefCell<Application>>) {
             is_overdue: false,
         }],
         page: 1,
+        has_previous: false,
         has_next: true,
     });
     app.model.selected = Some(0);
+    app.model.manual = true;
     app.sync();
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert accessible application behavior"
+)]
+fn receipts_are_the_default_and_manual_documents_open_in_a_dialog() -> Result<(), Box<dyn Error>> {
+    let (_temporary, _app, window) = fixture()?;
+    assert_eq!(window.get_tab(), 0);
+    let _search = control(&window, "Szukaj", AccessibleRole::TextInput)?;
+    button(&window, "+ Wystaw paragon")?.invoke_accessible_default_action();
+    let _documents_search = control(&window, "Szukaj dokumentu", AccessibleRole::TextInput)?;
+    let _next = button(&window, "Dalej")?;
+    button(&window, "Zamknij")?.invoke_accessible_default_action();
+    assert!(
+        ElementHandle::find_by_accessible_label(&window, "Szukaj dokumentu")
+            .next()
+            .is_none()
+    );
+    Ok(())
 }
 
 #[test]
@@ -156,23 +182,22 @@ fn ready(app: &Rc<RefCell<Application>>) {
 fn queue_confirmation_shows_amount_nip_and_local_pending_state() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
     ready(&app);
+    button(&window, "Dalej")?.invoke_accessible_default_action();
     control(&window, "NIP nabywcy", AccessibleRole::TextInput)?.set_accessible_value("1234567890");
-    button(&window, "Dodaj do wydruku")?.invoke_accessible_default_action();
     assert_eq!(
         window.get_confirm_text().as_str(),
-        concat!(
-            "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: 1234567890\n",
-            "Zatwierdzenie wystawi paragon fiskalny."
-        ),
-        "operator sees the binding amount and NIP"
+        "Sprzedaż · zlecenie 42 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny.",
+        "operator sees the binding amount"
     );
     let confirm = ElementHandle::find_by_accessible_label(&window, "Dodaj do wydruku")
         .filter(|element| element.accessible_role() == Some(AccessibleRole::Button))
         .last()
         .ok_or("missing confirmation button")?;
     confirm.invoke_accessible_default_action();
+    assert!(!window.get_manual(), "queued receipts return to Paragony");
+    button(&window, "+ Wystaw paragon")?.invoke_accessible_default_action();
     assert_eq!(
-        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
+        button(&window, "Dalej")?.accessible_enabled(),
         Some(false),
         "confirmed receipt waits for worker acknowledgement"
     );
@@ -184,7 +209,7 @@ fn queue_confirmation_shows_amount_nip_and_local_pending_state() -> Result<(), B
     app.borrow_mut().event(Event::CommandCompleted);
     app.borrow().sync();
     assert_eq!(
-        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
+        button(&window, "Dalej")?.accessible_enabled(),
         Some(true),
         "completion restores receipt action"
     );
@@ -199,36 +224,45 @@ fn queue_confirmation_shows_amount_nip_and_local_pending_state() -> Result<(), B
 fn paging_buttons_reflect_the_worker_page() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
     ready(&app);
-    assert_eq!(
-        button(&window, "Poprzednia strona")?.accessible_enabled(),
-        Some(false),
-        "first page has no predecessor"
-    );
-    assert_eq!(
-        button(&window, "Następna strona")?.accessible_enabled(),
-        Some(true),
-        "cursor exposes next page"
-    );
-    app.borrow_mut().event(Event::Documents {
+    let documents = |page, has_previous, has_next| Event::Documents {
         items: Vec::new(),
-        page: 2,
-        has_next: false,
-    });
-    app.borrow().sync();
+        page,
+        has_previous,
+        has_next,
+    };
+    // Server cursors, not the local page number, decide availability: page 1 may go back.
+    for (event, feed, expected) in [
+        (documents(1, false, true), "", (false, true)),
+        (documents(1, true, false), "", (true, false)),
+        (documents(2, false, false), "", (false, false)),
+        (documents(2, true, false), "", (true, false)),
+        (
+            Event::Jobs {
+                items: Vec::new(),
+                page: 1,
+                has_previous: true,
+                has_next: false,
+            },
+            " historii",
+            (true, false),
+        ),
+    ] {
+        app.borrow_mut().event(event);
+        app.borrow().sync();
+        let enabled = |direction| {
+            button(&window, &format!("{direction} strona{feed}"))
+                .map(|button| button.accessible_enabled())
+        };
+        assert_eq!(
+            (enabled("Poprzednia")?, enabled("Następna")?),
+            (Some(expected.0), Some(expected.1)),
+            "paging{feed} for {expected:?}"
+        );
+    }
     assert_eq!(
         window.get_page_label().as_str(),
         "Strona 2",
         "operator sees current page"
-    );
-    assert_eq!(
-        button(&window, "Poprzednia strona")?.accessible_enabled(),
-        Some(true),
-        "second page can go back"
-    );
-    assert_eq!(
-        button(&window, "Następna strona")?.accessible_enabled(),
-        Some(false),
-        "last page has no successor"
     );
     Ok(())
 }
@@ -318,6 +352,13 @@ fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<
     state.event(Event::Documents {
         items,
         page: 3,
+        has_previous: true,
+        has_next: true,
+    });
+    state.event(Event::Jobs {
+        items: vec![receipt_view(10, "done")?],
+        page: 2,
+        has_previous: true,
         has_next: true,
     });
     state.event(Event::Stopped);
@@ -340,9 +381,20 @@ fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<
         "documents from the stopped session are not offered for printing"
     );
     assert_eq!(
-        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
+        button(&window, "Dalej")?.accessible_enabled(),
         Some(false),
         "no stale selection can be queued"
+    );
+    assert_eq!(
+        (
+            window.get_receipts().row_count(),
+            window.get_receipt_detail().as_str(),
+            window.get_receipt_selected(),
+            window.get_jobs_previous_enabled(),
+            window.get_jobs_next_enabled()
+        ),
+        (0, "", -1, false, false),
+        "stopped sessions never retain server receipt rows, details or paging"
     );
     Ok(())
 }
@@ -417,6 +469,7 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
         .as_ref()
         .ok_or("missing app window")?
         .clone_strong();
+    window.set_tab(2);
     link.0
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -529,6 +582,7 @@ fn issues_after_stop_carry_no_previous_printer_identity() -> Result<(), Box<dyn 
 )]
 fn reload_after_pairing_keeps_a_diagnostics_choice_made_meanwhile() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
     // `Paired` submits Reload; the opt-out is written only after Reload has read the file.
     assert!(
         app.borrow_mut()
@@ -591,6 +645,7 @@ fn paired_fixture() -> Result<UiFixture, Box<dyn Error>> {
         .as_ref()
         .ok_or("missing app window")?
         .clone_strong();
+    window.set_tab(2);
     Ok((temp, app, window))
 }
 
@@ -655,6 +710,7 @@ fn a_reverted_api_address_edit_keeps_the_saved_pairing() -> Result<(), Box<dyn E
 )]
 fn a_status_write_acknowledgement_keeps_settings_typed_meanwhile() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
     control(&window, "Adres API", AccessibleRole::TextInput)?
         .set_accessible_value("https://typed.example.test");
     control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-1234");
@@ -840,6 +896,7 @@ fn accessible_headers_sort_visible_rows_without_changing_the_selected_document()
     app.borrow_mut().event(Event::Documents {
         items: documents,
         page: 1,
+        has_previous: false,
         has_next: false,
     });
     app.borrow().sync();
@@ -864,10 +921,10 @@ fn accessible_headers_sort_visible_rows_without_changing_the_selected_document()
         Some("42".into()),
         "second header action sorts descending"
     );
-    button(&window, "Dodaj do wydruku")?.invoke_accessible_default_action();
+    button(&window, "Dalej")?.invoke_accessible_default_action();
     assert_eq!(
         window.get_confirm_text(),
-        "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
+        "Sprzedaż · zlecenie 42 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny.",
         "sorting must never move selection to another document"
     );
     Ok(())
@@ -906,7 +963,6 @@ fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<()
     let (_temp, app, window) = fixture()?;
     ready(&app);
     button(&window, "Zlecenie")?.invoke_accessible_default_action();
-    control(&window, "NIP nabywcy", AccessibleRole::TextInput)?.set_accessible_value("1234567890");
     app.borrow_mut().tray = Some(TrayIcon::new()?);
     app.borrow_mut().close_after_probe(true);
     assert!(
@@ -933,13 +989,10 @@ fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<()
             .map(|column| column.sort_order),
         Some(SortOrder::Ascending)
     );
-    button(&reopened, "Dodaj do wydruku")?.invoke_accessible_default_action();
+    button(&reopened, "Dalej")?.invoke_accessible_default_action();
     assert_eq!(
         reopened.get_confirm_text(),
-        concat!(
-            "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: 1234567890\n",
-            "Zatwierdzenie wystawi paragon fiskalny."
-        )
+        "Sprzedaż · zlecenie 42 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny."
     );
     Ok(())
 }
@@ -969,17 +1022,12 @@ fn keyboard_navigation_selects_rows_and_enter_opens_the_selected_receipt_confirm
             })
             .collect(),
         page: 1,
+        has_previous: false,
         has_next: false,
     });
     app.borrow().sync();
     control(&window, "1", AccessibleRole::ListItem)?.invoke_accessible_default_action();
-    for (key, row) in [
-        (Key::DownArrow, 1),
-        (Key::End, 29),
-        (Key::Home, 0),
-        (Key::PageDown, 7),
-        (Key::PageUp, 0),
-    ] {
+    for (key, row) in [(Key::DownArrow, 1), (Key::End, 29), (Key::Home, 0)] {
         window
             .window()
             .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
@@ -990,11 +1038,19 @@ fn keyboard_navigation_selects_rows_and_enter_opens_the_selected_receipt_confirm
         );
     }
     window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::PageDown.into(),
+    });
+    assert!(window.get_selected() > 0);
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::PageUp.into(),
+    });
+    assert_eq!(window.get_selected(), 0);
+    window.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Return.into(),
     });
     assert_eq!(
         window.get_confirm_text(),
-        "Sprzedaż · zlecenie 1 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
+        "Sprzedaż · zlecenie 1 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny.",
         "Enter invokes the selected row's default action without printing yet"
     );
     Ok(())
@@ -1024,6 +1080,7 @@ fn keys_behind_an_open_confirmation_cannot_change_what_it_submits() -> Result<()
             })
             .collect(),
         page: 1,
+        has_previous: false,
         has_next: false,
     });
     app.borrow().sync();
@@ -1036,7 +1093,7 @@ fn keys_behind_an_open_confirmation_cannot_change_what_it_submits() -> Result<()
     assert!(window.get_confirming());
     assert_eq!(
         window.get_confirm_text(),
-        "Sprzedaż · zlecenie 1 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
+        "Sprzedaż · zlecenie 1 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny.",
         "the open confirmation keeps the receipt the operator opened"
     );
     Ok(())
@@ -1049,6 +1106,7 @@ fn keys_behind_an_open_confirmation_cannot_change_what_it_submits() -> Result<()
 )]
 fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
     control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
         .invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;
@@ -1083,6 +1141,7 @@ fn unticking_diagnostics_stops_reporting_from_the_running_app() -> Result<(), Bo
         }
     }
     let (_temp, _app, window) = fixture()?;
+    window.set_tab(2);
     let capture = Arc::new(Capture::default());
     let client = Arc::new(Client::from(
         telemetry::options()
@@ -1165,6 +1224,7 @@ fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement(
             with_app(move |app| {
                 assert!(!app.model.saving, "status is not a settings save");
                 let window = app.window.as_ref().ok_or("missing window")?;
+                window.set_tab(2);
                 assert_eq!(
                     button(window, "Uruchom")
                         .map_err(|error| error.to_string())?
@@ -1298,10 +1358,7 @@ fn selecting_the_end_index_never_enables_a_nonexistent_receipt() -> Result<(), B
     ready(&app);
     window.invoke_selected_document(1);
     assert_eq!(window.get_selected(), -1);
-    assert_eq!(
-        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
-        Some(false)
-    );
+    assert_eq!(button(&window, "Dalej")?.accessible_enabled(), Some(false));
     Ok(())
 }
 
@@ -1341,6 +1398,7 @@ fn diagnostics_completion_preserves_the_unresolved_operation_notice() -> Result<
         .model
         .say("Nierozstrzygnięty raport".into(), Tone::Error);
     app.borrow().sync();
+    window.set_tab(2);
     control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
         .invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;
@@ -1395,47 +1453,251 @@ fn native_close_request_keeps_the_window_until_the_tray_probe_finishes()
     Ok(())
 }
 
+fn receipt_view(number: u32, state: &str) -> Result<JobView, serde_json::Error> {
+    serde_json::from_value(receipt_view_json(number, state))
+}
+
+fn receipt_view_json(number: u32, state: &str) -> serde_json::Value {
+    use agent::testing::{job_json, with};
+    serde_json::json!({
+        "job": with(job_json(), &serde_json::json!({
+            "id": Uuid::from_u128(u128::from(number)),
+            "orderNumber": number, "state": state, "issuedAt": "2025-10-24T10:00:00Z",
+            "advances": [{"vatLetter": "A", "vatRate": "23", "amount": "50.00"}]
+        })),
+        "customerName": "Łukasz Kowalski", "vehiclePlate": "WA 12345", "source": "staff"
+    })
+}
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
-    reason = "Startup reloads the previous session's display cache"
+    reason = "Tests assert server history through accessible controls"
 )]
-fn startup_history_can_be_sorted_through_the_accessible_header() -> Result<(), Box<dyn Error>> {
-    i_slint_backend_testing::init_no_event_loop();
-    let temporary = TempDir::new()?;
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
-    fs::write(
-        dir.path().join("history.jsonl"),
-        concat!(
-            "{\"jobId\":\"00000000-0000-0000-0000-000000000001\",",
-            "\"printedAt\":\"2025-10-24T10:00:00Z\",\"receiptNumber\":\"10\",",
-            "\"total\":100,\"payments\":[],\"items\":[\"Usługa\"]}\n",
-            "{\"jobId\":\"00000000-0000-0000-0000-000000000002\",",
-            "\"printedAt\":\"2025-10-24T10:00:00Z\",\"receiptNumber\":\"2\",",
-            "\"total\":100,\"payments\":[],\"items\":[\"Olej\"]}\n"
-        ),
-    )?;
-    let app = make_app(dir, Settings::default(), Simulator::start().link())?;
-    let window = app
-        .borrow()
-        .window
-        .as_ref()
-        .ok_or("missing window")?
-        .clone_strong();
-    window.set_tab(2);
-    for expected in [["2", "10"], ["10", "2"]] {
-        button(&window, "Nr paragonu")?.invoke_accessible_default_action();
-        assert_eq!(window.get_tab(), 2);
-        let numbers = window
-            .get_history()
-            .iter()
-            .map(|row| {
-                row.row_data(2)
-                    .ok_or("missing receipt number")
-                    .map(|cell| cell.text.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(numbers, expected);
+fn receipts_show_server_fields_details_and_all_seven_states() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture()?;
+    for (state, status) in [
+        ("queued", "W kolejce"),
+        ("taken", "Drukuje się…"),
+        ("done", "Wydrukowano"),
+        ("failed", "Nie wydrukowano"),
+        ("expired", "Wygasło"),
+        ("unknown", "Do sprawdzenia"),
+        ("voided", "Anulowano"),
+    ] {
+        let mut view = receipt_view(1042, state)?;
+        view.job.receipt_number = Some("2187".into());
+        view.job.result = Some("Nieprawidłowa stawka VAT".into());
+        app.borrow_mut().event(Event::Jobs {
+            items: vec![view],
+            page: 1,
+            has_previous: false,
+            has_next: false,
+        });
+        app.borrow().sync();
+        let row = control(&window, "Zlecenie 1042", AccessibleRole::ListItem)?;
+        let description = row.accessible_description().ok_or("missing description")?;
+        for field in [status, "Łukasz Kowalski", "WA 12345", "2187"] {
+            assert!(description.contains(field), "{description} lacks {field}");
+        }
+        row.invoke_accessible_default_action();
+        let detail = window.get_receipt_detail();
+        for field in [
+            status,
+            "Paragon 2187 · 250,00 zł",
+            "Łukasz Kowalski",
+            "WA 12345",
+            "24.10.2025",
+            "Wymiana oleju · 2 · 200,00 zł",
+            "Karta płatnicza: 250,00 zł",
+            "Nieprawidłowa stawka VAT",
+            "Odliczone zaliczki:",
+            "VAT 23% · 50,00 zł",
+        ] {
+            assert!(detail.contains(field), "{detail} lacks {field}");
+        }
+        assert_eq!(window.get_receipt_selected(), 0);
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Keyboard events drive the real focused controls"
+)]
+fn receipt_list_keyboard_navigation_and_search_shortcuts() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture()?;
+    let items = (1..=30)
+        .map(|number| receipt_view(number, "queued"))
+        .collect::<Result<Vec<_>, _>>()?;
+    app.borrow_mut().event(Event::Jobs {
+        items,
+        page: 1,
+        has_previous: false,
+        has_next: false,
+    });
+    app.borrow().sync();
+    control(&window, "Zlecenie 1", AccessibleRole::ListItem)?.invoke_accessible_default_action();
+    for (key, selected) in [(Key::DownArrow, 1), (Key::End, 29), (Key::Home, 0)] {
+        window
+            .window()
+            .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+        assert_eq!(window.get_receipt_selected(), selected);
+    }
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::PageDown.into(),
+    });
+    let page = window.get_receipt_selected();
+    assert!(page > 0 && page < 29);
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::PageUp.into(),
+    });
+    assert_eq!(window.get_receipt_selected(), 0);
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyPressed { text: "f".into() });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyReleased { text: "f".into() });
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyPressed { text: "2".into() });
+    assert_eq!(
+        window.get_receipt_search(),
+        "2",
+        "Ctrl+F focuses server search"
+    );
+    assert_eq!(
+        window.get_receipts().row_count(),
+        30,
+        "typing never filters locally"
+    );
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+    assert_eq!(window.get_receipt_search(), "");
+    assert_eq!(window.get_receipts().row_count(), 30);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Server ordering and selection are operator-visible state"
+)]
+fn receipt_refresh_preserves_server_order_and_selected_job_identity() -> Result<(), Box<dyn Error>>
+{
+    let (_temporary, app, window) = fixture()?;
+    app.borrow_mut().event(Event::Jobs {
+        items: vec![
+            receipt_view(3, "done")?,
+            receipt_view(1, "done")?,
+            receipt_view(2, "done")?,
+        ],
+        page: 1,
+        has_previous: false,
+        has_next: true,
+    });
+    app.borrow().sync();
+    assert_eq!(
+        window
+            .get_receipts()
+            .iter()
+            .map(|row| row.order.to_string())
+            .collect::<Vec<_>>(),
+        ["Zlecenie 3", "Zlecenie 1", "Zlecenie 2"]
+    );
+    control(&window, "Zlecenie 2", AccessibleRole::ListItem)?.invoke_accessible_default_action();
+    app.borrow_mut().event(Event::Jobs {
+        items: vec![receipt_view(4, "done")?, receipt_view(2, "done")?],
+        page: 1,
+        has_previous: false,
+        has_next: false,
+    });
+    app.borrow().sync();
+    assert_eq!(window.get_receipt_selected(), 1);
+    assert!(window.get_receipt_detail().contains("Zlecenie 2"));
+    assert!(
+        ElementHandle::find_by_accessible_label(&window, "Wyjaśnij paragon")
+            .next()
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Connection and fiscal readiness are separate indicators"
+)]
+fn header_separates_holuto_connection_from_printer_readiness() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture()?;
+    assert_eq!(
+        control(&window, "Holuto", AccessibleRole::Text)?
+            .accessible_value()
+            .as_deref(),
+        Some("Nie połączono")
+    );
+    app.borrow_mut().model.running = true;
+    app.borrow().sync();
+    assert_eq!(
+        control(&window, "Holuto", AccessibleRole::Text)?
+            .accessible_value()
+            .as_deref(),
+        Some("Łączenie…")
+    );
+    ready(&app);
+    assert_eq!(
+        control(&window, "Holuto", AccessibleRole::Text)?
+            .accessible_value()
+            .as_deref(),
+        Some("Połączono")
+    );
+    assert_eq!(
+        control(&window, "Drukarka", AccessibleRole::Text)?
+            .accessible_value()
+            .as_deref(),
+        Some("Gotowa · Posnet TST0000000042")
+    );
+    app.borrow_mut()
+        .model
+        .device
+        .as_mut()
+        .ok_or("missing ready printer")?
+        .problems
+        .push("Brak papieru".into());
+    app.borrow().sync();
+    assert_eq!(
+        control(&window, "Drukarka", AccessibleRole::Text)?
+            .accessible_value()
+            .as_deref(),
+        Some("Niegotowa: Brak papieru")
+    );
+    app.borrow_mut().event(Event::Device {
+        status: None,
+        blocked: true,
+        report_unresolved: false,
+        orphaned_receipt: None,
+    });
+    app.borrow().sync();
+    assert_eq!(
+        control(&window, "Holuto", AccessibleRole::Text)?
+            .accessible_value()
+            .as_deref(),
+        Some("Połączono")
+    );
+    assert_eq!(
+        control(&window, "Drukarka", AccessibleRole::Text)?
+            .accessible_value()
+            .as_deref(),
+        Some("Zablokowana: wymaga rozstrzygnięcia")
+    );
     Ok(())
 }

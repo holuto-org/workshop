@@ -418,7 +418,8 @@ fn pair(path: &Path, code: String) -> Result<Response, Failure> {
             | Event::Connected { .. }
             | Event::Documents { .. }
             | Event::Device { .. }
-            | Event::HistoryChanged(_)
+            | Event::Jobs { .. }
+            | Event::JobsUnavailable
             | Event::CommandCompleted => {},
         }
     }

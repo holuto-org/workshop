@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     ffi::c_void,
+    fs,
     io::{self, Write as _},
     path::Path,
     thread,
@@ -79,6 +80,35 @@ pub(crate) fn run(state: &Path) -> Result<(), Box<dyn Error>> {
         delegate.respondsToSelector(sel!(applicationShouldTerminate:)),
         "the runtime delegate must expose the termination selector, not just a Rust callback"
     );
+    let evidence = state.join("accepted-job.json");
+    let accepted = Arc::clone(&holuto);
+    let state_dir = Arc::clone(&app.borrow().dir);
+    #[expect(
+        clippy::expect_used,
+        reason = "Native quit test must preserve server acceptance evidence before process exit"
+    )]
+    app.borrow_mut().settings_writer = Some(super::preferences::Writer::spawn(
+        state_dir,
+        move |completion| {
+            if let Ok(super::preferences::Outcome::Status(snapshot)) = &completion
+                && !snapshot.processing
+            {
+                fs::write(
+                    &evidence,
+                    serde_json::to_vec(&accepted.job(job)).expect("serialize accepted job"),
+                )
+                .expect("persist native-quit test evidence");
+            }
+            slint::invoke_from_event_loop(move || {
+                with_app(move |app| {
+                    app.capture();
+                    app.settings_saved(completion);
+                    Ok(())
+                });
+            })
+            .expect("deliver preferences completion");
+        },
+    )?);
     app.borrow_mut().start();
 
     let printer = Arc::clone(&simulator);

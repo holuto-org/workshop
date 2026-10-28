@@ -54,6 +54,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("ReceiptPayment", "JobPayment"),
         ("DeviceQueueForm", "QueueForm"),
         ("CursorPageAgentDocument", "Page"),
+        (
+            "TableSearchAgentDocumentFilterDocumentSearchDocumentSort",
+            "DocumentsSearch",
+        ),
+        ("DocumentSearchDocumentSearch", "DocumentsQuery"),
+        ("TableSearchAgentJobFilterJobSearchJobSort", "JobsSearch"),
+        ("JobSearchJobSearch", "JobSearch"),
+        ("CursorPageJobView", "JobsPage"),
+        ("CursorQuery", "DocumentsCursor"),
         ("AgentPaired", "Pairing"),
     ] {
         let _settings = settings.with_patch(schema, TypeSpacePatch::default().with_rename(name));
@@ -82,6 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "FiscalPrinterId",
         "PaymentAllocationId",
         "ServiceOrderId",
+        "ServiceOrderIdServiceOrderId",
     ] {
         let _settings = settings.with_replacement(name, "uuid::Uuid", iter::empty());
     }
@@ -94,6 +104,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("AgentDocument", "crate::documents::Document"), // Preserve integer-grosze conversion.
         ("TokenTokenKindAgent", "crate::settings::Token"), // Redact credentials.
         ("PairingInput", "String"),                      // Backend validates opaque pairing proofs.
+        ("Etag", "String"),       // Opaque server version, never interpreted.
+        ("SearchText", "String"), // `DocumentSearch::parse` validates it.
+        ("LicensePlate", "String"),
     ] {
         let _settings = settings.with_replacement(name, rust, iter::empty());
     }
@@ -135,6 +148,49 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("document page item no longer matches AgentDocument".into());
     }
     *item = json!({"$ref":"#/components/schemas/AgentDocument"});
+    // Reuse the same redacted Job for history and fiscal operations; etags stay server-side.
+    let job_view = schemas.get("JobView").ok_or("missing JobView")?.clone();
+    let item = schemas
+        .get_mut("CursorPage_JobView")
+        .and_then(|schema| schema.pointer_mut("/properties/items/items"))
+        .ok_or("missing job history page")?;
+    if item != &job_view {
+        return Err("job history page item no longer matches JobView".into());
+    }
+    *item = json!({"$ref":"#/components/schemas/JobView"});
+    replace_reference(
+        schemas
+            .get_mut("JobView")
+            .and_then(|schema| schema.pointer_mut("/properties/job"))
+            .ok_or("missing history job")?,
+        "Versioned_Job",
+        "Job",
+    )?;
+    let job_filter = schemas
+        .get("AgentJobFilter")
+        .ok_or("missing AgentJobFilter")?
+        .clone();
+    let filter = schemas
+        .get_mut("TableSearch_AgentJobFilter_JobSearch_JobSort")
+        .and_then(|schema| schema.pointer_mut("/properties/filter"))
+        .ok_or("missing job filter")?;
+    if filter != &job_filter {
+        return Err("job history filter no longer matches AgentJobFilter".into());
+    }
+    *filter = json!({"$ref":"#/components/schemas/AgentJobFilter"});
+    // Omitted sorting uses the service default, rather than serializing a client default.
+    for name in [
+        "TableSearch_AgentDocumentFilter_DocumentSearch_DocumentSort",
+        "TableSearch_AgentJobFilter_JobSearch_JobSort",
+    ] {
+        let _default = schemas
+            .get_mut(name)
+            .and_then(|schema| schema.pointer_mut("/properties/sort"))
+            .and_then(Value::as_object_mut)
+            .ok_or("missing table sorting")?
+            .remove("default")
+            .ok_or("missing table sorting default")?;
+    }
     // Send optional-nullable outbound fields as explicit nulls.
     for (name, fields) in [
         ("ResultForm", &["issuedAt", "receiptNumber", "result"][..]),
@@ -147,6 +203,21 @@ fn main() -> Result<(), Box<dyn Error>> {
             .ok_or("missing required fields")?;
         required.extend(fields.iter().map(|field| json!(field)));
     }
+    // The client always sends its page size, so the backend default is never needed.
+    let cursor = schemas
+        .get_mut("CursorQuery")
+        .and_then(Value::as_object_mut)
+        .ok_or("missing CursorQuery")?;
+    let _default = cursor
+        .get_mut("properties")
+        .and_then(|properties| properties.get_mut("limit"))
+        .and_then(Value::as_object_mut)
+        .ok_or("missing cursor limit")?
+        .remove("default")
+        .ok_or("missing cursor limit default")?;
+    if cursor.insert("required".into(), json!(["limit"])).is_some() {
+        return Err("CursorQuery gained required fields".into());
+    }
     let roots = [
         "Telemetry",
         "PrinterStatus",
@@ -154,6 +225,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         "ResultForm",
         "DeviceQueueForm",
         "CursorPage_AgentDocument",
+        "TableSearch_AgentDocumentFilter_DocumentSearch_DocumentSort",
+        "TableSearch_AgentJobFilter_JobSearch_JobSort",
+        "CursorPage_JobView",
         "AgentPaired",
         "PairForm",
     ];

@@ -11,7 +11,7 @@ use uuid::Uuid;
 use super::{ALLOCATION_ID, Holuto, JOB_ID, ORDER_ID, PRINTER_ID, job_json, telemetry, with};
 use crate::{
     api::{Api, ApiError, model::Job, queue_form},
-    documents::Document,
+    documents::{Document, DocumentSearch},
 };
 
 type TestResult = Result<(), Box<dyn StdError>>;
@@ -57,9 +57,9 @@ fn fake_request_contract_violations_fail_the_owning_test() {
 fn fake_response_contract_violations_fail_the_owning_test() {
     let outcome = catch_unwind(|| {
         let server = Holuto::new();
-        server.page(None, json!({"items": []}));
+        server.page(None, json!({"items": [], "nextCursor": null}));
         let api = api(&server).unwrap();
-        let _response = api.documents(None);
+        let _response = api.documents(None, None);
         drop(server);
     });
     assert!(
@@ -390,11 +390,11 @@ fn documents_exclude_only_the_jobs_that_make_each_document_ineligible() -> TestR
                     "allocationId": existing_allocation, "state": state
                 }),
             ));
-            let page = api(&server)?.documents(None)?;
+            let page = api(&server)?.documents(None, None)?;
             let expected = if hidden { json!([]) } else { json!([value]) };
             assert_eq!(
                 serde_json::to_value(page)?,
-                json!({"items": expected, "nextCursor": null}),
+                json!({"items": expected, "nextCursor": null, "previousCursor": null}),
                 "{name}/{state}"
             );
         }
@@ -431,34 +431,140 @@ fn queue_removes_documents_without_skipping_the_cursor_successor() -> TestResult
     fixtures.reverse();
     server.documents(fixtures);
     let api = api(&server)?;
-    let first = api.documents(None)?;
+    let first = api.documents(None, None)?;
     assert_eq!(serde_json::to_value(&first.items)?, json!(first_items));
     let cursor = first.next_cursor.ok_or("missing continuation")?;
-    assert_eq!(cursor, Uuid::from_u128(3000).to_string());
 
     api.queue(&queue_form(&serde_json::from_value(first_advance)?, None)?)?;
 
-    let continuation = api.documents(Some(&cursor))?;
+    let continuation = api.documents(Some(&cursor), None)?;
     assert_eq!(
-        serde_json::to_value(continuation)?,
-        json!({
-            "items": [next_advance, next_sale], "nextCursor": null
-        })
+        serde_json::to_value(&continuation.items)?,
+        json!([next_advance, next_sale])
     );
+    assert!(continuation.next_cursor.is_none());
+    let previous = continuation
+        .previous_cursor
+        .ok_or("missing previous cursor")?;
     let _removed = first_items.pop();
+    let back = api.documents(Some(&previous), None)?;
+    assert_eq!(serde_json::to_value(back.items)?, json!(first_items));
+    assert!(back.previous_cursor.is_none());
     first_items.push(next_advance);
-    let refreshed = api.documents(None)?;
+    let refreshed = api.documents(None, None)?;
+    assert_eq!(serde_json::to_value(refreshed.items)?, json!(first_items));
+    assert!(refreshed.next_cursor.is_some());
+    assert!(refreshed.previous_cursor.is_none());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "boundary assertions panic while setup and HTTP failures use Result"
+)]
+fn document_search_requires_every_word_and_pages_within_the_matches() -> TestResult {
+    let server = Holuto::new();
+    let named = |id: u128, number: i64, customer: &str| {
+        let mut value = document(Uuid::from_u128(id), None, "2025-10-16T10:00:00Z");
+        value["orderNumber"] = json!(number);
+        value["customerName"] = json!(customer);
+        value
+    };
+    let mut fixtures: Vec<_> = (1..=101_u8)
+        .map(|number| named(u128::from(number) + 5000, i64::from(number), "Jan Kowalski"))
+        .collect();
+    fixtures.extend([
+        named(4000, 500, "Anna Kowalska"),
+        named(5050, 600, "Janusz Nowak"),
+        named(9000, 700, "Jan Kowalski"),
+    ]);
+    // The last fixture is queued away: search never reveals an ineligible document.
+    server.documents(fixtures.clone());
+    let api = api(&server)?;
+    let queued: Document = serde_json::from_value(fixtures.pop().ok_or("missing fixture")?)?;
+    api.queue(&queue_form(&queued, None)?)?;
+    let search = DocumentSearch::parse("KOWAL, jan")?;
+    let first = api.documents(None, search.as_ref())?;
+    let numbers = |items: &[Document]| -> Vec<i64> {
+        items.iter().map(|document| document.order_number).collect()
+    };
+    assert_eq!(numbers(&first.items), (1..=100).collect::<Vec<_>>());
+    let cursor = first.next_cursor.ok_or("missing continuation")?;
+    let rest = api.documents(Some(&cursor), search.as_ref())?;
     assert_eq!(
-        serde_json::to_value(refreshed)?,
-        json!({
-            "items": first_items, "nextCursor": Uuid::from_u128(3001)
-        })
+        (numbers(&rest.items), rest.next_cursor),
+        (vec![101], None),
+        "the cursor continues the same search"
     );
-    let missing = api.documents(Some(&Uuid::from_u128(9999).to_string()))?;
+    let by_number = api.documents(None, DocumentSearch::parse("600")?.as_ref())?;
+    assert_eq!(numbers(&by_number.items), [600]);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "empty live windows must retain a path back through the production client"
+)]
+fn empty_document_windows_keep_the_opposite_direction_including_the_boundary() -> TestResult {
+    let server = Holuto::new();
+    let fixtures: Vec<_> = (1..=101)
+        .map(|id| document(Uuid::from_u128(id), None, "2026-10-16T10:00:00Z"))
+        .collect();
+    server.documents(fixtures);
+    let api = api(&server)?;
+    let first = api.documents(None, None)?;
+    let forward = first.next_cursor.ok_or("missing forward cursor")?;
+    let last = api.documents(Some(&forward), None)?;
+    let backward = last.previous_cursor.ok_or("missing backward cursor")?;
+    let last_document = last.items.first().ok_or("missing last document")?;
+    api.queue(&queue_form(last_document, None)?)?;
+    let empty = api.documents(Some(&forward), None)?;
+    assert_eq!(empty.items, []);
+    assert!(empty.next_cursor.is_none());
+    let back = api.documents(
+        Some(
+            &empty
+                .previous_cursor
+                .ok_or("missing reverse path from empty window")?,
+        ),
+        None,
+    )?;
+    assert_eq!(back.items.len(), 100);
     assert_eq!(
-        serde_json::to_value(missing)?,
-        json!({"items": [], "nextCursor": null})
+        back.items.first().ok_or("missing first document")?.order_id,
+        Uuid::from_u128(1)
     );
+    assert_eq!(
+        back.items
+            .last()
+            .ok_or("missing boundary document")?
+            .order_id,
+        Uuid::from_u128(100)
+    );
+
+    // Make the queued sale available again, but remove the entire earlier window.
+    let taken = api.take()?.ok_or("missing queued job")?;
+    server.set_job(taken.id, &json!({"state": "failed"}));
+    server.documents(vec![document(
+        Uuid::from_u128(101),
+        None,
+        "2026-10-16T10:00:00Z",
+    )]);
+    let empty = api.documents(Some(&backward), None)?;
+    assert_eq!(empty.items, []);
+    assert!(empty.previous_cursor.is_none());
+    let next = api.documents(
+        Some(
+            &empty
+                .next_cursor
+                .ok_or("missing forward path from empty window")?,
+        ),
+        None,
+    )?;
+    assert_eq!(next.items.len(), 1);
+    assert_eq!(next.items[0].order_id, Uuid::from_u128(101));
     Ok(())
 }
 
@@ -720,53 +826,6 @@ fn backend_queue_rejects_allocation_kind_mismatch_without_creating_work() -> Tes
     clippy::panic_in_result_fn,
     reason = "HTTP boundary assertions use Result for setup"
 )]
-fn backend_documents_validate_limit_and_default_to_fifty() -> TestResult {
-    let server = Holuto::new();
-    let _api = api(&server)?;
-    server.documents(
-        (1..=101)
-            .map(|id| document(Uuid::from_u128(id), None, "2026-10-16T10:00:00Z"))
-            .collect(),
-    );
-    for limit in ["0", "101", "-1", "1.5", "no", ""] {
-        let (status, ..) = raw(
-            &server,
-            "GET",
-            &format!("/agent/documents?limit={limit}"),
-            Some(b"DEM0000000001"),
-            Some(server.token()),
-            &Value::Null,
-        )?;
-        assert_eq!(status, 400, "limit={limit}");
-    }
-    for (query, count) in [("", 50), ("?limit=1", 1), ("?limit=100", 100)] {
-        let (status, _, body) = raw(
-            &server,
-            "GET",
-            &format!("/agent/documents{query}"),
-            Some(b"DEM0000000001"),
-            Some(server.token()),
-            &Value::Null,
-        )?;
-        assert_eq!(status, 200);
-        let expected: Vec<_> = (1..=count)
-            .map(|id| document(Uuid::from_u128(id), None, "2026-10-16T10:00:00Z"))
-            .collect();
-        assert_eq!(
-            body,
-            json!({
-                "items":expected, "nextCursor":Uuid::from_u128(count).to_string()
-            })
-        );
-    }
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "HTTP boundary assertions use Result for setup"
-)]
 fn backend_result_normalizes_code_and_compares_replays_at_microsecond_precision() -> TestResult {
     let server = Holuto::new();
     server.insert(job_json());
@@ -787,6 +846,11 @@ fn backend_result_normalizes_code_and_compares_replays_at_microsecond_precision(
     assert_eq!(status, 200);
     assert_eq!(body["receiptNumber"], "AB 123 4");
     assert_eq!(server.job(JOB_ID)["receiptNumber"], "AB 123 4");
+    assert_eq!(body["issuedAt"], "2025-01-02T12:00:00.123456Z");
+    assert_eq!(
+        server.job(JOB_ID)["issuedAt"],
+        "2025-01-02T12:00:00.123456Z"
+    );
     form["receiptNumber"] = json!("AB 123 4");
     form["issuedAt"] = json!("2025-01-02T12:00:00.123456001Z");
     assert_eq!(
@@ -886,5 +950,344 @@ fn backend_jobs_of_another_printer_are_invisible_and_never_block_take() -> TestR
         Err(ApiError::Status { status: 404, .. })
     ));
     assert_eq!(api.take()?.map(|job| job.id), Some(own));
+    Ok(())
+}
+
+/// `raw` cannot read the chunked bodies of full history windows.
+fn jobs_search(server: &Holuto, body: &Value) -> Result<(u16, Value), Box<dyn StdError>> {
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .proxy(None)
+            .build(),
+    );
+    let mut response = agent
+        .post(format!("{}/agent/jobs/search", server.url()))
+        .header("Authorization", format!("Bearer {}", server.token()))
+        .header("X-Device-Unique-Number", "DEM0000000001")
+        .send_json(body)?;
+    let status = response.status().as_u16();
+    let body = serde_json::from_reader(response.body_mut().as_reader())?;
+    Ok((status, body))
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP assertions use Result for setup and inspect the returned nonempty window"
+)]
+fn backend_jobs_history_scopes_all_states_and_keeps_metadata_outside_the_job() -> TestResult {
+    let server = Holuto::new();
+    let _api = api(&server)?;
+    for (index, state) in STATES.into_iter().chain(["voided"]).enumerate() {
+        let issued_at = ["done", "voided"]
+            .contains(&state)
+            .then_some("2025-01-02T12:00:00Z");
+        server.insert(with(
+            job_json(),
+            &json!({
+                "id": Uuid::from_u128(100 + u128::try_from(index)?), "state": state,
+                "issuedAt": issued_at
+            }),
+        ));
+    }
+    server.insert(with(
+        job_json(),
+        &json!({"id": Uuid::from_u128(999), "printerId": OTHER_PRINTER}),
+    ));
+    server.set_job_metadata(
+        Uuid::from_u128(106),
+        &json!({"customerName": "Łucja Żółć", "vehiclePlate": "WA12345", "source": "staff"}),
+    );
+    let (status, page) = jobs_search(
+        &server,
+        &json!({"filter": {"state": null, "orderId": null}, "search": {}, "cursor": {}}),
+    )?;
+    assert_eq!(status, 200);
+    let items = page["items"].as_array().ok_or("missing jobs")?;
+    let ids: Vec<_> = items.iter().map(|item| item["job"]["id"].clone()).collect();
+    assert_eq!(
+        ids,
+        json!([
+            Uuid::from_u128(106),
+            Uuid::from_u128(105),
+            Uuid::from_u128(104),
+            Uuid::from_u128(103),
+            Uuid::from_u128(102),
+            Uuid::from_u128(101),
+            Uuid::from_u128(100)
+        ])
+        .as_array()
+        .ok_or("expected ids")?
+        .clone()
+    );
+    assert_eq!(items[0]["customerName"], "Łucja Żółć");
+    assert_eq!(items[0]["vehiclePlate"], "WA12345");
+    assert_eq!(items[0]["job"]["etag"], "0123456789abcdef0123456789abcdef");
+    assert_eq!(items[0]["job"]["state"], "voided");
+    for item in items {
+        assert!(item.get("issuedAt").is_none());
+        assert!(item.get("customerName").is_some());
+        assert!(item.get("vehiclePlate").is_some());
+        assert_eq!(item["source"], "staff");
+        assert!(item["job"].get("customerName").is_none());
+        assert!(item["job"].get("issuedAt").is_some());
+    }
+    assert_eq!(page["nextCursor"], Value::Null);
+    assert_eq!(page["previousCursor"], Value::Null);
+    let (status, filtered) = jobs_search(
+        &server,
+        &json!({"filter": {"state": "expired", "orderId": ORDER_ID}, "search": {}, "cursor": {}}),
+    )?;
+    assert_eq!(status, 200);
+    assert_eq!(filtered["items"].as_array().ok_or("missing jobs")?.len(), 1);
+    assert_eq!(filtered["items"][0]["job"]["state"], "expired");
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_jobs_search_folds_accents_and_requires_every_literal_word() -> TestResult {
+    let server = Holuto::new();
+    let _api = api(&server)?;
+    server.insert(with(job_json(), &json!({"receiptNumber": "123/ABC"})));
+    server.set_job_metadata(
+        JOB_ID,
+        &json!({"customerName": "Łucja Żółć", "vehiclePlate": "WA12345"}),
+    );
+    for (q, count) in [
+        ("lucja", 1),
+        ("zolc", 1),
+        ("wa12345", 1),
+        ("123/abc", 1),
+        ("10", 1),
+        ("OLEJU", 1),
+        ("lucja,oleju", 1),
+        ("lucja missing", 0),
+        ("%", 0),
+        ("_", 0),
+    ] {
+        let (status, page) = jobs_search(
+            &server,
+            &json!({"filter": {}, "search": {"q": q}, "cursor": {}}),
+        )?;
+        assert_eq!(status, 200, "{q}");
+        assert_eq!(
+            page["items"].as_array().ok_or("missing jobs")?.len(),
+            count,
+            "{q}"
+        );
+    }
+    let debug = format!("{:?}", server.requests());
+    assert!(!debug.contains("lucja"));
+    assert!(!debug.contains("wa12345"));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_jobs_cursor_navigates_both_directions_and_binds_criteria() -> TestResult {
+    let server = Holuto::new();
+    let _api = api(&server)?;
+    for id in [100, 101, 102] {
+        server.insert(with(job_json(), &json!({"id": Uuid::from_u128(id)})));
+    }
+    let mut form = json!({
+        "filter": {}, "search": {}, "sort": ["id"], "cursor": {"limit": 1}
+    });
+    let (status, first) = jobs_search(&server, &form)?;
+    assert_eq!(status, 200);
+    assert_eq!(first["items"][0]["job"]["id"], json!(Uuid::from_u128(100)));
+    assert_eq!(first["previousCursor"], Value::Null);
+    let token = first["nextCursor"].as_str().ok_or("missing next cursor")?;
+    form["cursor"]["cursor"] = json!(token);
+    let (status, second) = jobs_search(&server, &form)?;
+    assert_eq!(status, 200);
+    assert_eq!(second["items"][0]["job"]["id"], json!(Uuid::from_u128(101)));
+    form["cursor"]["cursor"] = second["previousCursor"].clone();
+    let (status, previous) = jobs_search(&server, &form)?;
+    assert_eq!(status, 200);
+    assert_eq!(
+        previous["items"][0]["job"]["id"],
+        json!(Uuid::from_u128(100))
+    );
+    form["cursor"]["cursor"] = json!(token);
+    for changes in [
+        json!({"filter": {"state": "done"}}),
+        json!({"filter": {"orderId": OTHER_ORDER}}),
+        json!({"search": {"q": "oleju"}}),
+        json!({"sort": ["-id"]}),
+    ] {
+        let changed = with(form.clone(), &changes);
+        let (status, body) = jobs_search(&server, &changed)?;
+        assert_eq!(status, 400);
+        assert_eq!(body["code"], "fiscal_invalid_input");
+        assert_eq!(body["errors"][0]["pointer"], "/cursor/cursor");
+        assert_eq!(body["errors"][0]["code"], "invalid_cursor");
+    }
+    form["cursor"]["cursor"] = json!("not-a-cursor");
+    assert_eq!(jobs_search(&server, &form)?.0, 400);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_jobs_search_refuses_invalid_criteria_without_mutating_jobs() -> TestResult {
+    let server = Holuto::new();
+    let _api = api(&server)?;
+    server.insert(job_json());
+    for (changes, pointer, code) in [
+        (json!({"search": {"q": ""}}), "/search/q", "blank"),
+        (json!({"search": {"q": " \u{3000} "}}), "/search/q", "blank"),
+        (
+            json!({"search": {"q": "x".repeat(129)}}),
+            "/search/q",
+            "too_long",
+        ),
+        (
+            json!({"cursor": {"limit": 0}}),
+            "/cursor/limit",
+            "invalid_page_size",
+        ),
+        (
+            json!({"cursor": {"limit": 101}}),
+            "/cursor/limit",
+            "invalid_page_size",
+        ),
+        (
+            json!({"cursor": {"limit": -1}}),
+            "/cursor/limit",
+            "invalid_page_size",
+        ),
+        (
+            json!({"cursor": {"limit": 1.5}}),
+            "/cursor/limit",
+            "invalid_page_size",
+        ),
+        (
+            json!({"cursor": {"limit": "no"}}),
+            "/cursor/limit",
+            "invalid_page_size",
+        ),
+        (
+            json!({"filter": {"printerId": PRINTER_ID}}),
+            "/filter/printerId",
+            "unknown_field",
+        ),
+        (json!({"cursor": null}), "/cursor", "required"),
+    ] {
+        let form = with(json!({"filter": {}, "search": {}, "cursor": {}}), &changes);
+        let (status, body) = jobs_search(&server, &form)?;
+        assert_eq!(status, 400);
+        assert_eq!(body["code"], "fiscal_invalid_input");
+        assert_eq!(body["errors"][0]["pointer"], pointer);
+        assert_eq!(body["errors"][0]["code"], code);
+        assert_eq!(server.job(JOB_ID), job_json());
+    }
+    for q in ["x".to_owned(), "x".repeat(128)] {
+        assert_eq!(
+            jobs_search(
+                &server,
+                &json!({"filter": {}, "search": {"q": q}, "cursor": {"limit": 100}}),
+            )?
+            .0,
+            200
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_jobs_history_exposes_report_issue_time_and_device_source() -> TestResult {
+    let server = Holuto::new();
+    let api = api(&server)?;
+    let document: Document =
+        serde_json::from_value(document(ORDER_ID, None, "2026-10-16T10:00:00Z"))?;
+    api.queue(&queue_form(&document, None)?)?;
+    let taken = api.take()?.ok_or("missing job")?;
+    assert_eq!(taken.issued_at, None);
+    let form = json!({
+        "attempt": taken.attempt, "state": "done", "receiptNumber": "456",
+        "issuedAt": "2025-01-02T12:00:00Z", "result": null
+    });
+    assert_eq!(
+        raw(
+            &server,
+            "POST",
+            &format!("/agent/jobs/{}/result", taken.id),
+            Some(b"DEM0000000001"),
+            Some(server.token()),
+            &form,
+        )?
+        .0,
+        200
+    );
+    let (status, page) = jobs_search(&server, &json!({"filter": {}, "search": {}, "cursor": {}}))?;
+    assert_eq!(status, 200);
+    assert_eq!(page["items"][0]["job"]["issuedAt"], "2025-01-02T12:00:00Z");
+    assert_eq!(page["items"][0]["source"], "device");
+    assert_eq!(page["items"][0]["job"]["receiptNumber"], "456");
+    assert!(page["items"][0].get("issuedAt").is_none());
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_jobs_sorting_and_default_window_use_created_at_then_id() -> TestResult {
+    let server = Holuto::new();
+    let _api = api(&server)?;
+    for id in 100..=200 {
+        server.insert(with(job_json(), &json!({"id": Uuid::from_u128(id)})));
+    }
+    // Timestamp comparison must compare instants, not their textual UTC offsets.
+    server.set_job(
+        Uuid::from_u128(100),
+        &json!({"createdAt": "2026-10-16T12:00:00+01:00"}),
+    );
+    let (_, page) = jobs_search(&server, &json!({"filter": {}, "search": {}, "cursor": {}}))?;
+    assert_eq!(page["items"].as_array().ok_or("missing jobs")?.len(), 50);
+    assert_eq!(page["items"][0]["job"]["id"], json!(Uuid::from_u128(100)));
+    assert_eq!(page["items"][1]["job"]["id"], json!(Uuid::from_u128(200)));
+    assert!(page["nextCursor"].is_string());
+    for (sort, expected) in [
+        (json!(["createdAt", "id"]), 101),
+        (json!(["-createdAt", "id"]), 100),
+        (json!(["-id"]), 200),
+    ] {
+        let (status, page) = jobs_search(
+            &server,
+            &json!({"filter": {}, "search": {}, "sort": sort, "cursor": {"limit": 1}}),
+        )?;
+        assert_eq!(status, 200);
+        assert_eq!(
+            page["items"][0]["job"]["id"],
+            json!(Uuid::from_u128(expected))
+        );
+    }
+    let (_, page) = jobs_search(
+        &server,
+        &json!({"filter": {"orderId": OTHER_ORDER}, "search": {}, "cursor": {"limit": 100}}),
+    )?;
+    assert_eq!(
+        page,
+        json!({"items": [], "nextCursor": null, "previousCursor": null})
+    );
     Ok(())
 }

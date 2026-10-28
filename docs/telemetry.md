@@ -74,10 +74,11 @@ scrubbed/allowlisted; `before_send` alone does not cover every signal
 
 ## What structured diagnostics never send
 
-- Customer/company/person names, buyer NIP, receipt line names/text, amounts,
-  prices, quantities or payment/deduction payloads.
+- Customer/company/person names, vehicle plates, search text, buyer NIP,
+  receipt line names/text, amounts, prices, quantities or payment/deduction
+  payloads.
 - Pairing codes, the device token, authorization headers, passwords, arbitrary
-  server response/problem bodies, settings or journal/history contents.
+  server response/problem bodies, settings or journal contents.
 - Actual API URL path/query, opaque pagination cursor, hostname/server name,
   user-account identity, home directory or local state path. HTTP spans carry
   fixed route templates instead.

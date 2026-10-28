@@ -100,7 +100,7 @@ how to build the test.
   never global `set_var`. Assert the child's exact outcome and stored state,
   not runner text such as `1 passed`: a filter matching no test also passes.
 - **Files:** a temp directory per test; current-format literal fixtures for
-  settings/journal/history; inject portable failures (not chmod under root);
+  settings/journal; inject portable failures (not chmod under root);
   assert the previous durable record survives.
 
 Never claim a check ran unless its result was observed.

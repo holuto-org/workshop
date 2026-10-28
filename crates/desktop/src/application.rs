@@ -7,7 +7,6 @@ mod preferences;
 use std::{cell::RefCell, collections::VecDeque, fmt::Display, mem, rc::Rc, sync::Arc};
 
 use agent::{
-    history,
     settings::Settings,
     status::Snapshot,
     store::StateDir,
@@ -133,7 +132,6 @@ impl Application {
     }
 
     fn launch(&mut self) -> Result<(), slint::PlatformError> {
-        self.reload_history();
         // A block outlives restarts; `workshop status` must show it before Start.
         let block = worker::journal_block(&self.dir);
         self.model.blocked = block.blocked;
@@ -209,10 +207,10 @@ impl Application {
                 Ok(())
             });
         });
-        window.on_sort_history(|column, descending| {
+        window.on_selected_receipt(|index| {
             with_app(move |app| {
                 app.capture();
-                app.model.sort_history(column, descending);
+                app.model.select_receipt(index);
                 Ok(())
             });
         });
@@ -426,8 +424,35 @@ impl Application {
             Action::Start => self.start(),
             Action::Stop => return self.stop(false),
             Action::Quit => return self.stop(true),
+            // Pairing workers take no commands.
+            Action::Search | Action::JobsSearch => {
+                if self.model.running
+                    && let Some(command) = self
+                        .model
+                        .search_command(matches!(action, Action::JobsSearch))
+                {
+                    self.submit(command);
+                }
+            },
+            Action::OpenManual => self.model.manual = true,
+            Action::CloseManual => self.model.manual = false,
+            Action::JobsFirstPage => {
+                if self.model.connected {
+                    self.submit(Command::JobsFirstPage);
+                }
+            },
+            Action::JobsPreviousPage => {
+                if self.model.jobs_previous_enabled() {
+                    self.submit(Command::JobsPreviousPage);
+                }
+            },
+            Action::JobsNextPage => {
+                if self.model.jobs_next_enabled() {
+                    self.submit(Command::JobsNextPage);
+                }
+            },
             Action::PreviousPage => {
-                if self.model.connected && self.model.page > 1 {
+                if self.model.connected && self.model.has_previous {
                     self.submit(Command::PreviousPage);
                 }
             },
@@ -483,18 +508,19 @@ impl Application {
             self.model.say(NATIVE_QUIT_ERROR.into(), Tone::Error);
             return;
         }
+        self.model
+            .say("Łączenie z drukarką i Holuto…".into(), Tone::Info);
         match Worker::spawn(
             Arc::clone(&self.dir),
             self.model.settings.clone(),
             Arc::clone(&self.link),
+            self.model.initial_searches(),
             Self::worker_event,
         ) {
             Ok(worker) => {
                 self.worker = Some(worker);
                 self.model.running = true;
                 self.model.stopping = false;
-                self.model
-                    .say("Łączenie z drukarką i Holuto…".into(), Tone::Info);
                 self.publish_status();
             },
             Err(error) => self.model.say(error.to_string(), Tone::Error),
@@ -558,15 +584,6 @@ impl Application {
         Ok(())
     }
 
-    fn reload_history(&mut self) {
-        match history::load(&self.dir) {
-            Ok(history) => self.model.set_history(history),
-            Err(error) => self
-                .model
-                .say(format!("Nie można odczytać historii: {error}"), Tone::Error),
-        }
-    }
-
     fn event(&mut self, event: Event) {
         let publish = matches!(
             &event,
@@ -600,13 +617,16 @@ impl Application {
                 self.model.vendor = Some(vendor);
                 self.model.printer_id = Some(printer_id);
                 self.model.settings.port = port;
-                self.model.tab = Tab::Documents;
+                self.model.tab = Tab::Receipts;
             },
             Event::Documents {
                 items,
                 page,
+                has_previous,
                 has_next,
-            } => self.model.set_documents(items, page, has_next),
+            } => self
+                .model
+                .set_documents(items, page, has_previous, has_next),
             Event::Device {
                 status,
                 blocked,
@@ -621,7 +641,13 @@ impl Application {
                 self.model.report_unresolved = report_unresolved;
                 self.model.orphaned_receipt = orphaned_receipt;
             },
-            Event::HistoryChanged(history) => self.model.set_history(history),
+            Event::Jobs {
+                items,
+                page,
+                has_previous,
+                has_next,
+            } => self.model.set_jobs(items, page, has_previous, has_next),
+            Event::JobsUnavailable => self.model.jobs_unavailable(),
             Event::CommandCompleted => self.model.command_completed(),
             Event::Stopped => {
                 // Operation completion precedes Stopped; joining cannot interrupt printer I/O.

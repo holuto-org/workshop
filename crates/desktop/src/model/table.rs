@@ -2,15 +2,15 @@
 
 use std::{cmp::Ordering, mem, rc::Rc};
 
-use agent::{documents::Document, history::HistoryEntry};
-use fiscal::money::{Grosze, zloty};
+use agent::documents::Document;
+use fiscal::money::zloty;
 use jiff::{Timestamp, tz::TimeZone};
 use slint::{
     Model as _, ModelRc, SharedString, VecModel,
     language::{SortOrder, StandardListViewItem, TableColumn},
 };
 
-/// Must match both Slint column lists; `Row::cells` uses the same order.
+/// Must match the document column list; `Row::cells` uses the same order.
 const COLUMNS: usize = 5;
 
 pub(crate) trait Row: PartialEq {
@@ -142,80 +142,17 @@ impl Row for Document {
         match column {
             0 => self.order_number.cmp(&other.order_number),
             1 => self.kind.label().cmp(other.kind.label()),
-            2 => option_order(
+            2 => match (
                 self.customer_name.as_deref(),
                 other.customer_name.as_deref(),
-                text_order,
-            ),
+            ) {
+                (Some(a), Some(b)) => text_order(a, b),
+                (a, b) => a.is_some().cmp(&b.is_some()),
+            },
             3 => self.amount.cmp(&other.amount),
             4 => self.latest_at.cmp(&other.latest_at),
             _ => Ordering::Equal,
         }
-    }
-}
-
-impl Row for HistoryEntry {
-    fn cells(&self) -> [SharedString; COLUMNS] {
-        [
-            self.items.join(", ").into(),
-            timestamp_label(self.printed_at).into(),
-            self.receipt_number.as_deref().unwrap_or("—").into(),
-            self.total.to_string().into(),
-            if self.payments.is_empty() {
-                "—".into()
-            } else {
-                self.payments
-                    .iter()
-                    .map(|(form, amount)| format!("{}: {amount}", form.label()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-                    .into()
-            },
-        ]
-    }
-
-    fn compare(&self, other: &Self, column: usize) -> Ordering {
-        match column {
-            0 => self
-                .items
-                .iter()
-                .zip(&other.items)
-                .map(|(a, b)| text_order(a, b))
-                .find(|order| order.is_ne())
-                .unwrap_or_else(|| self.items.len().cmp(&other.items.len())),
-            1 => self.printed_at.cmp(&other.printed_at),
-            2 => option_order(
-                self.receipt_number.as_deref(),
-                other.receipt_number.as_deref(),
-                receipt_order,
-            ),
-            3 => self.total.cmp(&other.total),
-            4 => payments(self).cmp(payments(other)),
-            _ => Ordering::Equal,
-        }
-    }
-}
-
-fn payments(entry: &HistoryEntry) -> impl Iterator<Item = (&'static str, Grosze)> {
-    entry
-        .payments
-        .iter()
-        .map(|(form, amount)| (form.label(), *amount))
-}
-
-fn option_order(a: Option<&str>, b: Option<&str>, order: fn(&str, &str) -> Ordering) -> Ordering {
-    match (a, b) {
-        (Some(a), Some(b)) => order(a, b),
-        _ => a.is_some().cmp(&b.is_some()),
-    }
-}
-
-fn receipt_order(a: &str, b: &str) -> Ordering {
-    match (a.parse::<u64>(), b.parse::<u64>()) {
-        (Ok(x), Ok(y)) => x.cmp(&y).then_with(|| a.cmp(b)),
-        (Ok(_), Err(_)) => Ordering::Less,
-        (Err(_), Ok(_)) => Ordering::Greater,
-        (Err(_), Err(_)) => text_order(a, b),
     }
 }
 
@@ -243,7 +180,7 @@ fn letter(character: char) -> (char, u8) {
     }
 }
 
-fn timestamp_label(timestamp: Timestamp) -> String {
+pub(super) fn timestamp_label(timestamp: Timestamp) -> String {
     timestamp
         .to_zoned(TimeZone::system())
         .strftime("%d.%m.%Y %H:%M")

@@ -1,12 +1,14 @@
+#[path = "model/receipts.rs"]
+mod receipts;
 #[path = "model/table.rs"]
 mod table;
 
 use agent::{
-    documents::{BuyerNip, Document},
-    history::HistoryEntry,
+    api::model::JobView,
+    documents::{BuyerNip, Document, DocumentSearch},
     settings::{BAUD_RATES, Settings, Token},
     status::Snapshot,
-    worker::{Command, Tone},
+    worker::{Command, Searches, Tone},
 };
 use fiscal::{
     device::{Device, Vendor},
@@ -21,29 +23,26 @@ use crate::ui::{Action, AppWindow};
 /// Must match `AppWindow`'s tab order.
 #[derive(Clone, Copy)]
 pub(crate) enum Tab {
-    Documents,
+    Receipts,
     Reports,
-    History,
     Settings,
 }
 
 impl Tab {
     const fn from_index(index: i32) -> Option<Self> {
         match index {
-            0 => Some(Self::Documents),
+            0 => Some(Self::Receipts),
             1 => Some(Self::Reports),
-            2 => Some(Self::History),
-            3 => Some(Self::Settings),
+            2 => Some(Self::Settings),
             _ => None,
         }
     }
 
     const fn index(self) -> i32 {
         match self {
-            Self::Documents => 0,
+            Self::Receipts => 0,
             Self::Reports => 1,
-            Self::History => 2,
-            Self::Settings => 3,
+            Self::Settings => 2,
         }
     }
 }
@@ -68,9 +67,13 @@ pub(crate) struct Model {
     pub(crate) pairing_code: String,
     pub(crate) pairing: bool,
     documents: Table<Document>,
-    history: Table<HistoryEntry>,
+    receipts: receipts::Receipts,
+    receipt_search: String,
+    applied_receipt_search: Option<DocumentSearch>,
+    pub(crate) manual: bool,
     pub(crate) selected: Option<usize>,
     pub(crate) page: usize,
+    pub(crate) has_previous: bool,
     pub(crate) has_next: bool,
     pub(crate) running: bool,
     pub(crate) stopping: bool,
@@ -86,6 +89,11 @@ pub(crate) struct Model {
     pub(crate) orphaned_receipt: Option<String>,
     pub(crate) tab: Tab,
     pub(crate) nip: String,
+    /// The open receipt confirmation rejected the typed NIP.
+    nip_invalid: bool,
+    /// Typed search text; the worker lists `applied_search`.
+    search: String,
+    applied_search: Option<DocumentSearch>,
     pub(crate) message: String,
     pub(crate) tone: Tone,
     /// Month starts, newest first.
@@ -112,9 +120,13 @@ impl Model {
             pairing_code: String::new(),
             pairing: false,
             documents: Table::new(),
-            history: Table::new(),
+            receipts: receipts::Receipts::new(),
+            receipt_search: String::new(),
+            applied_receipt_search: None,
+            manual: false,
             selected: None,
             page: 1,
+            has_previous: false,
             has_next: false,
             running: false,
             stopping: false,
@@ -127,9 +139,12 @@ impl Model {
             blocked: false,
             report_unresolved: false,
             orphaned_receipt: None,
-            tab: Tab::Settings,
+            tab: Tab::Receipts,
             nip: String::new(),
-            message: "Wpisz kod parowania drukarki z Holuto.".into(),
+            nip_invalid: false,
+            search: String::new(),
+            applied_search: None,
+            message: String::new(),
             tone: Tone::Info,
             months,
             month_index: 0,
@@ -156,7 +171,13 @@ impl Model {
         self.documents.items()
     }
 
-    pub(crate) fn set_documents(&mut self, documents: Vec<Document>, page: usize, has_next: bool) {
+    pub(crate) fn set_documents(
+        &mut self,
+        documents: Vec<Document>,
+        page: usize,
+        has_previous: bool,
+        has_next: bool,
+    ) {
         let previous = self.documents.set(documents);
         self.selected = self
             .selected
@@ -168,11 +189,35 @@ impl Model {
                     .position(|new| new.same_document(old))
             });
         self.page = page;
+        self.has_previous = has_previous;
         self.has_next = has_next;
     }
 
-    pub(crate) fn set_history(&mut self, history: Vec<HistoryEntry>) {
-        let _previous = self.history.set(history);
+    pub(crate) fn set_jobs(
+        &mut self,
+        items: Vec<JobView>,
+        page: usize,
+        has_previous: bool,
+        has_next: bool,
+    ) {
+        self.receipts
+            .set(items, page, has_previous, has_next, self.today);
+    }
+
+    pub(crate) fn jobs_unavailable(&mut self) {
+        self.receipts.unavailable(self.today);
+    }
+
+    pub(crate) const fn jobs_previous_enabled(&self) -> bool {
+        self.connected && !self.receipts.unavailable && self.receipts.has_previous
+    }
+
+    pub(crate) const fn jobs_next_enabled(&self) -> bool {
+        self.connected && !self.receipts.unavailable && self.receipts.has_next
+    }
+
+    pub(crate) fn select_receipt(&mut self, index: i32) {
+        self.receipts.select(index);
     }
 
     pub(crate) fn stopped(&mut self) {
@@ -183,7 +228,42 @@ impl Model {
         // Recheck readiness on reconnect; retain the persisted fiscal block.
         self.device = None;
         // A new worker pages from the start; never offer a stopped session's rows.
-        self.set_documents(Vec::new(), 1, false);
+        self.set_documents(Vec::new(), 1, false, false);
+        self.receipts.set(Vec::new(), 1, false, false, self.today);
+    }
+
+    pub(crate) fn initial_searches(&mut self) -> Searches {
+        let _documents = self.search_command(false);
+        let _receipts = self.search_command(true);
+        Searches {
+            documents: self.applied_search.clone(),
+            jobs: self.applied_receipt_search.clone(),
+        }
+    }
+
+    /// The worker command listing the typed document or receipt search, unless it is already
+    /// listed; invalid text is reported and keeps the listed search.
+    pub(crate) fn search_command(&mut self, receipts: bool) -> Option<Command> {
+        let (text, applied) = if receipts {
+            (&self.receipt_search, &mut self.applied_receipt_search)
+        } else {
+            (&self.search, &mut self.applied_search)
+        };
+        match DocumentSearch::parse(text) {
+            Ok(search) if search == *applied => None,
+            Ok(search) => {
+                applied.clone_from(&search);
+                Some(if receipts {
+                    Command::JobsSearch(search)
+                } else {
+                    Command::Search(search)
+                })
+            },
+            Err(error) => {
+                self.say(error.to_string(), Tone::Error);
+                None
+            },
+        }
     }
 
     pub(crate) fn status(&self, updated_at: Timestamp) -> Snapshot {
@@ -238,22 +318,16 @@ impl Model {
         }
     }
 
-    pub(crate) fn sort_history(&mut self, column: i32, descending: bool) {
-        if let Some(sort) = Sort::new(column, descending) {
-            let _selected = self.history.sort(sort, None);
-        }
-    }
-
     pub(crate) fn initialize(&mut self, window: &AppWindow, today: Date) {
         let _rolled = self.roll_months(today);
         window.set_baud_rates(strings(BAUD_RATES.iter().map(u32::to_string)));
         window.set_months(strings(self.months.iter().copied().map(month_label)));
         window.set_documents(self.documents.rows());
-        window.set_history(self.history.rows());
         self.sync(window);
     }
 
     pub(crate) fn capture(&mut self, window: &AppWindow, today: Date) {
+        let day_changed = self.today != today;
         self.today = today;
         // Slint 1.18 permits assistive edits on disabled controls; guard settings here too.
         if !self.running && !self.saving && !self.pairing {
@@ -273,6 +347,11 @@ impl Model {
         }
         self.settings.telemetry_enabled = window.get_telemetry_enabled();
         self.nip = window.get_nip().to_string();
+        self.search = window.get_search().to_string();
+        self.receipt_search = window.get_receipt_search().to_string();
+        if day_changed {
+            self.receipts.refresh(today);
+        }
         self.month_index = usize::try_from(window.get_month_index()).unwrap_or_default();
         // Tray sessions can span months.
         if self.roll_months(today) {
@@ -296,20 +375,39 @@ impl Model {
         window.set_queue_enabled(self.queue_enabled() && self.selected.is_some());
         window.set_reports_enabled(self.reports_enabled());
         window.set_daily_report_enabled(self.daily_report_enabled());
-        window.set_previous_enabled(self.connected && self.page > 1);
+        window.set_previous_enabled(self.connected && self.has_previous);
         window.set_next_enabled(self.connected && self.has_next);
         window.set_report_unresolved(self.resolve_enabled());
         window.set_orphaned_receipt(self.acknowledge_enabled());
         window.set_status(self.message.as_str().into());
         window.set_status_tone(tone_number(self.tone));
-        window.set_connection_text(self.connection_text().into());
-        window.set_connection_tone(
+        window.set_holuto_text(
+            if self.connected {
+                "Połączono"
+            } else if self.running {
+                "Łączenie…"
+            } else {
+                "Nie połączono"
+            }
+            .into(),
+        );
+        window.set_printer_text(self.printer_text().into());
+        window.set_printer_tone(
             if self.blocked || self.device.as_ref().is_some_and(|status| !status.ready()) {
                 2
             } else {
                 0
             },
         );
+        window.set_receipt_search(self.receipt_search.as_str().into());
+        window.set_jobs_unavailable(self.receipts.unavailable);
+        window.set_jobs_previous_enabled(self.jobs_previous_enabled());
+        window.set_jobs_next_enabled(self.jobs_next_enabled());
+        window.set_jobs_page_label(format!("Strona {}", self.receipts.page).into());
+        window.set_manual(self.manual);
+        window.set_receipts(self.receipts.rows());
+        window.set_receipt_selected(self.receipts.index());
+        window.set_receipt_detail(self.receipts.detail.as_str().into());
         window.set_api_url(self.settings.api_url.as_str().into());
         window.set_pairing_code(self.pairing_code.as_str().into());
         window.set_start_on_launch(self.settings.start_on_launch);
@@ -324,6 +422,8 @@ impl Model {
         );
         window.set_month_index(i32::try_from(self.month_index).unwrap_or_default());
         window.set_nip(self.nip.as_str().into());
+        window.set_search(self.search.as_str().into());
+        window.set_searching(self.running && self.applied_search.is_some());
         window.set_selected(
             self.selected
                 .and_then(|index| i32::try_from(index).ok())
@@ -334,13 +434,18 @@ impl Model {
         window.set_to_date(self.to.as_str().into());
         window.set_summary(self.summary);
         window.set_confirming(self.pending.is_some());
+        window.set_confirm_nip(
+            self.pending
+                .as_ref()
+                .is_some_and(|pending| matches!(pending.command, Command::Queue { .. })),
+        );
+        window.set_nip_invalid(self.nip_invalid);
         if let Some(pending) = &self.pending {
             window.set_confirm_title(pending.title.as_str().into());
             window.set_confirm_text(pending.text.as_str().into());
             window.set_confirm_action(pending.action.as_str().into());
         }
         self.documents.sync_columns(&window.get_document_columns());
-        self.history.sync_columns(&window.get_history_columns());
     }
 
     const fn accepting(&self) -> bool {
@@ -375,17 +480,21 @@ impl Model {
         self.accepting() && self.orphaned_receipt.is_some()
     }
 
-    fn connection_text(&self) -> String {
+    fn printer_text(&self) -> String {
         if self.blocked {
-            "Zablokowane: wymaga rozstrzygnięcia".into()
+            "Zablokowana: wymaga rozstrzygnięcia".into()
         } else if let Some(status) = self.device.as_ref().filter(|status| !status.ready()) {
-            format!("Drukarka niegotowa: {}", status.description())
-        } else if self.connected {
-            format!("Połączono · {}", self.unique_number)
-        } else if self.running {
-            "Łączenie…".into()
+            format!("Niegotowa: {}", status.description())
+        } else if self.connected && self.device.is_some() {
+            let vendor = match self.vendor {
+                Some(Vendor::Posnet) => "Posnet",
+                Some(Vendor::Novitus) => "Novitus",
+                Some(Vendor::Elzab) => "Elzab",
+                None => "",
+            };
+            format!("Gotowa · {vendor} {}", self.unique_number)
         } else {
-            "Nie połączono".into()
+            "Niegotowa: brak połączenia".into()
         }
     }
 
@@ -463,8 +572,15 @@ impl Model {
             | Action::Start
             | Action::Stop
             | Action::Quit
+            | Action::Search
             | Action::PreviousPage
-            | Action::NextPage => None,
+            | Action::NextPage
+            | Action::JobsSearch
+            | Action::JobsFirstPage
+            | Action::JobsPreviousPage
+            | Action::OpenManual
+            | Action::CloseManual
+            | Action::JobsNextPage => None,
         };
     }
 
@@ -472,30 +588,24 @@ impl Model {
         let document = self
             .selected
             .and_then(|index| self.documents.items().get(index))?;
-        let text = self.nip.trim();
-        let buyer_nip = if text.is_empty() {
-            None
-        } else if let Ok(nip) = BuyerNip::parse(text) {
-            Some(nip)
-        } else {
-            self.say("NIP nabywcy musi zawierać 10 cyfr.".into(), Tone::Error);
-            return None;
-        };
-        Some(Confirmation {
+        let confirmation = Confirmation {
             command: Command::Queue {
                 document: document.clone(),
-                buyer_nip,
+                buyer_nip: None,
             },
             title: "Potwierdź paragon".into(),
             text: format!(
-                "{} · zlecenie {} · {}\nNIP: {}\nZatwierdzenie wystawi paragon fiskalny.",
+                "{} · zlecenie {} · {}\nZatwierdzenie wystawi paragon fiskalny.",
                 document.kind.label(),
                 document.order_number,
-                zloty(document.amount),
-                if text.is_empty() { "—" } else { text }
+                zloty(document.amount)
             ),
             action: "Dodaj do wydruku".into(),
-        })
+        };
+        // The buyer NIP belongs to this receipt only.
+        self.nip.clear();
+        self.nip_invalid = false;
+        Some(confirmation)
     }
 
     fn periodic_confirmation(&mut self) -> Option<Confirmation> {
@@ -528,6 +638,19 @@ impl Model {
     }
 
     pub(crate) fn confirm(&mut self, accepted: bool) -> Option<Command> {
+        if accepted
+            && let Some(Command::Queue { buyer_nip, .. }) =
+                self.pending.as_mut().map(|pending| &mut pending.command)
+        {
+            let text = self.nip.trim();
+            let parsed = (!text.is_empty()).then(|| BuyerNip::parse(text).ok());
+            // An invalid NIP keeps the dialog open so the operator can correct it.
+            self.nip_invalid = matches!(parsed, Some(None));
+            if self.nip_invalid {
+                return None;
+            }
+            *buyer_nip = parsed.flatten();
+        }
         let pending = self.pending.take().filter(|_| accepted)?;
         // The document list may have been refreshed while the confirmation was open.
         if let Command::Queue { document, .. } = &pending.command
@@ -551,7 +674,13 @@ impl Model {
             },
             Command::ResolveReport => self.resolve_enabled(),
             Command::AcknowledgeOrphanedReceipt => self.acknowledge_enabled(),
-            Command::NextPage | Command::PreviousPage => false,
+            Command::NextPage
+            | Command::PreviousPage
+            | Command::Search(_)
+            | Command::JobsFirstPage
+            | Command::JobsNextPage
+            | Command::JobsPreviousPage
+            | Command::JobsSearch(_) => false,
         };
         if !allowed {
             // A closed dialog must not read as a printed receipt or report.
@@ -562,8 +691,8 @@ impl Model {
             return None;
         }
         if matches!(pending.command, Command::Queue { .. }) {
-            // The buyer NIP belongs to this receipt only.
             self.nip.clear();
+            self.manual = false;
         }
         self.in_flight = true;
         Some(pending.command)

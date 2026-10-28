@@ -47,6 +47,8 @@ fn panic_and_error_have_printer_tags_and_no_sensitive_payload() -> Result<(), Bo
                 host = "HOST_CANARY_9183",
                 home = "/home/HOME_CANARY_9183",
                 token = "SECRET_TOKEN",
+                vehicle_plate = "PLATE_CANARY_9183",
+                q = "SEARCH_CANARY_9183",
                 url = "https://host/private?key=secret",
                 "Jan Kowalski 1234567890 Oil 250.00"
             );
@@ -54,6 +56,8 @@ fn panic_and_error_have_printer_tags_and_no_sensitive_payload() -> Result<(), Bo
             tracing::error!(
                 customer = "Jan Kowalski",
                 nip = "1234567890",
+                vehicle_plate = "PLATE_CANARY_9183",
+                q = "SEARCH_CANARY_9183",
                 "SECRET_TOKEN /private?key=secret Oil 250.00"
             );
         });
@@ -159,6 +163,8 @@ fn panic_and_error_have_printer_tags_and_no_sensitive_payload() -> Result<(), Bo
         "key=secret",
         "HOST_CANARY_9183",
         "HOME_CANARY_9183",
+        "PLATE_CANARY_9183",
+        "SEARCH_CANARY_9183",
     ] {
         assert!(!payload.contains(private), "telemetry leaked {private}");
     }
@@ -220,11 +226,10 @@ fn only_fiscal_operations_are_sampled_and_transaction_data_is_scrubbed()
 -> Result<(), Box<dyn Error>> {
     let capture = Arc::new(Capture::default());
     let captured = Arc::clone(&capture);
-    let transport = Arc::new(SafeTransport(captured));
     let client = Arc::new(Client::from(
         options()
             .dsn("https://public@example.invalid/1")
-            .transport(transport),
+            .transport(Arc::new(SafeTransport(captured))),
     ));
     Hub::run(
         Arc::new(Hub::new(Some(Arc::clone(&client)), Arc::default())),
@@ -259,15 +264,14 @@ fn only_fiscal_operations_are_sampled_and_transaction_data_is_scrubbed()
                 });
                 let span = transaction.start_child("http.client", "https://HOST_CANARY/private");
                 span.set_data("customer", "CUSTOMER_CANARY".into());
+                span.set_data("vehicle_plate", "PLATE_CANARY".into());
+                span.set_data("q", "SEARCH_CANARY".into());
                 span.set_data("home", "/home/HOME_CANARY".into());
                 span.set_data("amount", "AMOUNT_CANARY".into());
                 span.finish();
                 transaction.finish();
             }
-            assert!(
-                client.flush(Some(Duration::from_secs(1))),
-                "transactions flush into the capture"
-            );
+            assert!(client.flush(Some(Duration::from_secs(1))));
         },
     );
     let envelopes = capture.0.lock().map_err(|error| error.to_string())?;
@@ -313,6 +317,8 @@ fn only_fiscal_operations_are_sampled_and_transaction_data_is_scrubbed()
         "AMOUNT_CANARY",
         "HOST_CANARY",
         "HOME_CANARY",
+        "PLATE_CANARY",
+        "SEARCH_CANARY",
         "/private",
     ] {
         assert!(!payload.contains(canary), "transaction leaked {canary}");
@@ -448,7 +454,7 @@ fn fixed_driver_and_worker_warnings_reach_sentry_with_their_meaning() -> Result<
                 command = "trend",
                 "Receipt footer incomplete after the fiscal record"
             );
-            tracing::warn!("Could not load the receipt display history");
+            tracing::warn!("Holuto session unavailable; retrying in 15 seconds");
             tracing::error!("Worker operation failed");
         });
     });
@@ -470,7 +476,7 @@ fn fixed_driver_and_worker_warnings_reach_sentry_with_their_meaning() -> Result<
         breadcrumbs,
         [
             Some("Receipt footer incomplete after the fiscal record"),
-            Some("Could not load the receipt display history"),
+            Some("Holuto session unavailable; retrying in 15 seconds"),
         ]
     );
     Ok(())

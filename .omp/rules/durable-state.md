@@ -1,6 +1,6 @@
 ---
 description:
-  "Journal, settings, status, history and instance lock: durable, private,
+  "Journal, settings, status and instance lock: durable, private,
   fail-closed stored contracts"
 condition: ".*"
 scope:
@@ -9,8 +9,7 @@ scope:
   tool:edit(crates/agent/src/store*), tool:write(crates/agent/src/store*),
   tool:read(crates/agent/src/settings*), tool:edit(crates/agent/src/settings*),
   tool:write(crates/agent/src/settings*), tool:edit(crates/agent/src/status*),
-  tool:write(crates/agent/src/status*), tool:edit(crates/agent/src/history*),
-  tool:write(crates/agent/src/history*),
+  tool:write(crates/agent/src/status*),
   tool:read(crates/agent/src/journal/**),
   tool:edit(crates/agent/src/journal/**),
   tool:write(crates/agent/src/journal/**),
@@ -19,8 +18,7 @@ scope:
   tool:read(crates/agent/src/settings/**),
   tool:edit(crates/agent/src/settings/**),
   tool:write(crates/agent/src/settings/**),
-  tool:edit(crates/agent/src/status/**), tool:write(crates/agent/src/status/**),
-  tool:edit(crates/agent/src/history/**), tool:write(crates/agent/src/history/**)"
+  tool:edit(crates/agent/src/status/**), tool:write(crates/agent/src/status/**)"
 interruptMode: never
 ---
 
@@ -43,15 +41,12 @@ interruptMode: never
   `application.lock`, which `status`/`check` report. Readers that skip the lock
   (`Settings::load_at`, `Snapshot::load_at`) must not create state.
 - Keep literal fixtures of each stored format beside its module. Settings,
-  status and journal reject unknown fields; history is a tolerant display
-  cache. Format changes follow
+  status and journal reject unknown fields. Format changes follow
   [AGENTS.md](../../AGENTS.md#external-surfaces).
 - The device token lives only in `settings.json`: `Token` redacts `Debug` and
   has no `Display` implementation; settings parse errors never echo values.
   A different API URL forgets it (`Settings::set_api_url`).
-  `status.json` and history never hold credentials.
-- History is a display cache: its failures produce a notice and never prevent
-  settling a server-accepted result.
+  `status.json` never holds credentials.
 
 Details: [compatibility](../../docs/testing/compatibility.md),
 [security](../../docs/testing/security.md).

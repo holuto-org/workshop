@@ -48,8 +48,8 @@ placement and fixtures.
    cooperative quit finishes the operation before joining.
 7. **Corrupt local state on one OS.** Journal durability, private settings,
    process exclusion and stored formats must work on each supported platform.
-8. **Availability.** Bound network bodies, history display and pages; recover
-   from handled outages without busy loops or false fiscal certainty.
+8. **Availability.** Bound network bodies and job-history pages; recover from
+   handled outages without stale lists, busy loops or false fiscal certainty.
 
 Prioritize stronger fault, model and concurrency tests for the higher ranks.
 This is risk-based engineering, not a claim of safety certification.
@@ -85,8 +85,9 @@ below it.
   loopback Holuto fake + simulator + real state directory
 - **Controls, confirmations, event delivery, close/quit**: Real application
   through Slint testing backend, accessible labels and real worker where involved
-- **Queue through UI to receipt/result/history**: End-to-end scenario combining
-  the three boundaries; one per essential legal path, not every parser case
+- **Queue through UI to receipt/result/job history**: End-to-end scenario
+  combining the three boundaries; one per essential legal path, not every
+  parser case
 - **Parser, formatter, date or value boundary**: Named unit table with exact
   accepted/rejected values
 - **Large numeric/text space**: `proptest` against an independent

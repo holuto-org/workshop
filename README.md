@@ -66,7 +66,6 @@ State directory:
 - `operation.json`: fiscal journal; each receipt/report records its vendor and
   fiscal memory unique number, both required for resolution. Malformed files
   block.
-- `history.jsonl`: local receipt history, newest 500 receipts.
 - `status.json`: processing/connection and fiscal-block flags, last device
   vendor/unique number, update time. Display state; never credentials or
   customer data.
@@ -77,8 +76,8 @@ State directory:
   [native minidumps](docs/telemetry.md#native-minidumps-important-exception).
 
 On Unix, opening tightens the directory to **0700** and the locks to **0600**;
-every write replaces a data file with a **0600** copy, and history loading
-tightens its file. Settings, status and journal reads do not repair modes.
+every write replaces a data file with a **0600** copy. Settings, status and
+journal reads do not repair modes.
 On Windows, profile ACLs protect the directory.
 
 One background FIFO writer persists settings and status. Starting waits for
@@ -169,26 +168,36 @@ It never scans with an unresolved operation: the device must not change.
 
 ## Desktop app
 
-- **Do wydruku** — eligible advances and sales for the printer's branch, showing
-  kind, amount and legal deadline; overdue documents are marked. Queue a
-  document with an optional buyer NIP, which clears after each queued receipt;
-  Holuto derives payments and advance deductions. Unpaid final-sale balances
-  print as credit. Receipt lines and totals are not locally editable. Documents
-  above the printer's amount limit remain listed but cannot execute. Each poll
-  refreshes the current page of up to 100 documents, oldest first; **Następna
-  strona** and **Poprzednia strona** navigate. Column headers sort the page
-  without changing the selected document.
+- **Paragony** — browse the paired printer's job history from Holuto, including
+  web-queued, expired, printed and failed jobs. Search Holuto by order number,
+  customer, receipt number, vehicle plate or item; changing the search starts
+  on page one. Select a row for receipt details and Holuto's failure result.
+  When Holuto is unreachable, the list is unavailable rather than stale;
+  use **Ponów pobieranie historii** to retry. This view does not replace fiscal
+  memory.
+  Ctrl+F focuses search; Escape clears it; arrows, Home/End and
+  PageUp/PageDown select receipts.
+  Most printing starts in Holuto. For occasional manual printing,
+  **+ Wystaw paragon** opens eligible advances and sales for the printer's
+  branch, with kind, amount and legal deadline; overdue documents are marked.
+  **Szukaj dokumentu** searches order numbers and customer names after a 400 ms
+  pause or Enter. **Następna strona** and **Poprzednia strona** navigate the
+  current feed; column headers sort without changing selected identity.
+  **Dalej** opens confirmation with an optional buyer NIP for this receipt only.
+  Holuto derives payments and advance deductions; unpaid final-sale balances
+  print as credit. Lines and totals are not locally editable. Documents above
+  the printer's amount limit remain listed but cannot execute.
 - **Raporty** — daily, monthly and periodic fiscal reports, confirmed before
   printing. Periodic dates require zero-padded `dd.mm.rrrr` (for example
   `01.01.2025`), must be on or after `01.01.2000`, cannot be in the future, and
   require start ≤ end. Reports and receipts share one worker thread; commands
   cannot interleave.
-- **Historia** — receipts printed on this computer, with printer-assigned
-  numbers or numbers entered in Holuto when unreadable. Sort by column header.
-  This local log does not replace the printer's fiscal memory.
 - **Ustawienia** — API URL, pairing code, printer port/speed, autostart,
   **Udostępniaj diagnostykę** (see [Diagnostics](#diagnostics)) and processing
   controls.
+
+The header shows separate **Holuto** connection and **Drukarka** readiness
+indicators. When no receipts exist, start processing in **Ustawienia**.
 
 Polling runs every **3 seconds**, or **15 seconds** after errors or while
 blocked. If the printer does not answer, or Holuto is unreachable, times out
@@ -269,9 +278,8 @@ truncated.
   (same printer, connected and ready as for reports); it prints and reports
   nothing. Corrupt or unreadable journals fail closed; deleting the journal is
   not recovery.
-- History is a display cache that the worker publishes to the window; the window
-  never reads it while processing. Report its read/write errors separately; they
-  must not prevent settling a server-accepted result.
+- Job history is read-only Holuto data, not fiscal evidence or a heartbeat.
+  Its availability never replaces the journal's recovery and blocking rules.
 
 [certain-refusals]: docs/testing/fiscal-safety.md#recovery-classification
 

@@ -266,7 +266,6 @@ fn message(text: Option<&str>) -> &str {
             | "Worker panicked"
             | "Worker operation requires attention"
             | "Worker operation failed"
-            | "Could not load the receipt display history"
             | "Holuto session unavailable; retrying in 15 seconds"
             | "Printer unavailable at start; retrying in 15 seconds"
             | "Printed receipt conflicts with terminal Holuto state"

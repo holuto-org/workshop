@@ -64,6 +64,7 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     assert!(rendered(&window, fake.url()), "the scan sees field values");
     assert!(
         !rendered(&window, "previous-secret-never-rendered"),
@@ -143,6 +144,7 @@ fn invalid_pairing_code_keeps_credentials_and_allows_operator_correction()
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ZZZZ-ZZZZ");
     button(&window, "Sparuj")?.invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;
@@ -187,6 +189,7 @@ fn malformed_pairing_code_is_rejected_locally_and_remains_editable() -> Result<(
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-123I");
     button(&window, "Sparuj")?.invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;

@@ -1,7 +1,7 @@
 use serde_json::json;
 use std::error::Error as StdError;
 
-use super::BuyerNip;
+use super::{BuyerNip, DocumentSearch};
 use crate::Error;
 
 #[test]
@@ -35,6 +35,40 @@ fn buyer_nip_preserves_digits_without_accepting_separators_or_unicode_lookalikes
             "invalid fiscal identifier receives the operator-facing validation error"
         );
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn document_search_counts_characters_and_never_sends_blank_or_control_text()
+-> Result<(), Box<dyn StdError>> {
+    let text = |input: &str| -> Result<Option<String>, Error> {
+        DocumentSearch::parse(input).map(|search| search.map(|search| search.0))
+    };
+    assert_eq!(text(" \t\u{85} ")?, None);
+    assert_eq!(text("\0\u{3000}\u{7f}")?, None);
+    assert_eq!(
+        text("\0Jan\u{85}Kowalski\0")?,
+        Some("Jan Kowalski".to_owned())
+    );
+    assert_eq!(
+        text("\tJan\nKowalski\u{7f}")?,
+        Some("Jan Kowalski".to_owned())
+    );
+    let longest = "ą".repeat(128);
+    assert_eq!(text(&format!(" {longest} "))?, Some(longest.clone()));
+    assert!(matches!(
+        text(&format!("{longest}a")),
+        Err(Error::Invalid(message))
+            if message == "Wyszukiwana fraza może mieć najwyżej 128 znaków."
+    ));
+    assert_eq!(
+        format!("{:?}", DocumentSearch::parse("Jan")?),
+        "Some(DocumentSearch([REDACTED]))"
+    );
     Ok(())
 }
 

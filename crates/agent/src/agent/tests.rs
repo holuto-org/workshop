@@ -12,7 +12,6 @@ use crate::{
     Error,
     api::{Api, ApiError, model::JobState},
     documents::{BuyerNip, Document},
-    history::{self, HistoryEntry},
     journal::{
         Device, JobResult, Journal, Operation, ReceiptOperation, ReportOperation, Settlement,
         Summary,
@@ -134,7 +133,7 @@ fn printer_description_code_limit_counts_unicode_characters_not_bytes() {
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn printer_time_and_original_receipt_values_reach_holuto_and_history() -> TestResult {
+fn printer_time_and_original_receipt_values_reach_holuto() -> TestResult {
     let sim = Simulator::start();
     sim.set_clock("2025-01-02T12:34:00Z".parse()?);
     let server = Holuto::new();
@@ -174,14 +173,7 @@ fn printer_time_and_original_receipt_values_reach_holuto_and_history() -> TestRe
             .map(String::as_str),
         Some("2")
     );
-    assert_eq!(
-        history::load(&dir)?
-            .first()
-            .ok_or("missing history")?
-            .receipt_number
-            .as_deref(),
-        Some("1")
-    );
+    assert_eq!(server.job(JOB_ID)["receiptNumber"], "1");
     assert!(
         stored(&dir)?.settled.is_some(),
         "accepted result settles journal"
@@ -733,49 +725,6 @@ fn corrupt_journal_blocks_receipts_and_reports_without_touching_printer() -> Tes
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn history_error_does_not_block_server_accepted_result() -> TestResult {
-    let sim = Simulator::start();
-    let server = Holuto::new();
-    let _id = server.enqueue(job_json());
-    let (_temporary, dir) = state_dir();
-    fs::create_dir(dir.file("history.jsonl"))?;
-    let mut agent = agent(&sim, &dir, &server)?;
-    let _delay = agent.step()?;
-    let saved = stored(&dir)?;
-    assert_eq!(
-        saved.settled.map(|settled| settled.state),
-        Some(JobState::Done)
-    );
-    assert_eq!(
-        saved.device,
-        Device::Completed {
-            receipt_number: Some("1".to_owned())
-        }
-    );
-    assert_eq!(server.job(JOB_ID)["state"], "done");
-    assert_eq!(server.job(JOB_ID)["receiptNumber"], "1");
-    assert_eq!(sim.receipts().len(), 1);
-    let notices = agent.take_news().notices;
-    assert_eq!(notices.len(), 1);
-    let notice = notices.first().ok_or("missing history failure")?;
-    let prefix = format!(
-        "Nie można zapisać historii ({}): ",
-        dir.file("history.jsonl").display()
-    );
-    assert!(
-        notice
-            .strip_prefix(&prefix)
-            .is_some_and(|source| !source.is_empty()),
-        "history failure identifies the cache and includes the OS error: {notice}"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
 fn future_printer_clock_keeps_completed_evidence_and_surfaces_server_rejection() -> TestResult {
     let sim = Simulator::start();
     sim.set_clock("2099-01-02T12:00:00Z".parse()?);
@@ -1000,7 +949,6 @@ fn a_reoffered_job_is_never_printed_again() -> TestResult {
     let _delay = first.step()?;
     let printed = stored(&dir)?;
     let frames = sent(&sim, &RECEIPT_COMMANDS);
-    let history = history::load(&dir)?;
     let replay = server.job(JOB_ID);
     drop(first);
     server.fault(
@@ -1022,7 +970,6 @@ fn a_reoffered_job_is_never_printed_again() -> TestResult {
     ));
     assert_eq!(sent(&sim, &RECEIPT_COMMANDS), frames);
     assert_eq!(sim.receipts().len(), 1);
-    assert_eq!(history::load(&dir)?, history);
     assert_eq!(stored(&dir)?, printed, "the printed evidence is kept");
     Ok(())
 }
@@ -1079,13 +1026,10 @@ fn unnumbered_completion_remains_unknown_until_staff_supply_the_number() -> Test
     );
     server.resolve(JOB_ID, Some("P41"))?;
     assert_eq!(agent.settle()?, None);
+    assert_eq!(server.job(JOB_ID)["receiptNumber"], "P41");
     assert_eq!(
-        history::load(&dir)?
-            .first()
-            .ok_or("missing history")?
-            .receipt_number
-            .as_deref(),
-        Some("P41")
+        stored(&dir)?.settled.map(|settled| settled.state),
+        Some(JobState::Done)
     );
     assert_eq!(sim.receipts().len(), 1, "staff resolution never reprints");
     Ok(())
@@ -1309,14 +1253,6 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
         payments: Vec::new(),
         items: vec!["PrivateReceiptLine".to_owned()],
     };
-    let entry = HistoryEntry {
-        job_id: JOB_ID,
-        printed_at: "2025-01-02T12:00:00Z".parse()?,
-        receipt_number: Some("PrivateReceiptNumber".to_owned()),
-        total: summary.total,
-        payments: Vec::new(),
-        items: summary.items.clone(),
-    };
     let document: Document = serde_json::from_value(json!({
         "kind": "sale", "orderId": JOB_ID, "orderNumber": 10, "allocationId": null,
         "amount": "9876.54", "customerName": "PrivateCustomer",
@@ -1339,7 +1275,7 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
     )?;
     operation.summary = Some(summary.clone());
     let debug = format!(
-        "{summary:?}{entry:?} {document:?} {nip:?} {result:?} {error:?} {api_error:?} {operation:?}"
+        "{summary:?} {document:?} {nip:?} {result:?} {error:?} {api_error:?} {operation:?}"
     );
     for forbidden in [
         "PrivateReceiptLine",
@@ -1716,11 +1652,6 @@ fn journal_failures_after_print_preserve_the_last_durable_evidence_for_restart()
         );
         if !blocked {
             assert_eq!(saved.issued_at.to_string(), "2025-01-02T12:34:00Z");
-            let entries = history::load(&dir)?;
-            assert_eq!(entries.len(), 1);
-            let entry = entries.first().ok_or("missing recovered history")?;
-            assert_eq!(entry.receipt_number.as_deref(), Some("1"));
-            assert_eq!(entry.printed_at.to_string(), "2025-01-02T12:34:00Z");
         }
         assert_eq!(sim.receipts().len(), 1);
         assert_eq!(

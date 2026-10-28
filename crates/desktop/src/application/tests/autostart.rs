@@ -39,6 +39,7 @@ fn login_checkbox_registers_and_persists_without_pairing_or_unsaved_edits()
         return Ok(());
     }
     let (_temporary, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
     // Typed but never saved: only Zapisz, Uruchom or pairing may persist connection edits.
     window.set_api_url("https://unsaved.example".into());
     window.set_port("/dev/ttyUNSAVED".into());

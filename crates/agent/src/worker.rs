@@ -30,10 +30,9 @@ use tracing::dispatcher;
 use crate::{
     Error,
     agent::{Agent, Blocked, RETRY},
-    api::{Api, ApiError, model::Page, queue_form},
+    api::{Api, ApiError, model::JobView, queue_form},
     device,
-    documents::{BuyerNip, Document},
-    history::{self, HistoryEntry},
+    documents::{BuyerNip, Document, DocumentSearch},
     journal::{Journal, Operation},
     settings::Settings,
     store::StateDir,
@@ -47,6 +46,13 @@ pub enum Command {
     },
     NextPage,
     PreviousPage,
+    /// Restarts paging from the first page of the matching documents; `None` lists all.
+    Search(Option<DocumentSearch>),
+    /// Retries the server history from page one, retaining its search.
+    JobsFirstPage,
+    JobsNextPage,
+    JobsPreviousPage,
+    JobsSearch(Option<DocumentSearch>),
     DailyReport,
     MonthlyReport {
         year: i16,
@@ -106,6 +112,7 @@ pub enum Event {
     Documents {
         items: Vec<Document>,
         page: usize,
+        has_previous: bool,
         has_next: bool,
     },
     Device {
@@ -115,8 +122,15 @@ pub enum Event {
         /// Receipt evidence the operator confirms before a local acknowledgement.
         orphaned_receipt: Option<String>,
     },
-    /// Bounded, newest-first snapshot; the GUI never reads worker-owned storage.
-    HistoryChanged(Vec<HistoryEntry>),
+    /// Authoritative Holuto history; `page` is 1-based.
+    Jobs {
+        items: Vec<JobView>,
+        page: usize,
+        has_previous: bool,
+        has_next: bool,
+    },
+    /// Clear stale history when Holuto cannot supply it.
+    JobsUnavailable,
     /// Releases the GUI submission guard even when a command is refused.
     CommandCompleted,
     /// Safe to join the worker.
@@ -151,11 +165,13 @@ impl fmt::Debug for Event {
             Self::Documents {
                 items,
                 page,
+                has_previous,
                 has_next,
             } => f
                 .debug_struct("Documents")
                 .field("count", &items.len())
                 .field("page", page)
+                .field("has_previous", has_previous)
                 .field("has_next", has_next)
                 .finish(),
             Self::Device {
@@ -170,10 +186,19 @@ impl fmt::Debug for Event {
                 .field("report_unresolved", report_unresolved)
                 .field("orphaned_receipt", &orphaned_receipt.is_some())
                 .finish(),
-            Self::HistoryChanged(entries) => f
-                .debug_struct("HistoryChanged")
-                .field("count", &entries.len())
+            Self::Jobs {
+                items,
+                page,
+                has_previous,
+                has_next,
+            } => f
+                .debug_struct("Jobs")
+                .field("count", &items.len())
+                .field("page", page)
+                .field("has_previous", has_previous)
+                .field("has_next", has_next)
                 .finish(),
+            Self::JobsUnavailable => f.write_str("JobsUnavailable"),
             Self::CommandCompleted => f.write_str("CommandCompleted"),
             Self::Stopped => f.write_str("Stopped"),
         }
@@ -189,6 +214,13 @@ enum Message {
 pub struct Worker {
     messages: Sender<Message>,
     thread: JoinHandle<()>,
+}
+
+/// Initial list criteria; supplied before the worker can publish either feed.
+#[derive(Debug, Default)]
+pub struct Searches {
+    pub documents: Option<DocumentSearch>,
+    pub jobs: Option<DocumentSearch>,
 }
 
 impl Worker {
@@ -218,13 +250,14 @@ impl Worker {
         dir: Arc<StateDir>,
         settings: Settings,
         link: Arc<dyn Link>,
+        searches: Searches,
         sink: S,
     ) -> Result<Self, Error>
     where
         S: Fn(Event) + Send + Sync + 'static,
     {
         Self::start(dir, sink, false, move |dir, inbox, sink| {
-            run(dir, &settings, &link, inbox, sink)
+            run(dir, &settings, &link, searches, inbox, sink)
         })
     }
 
@@ -368,6 +401,7 @@ fn run(
     dir: &StateDir,
     settings: &Settings,
     link: &Arc<dyn Link>,
+    searches: Searches,
     inbox: &Receiver<Message>,
     sink: &(dyn Fn(Event) + Sync),
 ) -> Result<(), Error> {
@@ -375,16 +409,6 @@ fn run(
         text: "Łączenie z drukarką i Holuto…".to_owned(),
         tone: Tone::Info,
     });
-    match history::load(dir) {
-        Ok(entries) => sink(Event::HistoryChanged(entries)),
-        Err(error) => {
-            tracing::warn!("Could not load the receipt display history");
-            sink(Event::Status {
-                text: error.to_string(),
-                tone: Tone::Error,
-            });
-        },
-    }
     let mut queue = VecDeque::new();
     let Some((printer, status)) = detect_printer(dir, settings, link, inbox, sink, &mut queue)?
     else {
@@ -455,7 +479,8 @@ fn run(
     }
     Session {
         agent,
-        pager: Pager::default(),
+        pager: Pager::new(searches.documents),
+        jobs: Pager::new(searches.jobs),
         queue,
         sink,
     }
@@ -489,6 +514,7 @@ fn start_session(
                     ),
                     tone: Tone::Error,
                 });
+                sink(Event::JobsUnavailable);
                 false
             },
             Err(error) => return Err(error),
@@ -549,6 +575,7 @@ fn detect_printer(
         // the interval.
         let due = now() + RETRY;
         tracing::warn!("Printer unavailable at start; retrying in 15 seconds");
+        sink(Event::JobsUnavailable);
         sink(Event::Status {
             text: format!("Drukarka niedostępna: {error}. Ponowna próba za 15 sekund."),
             tone: Tone::Error,
@@ -636,6 +663,7 @@ fn until(due: Instant) -> Duration {
 struct Session<'a> {
     agent: Agent<'a>,
     pager: Pager,
+    jobs: Pager,
     queue: VecDeque<Command>,
     sink: &'a dyn Fn(Event),
 }
@@ -649,9 +677,18 @@ impl Session<'_> {
                 return Ok(());
             }
             while let Some(command) = self.queue.pop_front() {
-                let navigation = matches!(command, Command::NextPage | Command::PreviousPage);
+                let navigation = matches!(
+                    command,
+                    Command::NextPage
+                        | Command::PreviousPage
+                        | Command::Search(_)
+                        | Command::JobsFirstPage
+                        | Command::JobsNextPage
+                        | Command::JobsPreviousPage
+                        | Command::JobsSearch(_)
+                );
                 let done = self.command(command);
-                self.publish_news();
+                let _changed = self.publish_news();
                 if let Err(error) = done {
                     self.report_error(&error);
                     if matches!(error, Error::Api(ApiError::Unauthorized)) {
@@ -709,15 +746,21 @@ impl Session<'_> {
         if self.drain(inbox) {
             return Ok(None);
         }
+        // Show web-queued work before take can consume it. Listing never heartbeats or claims.
+        let _changed = self.publish_news();
+        let mut jobs = self.refresh_jobs();
+        if matches!(jobs, Err(ApiError::Unauthorized)) {
+            return Err(ApiError::Unauthorized.into());
+        }
         let delay = self.agent.step();
-        self.publish_news();
+        let jobs_changed = self.publish_news();
         if matches!(delay, Err(Error::Api(ApiError::Unauthorized))) {
             return Err(ApiError::Unauthorized.into());
         }
         if self.drain(inbox) {
             return Ok(None);
         }
-        // Printer and settlement failures must not hide Holuto documents.
+        // Printer and settlement failures must not hide server lists.
         let refreshed = self
             .pager
             .refresh(self.agent.api())
@@ -725,8 +768,15 @@ impl Session<'_> {
         if matches!(refreshed, Err(ApiError::Unauthorized)) {
             return Err(ApiError::Unauthorized.into());
         }
+        if jobs_changed {
+            jobs = self.refresh_jobs();
+        }
+        if matches!(jobs, Err(ApiError::Unauthorized)) {
+            return Err(ApiError::Unauthorized.into());
+        }
         let delay = delay?;
         refreshed?;
+        jobs?;
         self.publish_device();
         Ok(Some(delay))
     }
@@ -739,6 +789,7 @@ impl Session<'_> {
             } => {
                 let form = queue_form(&document, buyer_nip)?;
                 self.agent.api().queue(&form)?;
+                self.jobs.first();
                 self.say(
                     "Zlecenie dodano do kolejki Holuto.".to_owned(),
                     Tone::Success,
@@ -753,6 +804,32 @@ impl Session<'_> {
             Command::PreviousPage => {
                 self.pager.previous();
                 (self.sink)(self.pager.refresh(self.agent.api())?);
+                return Ok(());
+            },
+            Command::Search(search) => {
+                // Polls keep the new search even if this first fetch fails.
+                self.pager = Pager::new(search);
+                (self.sink)(self.pager.refresh(self.agent.api())?);
+                return Ok(());
+            },
+            Command::JobsFirstPage => {
+                self.jobs.first();
+                self.refresh_jobs()?;
+                return Ok(());
+            },
+            Command::JobsNextPage => {
+                self.jobs.next();
+                self.refresh_jobs()?;
+                return Ok(());
+            },
+            Command::JobsPreviousPage => {
+                self.jobs.previous();
+                self.refresh_jobs()?;
+                return Ok(());
+            },
+            Command::JobsSearch(search) => {
+                self.jobs = Pager::new(search);
+                self.refresh_jobs()?;
                 return Ok(());
             },
             Command::ResolveReport => {
@@ -783,14 +860,28 @@ impl Session<'_> {
         publish_device(&self.agent, self.sink);
     }
 
-    /// Failures can still produce notices or history.
-    fn publish_news(&mut self) {
+    /// Failures can still produce notices or change the server list.
+    fn publish_news(&mut self) -> bool {
         let news = self.agent.take_news();
         for notice in news.notices {
             self.say(notice, Tone::Error);
         }
-        if let Some(entries) = news.history {
-            (self.sink)(Event::HistoryChanged(entries));
+        if news.jobs_changed {
+            self.jobs.first();
+        }
+        news.jobs_changed
+    }
+
+    fn refresh_jobs(&mut self) -> Result<(), ApiError> {
+        match self.jobs.refresh_jobs(self.agent.api()) {
+            Ok(event) => {
+                (self.sink)(event);
+                Ok(())
+            },
+            Err(error) => {
+                (self.sink)(Event::JobsUnavailable);
+                Err(error)
+            },
         }
     }
 
@@ -805,102 +896,132 @@ impl Session<'_> {
     }
 }
 
-/// Navigation follows returned cursors; failures preserve the shown page and pending clicks.
-///
-/// `pages` holds opening cursors through the shown page (`None` for the first).
+/// Both feeds follow server cursors. Failed navigation retains every pending click.
 struct Pager {
-    pages: Vec<Option<String>>,
+    cursor: Option<String>,
+    page: usize,
     next: Option<String>,
-    requested: Option<usize>,
-}
-
-impl Default for Pager {
-    fn default() -> Self {
-        Self {
-            pages: vec![None],
-            next: None,
-            requested: None,
-        }
-    }
+    previous: Option<String>,
+    requested: isize,
+    search: Option<DocumentSearch>,
 }
 
 impl Pager {
-    const fn next(&mut self) {
-        let requested = match self.requested {
-            Some(requested) => requested,
-            None => self.pages.len(),
-        };
-        if requested < self.pages.len() || self.next.is_some() {
-            self.requested = Some(requested.saturating_add(1));
+    const fn new(search: Option<DocumentSearch>) -> Self {
+        Self {
+            cursor: None,
+            page: 1,
+            next: None,
+            previous: None,
+            requested: 0,
+            search,
         }
     }
 
-    fn previous(&mut self) {
-        self.requested = Some(
-            self.requested
-                .unwrap_or(self.pages.len())
-                .saturating_sub(1)
-                .max(1),
-        );
+    fn first(&mut self) {
+        self.cursor = None;
+        self.page = 1;
+        self.previous = None;
+        self.next = None;
+        self.requested = 0;
+    }
+
+    const fn next(&mut self) {
+        if self.requested != 0 || self.next.is_some() {
+            self.requested = self.requested.saturating_add(1);
+        }
+    }
+
+    const fn previous(&mut self) {
+        if self.requested != 0 || self.previous.is_some() {
+            self.requested = self.requested.saturating_sub(1);
+        }
     }
 
     fn refresh(&mut self, api: &Api) -> Result<Event, ApiError> {
-        let mut requested = self.requested.unwrap_or(self.pages.len());
-        let (mut page, forward) = if requested > self.pages.len() {
-            if let Some(cursor) = &self.next {
-                let (page, forward) =
-                    Self::fetch_forward(api, cursor, requested - self.pages.len())?;
-                requested = self.pages.len() + forward.len() + 1;
-                (page, forward)
-            } else {
-                requested = self.pages.len();
-                (
-                    api.documents(self.pages.last().and_then(Option::as_deref))?,
-                    Vec::new(),
-                )
-            }
-        } else {
-            (
-                api.documents(self.pages.get(requested - 1).and_then(Option::as_deref))?,
-                Vec::new(),
-            )
-        };
-        if page.items.is_empty() && requested > 1 {
-            // Queuing or printing can empty a page; return to the remaining documents.
-            page = api.documents(None)?;
-            requested = 1;
-        }
-        if requested > self.pages.len() {
-            self.pages.push(self.next.take());
-            self.pages.extend(forward);
-        } else {
-            self.pages.truncate(requested);
-        }
-        self.next = page.next_cursor;
-        self.requested = None;
+        let (items, page, has_previous, has_next) = self.refresh_with(|cursor, search| {
+            api.documents(cursor, search).map(|page| CursorPage {
+                items: page.items,
+                next: page.next_cursor,
+                previous: page.previous_cursor,
+            })
+        })?;
         Ok(Event::Documents {
-            items: page.items,
-            page: self.pages.len(),
-            has_next: self.next.is_some(),
+            items,
+            page,
+            has_previous,
+            has_next,
         })
     }
 
-    fn fetch_forward(
-        api: &Api,
-        cursor: &str,
-        count: usize,
-    ) -> Result<(Page, Vec<Option<String>>), ApiError> {
-        let mut page = api.documents(Some(cursor))?;
-        let mut opened = Vec::new();
-        while opened.len() + 1 < count && !page.items.is_empty() {
-            let Some(cursor) = page.next_cursor.take() else {
+    fn refresh_jobs(&mut self, api: &Api) -> Result<Event, ApiError> {
+        let (items, page, has_previous, has_next) = self.refresh_with(|cursor, search| {
+            api.jobs(cursor, search).map(|page| CursorPage {
+                items: page.items,
+                next: page.next_cursor,
+                previous: page.previous_cursor,
+            })
+        })?;
+        Ok(Event::Jobs {
+            items,
+            page,
+            has_previous,
+            has_next,
+        })
+    }
+
+    fn refresh_with<T, F>(&mut self, mut fetch: F) -> Result<(Vec<T>, usize, bool, bool), ApiError>
+    where
+        F: FnMut(Option<&str>, Option<&DocumentSearch>) -> Result<CursorPage<T>, ApiError>,
+    {
+        let mut cursor = self.cursor.clone();
+        let mut number = self.page;
+        let forward = self.requested > 0;
+        let advance = |number: usize| {
+            if forward {
+                number.saturating_add(1)
+            } else {
+                number.saturating_sub(1).max(1)
+            }
+        };
+        let mut remaining = self.requested.unsigned_abs();
+        let opening = if forward { &self.next } else { &self.previous };
+        if remaining > 0 && opening.is_some() {
+            cursor.clone_from(opening);
+            number = advance(number);
+            remaining -= 1;
+        } else {
+            remaining = 0;
+        }
+        let mut page = fetch(cursor.as_deref(), self.search.as_ref())?;
+        while remaining > 0 {
+            let continuation = if forward { &page.next } else { &page.previous };
+            let Some(next) = continuation else {
                 break;
             };
-            page = api.documents(Some(&cursor))?;
-            opened.push(Some(cursor));
+            cursor = Some(next.clone());
+            page = fetch(cursor.as_deref(), self.search.as_ref())?;
+            number = advance(number);
+            remaining -= 1;
         }
-        Ok((page, opened))
+        self.cursor = cursor;
+        self.page = number;
+        self.previous = page.previous;
+        self.next = page.next;
+        self.requested = 0;
+        Ok((
+            page.items,
+            number,
+            self.previous.is_some(),
+            self.next.is_some(),
+        ))
     }
+}
+
+struct CursorPage<T> {
+    items: Vec<T>,
+    next: Option<String>,
+    previous: Option<String>,
 }
 
 #[cfg(test)]

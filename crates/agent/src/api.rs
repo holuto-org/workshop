@@ -14,6 +14,7 @@ use std::{
     error::Error as StdError,
     fmt,
     io::{ErrorKind, Read as _},
+    num::NonZeroU32,
     time::Duration,
 };
 
@@ -28,13 +29,18 @@ use uuid::Uuid;
 
 use crate::{
     Error,
-    documents::{BuyerNip, Document},
+    documents::{BuyerNip, Document, DocumentSearch},
     settings,
 };
-use model::{Job, Page, Pairing, PrinterStatus, QueueForm, ResultForm, Telemetry};
+use model::{
+    AgentJobFilter, DocumentsCursor, DocumentsQuery, DocumentsSearch, Job, JobSearch, JobsPage,
+    JobsSearch, Page, Pairing, PrinterStatus, QueueForm, ResultForm, Telemetry,
+};
 
-/// Backend page-size limit.
-pub const DOCUMENTS_LIMIT: usize = 100;
+/// Backend page-size limit (100).
+pub const DOCUMENTS_LIMIT: NonZeroU32 = NonZeroU32::MIN.saturating_add(99);
+/// Job history window size.
+pub const JOBS_LIMIT: NonZeroU32 = NonZeroU32::MIN.saturating_add(49);
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
 /// Sent as `agent/<SemVer>` for the backend's `App-Version` gate.
@@ -233,11 +239,7 @@ impl Api {
         })
     }
 
-    fn get<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-    ) -> Result<Option<T>, ApiError> {
+    fn get<T: DeserializeOwned>(&self, path: &str) -> Result<Option<T>, ApiError> {
         let span = tracing::info_span!(
             "holuto.request",
             sentry.op = "http.client",
@@ -247,8 +249,7 @@ impl Api {
         );
         let _entered = span.enter();
         let request = self.headers(self.agent.get(self.url(path)), path);
-        decode(request.query_pairs(query.iter().copied()).call()?)
-            .map_err(|error| self.redact(error))
+        decode(request.call()?).map_err(|error| self.redact(error))
     }
 
     fn post<T: DeserializeOwned>(
@@ -344,7 +345,7 @@ impl Api {
     }
 
     pub fn job(&self, id: Uuid) -> Result<Job, ApiError> {
-        let job: Job = self.get(&format!("jobs/{id}"), &[])?.ok_or_else(empty)?;
+        let job: Job = self.get(&format!("jobs/{id}"))?.ok_or_else(empty)?;
         if job.id != id {
             return Err(ApiError::Response("stan innego zadania".to_owned()));
         }
@@ -367,13 +368,48 @@ impl Api {
         Ok(())
     }
 
-    pub fn documents(&self, cursor: Option<&str>) -> Result<Page, ApiError> {
-        let limit = DOCUMENTS_LIMIT.to_string();
-        let mut query = vec![("limit", limit.as_str())];
-        if let Some(cursor) = cursor {
-            query.push(("cursor", cursor));
-        }
-        let page: Page = self.get("documents", &query)?.ok_or_else(empty)?;
+    /// A search travels only in a request body: it may hold a customer name.
+    pub fn documents(
+        &self,
+        cursor: Option<&str>,
+        search: Option<&DocumentSearch>,
+    ) -> Result<Page, ApiError> {
+        let form = DocumentsSearch {
+            cursor: DocumentsCursor {
+                cursor: cursor.map(str::to_owned),
+                limit: DOCUMENTS_LIMIT,
+            },
+            filter: serde_json::Map::new(),
+            search: DocumentsQuery {
+                q: search.map(|search| search.as_str().to_owned()),
+            },
+            sort: Vec::new(),
+        };
+        let page: Page = self
+            .post("documents/search", Some(&form))?
+            .ok_or_else(empty)?;
+        page.check().map_err(ApiError::Response)?;
+        Ok(page)
+    }
+
+    /// The search stays in the body; printer scoping is enforced by Holuto.
+    pub fn jobs(
+        &self,
+        cursor: Option<&str>,
+        search: Option<&DocumentSearch>,
+    ) -> Result<JobsPage, ApiError> {
+        let form = JobsSearch {
+            cursor: DocumentsCursor {
+                cursor: cursor.map(str::to_owned),
+                limit: JOBS_LIMIT,
+            },
+            filter: AgentJobFilter::default(),
+            search: JobSearch {
+                q: search.map(|search| search.as_str().to_owned()),
+            },
+            sort: Vec::new(),
+        };
+        let page: JobsPage = self.post("jobs/search", Some(&form))?.ok_or_else(empty)?;
         page.check().map_err(ApiError::Response)?;
         Ok(page)
     }
@@ -435,7 +471,8 @@ fn route(path: &str) -> &'static str {
     match path {
         "session" => "/agent/session",
         "heartbeat" => "/agent/heartbeat",
-        "documents" => "/agent/documents",
+        "documents/search" => "/agent/documents/search",
+        "jobs/search" => "/agent/jobs/search",
         "jobs/take" => "/agent/jobs/take",
         "jobs" => "/agent/jobs",
         other if other.ends_with("/result") => "/agent/jobs/{id}/result",

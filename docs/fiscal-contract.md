@@ -47,15 +47,34 @@ Authenticated routes other than `/agent/session` carry
 `X-Device-Unique-Number`; the session carries `uniqueNumber` in its body.
 Device swaps are rejected before taking or printing jobs.
 
-- **`GET /agent/documents?limit=100[&cursor=…]`**:
-  `{items:[{kind, orderId, orderNumber, allocationId, amount, customerName,`
-  `occurredAt, dueAt, latestAt, isOverdue}], nextCursor}`. Return `nextCursor`
-  unchanged and URL-encoded;
-  null ends pagination. Kind is `advance` or `sale`. Advances identify their
-  allocation and payment time; sales use null allocation and posting time.
+- **`POST /agent/documents/search`**:
+  `{filter: {}, search: {}, cursor: {cursor: null, limit: 100}}`, with optional
+  `sort`. Response: `{items: [{kind, orderId, orderNumber, allocationId, amount,`
+  `customerName, occurredAt, dueAt, latestAt, isOverdue}], nextCursor,`
+  `previousCursor}`. Return opaque cursors unchanged in the same body, with the
+  same criteria. Only a null cursor ends that direction; an empty page can
+  still have a continuation. Kind is `advance` or `sale`. Advances identify
+  their allocation and payment time; sales use null allocation and posting
+  time. `search: {q}` matches every space- or comma-separated word of `q`
+  (1–128 characters, no control characters) against order number or customer
+  name. Search text is personal data and travels only in the body.
 - **`POST /agent/jobs`**: Queue `{kind, orderId, allocationId, buyerNip}`.
   Advances require an allocation; sales use null. Buyer NIP is nullable.
   Holuto derives payments.
+- **`POST /agent/jobs/search`**: Read-only paired-printer job history, not a
+  heartbeat. Body: `{filter: {state: null, orderId: null}, search: {},`
+  `sort: ["-createdAt", "-id"], cursor: {cursor: null, limit: 50}}`.
+  `sort` is optional; `cursor` is required and its limit is 1–100.
+  `filter.printerId` is refused. `search: {q}` searches order number, customer
+  name, receipt number, vehicle plate and line text. Blank or overlong
+  (more than 128 characters) queries fail at `/search/q`.
+  The response is `{items: [{job, customerName, vehiclePlate, source}],`
+  `nextCursor, previousCursor}`. `job` includes the same versioned fields and
+  `etag` as take, including `issuedAt`; `source` is `staff` or `device`.
+  Continue with either returned cursor and the same filter/search/sort;
+  changing them with a token fails at `/cursor/cursor`.
+  Authentication and identity refusals match other agent routes:
+  401, 400 `fiscal_invalid_input`, 403 `fiscal_unique_number_mismatch` and 404.
 - **`POST /agent/jobs/take`**: Claim a job; no body, 204 for an empty queue.
 - **`GET /agent/jobs/{id}`**: Reconcile job state without printing.
 - **`POST /agent/jobs/{id}/result`**:
@@ -76,7 +95,10 @@ Job lines: `name`, `quantity`, `unitPrice`, `total`, `vatRate`, `vatLetter`.
 Metadata: `orderId`, integer `orderNumber`, `printerId`, `kind`, nullable
 `allocationId`, `etag`, `buyerNip`, `companyName`, `total`, `advances`,
 `payments`, immutable attempt and lifecycle timestamps. Advances identify their
-allocation and have one line per VAT rate, quantity 1.
+allocation and have one line per VAT rate, quantity 1. Outcome fields are
+always present and nullable: `receiptNumber`, `issuedAt` (the printer's issue
+time of the receipt, set exactly when the job has one: `done` or `voided`) and
+`result`. Every job response (take, get, result reply, history) carries them.
 
 `total` sums gross line totals. `advances` contains `{vatLetter, vatRate, amount}`
 deductions, at most one per letter, each positive; duplicates and zero deductions

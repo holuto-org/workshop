@@ -26,7 +26,6 @@ use crate::{
         Api, ApiError,
         model::{Job, JobState, Telemetry},
     },
-    history::{self, HistoryEntry},
     journal::{
         Device, JobResult, Journal, Operation, ReceiptOperation, ReportOperation, Settlement,
         Summary,
@@ -42,7 +41,8 @@ const INTERRUPTED: &str = "Przerwano w trakcie drukowania. Sprawdź drukarkę.";
 #[derive(Default)]
 pub(crate) struct News {
     pub(crate) notices: Vec<String>,
-    pub(crate) history: Option<Vec<HistoryEntry>>,
+    /// A session, claim or result changed the authoritative server list.
+    pub(crate) jobs_changed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -58,7 +58,6 @@ pub(crate) enum Blocked {
 pub(crate) struct Agent<'dir> {
     printer: Box<dyn Driver>,
     api: Api,
-    dir: &'dir StateDir,
     journal: Journal<'dir>,
     telemetry: Telemetry,
     /// Last paired-device probe; supplies telemetry.
@@ -82,7 +81,6 @@ impl<'dir> Agent<'dir> {
         Self {
             printer,
             api,
-            dir,
             journal: Journal::new(dir),
             telemetry,
             status: None,
@@ -153,6 +151,7 @@ impl<'dir> Agent<'dir> {
         }
         self.api.session(&self.telemetry)?;
         self.telemetry_changed = false;
+        self.news.jobs_changed = true;
         Ok(true)
     }
 
@@ -227,6 +226,7 @@ impl<'dir> Agent<'dir> {
         let Some(job) = self.api.take()? else {
             return Ok(POLL);
         };
+        self.news.jobs_changed = true;
         self.execute(&job)?;
         Ok(Duration::ZERO)
     }
@@ -356,11 +356,7 @@ impl<'dir> Agent<'dir> {
             return Ok(Some(Blocked::OrphanedReceipt));
         }
         if remote.state.terminal() {
-            self.finish(
-                &mut operation,
-                remote.state,
-                remote.receipt_number.as_deref(),
-            )?;
+            self.finish(&mut operation, &remote, remote.state)?;
             return Ok(None);
         }
         if matches!(operation.device, Device::NotStarted) && remote.state == JobState::Unknown {
@@ -407,7 +403,7 @@ impl<'dir> Agent<'dir> {
             .result
             .as_ref()
             .map_or(JobState::Unknown, |result| result.outcome().into());
-        self.finish(&mut operation, state, None)?;
+        self.finish(&mut operation, &remote, state)?;
         Ok(None)
     }
 
@@ -466,14 +462,14 @@ impl<'dir> Agent<'dir> {
             Ok(status) => status,
             Err(error) => {
                 self.report(&mut operation, JobResult::failed(&error.to_string()))?;
-                return self.finish(&mut operation, JobState::Failed, None);
+                return self.finish(&mut operation, job, JobState::Failed);
             },
         };
         let receipt = match self.receipt(job, &status.capabilities) {
             Ok(receipt) => receipt,
             Err(reason) => {
                 self.report(&mut operation, JobResult::failed(&reason))?;
-                return self.finish(&mut operation, JobState::Failed, None);
+                return self.finish(&mut operation, job, JobState::Failed);
             },
         };
         operation.summary = Some(Summary::of(&receipt));
@@ -493,7 +489,7 @@ impl<'dir> Agent<'dir> {
                 tracing::info!(job_id = %job.id, "Receipt printed");
                 self.report(&mut operation, JobResult::done(printed.receipt_number))?;
                 if matches!(operation.result, Some(JobResult::Done { .. })) {
-                    self.finish(&mut operation, JobState::Done, None)?;
+                    self.finish(&mut operation, job, JobState::Done)?;
                 }
                 Ok(())
             },
@@ -503,7 +499,7 @@ impl<'dir> Agent<'dir> {
             },
             Err(error) => {
                 self.report(&mut operation, JobResult::failed(&error.to_string()))?;
-                self.finish(&mut operation, JobState::Failed, None)
+                self.finish(&mut operation, job, JobState::Failed)
             },
         }
     }
@@ -606,7 +602,10 @@ impl<'dir> Agent<'dir> {
             return Ok(());
         };
         match self.api.report(operation.job_id, &form) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.news.jobs_changed = true;
+                Ok(())
+            },
             Err(error @ ApiError::Status { status: 400, .. })
                 if matches!(operation.device, Device::Completed { .. }) =>
             {
@@ -625,41 +624,36 @@ impl<'dir> Agent<'dir> {
         }
     }
 
-    /// Uses the staff-supplied receipt number if the printer's was unreadable.
     fn finish(
         &mut self,
         operation: &mut ReceiptOperation,
+        job: &Job,
         state: JobState,
-        staff_number: Option<&str>,
     ) -> Result<(), Error> {
         self.orphaned_receipt = None;
-        if let (Device::Completed { receipt_number }, Some(summary)) =
-            (&operation.device, &operation.summary)
+        if state == JobState::Failed
+            && !matches!(operation.device, Device::Completed { .. })
+            && let Some(reason) = operation
+                .result
+                .as_ref()
+                .and_then(|result| match result {
+                    JobResult::Failed { reason } | JobResult::Unknown { reason } => Some(reason),
+                    JobResult::Done { .. } => None,
+                })
+                .or(job.result.as_ref())
         {
-            let entry = HistoryEntry {
-                job_id: operation.job_id,
-                printed_at: operation.issued_at,
-                receipt_number: receipt_number
-                    .clone()
-                    .or_else(|| staff_number.map(str::to_owned)),
-                total: summary.total,
-                payments: summary
-                    .payments
-                    .iter()
-                    .map(|payment| (payment.form, payment.amount))
-                    .collect(),
-                items: summary.items.clone(),
-            };
-            match history::append(self.dir, &entry) {
-                Ok(snapshot) => self.news.history = Some(snapshot),
-                Err(error) => self.news.notices.push(error.to_string()),
-            }
+            self.news.notices.push(format!(
+                "Nie wydrukowano paragonu (zlecenie {}): {reason}",
+                job.order_number
+            ));
         }
         operation.settled = Some(Settlement {
             at: Timestamp::now(),
             state,
         });
-        self.journal.save(&Operation::Receipt(operation.clone()))
+        self.journal.save(&Operation::Receipt(operation.clone()))?;
+        self.news.jobs_changed = true;
+        Ok(())
     }
 
     /// Explicit local acknowledgement of evidence Holuto cannot accept.
@@ -697,7 +691,7 @@ impl<'dir> Agent<'dir> {
             job_id = %operation.job_id, state = ?remote.state,
             "Operator acknowledged orphaned receipt; no command reissued"
         );
-        self.finish(&mut operation, remote.state, None)
+        self.finish(&mut operation, &remote, remote.state)
     }
 }
 

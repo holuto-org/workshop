@@ -1,11 +1,15 @@
 //! Stateful loopback `/agent` fake exercised through the production HTTP client.
 //!
-//! Customer fixtures are synthetic; request logs never retain authorization values.
+//! Customer fixtures are synthetic; request captures never retain authorization values.
+//! Captured bodies are available for assertions, but `Debug` never prints their contents.
+//! Job history keeps current customer/vehicle metadata outside immutable fiscal snapshots.
 //! `tiny_http` rejects non-ASCII headers before routing; non-UTF-8 header errors are not modeled.
 //! Contract violations panic on the server thread and are propagated to its owner on drop.
 
 #[cfg(test)]
 pub(crate) mod printers;
+
+mod jobs;
 
 use crate::api::contract;
 #[cfg(test)]
@@ -27,6 +31,7 @@ use jiff::Timestamp;
 use posnet::capabilities::capabilities;
 use serde_json::{Value, json};
 use std::{
+    cmp::Ordering,
     collections::{HashMap, VecDeque},
     fmt,
     io::{self, Write},
@@ -86,7 +91,7 @@ pub enum Fault {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RequestLog {
     pub method: String,
     pub path: String,
@@ -96,6 +101,21 @@ pub struct RequestLog {
     pub app_version: Option<String>,
     pub language: Option<String>,
     pub trace_headers: Vec<(String, String)>,
+}
+
+impl fmt::Debug for RequestLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RequestLog")
+            .field("method", &self.method)
+            .field("path", &self.path)
+            .field("body", &"[REDACTED]")
+            .field("authenticated", &self.authenticated)
+            .field("unique_number", &self.unique_number)
+            .field("app_version", &self.app_version)
+            .field("language", &self.language)
+            .field("trace_headers", &self.trace_headers)
+            .finish()
+    }
 }
 
 #[derive(Default)]
@@ -108,15 +128,29 @@ struct State {
     paired_token: Option<String>,
     token_generation: u64,
     jobs: HashMap<Uuid, Value>,
+    jobs_metadata: HashMap<Uuid, Value>,
+    jobs_pages: HashMap<Option<String>, Value>,
+    jobs_cursors: HashMap<String, Cursor<jobs::Key>>,
     queue_job: Option<Value>,
     queue: VecDeque<Uuid>,
     reported: HashMap<Uuid, Value>,
     documents: Vec<Value>,
     pages: HashMap<Option<String>, Value>,
+    document_cursors: HashMap<String, Cursor<DocumentKey>>,
     faults: VecDeque<(String, String, Fault)>,
     requests: Vec<RequestLog>,
     telemetry: Value,
     attempt: u128,
+}
+
+type DocumentKey = (Timestamp, Uuid, bool, Uuid);
+
+/// A search route's opaque cursor, bound to the criteria that issued it.
+struct Cursor<K> {
+    criteria: Value,
+    anchor: K,
+    previous: bool,
+    inclusive: bool,
 }
 
 #[expect(
@@ -235,6 +269,29 @@ impl Holuto {
             .extend(changes.as_object().unwrap().clone());
     }
 
+    /// Patches history-only fields without changing the fiscal job or its etag.
+    #[expect(
+        clippy::unwrap_used,
+        reason = "synthetic metadata patches must be JSON objects"
+    )]
+    pub fn set_job_metadata(&self, id: Uuid, changes: &Value) {
+        let mut state = locked(&self.state);
+        state
+            .jobs_metadata
+            .entry(id)
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .unwrap()
+            .extend(changes.as_object().unwrap().clone());
+    }
+
+    /// Scripts a history window; normal responses still undergo schema validation.
+    pub fn jobs_page(&self, cursor: Option<&str>, page: Value) {
+        let _old = locked(&self.state)
+            .jobs_pages
+            .insert(cursor.map(str::to_owned), page);
+    }
+
     pub fn documents(&self, documents: Vec<Value>) {
         locked(&self.state).documents = documents;
     }
@@ -282,7 +339,8 @@ impl Holuto {
         locked(&self.state).requests.clone()
     }
 
-    /// Staff can resolve only UNKNOWN; attempts stay unchanged.
+    /// Staff can resolve only UNKNOWN; attempts stay unchanged. A receipt number records the
+    /// resolution time as the receipt's issue time.
     pub fn resolve(&self, id: Uuid, receipt_number: Option<&str>) -> Result<(), &'static str> {
         let mut state = locked(&self.state);
         let job = state.jobs.get_mut(&id).ok_or("fiscal_not_found")?;
@@ -295,8 +353,14 @@ impl Holuto {
             "failed"
         });
         job["receiptNumber"] = json!(receipt_number);
+        let now = json!(Timestamp::now());
+        job["issuedAt"] = if receipt_number.is_some() {
+            now.clone()
+        } else {
+            Value::Null
+        };
         job["result"] = json!("Sprawdzono wydruk");
-        job["resolvedAt"] = json!(Timestamp::now());
+        job["resolvedAt"] = now;
         Ok(())
     }
 
@@ -409,8 +473,19 @@ fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
         let _sent = request.respond(response);
         return;
     }
-    contract::validate_request(&method, &path, &log.body).unwrap();
-    let (status, body) = route_request(&mut locked(shared), &log);
+    let invalid_search = if method == "POST" {
+        match route {
+            "/agent/jobs/search" => jobs::invalid_request(&log.body),
+            "/agent/documents/search" => invalid_limit(&log.body, invalid),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if invalid_search.is_none() {
+        contract::validate_request(&method, &path, &log.body).unwrap();
+    }
+    let (status, body) = route_request(&mut locked(shared), &log, invalid_search);
     contract::validate_response(&method, &path, status, &body).unwrap();
     if matches!(fault, Some(Fault::DropAfterCommit)) {
         // Invalid HTTP framing makes ureq fail immediately instead of waiting for a body.
@@ -575,7 +650,7 @@ fn document_available(document: &Value, jobs: &HashMap<Uuid, Value>) -> bool {
     clippy::unwrap_used,
     reason = "document fixtures must carry valid timestamps and UUID identities"
 )]
-fn document_key(document: &Value) -> (Timestamp, Uuid, bool, Uuid) {
+fn document_key(document: &Value) -> DocumentKey {
     let order: Uuid = document["orderId"].as_str().unwrap().parse().unwrap();
     let allocation = document["allocationId"]
         .as_str()
@@ -588,58 +663,155 @@ fn document_key(document: &Value) -> (Timestamp, Uuid, bool, Uuid) {
     )
 }
 
-fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
-    let cursor = url
-        .query_pairs()
-        .find(|(name, _)| name == "cursor")
-        .map(|(_, value)| value.into_owned());
-    if let Some(page) = state.pages.get(&cursor) {
+/// `invalid` builds the route's own validation problem.
+fn invalid_limit(body: &Value, invalid: fn(&str, &str) -> (u16, Value)) -> Option<(u16, Value)> {
+    body.pointer("/cursor/limit")
+        .filter(|limit| {
+            !limit
+                .as_u64()
+                .is_some_and(|limit| (1..=100).contains(&limit))
+        })
+        .map(|_| invalid("/cursor/limit", "invalid_page_size"))
+}
+
+/// Every space- or comma-separated word must occur, ignoring case, in the order number or
+/// customer name. Scripted pages describe the unfiltered feed only.
+fn documents_search(state: &mut State, body: &Value) -> (u16, Value) {
+    let query = body
+        .pointer("/search/q")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_lowercase();
+    let words: Vec<_> = query
+        .split([' ', ','])
+        .filter(|word| !word.is_empty())
+        .collect();
+    let cursor = body.pointer("/cursor/cursor").and_then(Value::as_str);
+    if words.is_empty()
+        && let Some(page) = state.pages.get(&cursor.map(str::to_owned))
+    {
         return (200, page.clone());
     }
-    let limit = match url.query_pairs().find(|(name, _)| name == "limit") {
-        None => 50,
-        Some((_, value)) => match value.parse::<usize>() {
-            Ok(limit @ 1..=100) => limit,
-            _ => return invalid("#query/limit", "invalid_page_size"),
-        },
+    let matches = |document: &Value| {
+        let number = document["orderNumber"].to_string();
+        let customer = document["customerName"]
+            .as_str()
+            .unwrap_or_default()
+            .to_lowercase();
+        words
+            .iter()
+            .all(|word| number.contains(word) || customer.contains(word))
     };
-    let after = match cursor {
-        None => None,
-        Some(cursor) => {
-            let Ok(id) = Uuid::parse_str(&cursor) else {
-                return refused(400, "invalid_cursor");
-            };
-            // Queuing hides documents, but their cursors must remain usable.
-            let Some(key) = state
-                .documents
-                .iter()
-                .map(document_key)
-                .find(|key| key.3 == id)
-            else {
-                return (200, json!({"items": [], "nextCursor": null}));
-            };
-            Some(key)
-        },
-    };
-    // Advances sort before sales for the same order.
-    let mut eligible: Vec<_> = state
+    let descending = body["sort"]
+        .as_array()
+        .and_then(|sort| sort.first())
+        .and_then(Value::as_str)
+        == Some("-occurredAt");
+    let rows = state
         .documents
         .iter()
-        .filter(|document| document_available(document, &state.jobs))
-        .map(|document| (document_key(document), document))
-        .filter(|(key, _)| after.is_none_or(|after| *key > after))
+        .filter(|document| document_available(document, &state.jobs) && matches(document))
+        .map(|document| (document_key(document), document.clone()))
         .collect();
-    eligible.sort_unstable_by_key(|(key, _)| *key);
-    let items: Vec<_> = eligible
-        .iter()
-        .take(limit)
-        .map(|(_, document)| *document)
-        .collect();
-    let next = eligible
-        .get(limit)
-        .and_then(|_| eligible.get(limit - 1))
-        .map(|(key, _)| key.3.to_string());
-    (200, json!({"items": items, "nextCursor": next}))
+    // Advances sort before sales for the same order, regardless of time direction.
+    let compare = |a: DocumentKey, b: DocumentKey| {
+        if descending {
+            b.0.cmp(&a.0)
+                .then_with(|| (a.1, a.2, a.3).cmp(&(b.1, b.2, b.3)))
+        } else {
+            a.cmp(&b)
+        }
+    };
+    cursor_page(
+        &mut state.document_cursors,
+        "documents",
+        body,
+        rows,
+        compare,
+        invalid,
+    )
+}
+
+/// One window of `rows` from the request's cursor; `invalid` reports a cursor these criteria did
+/// not issue. An empty window reverses its request boundary, including an excluded anchor.
+#[expect(
+    clippy::unwrap_used,
+    clippy::get_unwrap,
+    reason = "schema-validated limits fit usize; selected bounds come from eligible rows"
+)]
+fn cursor_page<K: Copy>(
+    cursors: &mut HashMap<String, Cursor<K>>,
+    prefix: &str,
+    body: &Value,
+    mut rows: Vec<(K, Value)>,
+    compare: impl Fn(K, K) -> Ordering,
+    invalid: fn(&str, &str) -> (u16, Value),
+) -> (u16, Value) {
+    let criteria =
+        json!({"filter": body["filter"], "search": body["search"], "sort": body["sort"]});
+    let cursor = match body.pointer("/cursor/cursor").and_then(Value::as_str) {
+        Some(token) => match cursors.get(token) {
+            Some(cursor) if cursor.criteria == criteria => Some(cursor),
+            _ => return invalid("/cursor/cursor", "invalid_cursor"),
+        },
+        None => None,
+    };
+    let limit = usize::try_from(
+        body.pointer("/cursor/limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50),
+    )
+    .unwrap();
+    rows.sort_unstable_by(|(a, _), (b, _)| compare(*a, *b));
+    let (start, end) = match cursor {
+        Some(cursor) if cursor.previous => {
+            let end = rows.partition_point(|(key, _)| {
+                let order = compare(*key, cursor.anchor);
+                order.is_lt() || (cursor.inclusive && order.is_eq())
+            });
+            (end.saturating_sub(limit), end)
+        },
+        Some(cursor) => {
+            let start = rows.partition_point(|(key, _)| {
+                let order = compare(*key, cursor.anchor);
+                order.is_lt() || (!cursor.inclusive && order.is_eq())
+            });
+            (start, start.saturating_add(limit).min(rows.len()))
+        },
+        None => (0, limit.min(rows.len())),
+    };
+    let selected = rows.get(start..end).unwrap();
+    let boundary = cursor.map(|cursor| (cursor.anchor, !cursor.inclusive));
+    let previous = selected
+        .first()
+        .map(|(key, _)| (*key, false))
+        .or(boundary)
+        .filter(|_| start > 0);
+    let next = selected
+        .last()
+        .map(|(key, _)| (*key, false))
+        .or(boundary)
+        .filter(|_| end < rows.len());
+    let items: Vec<_> = rows.drain(start..end).map(|(_, item)| item).collect();
+    let mut token = |anchor, previous, inclusive| {
+        let token = format!("{prefix}-{}", cursors.len() + 1);
+        let _old = cursors.insert(
+            token.clone(),
+            Cursor {
+                criteria: criteria.clone(),
+                anchor,
+                previous,
+                inclusive,
+            },
+        );
+        token
+    };
+    let previous = previous.map(|(anchor, inclusive)| token(anchor, true, inclusive));
+    let next = next.map(|(anchor, inclusive)| token(anchor, false, inclusive));
+    (
+        200,
+        json!({"items": items, "nextCursor": next, "previousCursor": previous}),
+    )
 }
 
 #[expect(
@@ -651,7 +823,11 @@ fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
     clippy::too_many_lines,
     reason = "one audited router keeps the fake's coupled job transitions together"
 )]
-fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
+fn route_request(
+    state: &mut State,
+    request: &RequestLog,
+    invalid_search: Option<(u16, Value)>,
+) -> (u16, Value) {
     if request.path == "/agent/pair" && request.method == "POST" {
         return pair(state, request);
     }
@@ -733,8 +909,11 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
     if path == "/agent/heartbeat" && request.method == "POST" {
         return (204, Value::Null);
     }
-    if path == "/agent/documents" && request.method == "GET" {
-        return documents_page(state, &url);
+    if path == "/agent/documents/search" && request.method == "POST" {
+        return invalid_search.unwrap_or_else(|| documents_search(state, &request.body));
+    }
+    if path == "/agent/jobs/search" && request.method == "POST" {
+        return invalid_search.unwrap_or_else(|| jobs::search(state, &request.body));
     }
     if path == "/agent/jobs/take" && request.method == "POST" {
         let paired = |job: &Value| job["printerId"] == json!(PRINTER_ID);
@@ -810,6 +989,7 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         job["attempt"] = Value::Null;
         job["takenAt"] = Value::Null;
         let _old = state.jobs.insert(id, job.clone());
+        let _old = state.jobs_metadata.insert(id, json!({"source": "device"}));
         state.queue.push_back(id);
         return (201, job);
     }
@@ -869,7 +1049,7 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
             {
                 return refused(409, "fiscal_job_conflict");
             }
-            for name in ["state", "receiptNumber", "result"] {
+            for name in ["state", "receiptNumber", "issuedAt", "result"] {
                 job[name] = form[name].clone();
             }
             let _old = state.reported.insert(id, form);
@@ -940,7 +1120,7 @@ pub fn job_json() -> Value {
             {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
              "total": "50.00", "vatRate": "8", "vatLetter": "B"}
         ],
-        "attempt": ATTEMPT, "receiptNumber": null, "result": null,
+        "attempt": ATTEMPT, "receiptNumber": null, "issuedAt": null, "result": null,
         "createdAt": "2026-10-16T10:00:00Z", "takenAt": "2026-10-16T10:01:00Z",
         "resolvedAt": null, "etag": "0123456789abcdef0123456789abcdef"
     })
@@ -965,7 +1145,13 @@ pub fn printer_json() -> Value {
 }
 pub fn status_json() -> Value {
     json!({
-        "printer": printer_json(), "isOnline": true, "isDeleted": false,
+        "printer": printer_json(),
+        "configuration": {
+            "id": PRINTER_ID, "branchId": Uuid::from_u128(11), "name": "Workshop",
+            "credentialRevision": 1, "deletedAt": null,
+            "etag": "0123456789abcdef0123456789abcdef"
+        },
+        "isOnline": true, "deletedAt": null,
         "lastSeenAt": "2026-10-16T10:00:00Z", "updatedAt": "2026-10-16T09:00:00Z"
     })
 }

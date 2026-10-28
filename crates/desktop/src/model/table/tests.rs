@@ -1,7 +1,6 @@
 use std::array;
 
 use agent::documents::ReceiptKind;
-use fiscal::receipt::PaymentForm;
 
 use super::*;
 use proptest::prelude::*;
@@ -83,52 +82,6 @@ fn polish_names_sort_in_the_operator_alphabet() {
             "Źrebak", "Żak"
         ]
         .map(Some)
-    );
-}
-
-#[test]
-fn receipt_counters_sort_numerically_before_staff_entered_numbers() {
-    let mut table = Table::new();
-    let _previous = table.set(
-        [
-            Some("staff-7"),
-            Some("10"),
-            None,
-            Some("9"),
-            Some("2"),
-            Some("02"),
-        ]
-        .map(|number| HistoryEntry {
-            job_id: uuid::Uuid::nil(),
-            printed_at: Timestamp::UNIX_EPOCH,
-            receipt_number: number.map(str::to_owned),
-            total: Grosze::ZERO,
-            payments: Vec::new(),
-            items: Vec::new(),
-        })
-        .to_vec(),
-    );
-    let _selection = table.sort(
-        Sort {
-            column: 2,
-            descending: false,
-        },
-        None,
-    );
-    assert_eq!(
-        table
-            .items()
-            .iter()
-            .map(|row| row.receipt_number.as_deref())
-            .collect::<Vec<_>>(),
-        [
-            None,
-            Some("02"),
-            Some("2"),
-            Some("9"),
-            Some("10"),
-            Some("staff-7")
-        ]
     );
 }
 
@@ -249,73 +202,6 @@ fn document_columns_sort_raw_numbers_and_instants_in_both_directions() {
                     .items()
                     .iter()
                     .map(|row| row.order_number)
-                    .collect::<Vec<_>>(),
-                expected,
-                "column {column}, descending {descending}"
-            );
-        }
-    }
-}
-
-#[test]
-fn history_columns_sort_raw_values_and_lexicographic_item_sequences() {
-    let entries = [
-        (
-            ["Żak"].as_slice(),
-            "2025-12-01T00:00:00Z",
-            "10",
-            1_000,
-            PaymentForm::Cash,
-        ),
-        (
-            ["Adam"].as_slice(),
-            "2026-01-01T00:00:00Z",
-            "2",
-            900,
-            PaymentForm::Cash,
-        ),
-        (
-            ["Adam", "Łukasz"].as_slice(),
-            "2025-02-01T00:00:00Z",
-            "3",
-            99,
-            PaymentForm::Card,
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, (items, printed_at, number, amount, form))| {
-        let total = Grosze::new(amount).unwrap();
-        HistoryEntry {
-            job_id: uuid::Uuid::from_u128(u128::try_from(index).unwrap()),
-            printed_at: printed_at.parse().unwrap(),
-            receipt_number: Some(number.into()),
-            total,
-            payments: vec![(form, total)],
-            items: items.iter().map(|item| (*item).into()).collect(),
-        }
-    })
-    .collect::<Vec<_>>();
-    for (column, ascending) in [
-        (0, [1, 2, 0]),
-        (1, [2, 0, 1]),
-        (2, [1, 2, 0]),
-        (3, [2, 1, 0]),
-        (4, [1, 0, 2]),
-    ] {
-        for descending in [false, true] {
-            let mut expected = ascending.map(uuid::Uuid::from_u128);
-            if descending {
-                expected.reverse();
-            }
-            let mut table = Table::new();
-            let _previous = table.set(entries.clone());
-            let _selection = table.sort(Sort { column, descending }, None);
-            assert_eq!(
-                table
-                    .items()
-                    .iter()
-                    .map(|row| row.job_id)
                     .collect::<Vec<_>>(),
                 expected,
                 "column {column}, descending {descending}"

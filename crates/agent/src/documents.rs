@@ -128,5 +128,34 @@ impl BuyerNip {
     }
 }
 
+/// Shared document/job-history search; customer names and plates never reach `Debug`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DocumentSearch(String);
+
+impl fmt::Debug for DocumentSearch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DocumentSearch([REDACTED])")
+    }
+}
+
+impl DocumentSearch {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The backend's `SearchText`: control characters become spaces, blank means no search and
+    /// at most 128 characters are sent.
+    pub fn parse(text: &str) -> Result<Option<Self>, Error> {
+        let text = text
+            .trim_matches(|character: char| character.is_control() || character.is_whitespace());
+        if text.chars().nth(128).is_some() {
+            return Err(Error::Invalid(
+                "Wyszukiwana fraza może mieć najwyżej 128 znaków.".to_owned(),
+            ));
+        }
+        Ok((!text.is_empty()).then(|| Self(text.replace(char::is_control, " "))))
+    }
+}
+
 #[cfg(test)]
 mod tests;

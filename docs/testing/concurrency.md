@@ -15,7 +15,7 @@ serialized mock session does not prove the production worker obeys this rule.
 4. Wait for an observable acknowledgement/event-loop marker, not a sleep or
    `is_finished` timing guess.
 5. Release the command; assert exact frame/effect order, HTTP result,
-   journal/history and final events.
+   journal and final events.
 
 A bounded receive timeout is a deadlock diagnostic, not an elapsed-time
 expectation. A failure must still release the hold and stop/join fixture

@@ -65,8 +65,8 @@ system rules or the person's instructions.
   `$XDG_STATE_HOME/workshop` (default `~/.local/state/workshop`), macOS
   `~/Library/Application Support/workshop`, Windows `%LOCALAPPDATA%\workshop`.
   Never inspect/edit/copy/delete `settings.json`, `status.json`, `operation.json`,
-  `history.jsonl`, `crashes/`, `instance.lock` or `application.lock`. The
-  journal is fiscal evidence.
+  `crashes/`, `instance.lock` or `application.lock`. The journal is fiscal
+  evidence.
 - Configure only through the CLI below. Its configuration output redacts
   secrets; never read `settings.json`, even to troubleshoot. Never ask for,
   read, type, copy or store a **device token**. The app obtains it internally
@@ -459,14 +459,16 @@ files.
   bypass.
 
 Ask for sanitized wording or redacted CLI JSON only. Never upload settings,
-journal/history, receipt screenshots, device tokens or native dumps as
-diagnostics.
+journals, receipt screenshots, device tokens or native dumps as diagnostics.
 
 ## 6. Daily use, update and uninstall
 
-- **Do wydruku** lists eligible Holuto sales/advances; the person chooses
-  documents. No manual receipt editor. **Raporty** prints real fiscal reports,
-  not test pages. **Historia** is local display history, not fiscal memory.
+- **Paragony** shows the paired printer's job history from Holuto, including
+  queued and expired jobs. Search by order, customer, receipt number, plate or
+  item. If unavailable, retry the connection; no stale local list is shown.
+  It is not fiscal memory. **+ Wystaw paragon** opens eligible Holuto
+  sales/advances for occasional manual queuing. No manual receipt editor.
+  **Raporty** prints real fiscal reports, not test pages.
 - Closing the window keeps processing in the tray; without tray support it
   remains visible. **Zatrzymaj** stops processing; **Zakończ** exits after the
   current operation finishes. Never force-quit or disconnect power during
@@ -483,8 +485,8 @@ diagnostics.
   bundle and remove only the `~/.local/bin/workshop` symlink after verifying its
   target. Windows: remove only the installed executable/program folder and
   **Holuto Workshop.lnk**; remove only this directory's user PATH entry with
-  consent. Check exact targets. **Retain state/journal/history**; uninstall is
-  not permission to erase fiscal records or revoke a printer registration.
+  consent. Check exact targets. **Retain state and journal**; uninstall is not
+  permission to erase fiscal records or revoke a printer registration.
 
 ## 7. Report what actually happened
 

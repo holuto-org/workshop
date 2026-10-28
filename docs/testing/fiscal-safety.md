@@ -17,8 +17,8 @@ dispatch**, not blind retry and not a claim of exactly-once printing.
 
 Use the real state directory and production HTTP client. The Holuto fake must
 commit a result and then lose its answer as well as fail before commit. After
-restart, assert the fake's state/request log, exact journal and history, device
-effects, and no replayed fiscal frames.
+restart, assert the fake's state/request log, exact journal, device effects,
+and no replayed fiscal frames.
 
 ## Fault matrix
 
@@ -57,8 +57,8 @@ authorization to skip preflight or switch printers while blocked.
 - **Completed but Holuto already failed/expired**: Retain journal and block.
   Notice names job/order and receipt number or `nieczytelny`. Only explicit
   **local operator acknowledgement** on the same ready vendor/unique number
-  appends history and settles; it neither prints nor reports to Holuto. Backend
-  staff resolution cannot resolve these terminal states.
+  settles; it neither prints nor reports to Holuto. Backend staff resolution
+  cannot resolve these terminal states.
 - **Mismatched attempt/vendor/unique number, corrupt or unreadable journal**:
   Fail closed, preserving evidence; never delete the file as recovery.
 - **Interrupted report**: Block until explicit report resolution with the same
@@ -131,6 +131,7 @@ normalize away unsupported text. Freeze printer time, including Warsaw DST
 repeated/skipped times; never replace printer time with the host clock. Inject
 `today` only into pure UI/date functions.
 
-History is a display cache: its read/write failure produces a notice without
-preventing settlement of a server-accepted result. Assert both the accepted
-result and retained fiscal evidence when injecting that failure.
+The Paragony list reads Holuto's job history; it is not fiscal evidence.
+History outages clear the displayed list without changing journal settlement
+or blocking. Unknown outcomes remain blocked until a person resolves them;
+display state must never turn uncertainty into permission to print.

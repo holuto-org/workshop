@@ -2,7 +2,7 @@
 //!
 //! Decimal strings are validated per job at the fiscal boundary.
 
-use super::{APP_VERSION, DOCUMENTS_LIMIT};
+use super::{APP_VERSION, DOCUMENTS_LIMIT, JOBS_LIMIT};
 use crate::documents::{Document, ReceiptKind};
 use fiscal::{
     device::{Device, VatKind, VatRate, Vendor},
@@ -32,10 +32,19 @@ pub type PrinterStatus = wire::PrinterStatus;
 pub type PrinterInfo = wire::PrinterInfo;
 pub type JobState = wire::JobState;
 pub type Job = wire::Job;
+pub type JobView = wire::JobView;
+pub type JobSource = wire::JobSource;
+pub type AgentJobFilter = wire::AgentJobFilter;
+pub type JobSearch = wire::JobSearch;
+pub type JobsSearch = wire::JobsSearch;
+pub type JobsPage = wire::JobsPage;
 pub type Outcome = wire::Outcome;
 pub type ResultForm = wire::ResultForm;
 pub type QueueForm = wire::QueueForm;
 pub type Page = wire::Page;
+pub type DocumentsSearch = wire::DocumentsSearch;
+pub type DocumentsCursor = wire::DocumentsCursor;
+pub type DocumentsQuery = wire::DocumentsQuery;
 pub type Pairing = wire::Pairing;
 pub type PairForm = wire::PairForm;
 
@@ -216,13 +225,31 @@ impl From<Outcome> for JobState {
 }
 impl Page {
     pub(crate) fn check(&self) -> Result<(), String> {
-        if self.items.len() > DOCUMENTS_LIMIT {
+        if usize::try_from(DOCUMENTS_LIMIT.get()).is_ok_and(|limit| self.items.len() > limit) {
             return Err("strona przekracza limit".to_owned());
         }
         if self.next_cursor.as_deref().is_some_and(str::is_empty) {
             return Err("pusty kursor następnej strony".to_owned());
         }
+        if self.previous_cursor.as_deref().is_some_and(str::is_empty) {
+            return Err("pusty kursor poprzedniej strony".to_owned());
+        }
         self.items.iter().try_for_each(Document::check)
+    }
+}
+impl JobsPage {
+    pub(crate) fn check(&self) -> Result<(), String> {
+        if usize::try_from(JOBS_LIMIT.get()).is_ok_and(|limit| self.items.len() > limit) {
+            return Err("strona przekracza limit".to_owned());
+        }
+        if [self.next_cursor.as_deref(), self.previous_cursor.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(str::is_empty)
+        {
+            return Err("pusty kursor strony".to_owned());
+        }
+        Ok(())
     }
 }
 pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<String>) {

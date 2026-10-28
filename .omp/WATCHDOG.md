@@ -9,8 +9,7 @@ Review in this order, using [the test checklist](../docs/testing/checklist.md):
 1. Duplicate fiscal effects: any retry, replay or second submission of a printer
    command, including after timeout, restart or a repeated click.
 2. Lost or overwritten evidence: journal writes after dispatch, deleted or reset
-   journals, stale completions overwriting newer state, history errors blocking
-   settlement.
+   journals or stale completions overwriting newer state.
 3. Uncertainty that fails to block, or a "certain" refusal broader than
    [recovery classification](../docs/testing/fiscal-safety.md#recovery-classification)
    and its vendor-evidence admission criterion.

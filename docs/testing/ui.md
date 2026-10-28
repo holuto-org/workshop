@@ -48,9 +48,15 @@ No sleep after clicking and no layout-coordinate search.
   safe errors.
 - Autostart toggles the per-user registration/preference, never bypasses fiscal
   preflight or an unresolved block.
-- Select/sort/refresh/page and confirm the same document identity. Assert kind,
-  amount and optional NIP in confirmation; cancel has no external effect;
-  repeated confirmation consumes the action once.
+- In **Paragony**, verify all seven server job states, customer/plate, receipt
+  number, issue time, failure result and selected line/payment/advance details.
+  Search is debounced and sent to Holuto, including name, plate, receipt,
+  order and item matches. Changing it restarts page one. Exercise next/previous
+  pages, empty results and unavailable/retry without stale rows.
+  Ctrl+F, Escape and list navigation retain their keyboard behavior.
+- Open **+ Wystaw paragon**, then select/sort/refresh/page and confirm the same
+  document identity through **Dalej**. Assert kind, amount and optional NIP;
+  cancel has no external effect; repeated confirmation consumes the action once.
 - Report confirmation shows exact dates/summary. With injected `today` in pure
   validation, test leap days, equal endpoints, today, future/reversed dates and
   periodic 1999-12-31 versus 2000-01-01.
@@ -61,9 +67,9 @@ No sleep after clicking and no layout-coordinate search.
   unknown receipts have no local bypass; the special
   completed-but-failed/expired conflict exposes only its explicit
   acknowledgement flow with job/order/receipt evidence.
-- Worker events update connection/notice/history/blocked state through the real
-  Slint loop. While a simulator command is held, an event-loop marker still
-  executes.
+- Worker events update both header indicators, notices, job-history pages,
+  availability and blocked state through the real Slint loop. While a simulator
+  command is held, an event-loop marker still executes.
 - Close with a tray hides/recreates the window without stopping work; no tray
   keeps it visible. Reopening retains selected identity and sort. Linux watcher
   availability uses separate private-bus tests.
@@ -71,8 +77,8 @@ No sleep after clicking and no layout-coordinate search.
   then exits. Do not test shutdown by killing the worker mid-operation.
 - On macOS, `macos_quit` is a deliberate exception: a harness-free test target
   runs real AppKit/winit on the main thread. Its child must emit the held-quit
-  marker; after exit, the parent checks stopped status, history and journal
-  settlement. An early native exit is a failure.
+  marker; after exit, the parent checks stopped status, accepted Holuto result
+  and journal settlement. An early native exit is a failure.
 
 Backend tests prove semantics and accessibility, not fonts, pixels, compositor
 integration or packaged startup. Those need

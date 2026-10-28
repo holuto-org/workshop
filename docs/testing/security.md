@@ -38,10 +38,10 @@ every mutating CLI command must refuse the GUI's instance lock.
 ## Local state
 
 On Unix assert state directory 0700 and created/replaced data files 0600,
-including settings, status, journal and history. Opening the state tightens an
-existing directory/lock; loading history tightens its file. Settings/journal/
-status reads alone do not repair modes. On Windows use the Local AppData Known
-Folder and profile ACL protection; Unix modes do not prove Windows privacy.
+including settings, status and journal. Opening the state tightens an existing
+directory/lock. Settings/journal/status reads alone do not repair modes. On
+Windows use the Local AppData Known Folder and profile ACL protection; Unix
+modes do not prove Windows privacy.
 Test cross-process locking and atomic replacement on every supported OS.
 
 Inject a deterministic write failure (for example a directory occupying the

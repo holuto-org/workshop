@@ -13,8 +13,6 @@ that an unreadable journal can be discarded.
 - **`settings.json`**: API URL/token/port/baud/diagnostics/autostart and nullable
   vendor retain meaning; unknown fields and a missing `vendor` fail closed.
   Diagnostics opt-out survives save/load/restart.
-- **`history.jsonl`**: Current entries preserve ordering, duplicate-job handling
-  and staff-entered numbers; torn lines do not swallow the next valid entry.
 
 A round trip proves only today's writer agrees with today's reader; literal
 fixtures make future format changes deliberate. Until the first Workshop
@@ -27,9 +25,10 @@ must pass on each OS; Linux rename does not prove Windows replacement.
 
 The vendored OpenAPI is the production contract, not the fake. Compare session
 vendor + unique number binding, heartbeat identity headers, current per-driver
-limits/VAT/capabilities, document pagination, queue inputs, take attempts,
-terminal states and result idempotency/refusals with that contract. Update the
-`agent::testing` loopback fake in the same change, then prove requests through
+limits/VAT/capabilities, document and job-history pagination/search, queue
+inputs, take attempts, terminal states and result idempotency/refusals.
+Update the `agent::testing` loopback fake in the same change, then prove
+requests through
 production `ureq` and the observable stored server state.
 
 Follow the [sync procedure](../../AGENTS.md#api-contract). Typify generates wire
@@ -47,6 +46,14 @@ and refusal for a stale attempt. Do not invent staff resolution for
 failed/expired jobs: only unknown jobs have that backend resolution path. A
 completed print conflicting with failed/expired uses explicit local
 acknowledgement and no server write.
+
+Job-history requests are read-only, never heartbeats. Assert the job's required
+nullable `issuedAt` (absent from the history row), all lifecycle states and
+staff/device sources, empty pages and both cursor directions. Changed
+filter/search/sort with a token must fail at `/cursor/cursor`; blank/overlong
+queries fail at `/search/q`. Search fixtures cover customer, plate, receipt
+number, order number and line text without putting their values into logs or
+`Debug`.
 
 A fake alone cannot prove compatibility with a deployed server. Review backend
 contract changes together; use sanitized recorded contract examples and the

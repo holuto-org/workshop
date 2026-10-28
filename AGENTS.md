@@ -41,7 +41,7 @@ them); other agents read the rule before changing that area.
 - **[worker-thread](.omp/rules/worker-thread.md)**: desktop printer/API access,
   event bridge, blocking calls, stop/join/quit.
 - **[durable-state](.omp/rules/durable-state.md)**: journal, store, settings,
-  status, history and their stored formats.
+  status and their stored formats.
 - **[holuto-api](.omp/rules/holuto-api.md)**: `/agent` client, OpenAPI
   contract, loopback Holuto fake.
 - **[posnet-wire-encoding](.omp/rules/posnet-wire-encoding.md)**,
@@ -73,7 +73,7 @@ One Cargo workspace; dependency versions and lints live only in the root
   receipts and company footers stay disabled; accepted daily reports remain
   uncertain until a person resolves them.
 - **`crates/agent`**: Holuto `/agent` client, durable journal and recovery,
-  settings/status/history and the single `Worker`.
+  settings/status and the single `Worker`.
 - **`crates/desktop`** (binary `workshop`): Polish Slint UI/tray, CLI, pairing,
   per-user autostart and Sentry lifecycle/privacy.
 

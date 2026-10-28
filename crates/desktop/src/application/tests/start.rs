@@ -1,4 +1,5 @@
 use agent::testing::{Fault, Holuto};
+use serde_json::json;
 
 use super::*;
 #[test]
@@ -9,6 +10,91 @@ fn saved_start_on_launch_runs_the_same_connection_preflight() -> Result<(), Box<
 #[test]
 fn sign_in_saves_settings_and_stops_cooperatively_while_connecting() -> Result<(), Box<dyn Error>> {
     connect_and_stop(false)
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "A real worker and Holuto fake prove the typed search reaches a new session"
+)]
+fn a_new_worker_uses_both_typed_searches_for_its_first_lists() -> Result<(), Box<dyn Error>> {
+    i_slint_backend_testing::init_integration_test_with_mock_time();
+    let temporary = TempDir::new()?;
+    let simulator = Simulator::start();
+    let fake = Arc::new(Holuto::new());
+    let (reached, arrivals) = mpsc::channel();
+    let (release, resume) = mpsc::channel();
+    fake.fault(
+        "POST",
+        "/agent/jobs/search",
+        Fault::Hold {
+            reached: reached.clone(),
+            release: resume,
+        },
+    );
+    let (document_release, document_resume) = mpsc::channel();
+    fake.fault(
+        "POST",
+        "/agent/documents/search",
+        Fault::Hold {
+            reached,
+            release: document_resume,
+        },
+    );
+    let settings = Settings {
+        api_url: fake.url().into(),
+        token: fake.token().into(),
+        port: simulator.address().into(),
+        ..Settings::default()
+    };
+    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    settings.save(&dir)?;
+    let app = make_app(dir, settings, simulator.link())?;
+    let window = app
+        .borrow()
+        .window
+        .as_ref()
+        .ok_or("missing window")?
+        .clone_strong();
+    // Typed before Start, or left typed across Stop: no worker was told yet.
+    control(&window, "Szukaj", AccessibleRole::TextInput)?.set_accessible_value("kowal");
+    button(&window, "+ Wystaw paragon")?.invoke_accessible_default_action();
+    control(&window, "Szukaj dokumentu", AccessibleRole::TextInput)?.set_accessible_value("nowak");
+    button(&window, "Zamknij")?.invoke_accessible_default_action();
+    window.set_tab(2);
+    button(&window, "Uruchom")?.invoke_accessible_default_action();
+    let coordinator = thread::Builder::new()
+        .name("search observer".into())
+        .spawn(move || {
+            let jobs_reached = arrivals.recv_timeout(Duration::from_secs(10)).is_ok();
+            let _released = release.send(());
+            let documents_reached = arrivals.recv_timeout(Duration::from_secs(10)).is_ok();
+            let _released = document_release.send(());
+            let _scheduled = slint::invoke_from_event_loop(|| {
+                with_app(|app| app.stop(true));
+            });
+            jobs_reached && documents_reached
+        })?;
+    slint::run_event_loop_until_quit()?;
+    let found = coordinator
+        .join()
+        .map_err(|_panic| "search observer panicked")?;
+    assert!(found, "both first listing requests must reach Holuto");
+    for (path, search) in [
+        ("/agent/documents/search", "nowak"),
+        ("/agent/jobs/search", "kowal"),
+    ] {
+        assert_eq!(
+            fake.requests()
+                .iter()
+                .find(|request| request.path == path)
+                .map(|request| request.body["search"].clone()),
+            Some(json!({"q": search})),
+            "{path} must never first list unfiltered rows"
+        );
+    }
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    Ok(())
 }
 
 #[test]
@@ -60,6 +146,7 @@ fn stop_while_start_is_saving_settings_cancels_the_start() -> Result<(), Box<dyn
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     button(&window, "Uruchom")?.invoke_accessible_default_action();
     assert!(app.borrow().model.saving, "start waits for its settings");
     // Assistive technology can activate the disabled button.
@@ -114,6 +201,7 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     if !start_on_launch {
         button(&window, "Uruchom")?.invoke_accessible_default_action();
     }
@@ -208,6 +296,7 @@ fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration
         dir,
         settings.clone(),
         simulator.link(),
+        worker::Searches::default(),
         Application::worker_event,
     )?;
     app.borrow_mut().worker = Some(worker);
@@ -220,6 +309,7 @@ fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     control(&window, "Adres API", AccessibleRole::TextInput)?
         .set_accessible_value("https://unsaved.example.test");
     for label in ["Zapisz", "Uruchom", "Sparuj"] {
@@ -250,7 +340,6 @@ fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration
 )]
 fn page_callbacks_reject_disabled_actions_and_navigate_next_then_previous()
 -> Result<(), Box<dyn Error>> {
-    use serde_json::json;
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
     let simulator = Simulator::start();
@@ -265,11 +354,15 @@ fn page_callbacks_reject_disabled_actions_and_navigate_next_then_previous()
     };
     holuto.page(
         None,
-        json!({"items":[document(10)],"nextCursor":"second-page"}),
+        json!({"items":[document(10)],"nextCursor":"second-page","previousCursor":null}),
+    );
+    holuto.page(
+        Some("first"),
+        json!({"items":[document(10)],"nextCursor":"second-page","previousCursor":null}),
     );
     holuto.page(
         Some("second-page"),
-        json!({"items":[document(11)],"nextCursor":null}),
+        json!({"items":[document(11)],"nextCursor":null,"previousCursor":"first"}),
     );
     let settings = Settings {
         api_url: holuto.url().into(),
@@ -279,43 +372,51 @@ fn page_callbacks_reject_disabled_actions_and_navigate_next_then_previous()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
+    // Opening the dialog is covered separately; a click here would be a re-entrant callback.
+    app.borrow_mut().model.manual = true;
     let pages = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&pages);
-    let worker = Worker::spawn(dir, settings, simulator.link(), move |event| {
-        let step = matches!(event, Event::Documents { .. })
-            .then(|| observed.fetch_add(1, Ordering::SeqCst));
-        let _scheduled = slint::invoke_from_event_loop(move || {
-            with_app(move |app| {
-                app.event(event);
-                app.sync();
-                let window = app.window.as_ref().ok_or("missing window")?;
-                if let Some(step) = step {
-                    assert_eq!(app.model.page, if step == 1 { 2 } else { 1 });
-                    match step {
-                        0 => {
-                            button(window, "Poprzednia strona")
-                                .map_err(|error| error.to_string())?
-                                .invoke_accessible_default_action();
-                            button(window, "Następna strona")
-                                .map_err(|error| error.to_string())?
-                                .invoke_accessible_default_action();
-                        },
-                        1 => {
-                            button(window, "Następna strona")
-                                .map_err(|error| error.to_string())?
-                                .invoke_accessible_default_action();
-                            button(window, "Poprzednia strona")
-                                .map_err(|error| error.to_string())?
-                                .invoke_accessible_default_action();
-                        },
-                        2 => app.stop(true)?,
-                        _ => panic!("unexpected page refresh"),
+    let worker = Worker::spawn(
+        dir,
+        settings,
+        simulator.link(),
+        worker::Searches::default(),
+        move |event| {
+            let step = matches!(event, Event::Documents { .. })
+                .then(|| observed.fetch_add(1, Ordering::SeqCst));
+            let _scheduled = slint::invoke_from_event_loop(move || {
+                with_app(move |app| {
+                    app.event(event);
+                    app.sync();
+                    let window = app.window.as_ref().ok_or("missing window")?;
+                    if let Some(step) = step {
+                        assert_eq!(app.model.page, if step == 1 { 2 } else { 1 });
+                        match step {
+                            0 => {
+                                button(window, "Poprzednia strona")
+                                    .map_err(|error| error.to_string())?
+                                    .invoke_accessible_default_action();
+                                button(window, "Następna strona")
+                                    .map_err(|error| error.to_string())?
+                                    .invoke_accessible_default_action();
+                            },
+                            1 => {
+                                button(window, "Następna strona")
+                                    .map_err(|error| error.to_string())?
+                                    .invoke_accessible_default_action();
+                                button(window, "Poprzednia strona")
+                                    .map_err(|error| error.to_string())?
+                                    .invoke_accessible_default_action();
+                            },
+                            2 => app.stop(true)?,
+                            _ => panic!("unexpected page refresh"),
+                        }
                     }
-                }
-                Ok(())
+                    Ok(())
+                });
             });
-        });
-    })?;
+        },
+    )?;
     app.borrow_mut().worker = Some(worker);
     app.borrow_mut().model.running = true;
     slint::run_event_loop_until_quit()?;
@@ -324,14 +425,15 @@ fn page_callbacks_reject_disabled_actions_and_navigate_next_then_previous()
         holuto
             .requests()
             .into_iter()
-            .filter(|request| request.path.starts_with("/agent/documents"))
-            .map(|request| request.path)
+            .filter(|request| request.path == "/agent/documents/search")
+            .map(|request| request.body["cursor"].clone())
             .collect::<Vec<_>>(),
         [
-            "/agent/documents?limit=100",
-            "/agent/documents?limit=100&cursor=second-page",
-            "/agent/documents?limit=100"
-        ]
+            json!({"limit": 100}),
+            json!({"limit": 100, "cursor": "second-page"}),
+            json!({"limit": 100, "cursor": "first"})
+        ],
+        "disabled buttons send nothing; enabled ones follow the server cursors"
     );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())

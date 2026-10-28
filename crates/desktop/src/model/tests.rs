@@ -35,7 +35,7 @@ fn ready() -> Model {
         vat: Vec::new(),
         capabilities: capabilities(),
     });
-    model.set_documents(vec![document()], 1, false);
+    model.set_documents(vec![document()], 1, false, false);
     model.selected = Some(0);
     model
 }
@@ -257,7 +257,7 @@ fn cancelled_or_newly_blocked_confirmation_sends_nothing() {
 fn a_receipt_that_left_the_pending_list_while_confirming_is_not_queued() {
     let mut model = ready();
     model.request(Action::QueueReceipt);
-    model.set_documents(vec![], 1, false);
+    model.set_documents(vec![], 1, false, false);
     assert_eq!(model.confirm(true), None);
     assert_eq!(
         (model.message.as_str(), model.tone),
@@ -270,21 +270,22 @@ fn a_receipt_that_left_the_pending_list_while_confirming_is_not_queued() {
 }
 
 #[test]
-fn the_receipt_carries_the_buyer_nip_it_showed_and_an_invalid_nip_sends_nothing() {
+fn the_receipt_carries_the_confirmed_buyer_nip_and_an_invalid_nip_keeps_the_dialog_open() {
     let mut model = ready();
-    model.nip = "526104082".into();
+    model.nip = "1234567890".into();
     model.request(Action::QueueReceipt);
     assert!(
-        model.pending.is_none(),
-        "a 9-digit NIP opens no confirmation"
+        model.nip.is_empty(),
+        "a NIP never carries into a new receipt"
     );
-    assert_eq!(
-        (model.message.as_str(), model.tone),
-        ("NIP nabywcy musi zawierać 10 cyfr.", Tone::Error)
+    model.nip = "526104082".into();
+    assert_eq!(model.confirm(true), None, "a 9-digit NIP sends nothing");
+    assert!(
+        model.pending.is_some() && model.nip_invalid,
+        "the dialog stays open for correction"
     );
     model.nip = " 5261040828 ".into();
     let mut commands = Vec::new();
-    model.request(Action::QueueReceipt);
     commands.extend(model.confirm(true));
     assert_eq!(
         commands,
@@ -294,6 +295,56 @@ fn the_receipt_carries_the_buyer_nip_it_showed_and_an_invalid_nip_sends_nothing(
         }]
     );
     assert!(model.nip.is_empty(), "the NIP belongs to this receipt only");
+}
+
+#[test]
+fn searches_are_validated_deduplicated_and_start_with_the_last_valid_criteria() {
+    for jobs in [false, true] {
+        let mut model = ready();
+        let search = |model: &mut Model, text: String| {
+            if jobs {
+                model.receipt_search = text;
+            } else {
+                model.search = text;
+            }
+            model.search_command(jobs)
+        };
+        let parsed = DocumentSearch::parse("kowal WA123").unwrap();
+        let expected = if jobs {
+            Command::JobsSearch(parsed.clone())
+        } else {
+            Command::Search(parsed.clone())
+        };
+        assert_eq!(search(&mut model, " kowal WA123 ".into()), Some(expected));
+        assert_eq!(
+            search(&mut model, "kowal WA123".into()),
+            None,
+            "Enter after the typing pause must not resend a search"
+        );
+        assert_eq!(search(&mut model, "x".repeat(129)), None);
+        assert_eq!(
+            (model.message.as_str(), model.tone),
+            (
+                "Wyszukiwana fraza może mieć najwyżej 128 znaków.",
+                Tone::Error
+            )
+        );
+        model.stopped();
+        let initial = model.initial_searches();
+        assert_eq!(
+            if jobs {
+                initial.jobs
+            } else {
+                initial.documents
+            },
+            parsed
+        );
+        assert_eq!(
+            search(&mut model, "kowal WA123".into()),
+            None,
+            "a new worker already starts with the valid criteria, even after rejected text"
+        );
+    }
 }
 
 #[test]
@@ -349,7 +400,7 @@ fn sorted_refresh_retains_document_identity_not_row_index() {
     let mut other = document();
     other.order_id = Uuid::from_u128(1);
     other.order_number = 1;
-    model.set_documents(vec![document(), other.clone()], 1, true);
+    model.set_documents(vec![document(), other.clone()], 1, false, true);
     model.sort_documents(0, false);
     assert_eq!(
         model.selected,
@@ -359,7 +410,7 @@ fn sorted_refresh_retains_document_identity_not_row_index() {
     let mut inserted = document();
     inserted.order_id = Uuid::from_u128(10);
     inserted.order_number = 10;
-    model.set_documents(vec![other, document(), inserted], 2, false);
+    model.set_documents(vec![other, document(), inserted], 2, true, false);
     model.request(Action::QueueReceipt);
     let mut commands = Vec::new();
     commands.extend(model.confirm(true));
@@ -459,51 +510,6 @@ fn capture_rejects_assistive_connection_edits_while_running_saving_or_pairing() 
 }
 
 #[test]
-fn window_sync_shows_connection_state_and_readiness_with_error_precedence() {
-    i_slint_backend_testing::init_no_event_loop();
-    let window = AppWindow::new().unwrap();
-    let mut model = Model::new(Settings::default(), today());
-    for (running, connected, problem, blocked, text, tone) in [
-        (false, false, false, false, "Nie połączono", 0),
-        (true, false, false, false, "Łączenie…", 0),
-        (true, true, false, false, "Połączono · SERIAL42", 0),
-        (
-            true,
-            true,
-            true,
-            false,
-            "Drukarka niegotowa: Brak papieru",
-            2,
-        ),
-        (
-            true,
-            true,
-            true,
-            true,
-            "Zablokowane: wymaga rozstrzygnięcia",
-            2,
-        ),
-    ] {
-        model.running = running;
-        model.connected = connected;
-        model.blocked = blocked;
-        model.unique_number = "SERIAL42".into();
-        model.device = connected.then(|| ready().device.unwrap());
-        if problem {
-            model
-                .device
-                .as_mut()
-                .unwrap()
-                .problems
-                .push("Brak papieru".into());
-        }
-        model.sync(&window);
-        assert_eq!(window.get_connection_text(), text);
-        assert_eq!(window.get_connection_tone(), tone);
-    }
-}
-
-#[test]
 fn window_initialization_lists_every_polish_month_and_tab_capture_round_trips() {
     use slint::Model as _;
     i_slint_backend_testing::init_no_event_loop();
@@ -543,7 +549,7 @@ fn window_initialization_lists_every_polish_month_and_tab_capture_round_trips() 
             "styczeń 2024",
         ]
     );
-    for index in [0, 1, 2, 3] {
+    for index in [0, 1, 2] {
         window.set_tab(index);
         model.capture(&window, Date::constant(2026, 1, 1));
         model.sync(&window);
