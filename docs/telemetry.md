@@ -19,8 +19,8 @@ and envelopes; already submitted requests cannot be recalled. Restart to disable
 the native crash reporter. Turning it on after a disabled startup also needs a
 restart to initialize the client. This affects diagnostics, not Holuto requests
 required to print. Tests use capturing transports, not production ingestion.
-Package smoke checks save diagnostics opt-out through the CLI before launching
-the GUI, including when the executable embeds the production DSN.
+Package smoke isolation follows the
+[package checks](testing/platforms.md#package-checks).
 
 Normal CLI commands return before diagnostics initialization. A native reporter
 child bypasses CLI dispatch and enters initialization even if consent changed
@@ -133,7 +133,7 @@ Structured capture/transport tests do not verify native minidump delivery.
 
 The [CI release identity and environment](ci.md#release-telemetry-artifacts)
 must match client events. Non-CI release builds use `SENTRY_ENVIRONMENT`,
-defaulting to `production` only when unset. Debug builds use `development`.
+defaulting to `production` only when unset.
 CI separates matching symbols before distribution stripping and uploads them
 with source context to Sentry; it does not retain debug files as CI artifacts.
 Source uploads contain application source code, not runtime settings or fiscal

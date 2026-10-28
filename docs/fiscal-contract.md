@@ -203,8 +203,7 @@ follows [recovery classification](testing/fiscal-safety.md#recovery-classificati
 reports with strict model/firmware profiles for HD II Online, Deon Online,
 Bono Online and Point. It verifies PC1, native dialect, CP1250 input/output,
 fiscal mode, idle status, header, VAT and Warsaw clock in the printing session.
-Unknown firmware is not ready; there is no compatibility fallback. Profiles
-advertise 40/60-character item names and 255 sale lines. Read-only `52$i`
+Unknown firmware is not ready; there is no compatibility fallback. Read-only `52$i`
 attribute 1 bit `0x0200` enables all assigned, non-control Windows-1250
 characters, including Polish names; without that verified bit the repertoire
 remains printable ASCII. Advances, zero-total receipts and changing company

@@ -60,8 +60,8 @@ breadcrumbs.
 
 Assert printer ID/device serial tags only once known, safe route templates
 rather than real URL paths, unchanged trace propagation semantics, and no
-transmission when DSN is absent or opt-out is saved. Package smoke checks must
-save opt-out before any GUI launch; see [package checks](platforms.md#package-checks).
+transmission when DSN is absent or opt-out is saved. For package smoke isolation,
+see [package checks](platforms.md#package-checks).
 No test may send real crash reports.
 
 Sentry's

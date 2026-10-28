@@ -120,7 +120,8 @@ package against the user's saved state. On Unix, `verify.sh` uses temporary
 home/state directories; the standalone Linux smoke script creates its own fresh
 state too. On Windows, the verifier requires a clean disposable user profile
 and refuses existing Workshop state rather than overriding Known Folders.
-Every GUI smoke launch saves diagnostics opt-out before starting the app.
+Every GUI smoke launch saves diagnostics opt-out through the CLI before starting
+the app, including when the executable embeds the production DSN.
 The verifier proves `workshop --help`, `workshop check --json` and the
 **Holuto Workshop main window** work: a process that merely survives a timeout
 could be stuck in an error dialog. Check `.deb` dependencies/desktop entry

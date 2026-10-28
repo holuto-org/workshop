@@ -13,9 +13,8 @@
   - **Runner and work**: Checks; then the Package job builds and verifies
     Windows x64 `.exe`, Linux x64/ARM64 `.deb`, macOS ARM64/x64 `.dmg`
     (isolated installed-package CLI checks and main-window launch without a
-    configured printer) and uploads matching debug files/source context to
-    Sentry. If no GitHub release exists for the workspace version, it publishes
-    stable filenames/checksums. A push that
+    configured printer). If no GitHub release exists for the workspace version,
+    it publishes stable filenames/checksums. A push that
     keeps a released version only builds and checks: bump the version to
     release. Retry a failed release by rerunning its original run.
 - **Cleanup merged PR branches (`cleanup-merged-pr-branches.yml`)**

@@ -18,6 +18,4 @@ exclude_re = [
     'crates/novitus/src/receipt\.rs:73:87: replace > with (==|>=) in validate',
     # EventFilter::Breadcrumb and EventFilter::Log are disjoint bits: OR and XOR coincide.
     'crates/desktop/src/telemetry\.rs:94:41: replace \| with \^ in layer',
-    # Defensive gate: every ready Elzab profile supports advances, in production and acceptance.
-    'crates/elzab/src/receipt\.rs:37:8: delete ! in validate',
 ]

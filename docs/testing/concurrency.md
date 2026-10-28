@@ -40,9 +40,8 @@ threads.
 - A second process cannot use the same state directory. Hold the instance lock
   in a child and assert the contender's exact failure and unchanged files.
 
-Use `std::env::current_exe()` and a child-only environment marker for
-process-level tests; set environment on the child command, never unsafe global
-`set_var`. Each test gets its own directory/server/simulator. Linux bus-global
+Follow the [process-test rule](../../.omp/rules/writing-tests.md#per-kind).
+Each test gets its own directory/server/simulator. Linux bus-global
 tray scenarios belong to the serial `session_bus` nextest group; COM pair tests
 share an exclusive pair and must not race for it.
 
