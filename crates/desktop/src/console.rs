@@ -2,42 +2,34 @@
 //! Preserve inherited pipes and redirected handles.
 
 #[cfg(windows)]
-use windows_sys::Win32::{
-    Foundation::{HANDLE, INVALID_HANDLE_VALUE},
-    System::Console::{
-        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
-    },
-};
+use std::{io, os::windows::io::AsRawHandle as _};
 
 #[cfg(windows)]
 pub(crate) fn prepare(cli: bool) {
-    if cli {
-        attach_parent();
+    // std reports a missing standard handle as null and looks the handles up again on every
+    // write, so output written after attaching reaches the parent console.
+    if cli && io::stdout().as_raw_handle().is_null() && io::stderr().as_raw_handle().is_null() {
+        // A missing parent console is normal; never allocate one.
+        let _attached = AttachConsole(ATTACH_PARENT_PROCESS);
     }
 }
 
 #[cfg(not(windows))]
 pub(crate) const fn prepare(_cli: bool) {}
 
+/// <https://learn.microsoft.com/en-us/windows/console/attachconsole>
+#[cfg(windows)]
+const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+
 #[cfg(windows)]
 #[expect(
     unsafe_code,
-    reason = "Win32 console attachment has no safe std equivalent; preserve inherited handles"
+    reason = "std has no console attachment; one declaration of the documented signature"
 )]
-fn attach_parent() {
-    // SAFETY: GetStdHandle takes only fixed Win32 constants and returns borrowed handles.
-    let (output, error) = unsafe {
-        (
-            GetStdHandle(STD_OUTPUT_HANDLE),
-            GetStdHandle(STD_ERROR_HANDLE),
-        )
-    };
-    let valid = |handle: HANDLE| !handle.is_null() && handle != INVALID_HANDLE_VALUE;
-    if !valid(output) && !valid(error) {
-        // SAFETY: fixed parent-process sentinel; no pointers or owned handles.
-        // A missing parent console is normal; never allocate one.
-        let _attached = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
-    }
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    /// `BOOL AttachConsole(DWORD dwProcessId)`: no pointers, so every argument is sound.
+    safe fn AttachConsole(process_id: u32) -> i32;
 }
 
 // Separate attributes: clippy recognizes a test module only by a plain `cfg(test)`.

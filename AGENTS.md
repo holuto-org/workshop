@@ -2,8 +2,9 @@
 
 Rust/Slint tray application and `workshop` CLI for workshop PCs connected to a
 supported Posnet, Novitus or Elzab online fiscal printer. It prints only Holuto
-sales/advances and fiscal reports: no manual receipt editor and no separate
-agent service. Closing to the tray keeps processing; starting is explicit
+sales/advances queued in the Holuto web app, plus fiscal reports: no receipt
+list, manual queuing or receipt editor and no separate agent service. Closing
+to the tray keeps processing; starting is explicit
 unless the user opts into autostart. Hard requirements are in
 [`.omp/RULES.md`](.omp/RULES.md).
 
@@ -28,7 +29,8 @@ gitignored paths (see `.gitignore`) other than build output.
 - **Review priorities**: [`.omp/WATCHDOG.md`](.omp/WATCHDOG.md).
 - **Procedures and evidence**: [testing](docs/testing/README.md),
   [workflows](docs/workflows.md), [CI](docs/ci.md),
-  [telemetry](docs/telemetry.md), [fiscal contract](docs/fiscal-contract.md).
+  [telemetry](docs/telemetry.md), [fiscal contract](docs/fiscal-contract.md),
+  [translations](docs/localization.md).
 - **End-user and LLM install material**: [README](README.md),
   [install guide](docs/install-with-ai.md) and [`llms.txt`](llms.txt).
 - **Facts plainly visible in code**: nowhere; search the code.
@@ -38,30 +40,30 @@ gitignored paths (see `.gitignore`) other than build output.
 omp injects a rule when you edit matching files (some rules also when you read
 them); other agents read the rule before changing that area.
 
-- **[worker-thread](.omp/rules/worker-thread.md)**: desktop printer/API access,
-  event bridge, blocking calls, stop/join/quit.
-- **[durable-state](.omp/rules/durable-state.md)**: journal, store, settings,
-  status, history and their stored formats.
+- **[worker-thread](.omp/rules/worker-thread.md)**: asynchronous desktop state,
+  operator edits, persistence-dependent actions and native shutdown.
 - **[holuto-api](.omp/rules/holuto-api.md)**: `/agent` client, OpenAPI
   contract, loopback Holuto fake.
-- **[posnet-wire-encoding](.omp/rules/posnet-wire-encoding.md)**,
-  **[novitus-wire-encoding](.omp/rules/novitus-wire-encoding.md)**: Windows-1250
-  wire text.
-- **[elzab-wire-encoding](.omp/rules/elzab-wire-encoding.md)**: ElzabSTX
-  framing, code page and fiscal completion.
+- **[fiscal-evidence](.omp/rules/fiscal-evidence.md)**: vendor evidence versus
+  host policy, hardware qualification and completion/refusal certainty.
 - **[writing-tests](.omp/rules/writing-tests.md)**: test placement, harnesses,
   simulators and per-kind conventions.
 - **[telemetry](.omp/rules/telemetry.md)**: logging/tracing, error capture,
   Sentry setup, transport and scrubbing.
-- **[installers-packaging](.omp/rules/installers-packaging.md)**: install
-  scripts, packaging and workflows: local checks and deliberate safety checks.
-- **[documentation](.omp/rules/documentation.md)**: any Markdown or `llms.txt`.
+- **[installers-packaging](.omp/rules/installers-packaging.md)**: installer trust,
+  fiscal boundaries and native package compatibility.
+- **[documentation](.omp/rules/documentation.md)**: evidence, end-user contracts
+  and incoming references.
+- **[localization](.omp/rules/localization.md)**: safety-critical translation
+  meaning and presentation-versus-fiscal boundaries.
 
 ## Crates and boundaries
 
 One Cargo workspace; dependency versions and lints live only in the root
 `Cargo.toml`; crates use `workspace = true`.
 
+- **`crates/i18n`**: embedded Fluent catalogs, deferred operator messages and
+  system-language negotiation; UI rendering takes an explicit language.
 - **`crates/fiscal`**: shared fiscal values, capability-driven receipt
   validation, `Driver` trait, `Device`/`Capabilities`, journal/report contracts,
   Windows-1250 codec and serial links.
@@ -73,16 +75,18 @@ One Cargo workspace; dependency versions and lints live only in the root
   receipts and company footers stay disabled; accepted daily reports remain
   uncertain until a person resolves them.
 - **`crates/agent`**: Holuto `/agent` client, durable journal and recovery,
-  settings/status/history and the single `Worker`.
-- **`crates/desktop`** (binary `workshop`): Polish Slint UI/tray, CLI, pairing,
-  per-user autostart and Sentry lifecycle/privacy.
+  settings/status and the single `Worker`.
+- **`crates/desktop`** (binary `workshop`): multilingual Slint UI/tray, CLI,
+  pairing, per-user autostart and Sentry lifecycle/privacy.
 
 Each driver's `simulator` feature provides its offline peer. Agent `testing`
 enables those features and exposes the loopback Holuto fake; desktop `simulator`
-runs all three peers with state in a separate `workshop-simulator` directory. Agent
-`testing` and desktop `simulator` fail to compile without debug assertions; the
-drivers' `simulator` features have no release guard of their own. The
-debug-only `cfg(workshop_acceptance)` is not a Cargo feature; see
+runs all three peers and a loopback Holuto with sample queued jobs that print
+once processing starts, with
+state in a separate `workshop-simulator` directory; it never reaches a real
+Holuto. Agent `testing` and desktop `simulator` fail to compile without debug
+assertions; the drivers' `simulator` features have no release guard of their
+own. The debug-only `cfg(workshop_acceptance)` is not a Cargo feature; see
 [hardware acceptance](docs/testing/hardware-acceptance.md).
 
 ### External surfaces
@@ -102,15 +106,18 @@ replacement metadata. After it they are contracts.
 
 ## Code conventions
 
-- Errors callers match on are `thiserror` enums; their `Display` is the Polish,
-  operator-facing text.
+- Errors callers match on are `thiserror` enums. Catalog-backed `Display` stays
+  Polish for CLI and persisted diagnostics; the UI renders deferred
+  `i18n::Message` values in its selected language. Follow the
+  [translation procedure](docs/localization.md) for wording changes.
 - Comments and docs cite only public sources, such as the vendor spec pages
   listed in the [fiscal contract](docs/fiscal-contract.md); never private
   repositories, their file/line numbers or unpublished documents.
 - `posnet`, `novitus` and `elzab` share one shape (session, preflight, profile,
   simulator). A bug or simplification found in one driver: check the other
   two, and change all three or say why one differs.
-- Run scoped clippy after your first edit, not only at the end.
+- For inline Rust changes, run scoped clippy after the first coherent edit,
+  not only at the end. Parallel slices defer checks to their integrator.
 
 ### Simplifying and deleting
 
@@ -136,7 +143,8 @@ diff. `BACKEND_DIR` selects the backend checkout (default `../backend`).
 The script copies that checkout's exported schema without regenerating it:
 confirm it is on the branch that will be deployed. A feature needing a new
 `/agent` field starts in the backend and cannot be finished here alone.
-Wire types are generated into `OUT_DIR` at build time.
+After a sync, the `api::contract` tests check the hand-written wire types in
+`agent::api::model` against it.
 Nothing compares the live API with the schema: deploy the backend first. See
 [fiscal contract](docs/fiscal-contract.md) and
 [compatibility](docs/testing/compatibility.md).
@@ -171,15 +179,22 @@ not attribute them to the user.
   /tmp/workshop-<task>`, apply your diff, remove the worktree afterwards).
 - Every copy, probe or `RUSTFLAGS` variant uses its own `CARGO_TARGET_DIR`
   (for example `target/acceptance`), never the shared `target/`.
-- Experiments never edit tracked files: hand mutations go in a copy, probes in
+- Experiments never edit tracked files: trial code edits go in a copy, probes in
   a throwaway crate outside the repository that depends on workspace crates by
   path. Probes under `crates/*/tests` or `examples` get swept into commits and
   break workspace clippy.
 
 ## Verify
 
-Subagents skip these unless their assignment asks for a check; the integrator
-runs them once after slices land, from the repository root:
+Select checks from the changed behavior and
+[finishing a change](docs/workflows.md#finishing-a-change). Documentation-only
+changes need Markdown/link checks, not a Rust rebuild or package launch.
+For Rust changes, cover affected crates and dependents with production and
+all-feature builds/tests. Slice agents defer checks until integration.
+
+The full workspace batch below is for a clean integrated tree or workspace-wide
+changes. In a shared checkout, use the scoped crate and changed-file formatting
+commands above instead:
 
 ```sh
 # Unstable rustfmt options; builds stay on the pinned stable toolchain
@@ -209,8 +224,8 @@ not run and rely on CI's native matrix.
 
 User-level evidence an agent can produce comes from the end-to-end scenarios in
 `crates/desktop/src/application/tests/end_to_end.rs` (real application, worker,
-simulator and loopback Holuto). The GUI smoke run needs a display and a paired
-Holuto environment, so it is a human check, against simulators, never a
+simulator and loopback Holuto). The GUI smoke run needs a display, so it is a
+human check, against simulators and the built-in sample Holuto, never a
 printer:
 
 ```sh

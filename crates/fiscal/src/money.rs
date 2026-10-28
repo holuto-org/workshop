@@ -15,7 +15,7 @@ impl Grosze {
     pub const MAX: Self = Self(9_999_999_999);
     pub const ZERO: Self = Self(0);
 
-    pub fn new(grosze: u64) -> Result<Self, Error> {
+    pub const fn new(grosze: u64) -> Result<Self, Error> {
         if grosze > Self::MAX.0 {
             return Err(out_of_range());
         }
@@ -24,11 +24,8 @@ impl Grosze {
 
     /// Plain złoty amount with at most two decimal places, e.g. `"12.50"`.
     pub fn parse(zloty: &str) -> Result<Self, Error> {
-        let grosze = decimal::parse(zloty, 2).ok_or_else(|| {
-            Error::Invalid(
-                "Kwota musi być zapisana cyframi, z najwyżej 2 miejscami po przecinku.".to_owned(),
-            )
-        })?;
+        let grosze = decimal::parse(zloty, 2)
+            .ok_or_else(|| Error::Invalid(i18n::Message::new("fiscal-amount-format")))?;
         Self::new(grosze)
     }
 
@@ -76,7 +73,7 @@ impl fmt::Display for Grosze {
 }
 
 /// Formats as `1 234 567,89 zł`, including values above [`Grosze::MAX`].
-pub fn zloty(grosze: u64) -> String {
+fn zloty(grosze: u64) -> String {
     let whole = (grosze / 100).to_string();
     let mut grouped = String::with_capacity(whole.len() + whole.len() / 3);
     for (index, digit) in whole.chars().enumerate() {
@@ -88,8 +85,8 @@ pub fn zloty(grosze: u64) -> String {
     format!("{grouped},{:02} zł", grosze % 100)
 }
 
-fn out_of_range() -> Error {
-    Error::Invalid("Kwota musi być nieujemna i mieścić się w zakresie drukarki.".to_owned())
+const fn out_of_range() -> Error {
+    Error::Invalid(i18n::Message::new("fiscal-amount-range"))
 }
 
 #[cfg(test)]

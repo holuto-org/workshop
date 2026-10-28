@@ -468,7 +468,7 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
 }
 
 /// The golden files hold one settlement state and payment form; the journal may hold the
-/// others, whose names come from generated or shared types.
+/// others, whose names come from the wire and receipt types.
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -476,7 +476,6 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
 )]
 fn every_stored_settlement_state_and_payment_form_keeps_its_name() -> TestResult {
     for (state, name) in [
-        (JobState::Done, "done"),
         (JobState::Failed, "failed"),
         (JobState::Expired, "expired"),
         (JobState::Voided, "voided"),
@@ -491,7 +490,6 @@ fn every_stored_settlement_state_and_payment_form_keeps_its_name() -> TestResult
     }
     for (form, name) in [
         (PaymentForm::Cash, "cash"),
-        (PaymentForm::Card, "card"),
         (PaymentForm::Transfer, "transfer"),
         (PaymentForm::Mobile, "mobile"),
         (PaymentForm::Credit, "credit"),
@@ -538,7 +536,7 @@ fn failed_journal_replacement_retains_previous_evidence_across_restart() -> Test
     else {
         return Err("write failure must remain a storage error".into());
     };
-    assert_eq!(action, "Nie można zapisać rejestru operacji");
+    assert_eq!(action.to_string(), "Nie można zapisać rejestru operacji");
     assert_eq!(failed_path, dir.file("operation.json"));
     assert_eq!(source.kind(), ErrorKind::PermissionDenied);
     assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
@@ -565,9 +563,9 @@ fn unreadable_journal_blocks_without_removing_its_contents() -> TestResult {
     assert!(matches!(
         Journal::new(&dir).load(),
         Err(crate::Error::Store {
-            action: "Nie można odczytać rejestru operacji. Drukowanie zablokowane",
+            action,
             ..
-        })
+        }) if action.to_string() == "Nie można odczytać rejestru operacji. Drukowanie zablokowane"
     ));
     assert_eq!(fs::read(path.join("evidence"))?, b"keep fiscal record");
     Ok(())

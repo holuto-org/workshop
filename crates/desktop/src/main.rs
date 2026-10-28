@@ -10,6 +10,7 @@ mod application;
 mod autostart;
 mod cli;
 mod console;
+mod localization;
 mod model;
 #[cfg(feature = "simulator")]
 mod simulators;
@@ -40,6 +41,7 @@ use std::{
 use agent::{settings::Settings, store::StateDir};
 #[cfg(not(feature = "simulator"))]
 use fiscal::link::{Link, SerialLink};
+use i18n::{Language, LanguagePreference, Message};
 use slint::ComponentHandle;
 
 fn main() -> ExitCode {
@@ -56,8 +58,9 @@ fn main() -> ExitCode {
     match start() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            if let Err(dialog_error) = show_error(&error.to_string())
-                && let Err(write_error) = writeln!(io::stderr().lock(), "{error}\n{dialog_error}")
+            if let Err(dialog_error) = show_error(&error.message, error.language)
+                && let Err(write_error) =
+                    writeln!(io::stderr().lock(), "{}\n{dialog_error}", error.message)
             {
                 drop(write_error);
             }
@@ -66,32 +69,52 @@ fn main() -> ExitCode {
     }
 }
 
-fn start() -> Result<(), Box<dyn Error>> {
-    let dir = Arc::new(StateDir::open_default(cfg!(feature = "simulator"))?);
-    let settings = Settings::load(&dir)?.unwrap_or_default();
-    #[cfg(feature = "simulator")]
-    let simulators = simulators::Simulators::start();
-    #[cfg(feature = "simulator")]
-    let (settings, link) = simulators.connection(
-        settings,
-        &env::var("WORKSHOP_SIMULATOR").or_else(|error| match error {
-            env::VarError::NotPresent => Ok("posnet".to_owned()),
-            env::VarError::NotUnicode(value) => Err(env::VarError::NotUnicode(value)),
-        })?,
-    )?;
-    #[cfg(not(feature = "simulator"))]
-    let link: Arc<dyn Link> = Arc::new(SerialLink);
-    slint::BackendSelector::new()
-        .renderer_name("software".into())
-        .select()?;
-    slint::set_xdg_app_id("workshop")?;
-    application::run(dir, settings, link)?;
-    Ok(())
+struct StartupError {
+    message: Message,
+    language: Language,
 }
 
-fn show_error(message: &str) -> Result<(), slint::PlatformError> {
+fn start() -> Result<(), StartupError> {
+    let mut language = LanguagePreference::System.resolve();
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let dir = Arc::new(StateDir::open_default(cfg!(feature = "simulator"))?);
+        let settings = Settings::load(&dir)?.unwrap_or_default();
+        language = settings.language.resolve();
+        #[cfg(feature = "simulator")]
+        let simulators = simulators::Simulators::start();
+        #[cfg(feature = "simulator")]
+        let (settings, link) = simulators.connection(
+            settings,
+            &env::var("WORKSHOP_SIMULATOR").or_else(|error| match error {
+                env::VarError::NotPresent => Ok("posnet".to_owned()),
+                env::VarError::NotUnicode(value) => Err(env::VarError::NotUnicode(value)),
+            })?,
+        )?;
+        // Start keeps the stored token, so the sample Holuto's pairing is stored too.
+        #[cfg(feature = "simulator")]
+        settings.save(&dir)?;
+        #[cfg(not(feature = "simulator"))]
+        let link: Arc<dyn Link> = Arc::new(SerialLink);
+        slint::BackendSelector::new()
+            .renderer_name("software".into())
+            .select()?;
+        slint::set_xdg_app_id("workshop")?;
+        application::run(dir, settings, link)?;
+        Ok(())
+    })();
+    result.map_err(|error| StartupError {
+        message: error.downcast_ref::<agent::Error>().map_or_else(
+            || Message::literal(error.to_string()),
+            agent::Error::message,
+        ),
+        language,
+    })
+}
+
+fn show_error(message: &Message, language: Language) -> Result<(), slint::PlatformError> {
     let window = ui::ErrorWindow::new()?;
-    window.set_message(message.into());
+    localization::install(&window.global::<ui::Translations<'_>>(), language);
+    window.set_message(message.render(language).into());
     window.on_dismiss(|| {
         let _event_loop_closed = slint::quit_event_loop();
     });

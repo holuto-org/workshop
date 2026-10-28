@@ -9,8 +9,6 @@ work=
 staging=
 mounted=0
 backup=
-target=
-launcher=
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 usage() { printf 'Usage: bash install.sh [--release vX.Y.Z] [--dry-run]\n'; }
@@ -44,20 +42,46 @@ check_launcher() {
 }
 # The previous HuggingCar Fiscal desktop app (v0.1.x) journals fiscal intent in Qt's
 # GenericStateLocation. The new app never reads it, so a record that is not a complete
-# JSON object whose top-level state is completed/acknowledged must be resolved in that
-# app first. A full JSON parser decides; without one, an existing journal blocks.
+# JSON object with exactly one top-level state, completed/acknowledged, must be
+# resolved in that app first. A full JSON parser decides; without one, an existing journal blocks.
 # osascript comes first: macOS's python3 may be a stub that prompts to install tools.
 legacy_state() {
   if command -v osascript >/dev/null 2>&1; then
     osascript -l JavaScript -e 'function run(argv) {
-  const text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], 4, null);
-  const record = JSON.parse(text.js);
-  return record && typeof record === "object" && !Array.isArray(record) ? String(record.state) : "";
+  const text = $.NSString.stringWithContentsOfFileEncodingError(argv[0], 4, null).js;
+  const record = JSON.parse(text);
+  if (!record || typeof record !== "object" || Array.isArray(record) || typeof record.state !== "string") return "";
+  // JSON.parse validates the whole record but discards duplicate keys. Count decoded
+  // root keys in the validated text, ignoring nested values and escaped string content.
+  let depth = 0, key = false, states = 0;
+  for (let i = 0; i < text.length; ++i) {
+    const character = text[i];
+    if (character === "\"") {
+      const start = i;
+      for (++i; i < text.length; ++i) {
+        if (text[i] === "\\") ++i;
+        else if (text[i] === "\"") break;
+      }
+      if (depth === 1 && key) {
+        if (JSON.parse(text.slice(start, i + 1)) === "state") ++states;
+        key = false;
+      }
+    } else if (character === "{" || character === "[") {
+      if (++depth === 1) key = true;
+    } else if (character === "}" || character === "]") {
+      --depth;
+    } else if (character === "," && depth === 1) {
+      key = true;
+    }
+  }
+  return states === 1 ? record.state : "";
 }' "$1" 2>/dev/null
   elif command -v python3 >/dev/null 2>&1; then
     python3 -c 'import json, sys
-record = json.load(open(sys.argv[1], encoding="utf-8"))
-print(record.get("state", "") if isinstance(record, dict) else "")' "$1" 2>/dev/null
+class Object(list): pass
+record = json.load(open(sys.argv[1], encoding="utf-8"), object_pairs_hook=Object)
+states = [value for name, value in record if name == "state"] if isinstance(record, Object) else []
+print(states[0] if len(states) == 1 and isinstance(states[0], str) else "")' "$1" 2>/dev/null
   fi
 }
 check_legacy_journal() {

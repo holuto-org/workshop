@@ -33,11 +33,33 @@ if ($dlls -match '^(vcruntime|msvcp|msvcr|ucrtbase|api-ms-win-crt)') {
     throw "Dynamic VC++ runtime import: $($dlls -join ', ')"
 }
 Write-Host "Verified static CRT; imported DLLs: $($dlls -join ', ')"
-# The same winresource call embeds the icon, so a versioned resource proves both.
+# build.rs writes these resources itself, so check each one: exact UTF-16 strings from the
+# Polish string table and the icon Explorer extracts, pixel for pixel against the source file.
 $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'cargo metadata failed' }
 $version = ($metadata.packages | Where-Object name -eq 'workshop').version
-if ($files[0].VersionInfo.ProductVersion -ne $version) { throw "Wrong ProductVersion resource: $($files[0].VersionInfo.ProductVersion)" }
+$info = $files[0].VersionInfo
+$expected = @{ ProductVersion = $version; FileVersion = $version; ProductName = 'Holuto Workshop'; FileDescription = 'Holuto Workshop · drukarki fiskalne' }
+foreach ($field in $expected.Keys) {
+    if ($info.$field -cne $expected[$field]) { throw "Wrong $field resource: $($info.$field)" }
+}
+Add-Type -AssemblyName System.Drawing
+$extracted = [Drawing.Icon]::ExtractAssociatedIcon($files[0].FullName)
+$size = $extracted.Size
+$source = New-Object Drawing.Icon -ArgumentList (Resolve-Path 'crates/desktop/assets/icon.ico').Path, $size
+$actual = $extracted.ToBitmap()
+$reference = $source.ToBitmap()
+try {
+    if ($actual.Width -ne $reference.Width -or $actual.Height -ne $reference.Height) { throw "Icon size differs: $($actual.Width)x$($actual.Height)" }
+    for ($y = 0; $y -lt $actual.Height; $y++) {
+        for ($x = 0; $x -lt $actual.Width; $x++) {
+            if ($actual.GetPixel($x, $y).ToArgb() -ne $reference.GetPixel($x, $y).ToArgb()) { throw "EXE icon differs from assets/icon.ico at $x,$y" }
+        }
+    }
+} finally {
+    $actual.Dispose(); $reference.Dispose(); $extracted.Dispose(); $source.Dispose()
+}
+Write-Host "Verified version resources and the ${size} icon"
 # Known Folders are not overridden by environment variables: never use saved state.
 $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
 if (Test-Path -LiteralPath (Join-Path $local 'workshop')) { throw 'Package smoke requires a clean Windows profile: workshop state exists' }

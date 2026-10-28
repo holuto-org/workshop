@@ -1,43 +1,243 @@
-//! `/agent` wire bodies generated from the vendored contract.
+//! `/agent` wire bodies, written against the vendored `openapi/agent.json`.
 //!
-//! Decimal strings are validated per job at the fiscal boundary.
+//! Response types read only the fields the client uses and ignore the rest, so a
+//! backend addition never breaks a paired printer. Every field they read is required
+//! by the contract, and a nullable one must still be present (`Option::deserialize`).
+//! Outbound nullable fields serialize explicit nulls. Decimal strings are validated per
+//! job at the fiscal boundary, so one malformed job fails alone. Structs never show
+//! their values in `Debug`: they carry customer, receipt and device data.
+//! `contract::tests` checks these types against the schema.
 
-use super::{APP_VERSION, DOCUMENTS_LIMIT};
-use crate::documents::{Document, ReceiptKind};
-use fiscal::{
-    device::{Device, VatKind, VatRate, Vendor},
-    receipt::VAT_SLOTS,
-};
+use std::fmt;
+
+use i18n::Message;
+
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-type AppVersion = &'static str;
-#[expect(
-    unused_qualifications,
-    unreachable_pub,
-    unnameable_types,
-    clippy::absolute_paths,
-    clippy::renamed_function_params,
-    clippy::needless_raw_strings,
-    reason = "typify generated paths and helper visibility"
-)]
-mod wire {
-    include!(concat!(env!("OUT_DIR"), "/agent-wire.rs"));
+use super::APP_VERSION;
+use crate::settings::Token;
+use fiscal::{
+    device::{Device, VatKind, VatRate, Vendor},
+    receipt::{PaymentForm, VAT_SLOTS},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReceiptKind {
+    /// Payment allocation with one line per VAT rate.
+    Advance,
+    /// Posted order's final sale; unpaid balance prints as credit.
+    Sale,
 }
-pub type VatCode = wire::VatCode;
-pub type VatLetter = wire::FiscalVatLetter;
-pub type VatRateMapping = wire::VatRateMapping;
-pub type Telemetry = wire::Telemetry;
-pub type PrinterCapabilities = wire::PrinterCapabilities;
-pub type PrinterStatus = wire::PrinterStatus;
-pub type PrinterInfo = wire::PrinterInfo;
-pub type JobState = wire::JobState;
-pub type Job = wire::Job;
-pub type Outcome = wire::Outcome;
-pub type ResultForm = wire::ResultForm;
-pub type QueueForm = wire::QueueForm;
-pub type Page = wire::Page;
-pub type Pairing = wire::Pairing;
-pub type PairForm = wire::PairForm;
+
+impl ReceiptKind {
+    pub(crate) const fn check_allocation(self, allocation_id: Option<Uuid>) -> Result<(), Message> {
+        match (self, allocation_id) {
+            (Self::Advance, Some(_)) | (Self::Sale, None) => Ok(()),
+            (Self::Advance, None) => Err(Message::new("agent-allocation-missing")),
+            (Self::Sale, Some(_)) => Err(Message::new("agent-allocation-sale")),
+        }
+    }
+}
+
+/// Polish VAT rates as `KSeF` codes them; `zw` marks an exempt supply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VatCode {
+    #[serde(rename = "23")]
+    Rate23,
+    #[serde(rename = "8")]
+    Rate8,
+    #[serde(rename = "5")]
+    Rate5,
+    #[serde(rename = "0")]
+    Rate0,
+    #[serde(rename = "zw")]
+    Exempt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VatLetter {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+}
+
+/// Also the journal's stored settlement state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobState {
+    Queued,
+    Taken,
+    Done,
+    Failed,
+    Expired,
+    Unknown,
+    Voided,
+}
+
+/// A reported attempt's result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    Done,
+    Failed,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VatRateMapping {
+    pub letter: VatLetter,
+    pub vat_rate: VatCode,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrinterCapabilities {
+    pub advance_deductions: bool,
+    pub allowed_characters: String,
+    pub max_company_name_length: usize,
+    pub max_item_name_length: usize,
+    pub max_lines_per_receipt: usize,
+    pub max_quantity_decimals: u8,
+    pub zero_total_receipts: bool,
+}
+
+/// `POST /agent/session` body: what the connected printer reports.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Telemetry {
+    pub app_version: &'static str,
+    pub capabilities: PrinterCapabilities,
+    pub firmware: String,
+    pub model: String,
+    pub unique_number: String,
+    pub vat_rates: Vec<VatRateMapping>,
+    pub vendor: Vendor,
+}
+
+#[derive(Deserialize)]
+pub struct PrinterStatus {
+    pub printer: PrinterInfo,
+}
+
+/// The paired printer as Holuto last recorded it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrinterInfo {
+    pub id: Uuid,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub unique_number: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub capabilities: Option<PrinterCapabilities>,
+    pub vat_rates: Vec<VatRateMapping>,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Job {
+    pub id: Uuid,
+    pub printer_id: Uuid,
+    pub kind: ReceiptKind,
+    pub order_number: i64,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub allocation_id: Option<Uuid>,
+    pub company_name: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub buyer_nip: Option<String>,
+    pub lines: Vec<JobLine>,
+    pub advances: Vec<JobAdvance>,
+    pub payments: Vec<JobPayment>,
+    pub total: String,
+    pub state: JobState,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub attempt: Option<Uuid>,
+    /// The printer's issue time of the job's receipt.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub issued_at: Option<Timestamp>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub receipt_number: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub result: Option<String>,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobLine {
+    pub name: String,
+    pub quantity: String,
+    pub unit_price: String,
+    pub total: String,
+    pub vat_letter: VatLetter,
+    pub vat_rate: VatCode,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobAdvance {
+    pub amount: String,
+    pub vat_letter: VatLetter,
+    pub vat_rate: VatCode,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+pub struct JobPayment {
+    pub amount: String,
+    pub form: PaymentForm,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultForm {
+    pub attempt: Uuid,
+    pub issued_at: Option<Timestamp>,
+    pub receipt_number: Option<String>,
+    pub result: Option<String>,
+    pub state: Outcome,
+}
+
+#[derive(Serialize)]
+pub struct PairForm {
+    pub code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pairing {
+    pub printer_id: Uuid,
+    pub token: Token,
+}
+
+macro_rules! redacted_debug {
+    ($($name:ident),+ $(,)?) => {$(
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct(stringify!($name)).finish_non_exhaustive()
+            }
+        }
+    )+};
+}
+
+redacted_debug!(
+    VatRateMapping,
+    PrinterCapabilities,
+    Telemetry,
+    PrinterStatus,
+    PrinterInfo,
+    Job,
+    JobLine,
+    JobAdvance,
+    JobPayment,
+    ResultForm,
+    PairForm,
+    Pairing,
+);
 
 impl VatLetter {
     pub const fn slot(self) -> u8 {
@@ -69,12 +269,12 @@ impl VatLetter {
 impl VatCode {
     pub const fn of(rate: VatRate) -> Option<Self> {
         match rate.kind {
-            VatKind::Exempt => Some(Self::Zw),
+            VatKind::Exempt => Some(Self::Exempt),
             VatKind::Rate { basis_points } => match basis_points {
-                2300 => Some(Self::X23),
-                800 => Some(Self::X8),
-                500 => Some(Self::X5),
-                0 => Some(Self::X0),
+                2300 => Some(Self::Rate23),
+                800 => Some(Self::Rate8),
+                500 => Some(Self::Rate5),
+                0 => Some(Self::Rate0),
                 _ => None,
             },
             VatKind::Inactive => None,
@@ -83,11 +283,11 @@ impl VatCode {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::X23 => "23%",
-            Self::X8 => "8%",
-            Self::X5 => "5%",
-            Self::X0 => "0%",
-            Self::Zw => "zw",
+            Self::Rate23 => "23%",
+            Self::Rate8 => "8%",
+            Self::Rate5 => "5%",
+            Self::Rate0 => "0%",
+            Self::Exempt => "zw",
         }
     }
 }
@@ -112,7 +312,7 @@ impl Telemetry {
         }
     }
 
-    pub(crate) fn describe(&mut self, device: &Device) -> Vec<String> {
+    pub(crate) fn describe(&mut self, device: &Device) -> Vec<Message> {
         let (rates, skipped) = printer_slots(&device.vat);
         self.vendor = device.vendor;
         device.model.clone_into(&mut self.model);
@@ -132,17 +332,17 @@ impl Telemetry {
     }
 }
 impl PrinterInfo {
-    pub(crate) fn check(&self, unique_number: &str) -> Result<(), String> {
+    pub(crate) fn check(&self, unique_number: &str) -> Result<(), Message> {
         if self
             .unique_number
             .as_deref()
             .is_some_and(|paired| paired != unique_number)
         {
-            return Err("sparowano z inną drukarką".to_owned());
+            return Err(Message::new("agent-paired-other"));
         }
         if let Some(c) = &self.capabilities {
             if c.max_quantity_decimals > 8 {
-                return Err("nieprawidłowa precyzja ilości drukarki".to_owned());
+                return Err(Message::new("agent-invalid-precision"));
             }
             if [
                 c.max_item_name_length,
@@ -151,19 +351,31 @@ impl PrinterInfo {
             ]
             .contains(&0)
             {
-                return Err("zerowy limit drukarki".to_owned());
+                return Err(Message::new("agent-zero-limit"));
             }
             if c.allowed_characters.is_empty() {
-                return Err("pusta lista znaków drukarki".to_owned());
+                return Err(Message::new("agent-empty-characters"));
             }
         }
         if self.vat_rates.len() > usize::from(VAT_SLOTS) {
-            return Err("nieprawidłowe litery VAT".to_owned());
+            return Err(Message::new("agent-invalid-vat-letters"));
         }
         Ok(())
     }
 }
 impl JobState {
+    pub(crate) const fn message(self) -> Message {
+        Message::new(match self {
+            Self::Queued => "agent-state-queued",
+            Self::Taken => "agent-state-taken",
+            Self::Done => "agent-state-done",
+            Self::Failed => "agent-state-failed",
+            Self::Expired => "agent-state-expired",
+            Self::Unknown => "agent-state-unknown",
+            Self::Voided => "agent-state-voided",
+        })
+    }
+
     pub const fn terminal(self) -> bool {
         matches!(
             self,
@@ -173,34 +385,34 @@ impl JobState {
 }
 impl Job {
     /// Holuto's binding of this job to the paired printer.
-    pub(crate) fn check_printer(&self, printer_id: Option<Uuid>) -> Result<(), String> {
+    pub(crate) fn check_printer(&self, printer_id: Option<Uuid>) -> Result<(), Message> {
         if printer_id != Some(self.printer_id) {
-            return Err("zadanie innej drukarki".to_owned());
+            return Err(Message::new("agent-job-other-printer"));
         }
         Ok(())
     }
 
     /// Job shape; a claimed job that breaks it fails before any fiscal command.
-    pub(crate) fn check(&self, max_lines: usize) -> Result<(), String> {
+    pub(crate) fn check(&self, max_lines: usize) -> Result<(), Message> {
         self.kind.check_allocation(self.allocation_id)?;
         if self.order_number <= 0 {
-            return Err("numer zlecenia musi być dodatni".to_owned());
+            return Err(Message::new("agent-order-positive"));
         }
         if self.lines.is_empty() {
-            return Err("zadanie musi mieć co najmniej jedną pozycję".to_owned());
+            return Err(Message::new("agent-job-empty"));
         }
         if self.lines.len() > max_lines {
-            return Err(format!("zadanie musi mieć od 1 do {max_lines} pozycji"));
+            return Err(Message::new("agent-job-lines").arg("max", max_lines));
         }
         if self.kind == ReceiptKind::Advance && !self.advances.is_empty() {
-            return Err("zaliczka nie może odliczać zaliczek".to_owned());
+            return Err(Message::new("agent-advance-deducts"));
         }
         if self
             .buyer_nip
             .as_deref()
             .is_some_and(|nip| nip.len() != 10 || !nip.bytes().all(|b| b.is_ascii_digit()))
         {
-            return Err("nieprawidłowy NIP nabywcy".to_owned());
+            return Err(Message::new("agent-invalid-nip"));
         }
         Ok(())
     }
@@ -214,18 +426,7 @@ impl From<Outcome> for JobState {
         }
     }
 }
-impl Page {
-    pub(crate) fn check(&self) -> Result<(), String> {
-        if self.items.len() > DOCUMENTS_LIMIT {
-            return Err("strona przekracza limit".to_owned());
-        }
-        if self.next_cursor.as_deref().is_some_and(str::is_empty) {
-            return Err("pusty kursor następnej strony".to_owned());
-        }
-        self.items.iter().try_for_each(Document::check)
-    }
-}
-pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<String>) {
+pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<Message>) {
     let mut mapped = Vec::new();
     let mut skipped = Vec::new();
     for rate in rates.iter().filter(|rate| rate.active()) {
@@ -234,10 +435,7 @@ pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<Stri
         };
         match VatCode::of(*rate) {
             Some(vat_rate) => mapped.push(VatRateMapping { letter, vat_rate }),
-            None => skipped.push(format!(
-                "Pomijam nieobsługiwaną stawkę VAT w slocie {}",
-                rate.label()
-            )),
+            None => skipped.push(Message::new("agent-skipped-vat").arg("slot", rate.message())),
         }
     }
     (mapped, skipped)

@@ -27,45 +27,26 @@ use fiscal::{
 use jiff::civil::Date;
 use tracing::dispatcher;
 
+use i18n::Message;
+
 use crate::{
     Error,
     agent::{Agent, Blocked, RETRY},
-    api::{Api, ApiError, model::Page, queue_form},
+    api::{Api, ApiError},
     device,
-    documents::{BuyerNip, Document},
-    history::{self, HistoryEntry},
     journal::{Journal, Operation},
     settings::Settings,
     store::StateDir,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+/// Receipts come only from Holuto's queue; the desktop issues reports and resolutions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
-    Queue {
-        document: Document,
-        buyer_nip: Option<BuyerNip>,
-    },
-    NextPage,
-    PreviousPage,
     DailyReport,
-    MonthlyReport {
-        year: i16,
-        month: i8,
-    },
-    PeriodicReport {
-        from: Date,
-        to: Date,
-        summary: bool,
-    },
+    MonthlyReport { year: i16, month: i8 },
+    PeriodicReport { from: Date, to: Date, summary: bool },
     ResolveReport,
     AcknowledgeOrphanedReceipt,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tone {
-    Info,
-    Success,
-    Error,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,15 +59,10 @@ pub enum PairingFailure {
 }
 
 pub enum Event {
-    Status {
-        text: String,
-        tone: Tone,
-    },
+    /// An operator problem, or all clear when the previous problem ended.
+    Problem(Option<Message>),
     /// The GUI persists detected settings and reports save failures.
-    PortDetected {
-        port: String,
-        vendor: Vendor,
-    },
+    PortDetected { port: String, vendor: Vendor },
     /// The detected printer's identity; the GUI publishes it as one status.
     Connected {
         printer_id: String,
@@ -95,28 +71,18 @@ pub enum Event {
         port: String,
     },
     /// Credentials are durably saved and never included in the event.
-    Paired {
-        printer_id: String,
-    },
+    Paired { printer_id: String },
     PairingFailed {
-        message: String,
+        message: Message,
         failure: PairingFailure,
-    },
-    /// `page` is 1-based.
-    Documents {
-        items: Vec<Document>,
-        page: usize,
-        has_next: bool,
     },
     Device {
         status: Option<Device>,
         blocked: bool,
         report_unresolved: bool,
         /// Receipt evidence the operator confirms before a local acknowledgement.
-        orphaned_receipt: Option<String>,
+        orphaned_receipt: Option<Message>,
     },
-    /// Bounded, newest-first snapshot; the GUI never reads worker-owned storage.
-    HistoryChanged(Vec<HistoryEntry>),
     /// Releases the GUI submission guard even when a command is refused.
     CommandCompleted,
     /// Safe to join the worker.
@@ -126,10 +92,8 @@ pub enum Event {
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Status { tone, .. } => f
-                .debug_struct("Status")
-                .field("tone", tone)
-                .finish_non_exhaustive(),
+            Self::Problem(Some(_)) => f.write_str("Problem(..)"),
+            Self::Problem(None) => f.write_str("Problem(None)"),
             Self::PortDetected { .. } => f.write_str("PortDetected(..)"),
             Self::Paired { printer_id } => f
                 .debug_struct("Paired")
@@ -148,16 +112,6 @@ impl fmt::Debug for Event {
                 .field("printer_id", printer_id)
                 .field("unique_number", unique_number)
                 .finish_non_exhaustive(),
-            Self::Documents {
-                items,
-                page,
-                has_next,
-            } => f
-                .debug_struct("Documents")
-                .field("count", &items.len())
-                .field("page", page)
-                .field("has_next", has_next)
-                .finish(),
             Self::Device {
                 status,
                 blocked,
@@ -170,24 +124,20 @@ impl fmt::Debug for Event {
                 .field("report_unresolved", report_unresolved)
                 .field("orphaned_receipt", &orphaned_receipt.is_some())
                 .finish(),
-            Self::HistoryChanged(entries) => f
-                .debug_struct("HistoryChanged")
-                .field("count", &entries.len())
-                .finish(),
             Self::CommandCompleted => f.write_str("CommandCompleted"),
             Self::Stopped => f.write_str("Stopped"),
         }
     }
 }
 
-enum Message {
+enum Request {
     Command(Command),
     Stop,
 }
 
 #[derive(Debug)]
 pub struct Worker {
-    messages: Sender<Message>,
+    messages: Sender<Request>,
     thread: JoinHandle<()>,
 }
 
@@ -231,7 +181,7 @@ impl Worker {
     fn start<S, F>(dir: Arc<StateDir>, sink: S, pairing: bool, operation: F) -> Result<Self, Error>
     where
         S: Fn(Event) + Send + Sync + 'static,
-        F: FnOnce(&StateDir, &Receiver<Message>, &S) -> Result<(), Error> + Send + 'static,
+        F: FnOnce(&StateDir, &Receiver<Request>, &S) -> Result<(), Error> + Send + 'static,
     {
         let (messages, inbox) = mpsc::channel();
         let path = dir.path().to_owned();
@@ -251,27 +201,21 @@ impl Worker {
                             if pairing {
                                 sink(pairing_failed(&error));
                             } else {
-                                sink(Event::Status {
-                                    text: format!("Błąd: {error}"),
-                                    tone: Tone::Error,
-                                });
+                                sink(Event::Problem(Some(
+                                    Message::new("agent-error").arg("error", error.message()),
+                                )));
                             }
                         },
                         Err(_payload) => {
                             tracing::error!("Worker panicked");
-                            let text = "Wątek drukarki został przerwany. Sprawdź wydruk przed \
-                                   ponownym uruchomieniem."
-                                .to_owned();
+                            let text = Message::new("agent-worker-panic");
                             if pairing {
                                 sink(Event::PairingFailed {
                                     message: text,
                                     failure: PairingFailure::Communication,
                                 });
                             } else {
-                                sink(Event::Status {
-                                    text,
-                                    tone: Tone::Error,
-                                });
+                                sink(Event::Problem(Some(text)));
                             }
                         },
                     }
@@ -288,7 +232,7 @@ impl Worker {
                 });
             })
             .map_err(|source| Error::Store {
-                action: "Nie można uruchomić wątku drukarki",
+                action: Message::new("agent-start-worker"),
                 path,
                 source,
             })?;
@@ -297,12 +241,12 @@ impl Worker {
 
     pub fn submit(&self, command: Command) {
         // A closed inbox means the worker has stopped.
-        let _sent = self.messages.send(Message::Command(command));
+        let _sent = self.messages.send(Request::Command(command));
     }
 
     /// Stops after the current operation; emits `Event::Stopped`.
     pub fn stop(&self) {
-        let _sent = self.messages.send(Message::Stop);
+        let _sent = self.messages.send(Request::Stop);
     }
 
     /// Call only after `Event::Stopped` to avoid blocking the GUI.
@@ -351,14 +295,12 @@ fn pairing_failed(error: &Error) -> Event {
                 | Error::Store { .. }
                 | Error::Printer(_)
                 | Error::Blocked(_)
-                | Error::Busy(_) => "Nieprawidłowy, wykorzystany lub wygasły kod parowania. \
-                     Wygeneruj nowy kod w Holuto."
-                    .to_owned(),
+                | Error::Busy(_) => Message::new("agent-pair-invalid"),
             },
-            PairingFailure::Throttled => "Zbyt wiele prób parowania. Spróbuj później.".to_owned(),
+            PairingFailure::Throttled => Message::new("agent-pair-throttled"),
             PairingFailure::Communication
             | PairingFailure::Unauthorized
-            | PairingFailure::Storage => error.to_string(),
+            | PairingFailure::Storage => error.message(),
         },
         failure,
     }
@@ -368,23 +310,9 @@ fn run(
     dir: &StateDir,
     settings: &Settings,
     link: &Arc<dyn Link>,
-    inbox: &Receiver<Message>,
+    inbox: &Receiver<Request>,
     sink: &(dyn Fn(Event) + Sync),
 ) -> Result<(), Error> {
-    sink(Event::Status {
-        text: "Łączenie z drukarką i Holuto…".to_owned(),
-        tone: Tone::Info,
-    });
-    match history::load(dir) {
-        Ok(entries) => sink(Event::HistoryChanged(entries)),
-        Err(error) => {
-            tracing::warn!("Could not load the receipt display history");
-            sink(Event::Status {
-                text: error.to_string(),
-                tone: Tone::Error,
-            });
-        },
-    }
     let mut queue = VecDeque::new();
     let Some((printer, status)) = detect_printer(dir, settings, link, inbox, sink, &mut queue)?
     else {
@@ -402,22 +330,13 @@ fn run(
         settings.token.as_str(),
         &status.unique_number,
     )?;
-    let waiting = |problem: Option<&str>| {
+    let waiting = |problem: Option<&Message>| {
         if problem.is_some() {
             tracing::warn!("Printer requires operator intervention");
         }
-        sink(problem.map_or_else(
-            || Event::Status {
-                text: "Drukowanie wznowione.".to_owned(),
-                tone: Tone::Info,
-            },
-            |problem| Event::Status {
-                text: format!(
-                    "Drukarka czeka: {problem}. Usuń problem, a drukowanie będzie kontynuowane."
-                ),
-                tone: Tone::Error,
-            },
-        ));
+        sink(Event::Problem(problem.map(|problem| {
+            Message::new("agent-waiting").arg("problem", problem.clone())
+        })));
     };
     let mut agent = Agent::new(printer, api, dir, &waiting);
     let notices = agent.describe(status.clone())?;
@@ -440,31 +359,22 @@ fn run(
         vendor: status.vendor,
         port,
     });
-    sink(Event::Status {
-        text: format!(
-            "Połączono: {}. Oczekiwanie na zlecenia.",
-            status.unique_number
-        ),
-        tone: Tone::Success,
-    });
+    sink(Event::Problem(None));
     for notice in notices {
-        sink(Event::Status {
-            text: notice,
-            tone: Tone::Error,
-        });
+        sink(Event::Problem(Some(notice)));
     }
     Session {
         agent,
-        pager: Pager::default(),
         queue,
         sink,
+        error_shown: false,
     }
     .run(inbox)
 }
 
 fn start_session(
     agent: &mut Agent<'_>,
-    inbox: &Receiver<Message>,
+    inbox: &Receiver<Request>,
     sink: &dyn Fn(Event),
     queue: &mut VecDeque<Command>,
 ) -> Result<bool, Error> {
@@ -475,20 +385,14 @@ fn start_session(
             Ok(true) => return Ok(true),
             Ok(false) => {
                 publish_device(agent, sink);
-                sink(Event::Status {
-                    text: agent.not_ready_notice(),
-                    tone: Tone::Error,
-                });
+                sink(Event::Problem(Some(agent.not_ready_notice())));
                 true
             },
             Err(error) if retry_start(&error) => {
                 tracing::warn!("Holuto session unavailable; retrying in 15 seconds");
-                sink(Event::Status {
-                    text: format!(
-                        "Nie można połączyć z Holuto: {error}. Ponowna próba za 15 sekund."
-                    ),
-                    tone: Tone::Error,
-                });
+                sink(Event::Problem(Some(
+                    Message::new("agent-holuto-retry").arg("error", error.message()),
+                )));
                 false
             },
             Err(error) => return Err(error),
@@ -500,16 +404,12 @@ fn start_session(
             match agent.refresh() {
                 Ok(notices) => {
                     for text in notices {
-                        sink(Event::Status {
-                            text,
-                            tone: Tone::Error,
-                        });
+                        sink(Event::Problem(Some(text)));
                     }
                 },
-                Err(error) => sink(Event::Status {
-                    text: format!("Błąd: {error}"),
-                    tone: Tone::Error,
-                }),
+                Err(error) => sink(Event::Problem(Some(
+                    Message::new("agent-error").arg("error", error.message()),
+                ))),
             }
         }
     }
@@ -523,7 +423,7 @@ fn detect_printer(
     dir: &StateDir,
     settings: &Settings,
     link: &Arc<dyn Link>,
-    inbox: &Receiver<Message>,
+    inbox: &Receiver<Request>,
     sink: &dyn Fn(Event),
     queue: &mut VecDeque<Command>,
 ) -> Result<Option<Detected>, Error> {
@@ -549,10 +449,9 @@ fn detect_printer(
         // the interval.
         let due = now() + RETRY;
         tracing::warn!("Printer unavailable at start; retrying in 15 seconds");
-        sink(Event::Status {
-            text: format!("Drukarka niedostępna: {error}. Ponowna próba za 15 sekund."),
-            tone: Tone::Error,
-        });
+        sink(Event::Problem(Some(
+            Message::new("agent-printer-retry").arg("error", error.message()),
+        )));
         if !wait(due, inbox, queue) {
             return Ok(None);
         }
@@ -560,11 +459,11 @@ fn detect_printer(
 }
 
 /// Queues commands until the retry is due; `false` means stop.
-fn wait(due: Instant, inbox: &Receiver<Message>, queue: &mut VecDeque<Command>) -> bool {
+fn wait(due: Instant, inbox: &Receiver<Request>, queue: &mut VecDeque<Command>) -> bool {
     loop {
         match inbox.recv_timeout(until(due)) {
-            Ok(Message::Command(command)) => queue.push_back(command),
-            Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => return false,
+            Ok(Request::Command(command)) => queue.push_back(command),
+            Ok(Request::Stop) | Err(RecvTimeoutError::Disconnected) => return false,
             Err(RecvTimeoutError::Timeout) => return true,
         }
     }
@@ -574,7 +473,7 @@ fn publish_device(agent: &Agent<'_>, sink: &dyn Fn(Event)) {
     let blocked = agent.blocked();
     let report_unresolved = matches!(blocked, Ok(Some(Blocked::Report)));
     let orphaned_receipt = matches!(blocked, Ok(Some(Blocked::OrphanedReceipt)))
-        .then(|| agent.orphan_evidence().map(str::to_owned))
+        .then(|| agent.orphan_evidence().cloned())
         .flatten();
     sink(Event::Device {
         status: agent.status().cloned(),
@@ -635,13 +534,15 @@ fn until(due: Instant) -> Duration {
 
 struct Session<'a> {
     agent: Agent<'a>,
-    pager: Pager,
     queue: VecDeque<Command>,
     sink: &'a dyn Fn(Event),
+    /// The footer shows an error, which the next successful operation clears.
+    /// Fiscal notices are not errors: only a newer problem replaces them.
+    error_shown: bool,
 }
 
 impl Session<'_> {
-    fn run(mut self, inbox: &Receiver<Message>) -> Result<(), Error> {
+    fn run(mut self, inbox: &Receiver<Request>) -> Result<(), Error> {
         // Inbox activity must not postpone background polling.
         let mut due = now();
         loop {
@@ -649,22 +550,17 @@ impl Session<'_> {
                 return Ok(());
             }
             while let Some(command) = self.queue.pop_front() {
-                let navigation = matches!(command, Command::NextPage | Command::PreviousPage);
                 let done = self.command(command);
-                self.publish_news();
+                self.publish_notices();
                 if let Err(error) = done {
                     self.report_error(&error);
                     if matches!(error, Error::Api(ApiError::Unauthorized)) {
-                        if !navigation {
-                            (self.sink)(Event::CommandCompleted);
-                        }
+                        (self.sink)(Event::CommandCompleted);
                         return Ok(());
                     }
                 }
-                if !navigation {
-                    (self.sink)(Event::CommandCompleted);
-                    due = now();
-                }
+                (self.sink)(Event::CommandCompleted);
+                due = now();
                 if self.drain(inbox) {
                     return Ok(());
                 }
@@ -674,7 +570,10 @@ impl Session<'_> {
             }
             if until(due).is_zero() {
                 let delay = match self.poll(inbox) {
-                    Ok(Some(delay)) => delay,
+                    Ok(Some(delay)) => {
+                        self.recovered();
+                        delay
+                    },
                     Ok(None) => return Ok(()),
                     Err(error @ Error::Api(ApiError::Unauthorized)) => return Err(error),
                     Err(error) => {
@@ -688,94 +587,56 @@ impl Session<'_> {
                 continue;
             }
             match inbox.recv_timeout(until(due)) {
-                Ok(Message::Command(command)) => self.queue.push_back(command),
-                Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                Ok(Request::Command(command)) => self.queue.push_back(command),
+                Ok(Request::Stop) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
                 Err(RecvTimeoutError::Timeout) => {},
             }
         }
     }
 
-    fn drain(&mut self, inbox: &Receiver<Message>) -> bool {
+    fn drain(&mut self, inbox: &Receiver<Request>) -> bool {
         loop {
             match inbox.try_recv() {
-                Ok(Message::Command(command)) => self.queue.push_back(command),
-                Ok(Message::Stop) | Err(TryRecvError::Disconnected) => return true,
+                Ok(Request::Command(command)) => self.queue.push_back(command),
+                Ok(Request::Stop) | Err(TryRecvError::Disconnected) => return true,
                 Err(TryRecvError::Empty) => return false,
             }
         }
     }
 
-    fn poll(&mut self, inbox: &Receiver<Message>) -> Result<Option<Duration>, Error> {
+    fn poll(&mut self, inbox: &Receiver<Request>) -> Result<Option<Duration>, Error> {
         if self.drain(inbox) {
             return Ok(None);
         }
         let delay = self.agent.step();
-        self.publish_news();
-        if matches!(delay, Err(Error::Api(ApiError::Unauthorized))) {
-            return Err(ApiError::Unauthorized.into());
-        }
-        if self.drain(inbox) {
-            return Ok(None);
-        }
-        // Printer and settlement failures must not hide Holuto documents.
-        let refreshed = self
-            .pager
-            .refresh(self.agent.api())
-            .map(|page| (self.sink)(page));
-        if matches!(refreshed, Err(ApiError::Unauthorized)) {
-            return Err(ApiError::Unauthorized.into());
-        }
+        self.publish_notices();
         let delay = delay?;
-        refreshed?;
         self.publish_device();
         Ok(Some(delay))
     }
 
     fn command(&mut self, command: Command) -> Result<(), Error> {
         let report = match command {
-            Command::Queue {
-                document,
-                buyer_nip,
-            } => {
-                let form = queue_form(&document, buyer_nip)?;
-                self.agent.api().queue(&form)?;
-                self.say(
-                    "Zlecenie dodano do kolejki Holuto.".to_owned(),
-                    Tone::Success,
-                );
-                return Ok(());
-            },
-            Command::NextPage => {
-                self.pager.next();
-                (self.sink)(self.pager.refresh(self.agent.api())?);
-                return Ok(());
-            },
-            Command::PreviousPage => {
-                self.pager.previous();
-                (self.sink)(self.pager.refresh(self.agent.api())?);
-                return Ok(());
-            },
             Command::ResolveReport => {
                 self.agent.resolve_report()?;
                 self.publish_device();
-                self.say("Wyjaśniono raport.".to_owned(), Tone::Success);
+                self.clear_problem();
                 return Ok(());
             },
             Command::AcknowledgeOrphanedReceipt => {
                 self.agent.acknowledge_orphaned_receipt()?;
                 self.publish_device();
-                self.say("Wyjaśniono osierocony paragon.".to_owned(), Tone::Success);
+                self.clear_problem();
                 return Ok(());
             },
             Command::DailyReport => Report::Daily,
             Command::MonthlyReport { year, month } => Report::Monthly { year, month },
             Command::PeriodicReport { from, to, summary } => Report::Periodic { from, to, summary },
         };
-        self.say(format!("{}: drukowanie…", report.label()), Tone::Info);
         let printed = self.agent.run_report(report);
         self.publish_device();
         printed?;
-        self.say(format!("{} wydrukowany.", report.label()), Tone::Success);
+        self.clear_problem();
         Ok(())
     }
 
@@ -783,123 +644,34 @@ impl Session<'_> {
         publish_device(&self.agent, self.sink);
     }
 
-    /// Failures can still produce notices or history.
-    fn publish_news(&mut self) {
-        let news = self.agent.take_news();
-        for notice in news.notices {
-            self.say(notice, Tone::Error);
-        }
-        if let Some(entries) = news.history {
-            (self.sink)(Event::HistoryChanged(entries));
+    /// Failures can still produce notices.
+    fn publish_notices(&mut self) {
+        for notice in self.agent.take_notices() {
+            self.problem(notice);
         }
     }
 
-    fn report_error(&self, error: &Error) {
+    fn report_error(&mut self, error: &Error) {
         trace_failure(error);
-        self.say(format!("Błąd: {error}"), Tone::Error);
+        self.problem(Message::new("agent-error").arg("error", error.message()));
+        self.error_shown = true;
         self.publish_device();
     }
 
-    fn say(&self, text: String, tone: Tone) {
-        (self.sink)(Event::Status { text, tone });
-    }
-}
-
-/// Navigation follows returned cursors; failures preserve the shown page and pending clicks.
-///
-/// `pages` holds opening cursors through the shown page (`None` for the first).
-struct Pager {
-    pages: Vec<Option<String>>,
-    next: Option<String>,
-    requested: Option<usize>,
-}
-
-impl Default for Pager {
-    fn default() -> Self {
-        Self {
-            pages: vec![None],
-            next: None,
-            requested: None,
-        }
-    }
-}
-
-impl Pager {
-    const fn next(&mut self) {
-        let requested = match self.requested {
-            Some(requested) => requested,
-            None => self.pages.len(),
-        };
-        if requested < self.pages.len() || self.next.is_some() {
-            self.requested = Some(requested.saturating_add(1));
+    fn recovered(&mut self) {
+        if self.error_shown {
+            self.clear_problem();
         }
     }
 
-    fn previous(&mut self) {
-        self.requested = Some(
-            self.requested
-                .unwrap_or(self.pages.len())
-                .saturating_sub(1)
-                .max(1),
-        );
+    fn problem(&mut self, text: Message) {
+        self.error_shown = false;
+        (self.sink)(Event::Problem(Some(text)));
     }
 
-    fn refresh(&mut self, api: &Api) -> Result<Event, ApiError> {
-        let mut requested = self.requested.unwrap_or(self.pages.len());
-        let (mut page, forward) = if requested > self.pages.len() {
-            if let Some(cursor) = &self.next {
-                let (page, forward) =
-                    Self::fetch_forward(api, cursor, requested - self.pages.len())?;
-                requested = self.pages.len() + forward.len() + 1;
-                (page, forward)
-            } else {
-                requested = self.pages.len();
-                (
-                    api.documents(self.pages.last().and_then(Option::as_deref))?,
-                    Vec::new(),
-                )
-            }
-        } else {
-            (
-                api.documents(self.pages.get(requested - 1).and_then(Option::as_deref))?,
-                Vec::new(),
-            )
-        };
-        if page.items.is_empty() && requested > 1 {
-            // Queuing or printing can empty a page; return to the remaining documents.
-            page = api.documents(None)?;
-            requested = 1;
-        }
-        if requested > self.pages.len() {
-            self.pages.push(self.next.take());
-            self.pages.extend(forward);
-        } else {
-            self.pages.truncate(requested);
-        }
-        self.next = page.next_cursor;
-        self.requested = None;
-        Ok(Event::Documents {
-            items: page.items,
-            page: self.pages.len(),
-            has_next: self.next.is_some(),
-        })
-    }
-
-    fn fetch_forward(
-        api: &Api,
-        cursor: &str,
-        count: usize,
-    ) -> Result<(Page, Vec<Option<String>>), ApiError> {
-        let mut page = api.documents(Some(cursor))?;
-        let mut opened = Vec::new();
-        while opened.len() + 1 < count && !page.items.is_empty() {
-            let Some(cursor) = page.next_cursor.take() else {
-                break;
-            };
-            page = api.documents(Some(&cursor))?;
-            opened.push(Some(cursor));
-        }
-        Ok((page, opened))
+    fn clear_problem(&mut self) {
+        self.error_shown = false;
+        (self.sink)(Event::Problem(None));
     }
 }
 

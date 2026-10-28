@@ -22,6 +22,17 @@ impl fmt::Display for Failure {
 }
 impl Error for Failure {}
 
+#[cfg(target_os = "linux")]
+/// A fresh state lacks the address only when the build carries none; release builds
+/// carry it, so pairing is the first thing missing there.
+fn first_missing_setting() -> String {
+    if Settings::default().api_url.is_empty() {
+        Settings::missing_api_url().to_string()
+    } else {
+        "Sparuj drukarkę kodem z Holuto w Ustawieniach.".into()
+    }
+}
+
 #[test]
 fn ports_json_includes_brand_hints_while_human_output_keeps_names_only() {
     use fiscal::{device::Vendor, link::Candidate};
@@ -227,25 +238,6 @@ fn settings_changes_refuse_a_held_lock_naming_the_holder_and_preserve_config() -
             assert_eq!(Settings::load(&dir)?, Some(settings.clone()));
         }
     }
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Assertions prove behavior; setup propagates I/O"
-)]
-fn fresh_installation_check_reports_missing_configuration_without_opening_ports() -> TestResult {
-    let temp = tempfile::tempdir()?;
-    let response = execute(Command::Check, &temp.path().join("state"))?;
-    assert_eq!(response.exit, 3);
-    assert_eq!(
-        response.value,
-        json!({
-            "ok":false,"configured":false,"appRunning":false,
-            "errors":["Wpisz adres API w Ustawieniach."]
-        })
-    );
     Ok(())
 }
 
@@ -633,13 +625,14 @@ fn json_dispatch_round_trips_configuration_and_reports_exact_errors() -> TestRes
             vec!["check"],
             3,
             json!({"ok":false,"configured":false,"appRunning":false,
-            "errors":["Wpisz adres API w Ustawieniach."]}),
+            "errors":[first_missing_setting()]}),
         ),
         (
             vec!["config", "show"],
             0,
             json!({"ok":true,"config":{
-                "apiUrl":"","paired":false,"port":"auto","baudRate":9600,"vendor":null,
+                "apiUrl":Settings::default().api_url,"paired":false,"port":"auto",
+                "baudRate":9600,"vendor":null,
                 "telemetryEnabled":true,"startOnLaunch":false
             }}),
         ),

@@ -11,8 +11,6 @@ use super::{Agent, Blocked};
 use crate::{
     Error,
     api::{Api, ApiError, model::JobState},
-    documents::{BuyerNip, Document},
-    history::{self, HistoryEntry},
     journal::{
         Device, JobResult, Journal, Operation, ReceiptOperation, ReportOperation, Settlement,
         Summary,
@@ -23,7 +21,7 @@ use crate::{
 use uuid::Uuid;
 
 type TestResult = Result<(), Box<dyn StdError>>;
-fn waiting(_message: Option<&str>) {}
+fn waiting(_message: Option<&i18n::Message>) {}
 fn agent<'a>(sim: &Simulator, dir: &'a StateDir, server: &Holuto) -> Result<Agent<'a>, Error> {
     let api = Api::new(server.url(), server.token(), UNIQUE_NUMBER)?;
     let mut agent = Agent::new(sim.driver(), api, dir, &waiting);
@@ -103,7 +101,7 @@ fn invalid_printer_description_never_reaches_the_session_endpoint() {
             assert!(matches!(
                 result,
                 Err(Error::Invalid(message))
-                    if message == "Nieprawidłowy model lub firmware drukarki: \
+                    if message.to_string() == "Nieprawidłowy model lub firmware drukarki: \
                         wymagane od 1 do 64 znaków bez znaków sterujących."
             ));
             assert!(requests.is_empty(), "{field}: invalid telemetry was sent");
@@ -134,7 +132,7 @@ fn printer_description_code_limit_counts_unicode_characters_not_bytes() {
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn printer_time_and_original_receipt_values_reach_holuto_and_history() -> TestResult {
+fn printer_time_and_original_receipt_values_reach_holuto() -> TestResult {
     let sim = Simulator::start();
     sim.set_clock("2025-01-02T12:34:00Z".parse()?);
     let server = Holuto::new();
@@ -174,14 +172,7 @@ fn printer_time_and_original_receipt_values_reach_holuto_and_history() -> TestRe
             .map(String::as_str),
         Some("2")
     );
-    assert_eq!(
-        history::load(&dir)?
-            .first()
-            .ok_or("missing history")?
-            .receipt_number
-            .as_deref(),
-        Some("1")
-    );
+    assert_eq!(server.job(JOB_ID)["receiptNumber"], "1");
     assert!(
         stored(&dir)?.settled.is_some(),
         "accepted result settles journal"
@@ -204,7 +195,11 @@ fn not_started_expired_attempt_waits_for_staff_with_explicit_no_dispatch_notice(
     let mut agent = agent(&sim, &dir, &server)?;
     assert_eq!(agent.settle()?, Some(Blocked::Receipt));
     assert_eq!(
-        agent.take_news().notices,
+        agent
+            .take_notices()
+            .into_iter()
+            .map(|message| message.to_string())
+            .collect::<Vec<_>>(),
         [format!(
             "Zlecenie 10 (zadanie {JOB_ID}): rejestr drukarki potwierdza, że nie wysłano żadnego \
              polecenia fiskalnego. Rozstrzygnij zadanie jako niewydrukowane w Holuto."
@@ -359,7 +354,11 @@ fn terminal_failed_or_expired_print_needs_same_device_local_acknowledgement() ->
             "Expired"
         };
         assert_eq!(
-            agent.take_news().notices,
+            agent
+                .take_notices()
+                .into_iter()
+                .map(|message| message.to_string())
+                .collect::<Vec<_>>(),
             [format!(
                 "Paragon 41 został wydrukowany dla zlecenia 10 (zadanie {JOB_ID}), ale Holuto \
                  oznaczyło zadanie jako {state_label}. Sprawdź wydruk i użyj „Wyjaśnij paragon”."
@@ -413,10 +412,10 @@ fn orphaned_print_refuses_reports_with_the_local_acknowledgement_not_holuto() ->
         None,
     )?))?;
     let mut agent = agent(&sim, &dir, &server)?;
+    let expected = "Najpierw wyjaśnij wydrukowany paragon przyciskiem „Wyjaśnij paragon”.";
     assert!(matches!(
         agent.run_report(Report::Daily),
-        Err(Error::Blocked(message))
-            if message == "Najpierw wyjaśnij wydrukowany paragon przyciskiem „Wyjaśnij paragon”."
+        Err(Error::Blocked(message)) if message.to_string() == expected
     ));
     assert_eq!(sim.reports(), []);
     assert_eq!(stored(&dir)?.settled, None);
@@ -440,7 +439,7 @@ fn different_attempt_cannot_settle_or_reprint_a_journal() -> TestResult {
     Journal::new(&dir).save(&Operation::Receipt(operation.clone()))?;
     let mut agent = agent(&sim, &dir, &server)?;
     assert!(matches!(agent.settle(), Err(Error::Blocked(message))
-            if message == "Nie można uzgodnić niepotwierdzonego paragonu z Holuto: \
+            if message.to_string() == "Nie można uzgodnić niepotwierdzonego paragonu z Holuto: \
                            Holuto zna inną próbę wykonania tego zadania. Drukowanie zablokowane."));
     assert_eq!(stored(&dir)?, operation);
     assert!(sim.receipts().is_empty(), "attempt mismatch never prints");
@@ -704,12 +703,12 @@ fn corrupt_journal_blocks_receipts_and_reports_without_touching_printer() -> Tes
     let expected = "Uszkodzony rejestr operacji lub nieobsługiwany format. \
                     Drukowanie zablokowane; nie usuwaj pliku.";
     assert!(
-        matches!(agent.step(), Err(Error::Blocked(message)) if message == expected),
+        matches!(agent.step(), Err(Error::Blocked(message)) if message.to_string() == expected),
         "corrupt journal blocks receipt"
     );
     let refused = agent.run_report(Report::Daily);
     assert!(
-        matches!(refused, Err(Error::Blocked(message)) if message == expected),
+        matches!(refused, Err(Error::Blocked(message)) if message.to_string() == expected),
         "corrupt journal blocks reports"
     );
     assert!(
@@ -725,49 +724,6 @@ fn corrupt_journal_blocks_receipts_and_reports_without_touching_printer() -> Tes
             .all(|request| request.path != "/agent/jobs/take")
     );
     assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
-fn history_error_does_not_block_server_accepted_result() -> TestResult {
-    let sim = Simulator::start();
-    let server = Holuto::new();
-    let _id = server.enqueue(job_json());
-    let (_temporary, dir) = state_dir();
-    fs::create_dir(dir.file("history.jsonl"))?;
-    let mut agent = agent(&sim, &dir, &server)?;
-    let _delay = agent.step()?;
-    let saved = stored(&dir)?;
-    assert_eq!(
-        saved.settled.map(|settled| settled.state),
-        Some(JobState::Done)
-    );
-    assert_eq!(
-        saved.device,
-        Device::Completed {
-            receipt_number: Some("1".to_owned())
-        }
-    );
-    assert_eq!(server.job(JOB_ID)["state"], "done");
-    assert_eq!(server.job(JOB_ID)["receiptNumber"], "1");
-    assert_eq!(sim.receipts().len(), 1);
-    let notices = agent.take_news().notices;
-    assert_eq!(notices.len(), 1);
-    let notice = notices.first().ok_or("missing history failure")?;
-    let prefix = format!(
-        "Nie można zapisać historii ({}): ",
-        dir.file("history.jsonl").display()
-    );
-    assert!(
-        notice
-            .strip_prefix(&prefix)
-            .is_some_and(|source| !source.is_empty()),
-        "history failure identifies the cache and includes the OS error: {notice}"
-    );
     Ok(())
 }
 
@@ -1000,7 +956,6 @@ fn a_reoffered_job_is_never_printed_again() -> TestResult {
     let _delay = first.step()?;
     let printed = stored(&dir)?;
     let frames = sent(&sim, &RECEIPT_COMMANDS);
-    let history = history::load(&dir)?;
     let replay = server.job(JOB_ID);
     drop(first);
     server.fault(
@@ -1015,14 +970,13 @@ fn a_reoffered_job_is_never_printed_again() -> TestResult {
     assert!(matches!(
         recovered.step(),
         Err(Error::Blocked(message))
-            if message == format!(
+            if message.to_string() == format!(
                 "Zadanie {JOB_ID} było już wykonywane na tej drukarce; \
                  nie zostanie wydrukowane ponownie."
             )
     ));
     assert_eq!(sent(&sim, &RECEIPT_COMMANDS), frames);
     assert_eq!(sim.receipts().len(), 1);
-    assert_eq!(history::load(&dir)?, history);
     assert_eq!(stored(&dir)?, printed, "the printed evidence is kept");
     Ok(())
 }
@@ -1048,9 +1002,10 @@ fn a_claim_never_prints_over_another_unresolved_receipt() -> TestResult {
     let mut agent = agent(&sim, &dir, &server)?;
     // `step` settles first; a claim racing an unresolved journal reaches `execute` directly.
     let job = agent.api.take()?.ok_or("missing claimed job")?;
+    let expected = "Poprzednia operacja jest nierozstrzygnięta.";
     assert!(matches!(
         agent.execute(&job),
-        Err(Error::Blocked(message)) if message == "Poprzednia operacja jest nierozstrzygnięta."
+        Err(Error::Blocked(message)) if message.to_string() == expected
     ));
     assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
     assert_eq!(stored(&dir)?, other);
@@ -1079,13 +1034,10 @@ fn unnumbered_completion_remains_unknown_until_staff_supply_the_number() -> Test
     );
     server.resolve(JOB_ID, Some("P41"))?;
     assert_eq!(agent.settle()?, None);
+    assert_eq!(server.job(JOB_ID)["receiptNumber"], "P41");
     assert_eq!(
-        history::load(&dir)?
-            .first()
-            .ok_or("missing history")?
-            .receipt_number
-            .as_deref(),
-        Some("P41")
+        stored(&dir)?.settled.map(|settled| settled.state),
+        Some(JobState::Done)
     );
     assert_eq!(sim.receipts().len(), 1, "staff resolution never reprints");
     Ok(())
@@ -1227,7 +1179,7 @@ fn orphan_acknowledgement_rechecks_the_server_printer_binding() -> TestResult {
     );
     assert!(
         matches!(agent.acknowledge_orphaned_receipt(), Err(Error::Blocked(message))
-        if message == expected),
+        if message.to_string() == expected),
         "a changed server binding cannot erase the retained physical evidence"
     );
     assert_eq!(stored(&dir)?, operation);
@@ -1279,7 +1231,7 @@ fn orphan_acknowledgement_refuses_what_staff_or_settlement_must_decide() -> Test
         let refused = agent.acknowledge_orphaned_receipt();
         assert!(
             matches!(&refused, Err(Error::Blocked(message) | Error::Invalid(message))
-                if message == expected),
+                if message.to_string() == expected),
             "{remote}, {device:?}, settled {settled}: {refused:?}"
         );
         assert_eq!(stored(&dir)?, operation, "{remote}: journal unchanged");
@@ -1303,32 +1255,15 @@ mod reconciliation;
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestResult {
+fn debug_diagnostics_do_not_disclose_receipt_or_error_text() -> TestResult {
     let summary = Summary {
         total: Grosze::new(987_654)?,
         payments: Vec::new(),
         items: vec!["PrivateReceiptLine".to_owned()],
     };
-    let entry = HistoryEntry {
-        job_id: JOB_ID,
-        printed_at: "2025-01-02T12:00:00Z".parse()?,
-        receipt_number: Some("PrivateReceiptNumber".to_owned()),
-        total: summary.total,
-        payments: Vec::new(),
-        items: summary.items.clone(),
-    };
-    let document: Document = serde_json::from_value(json!({
-        "kind": "sale", "orderId": JOB_ID, "orderNumber": 10, "allocationId": null,
-        "amount": "9876.54", "customerName": "PrivateCustomer",
-        "occurredAt": "2025-01-02T12:00:00Z",
-        "dueAt": "2025-01-02T12:00:00Z",
-        "latestAt": "2025-01-02T12:00:00Z",
-        "isOverdue": false
-    }))?;
-    let nip = BuyerNip::parse("5261040828")?;
     let result = JobResult::failed("PrivateResultReason");
-    let error = Error::Invalid("PrivateErrorText".to_owned());
-    let api_error = ApiError::Response("PrivateApiText".to_owned());
+    let error = Error::Invalid("PrivateErrorText".into());
+    let api_error = ApiError::Response("PrivateApiText".into());
     let mut operation = claimed(
         Device::Completed {
             receipt_number: Some("PrivateReceiptNumber".to_owned()),
@@ -1338,16 +1273,12 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
         }),
     )?;
     operation.summary = Some(summary.clone());
-    let debug = format!(
-        "{summary:?}{entry:?} {document:?} {nip:?} {result:?} {error:?} {api_error:?} {operation:?}"
-    );
+    let debug = format!("{summary:?} {result:?} {error:?} {api_error:?} {operation:?}");
     for forbidden in [
         "PrivateReceiptLine",
         "PrivateReceiptNumber",
         "987654",
         "9876.54",
-        "PrivateCustomer",
-        "5261040828",
         "PrivateResultReason",
         "PrivateErrorText",
         "PrivateApiText",
@@ -1380,7 +1311,8 @@ fn resolution_requires_the_same_vendor_and_serial() -> TestResult {
             "Niepotwierdzony paragon dotyczy drukarki {vendor:?} {unique_number}. Podłącz ją, \
              aby uzgodnić wynik z Holuto."
         );
-        assert!(matches!(agent.settle(), Err(Error::Blocked(message)) if message == expected));
+        let result = agent.settle();
+        assert!(matches!(result, Err(Error::Blocked(message)) if message.to_string() == expected));
         assert_eq!(server.requests().len(), requests);
         assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
         assert_eq!(sim.frames(), frames);
@@ -1416,9 +1348,8 @@ fn report_resolution_requires_the_same_vendor_and_serial() -> TestResult {
         let expected = format!(
             "Podłącz drukarkę {vendor:?} {unique_number}, której dotyczy przerwany raport."
         );
-        assert!(
-            matches!(agent.resolve_report(), Err(Error::Blocked(message)) if message == expected)
-        );
+        let result = agent.resolve_report();
+        assert!(matches!(result, Err(Error::Blocked(message)) if message.to_string() == expected));
         assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
         assert_eq!(sim.frames(), frames);
         assert_eq!(agent.blocked()?, Some(Blocked::Report));
@@ -1454,7 +1385,7 @@ fn orphan_acknowledgement_requires_the_same_vendor_and_serial() -> TestResult {
         let expected =
             format!("Podłącz drukarkę {vendor:?} {unique_number}, która wydrukowała ten paragon.");
         let result = agent.acknowledge_orphaned_receipt();
-        assert!(matches!(result, Err(Error::Blocked(message)) if message == expected));
+        assert!(matches!(result, Err(Error::Blocked(message)) if message.to_string() == expected));
         assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
         assert_eq!(sim.frames(), frames);
         assert_eq!(server.requests().len(), requests);
@@ -1555,7 +1486,7 @@ fn a_printer_swapped_mid_session_claims_no_job_and_prints_nothing() -> TestResul
     assert!(matches!(
         agent.step(),
         Err(Error::Blocked(message))
-            if message == format!(
+            if message.to_string() == format!(
                 "Podłączona drukarka {UNIQUE_NUMBER} nie jest drukarką {PAIRED} sparowaną przy \
                  uruchomieniu. Podłącz ją ponownie albo zatrzymaj i uruchom obsługę."
             )
@@ -1607,7 +1538,7 @@ fn a_claim_for_another_printer_or_without_an_attempt_is_never_printed() -> TestR
         let mut agent = agent(&sim, &dir, &server)?;
         assert!(
             matches!(agent.step(), Err(Error::Blocked(message))
-            if message == format!(
+            if message.to_string() == format!(
                 "Nieprawidłowe zadanie {JOB_ID} z Holuto: {problem}. Nie drukuję go."
             )),
             "{changes}"
@@ -1716,11 +1647,6 @@ fn journal_failures_after_print_preserve_the_last_durable_evidence_for_restart()
         );
         if !blocked {
             assert_eq!(saved.issued_at.to_string(), "2025-01-02T12:34:00Z");
-            let entries = history::load(&dir)?;
-            assert_eq!(entries.len(), 1);
-            let entry = entries.first().ok_or("missing recovered history")?;
-            assert_eq!(entry.receipt_number.as_deref(), Some("1"));
-            assert_eq!(entry.printed_at.to_string(), "2025-01-02T12:34:00Z");
         }
         assert_eq!(sim.receipts().len(), 1);
         assert_eq!(
@@ -1829,9 +1755,10 @@ fn a_report_completion_write_failure_requires_resolution_without_reprinting() ->
     recovered.resolve_report()?;
     assert_eq!(recovered.blocked()?, None);
     let resolved = fs::read(dir.file("operation.json"))?;
+    let expected = "Brak przerwanego raportu do wyjaśnienia.";
     assert!(matches!(
         recovered.resolve_report(),
-        Err(Error::Invalid(message)) if message == "Brak przerwanego raportu do wyjaśnienia."
+        Err(Error::Invalid(message)) if message.to_string() == expected
     ));
     assert_eq!(fs::read(dir.file("operation.json"))?, resolved);
     assert_eq!(sim.reports(), reports);
@@ -2001,7 +1928,11 @@ fn a_changed_vat_warning_survives_a_failed_poll() -> TestResult {
         Err(Error::Api(ApiError::Status { status: 503, .. }))
     ));
     let _delay = agent.step()?;
-    let mut notices = agent.take_news().notices;
+    let mut notices = agent
+        .take_notices()
+        .into_iter()
+        .map(|message| message.to_string())
+        .collect::<Vec<_>>();
     notices.retain(|notice| notice.starts_with("Pomijam"));
     assert_eq!(
         notices,

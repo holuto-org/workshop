@@ -1,58 +1,60 @@
-#[path = "model/table.rs"]
-mod table;
-
 use agent::{
-    documents::{BuyerNip, Document},
-    history::HistoryEntry,
-    settings::{BAUD_RATES, Settings, Token},
+    settings::{BAUD_RATES, Settings, Theme},
     status::Snapshot,
-    worker::{Command, Tone},
+    worker::Command,
 };
-use fiscal::{
-    device::{Device, Vendor},
-    money::zloty,
-};
+use fiscal::device::{Device, Vendor};
+use i18n::{Language, LanguagePreference, Message};
 use jiff::{Timestamp, ToSpan, civil::Date};
-use slint::{ModelRc, SharedString, VecModel};
-use table::{Sort, Table};
+use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
-use crate::ui::{Action, AppWindow};
+use crate::{
+    localization,
+    ui::{Action, AppWindow, Translations},
+};
 
 /// Must match `AppWindow`'s tab order.
 #[derive(Clone, Copy)]
 pub(crate) enum Tab {
-    Documents,
+    Status,
     Reports,
-    History,
     Settings,
 }
 
 impl Tab {
     const fn from_index(index: i32) -> Option<Self> {
         match index {
-            0 => Some(Self::Documents),
+            0 => Some(Self::Status),
             1 => Some(Self::Reports),
-            2 => Some(Self::History),
-            3 => Some(Self::Settings),
+            2 => Some(Self::Settings),
             _ => None,
         }
     }
 
     const fn index(self) -> i32 {
         match self {
-            Self::Documents => 0,
+            Self::Status => 0,
             Self::Reports => 1,
-            Self::History => 2,
-            Self::Settings => 3,
+            Self::Settings => 2,
         }
     }
 }
 
+/// Must match `AppWindow`'s theme choices.
+const THEMES: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
+
+pub(crate) fn theme_at(index: i32) -> Theme {
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| THEMES.get(index).copied())
+        .unwrap_or_default()
+}
+
 pub(crate) struct Confirmation {
     command: Command,
-    title: String,
-    text: String,
-    action: String,
+    title: Message,
+    text: Message,
+    action: Message,
 }
 
 #[expect(
@@ -61,17 +63,11 @@ pub(crate) struct Confirmation {
 )]
 pub(crate) struct Model {
     pub(crate) settings: Settings,
-    /// Persisted API address and pairing; address edits are judged against these,
-    /// not an earlier capture, so reverting an edit keeps the pairing.
-    saved_api_url: String,
-    saved_token: Token,
+    pub(crate) language: Language,
     pub(crate) pairing_code: String,
     pub(crate) pairing: bool,
-    documents: Table<Document>,
-    history: Table<HistoryEntry>,
-    pub(crate) selected: Option<usize>,
-    pub(crate) page: usize,
-    pub(crate) has_next: bool,
+    /// Start was requested and the worker is not spawned yet.
+    pub(crate) starting: bool,
     pub(crate) running: bool,
     pub(crate) stopping: bool,
     pub(crate) saving: bool,
@@ -83,11 +79,9 @@ pub(crate) struct Model {
     pub(crate) blocked: bool,
     pub(crate) report_unresolved: bool,
     /// Evidence the acknowledgement quotes; never the transient status line.
-    pub(crate) orphaned_receipt: Option<String>,
+    pub(crate) orphaned_receipt: Option<Message>,
     pub(crate) tab: Tab,
-    pub(crate) nip: String,
-    pub(crate) message: String,
-    pub(crate) tone: Tone,
+    pub(crate) message: Message,
     /// Month starts, newest first.
     pub(crate) months: Vec<Date>,
     pub(crate) month_index: usize,
@@ -103,19 +97,13 @@ pub(crate) struct Model {
 impl Model {
     pub(crate) fn new(settings: Settings, today: Date) -> Self {
         let months = months_before(today);
-        let saved_api_url = settings.api_url.clone();
-        let saved_token = settings.token.clone();
+        let language = settings.language.resolve();
         Self {
             settings,
-            saved_api_url,
-            saved_token,
+            language,
             pairing_code: String::new(),
             pairing: false,
-            documents: Table::new(),
-            history: Table::new(),
-            selected: None,
-            page: 1,
-            has_next: false,
+            starting: false,
             running: false,
             stopping: false,
             saving: false,
@@ -127,10 +115,8 @@ impl Model {
             blocked: false,
             report_unresolved: false,
             orphaned_receipt: None,
-            tab: Tab::Settings,
-            nip: String::new(),
-            message: "Wpisz kod parowania drukarki z Holuto.".into(),
-            tone: Tone::Info,
+            tab: Tab::Status,
+            message: Message::default(),
             months,
             month_index: 0,
             from: date_label(today.checked_sub(7.days()).unwrap_or(today)),
@@ -142,37 +128,17 @@ impl Model {
         }
     }
 
-    pub(crate) fn say(&mut self, text: String, tone: Tone) {
+    pub(crate) fn problem(&mut self, text: Message) {
         self.message = text;
-        self.tone = tone;
     }
 
-    pub(crate) fn settings_persisted(&mut self) {
-        self.saved_api_url.clone_from(&self.settings.api_url);
-        self.saved_token.clone_from(&self.settings.token);
+    pub(crate) fn set_language(&mut self, preference: LanguagePreference) {
+        self.settings.language = preference;
+        self.language = preference.resolve();
     }
 
-    pub(crate) fn documents(&self) -> &[Document] {
-        self.documents.items()
-    }
-
-    pub(crate) fn set_documents(&mut self, documents: Vec<Document>, page: usize, has_next: bool) {
-        let previous = self.documents.set(documents);
-        self.selected = self
-            .selected
-            .and_then(|index| previous.get(index))
-            .and_then(|old| {
-                self.documents
-                    .items()
-                    .iter()
-                    .position(|new| new.same_document(old))
-            });
-        self.page = page;
-        self.has_next = has_next;
-    }
-
-    pub(crate) fn set_history(&mut self, history: Vec<HistoryEntry>) {
-        let _previous = self.history.set(history);
+    pub(crate) fn clear_problem(&mut self) {
+        self.message = Message::default();
     }
 
     pub(crate) fn stopped(&mut self) {
@@ -182,8 +148,6 @@ impl Model {
         self.in_flight = false;
         // Recheck readiness on reconnect; retain the persisted fiscal block.
         self.device = None;
-        // A new worker pages from the start; never offer a stopped session's rows.
-        self.set_documents(Vec::new(), 1, false);
     }
 
     pub(crate) fn status(&self, updated_at: Timestamp) -> Snapshot {
@@ -232,24 +196,15 @@ impl Model {
         true
     }
 
-    pub(crate) fn sort_documents(&mut self, column: i32, descending: bool) {
-        if let Some(sort) = Sort::new(column, descending) {
-            self.selected = self.documents.sort(sort, self.selected);
-        }
-    }
-
-    pub(crate) fn sort_history(&mut self, column: i32, descending: bool) {
-        if let Some(sort) = Sort::new(column, descending) {
-            let _selected = self.history.sort(sort, None);
-        }
-    }
-
     pub(crate) fn initialize(&mut self, window: &AppWindow, today: Date) {
         let _rolled = self.roll_months(today);
         window.set_baud_rates(strings(BAUD_RATES.iter().map(u32::to_string)));
-        window.set_months(strings(self.months.iter().copied().map(month_label)));
-        window.set_documents(self.documents.rows());
-        window.set_history(self.history.rows());
+        window.set_months(strings(
+            self.months
+                .iter()
+                .copied()
+                .map(|month| month_label(month).render(self.language)),
+        ));
         self.sync(window);
     }
 
@@ -257,9 +212,6 @@ impl Model {
         self.today = today;
         // Slint 1.18 permits assistive edits on disabled controls; guard settings here too.
         if !self.running && !self.saving && !self.pairing {
-            self.settings.api_url.clone_from(&self.saved_api_url);
-            self.settings.token.clone_from(&self.saved_token);
-            self.settings.set_api_url(window.get_api_url().trim());
             window
                 .get_pairing_code()
                 .trim()
@@ -272,11 +224,15 @@ impl Model {
             }
         }
         self.settings.telemetry_enabled = window.get_telemetry_enabled();
-        self.nip = window.get_nip().to_string();
         self.month_index = usize::try_from(window.get_month_index()).unwrap_or_default();
         // Tray sessions can span months.
         if self.roll_months(today) {
-            window.set_months(strings(self.months.iter().copied().map(month_label)));
+            window.set_months(strings(
+                self.months
+                    .iter()
+                    .copied()
+                    .map(|month| month_label(month).render(self.language)),
+            ));
         }
         self.summary = window.get_summary();
         window.get_from_date().trim().clone_into(&mut self.from);
@@ -292,28 +248,49 @@ impl Model {
         window.set_stopping(self.stopping);
         window.set_saving_settings(self.saving);
         window.set_pairing(self.pairing);
-        window.set_connected(self.connected);
-        window.set_queue_enabled(self.queue_enabled() && self.selected.is_some());
+        window.set_starting(self.starting);
         window.set_reports_enabled(self.reports_enabled());
         window.set_daily_report_enabled(self.daily_report_enabled());
-        window.set_previous_enabled(self.connected && self.page > 1);
-        window.set_next_enabled(self.connected && self.has_next);
         window.set_report_unresolved(self.resolve_enabled());
         window.set_orphaned_receipt(self.acknowledge_enabled());
-        window.set_status(self.message.as_str().into());
-        window.set_status_tone(tone_number(self.tone));
-        window.set_connection_text(self.connection_text().into());
-        window.set_connection_tone(
+        localization::set_language(&window.global::<Translations<'_>>(), self.language);
+        window.set_language_index(localization::preference_index(self.settings.language));
+        window.set_status(self.message.render(self.language).into());
+        // The header speaks only when something is wrong; a working setup shows nothing.
+        let holuto_state: SharedString = self.holuto_text().render(self.language).into();
+        window.set_holuto_text(if self.connected {
+            SharedString::default()
+        } else {
+            holuto_state.clone()
+        });
+        let printer_problem = self
+            .printer_problem()
+            .map(|problem| SharedString::from(problem.render(self.language)));
+        window.set_printer_text(printer_problem.clone().unwrap_or_default());
+        window.set_printer_tone(
             if self.blocked || self.device.as_ref().is_some_and(|status| !status.ready()) {
                 2
             } else {
                 0
             },
         );
-        window.set_api_url(self.settings.api_url.as_str().into());
+        window.set_processing_state(self.processing_text().render(self.language).into());
+        window.set_holuto_state(holuto_state);
+        window.set_printer_identity(self.printer_identity().into());
+        window.set_printer_state(
+            printer_problem.unwrap_or_else(|| i18n::text("desktop-ready", self.language).into()),
+        );
+        window.set_start_hint(self.start_hint().render(self.language).into());
         window.set_pairing_code(self.pairing_code.as_str().into());
         window.set_start_on_launch(self.settings.start_on_launch);
         window.set_telemetry_enabled(self.settings.telemetry_enabled);
+        window.set_theme_index(
+            THEMES
+                .iter()
+                .position(|theme| *theme == self.settings.theme)
+                .and_then(|i| i32::try_from(i).ok())
+                .unwrap_or_default(),
+        );
         window.set_port(self.settings.port.as_str().into());
         window.set_baud_index(
             BAUD_RATES
@@ -323,36 +300,28 @@ impl Model {
                 .unwrap_or_default(),
         );
         window.set_month_index(i32::try_from(self.month_index).unwrap_or_default());
-        window.set_nip(self.nip.as_str().into());
-        window.set_selected(
-            self.selected
-                .and_then(|index| i32::try_from(index).ok())
-                .unwrap_or(-1),
-        );
-        window.set_page_label(format!("Strona {}", self.page).into());
         window.set_from_date(self.from.as_str().into());
         window.set_to_date(self.to.as_str().into());
         window.set_summary(self.summary);
-        window.set_confirming(self.pending.is_some());
         if let Some(pending) = &self.pending {
-            window.set_confirm_title(pending.title.as_str().into());
-            window.set_confirm_text(pending.text.as_str().into());
-            window.set_confirm_action(pending.action.as_str().into());
+            window.set_confirm_title(pending.title.render(self.language).into());
+            window.set_confirm_text(pending.text.render(self.language).into());
+            window.set_confirm_action(pending.action.render(self.language).into());
         }
-        self.documents.sync_columns(&window.get_document_columns());
-        self.history.sync_columns(&window.get_history_columns());
+        window.invoke_show_confirmation(self.pending.is_some());
     }
 
     const fn accepting(&self) -> bool {
         self.connected && !self.stopping && !self.in_flight
     }
 
-    const fn queue_enabled(&self) -> bool {
+    /// Fiscal reports need an accepting worker and no unresolved fiscal block.
+    const fn reports_unblocked(&self) -> bool {
         self.accepting() && !self.blocked
     }
 
     fn reports_enabled(&self) -> bool {
-        self.queue_enabled()
+        self.reports_unblocked()
             && self
                 .device
                 .as_ref()
@@ -360,7 +329,7 @@ impl Model {
     }
 
     fn daily_report_enabled(&self) -> bool {
-        self.queue_enabled()
+        self.reports_unblocked()
             && self
                 .device
                 .as_ref()
@@ -375,17 +344,63 @@ impl Model {
         self.accepting() && self.orphaned_receipt.is_some()
     }
 
-    fn connection_text(&self) -> String {
-        if self.blocked {
-            "Zablokowane: wymaga rozstrzygnięcia".into()
-        } else if let Some(status) = self.device.as_ref().filter(|status| !status.ready()) {
-            format!("Drukarka niegotowa: {}", status.description())
-        } else if self.connected {
-            format!("Połączono · {}", self.unique_number)
+    /// Stan's "Obsługa drukarki"; a pairing worker is not processing, so it never stops one.
+    pub(crate) const fn processing_text(&self) -> Message {
+        if self.running && self.stopping {
+            Message::new("desktop-stopping")
         } else if self.running {
-            "Łączenie…".into()
+            Message::new("desktop-running")
+        } else if self.starting {
+            Message::new("desktop-starting")
         } else {
-            "Nie połączono".into()
+            Message::new("desktop-stopped")
+        }
+    }
+
+    /// Stan's "Holuto"; the header repeats it only while not connected.
+    pub(crate) const fn holuto_text(&self) -> Message {
+        if self.connected {
+            Message::new("desktop-connected")
+        } else if self.running {
+            Message::new("desktop-connecting")
+        } else {
+            Message::new("desktop-disconnected")
+        }
+    }
+
+    /// The last connected printer, kept after Stop like the published status.
+    pub(crate) fn printer_identity(&self) -> String {
+        match self.vendor {
+            Some(vendor) if !self.unique_number.is_empty() => {
+                let mut identity = format!("{} · {}", vendor_label(vendor), self.unique_number);
+                if !self.settings.port.is_empty() {
+                    identity.push_str(" · ");
+                    identity.push_str(&self.settings.port);
+                }
+                identity
+            },
+            _ => "—".into(),
+        }
+    }
+
+    /// Why the printer cannot print now; `None` once it is connected, ready and unblocked.
+    pub(crate) fn printer_problem(&self) -> Option<Message> {
+        if self.blocked {
+            Some(Message::new("desktop-blocked"))
+        } else if let Some(status) = self.device.as_ref().filter(|status| !status.ready()) {
+            Some(Message::new("desktop-not-ready").arg("detail", status.message()))
+        } else if self.connected && self.device.is_some() {
+            None
+        } else {
+            Some(Message::new("desktop-no-connection"))
+        }
+    }
+
+    pub(crate) fn start_hint(&self) -> Message {
+        if self.running || self.starting {
+            Message::default()
+        } else {
+            Message::new("desktop-start-hint")
         }
     }
 
@@ -395,22 +410,11 @@ impl Model {
             return;
         }
         self.pending = match action {
-            Action::QueueReceipt => {
-                if self.queue_enabled() {
-                    self.queue_confirmation()
-                } else {
-                    None
-                }
-            },
             Action::DailyReport => self.daily_report_enabled().then(|| Confirmation {
                 command: Command::DailyReport,
-                title: "Raport dobowy".into(),
-                text: concat!(
-                    "Raport dobowy zamknie bieżącą sprzedaż dnia w pamięci fiskalnej. ",
-                    "Wydrukować raport?"
-                )
-                .into(),
-                action: "Drukuj".into(),
+                title: Message::new("desktop-daily-report"),
+                text: Message::new("desktop-confirm-daily"),
+                action: Message::new("desktop-print"),
             }),
             Action::MonthlyReport => self
                 .months
@@ -421,9 +425,9 @@ impl Model {
                         year: month.year(),
                         month: month.month(),
                     },
-                    title: "Raport miesięczny".into(),
-                    text: format!("Wydrukować raport miesięczny za {}?", month_label(month)),
-                    action: "Drukuj".into(),
+                    title: Message::new("desktop-monthly-report"),
+                    text: Message::new("desktop-confirm-monthly").arg("month", month_label(month)),
+                    action: Message::new("desktop-print"),
                 }),
             Action::PeriodicReport => {
                 if self.reports_enabled() {
@@ -434,75 +438,28 @@ impl Model {
             },
             Action::ResolveReport => self.resolve_enabled().then(|| Confirmation {
                 command: Command::ResolveReport,
-                title: "Wyjaśnij raport".into(),
-                text: concat!(
-                    "Sprawdź fizyczny wydruk i stan drukarki. Czy ustalono wynik raportu? ",
-                    "To potwierdzenie nie ponawia wydruku."
-                )
-                .into(),
-                action: "Usuń blokadę".into(),
+                title: Message::new("desktop-resolve-report"),
+                text: Message::new("desktop-confirm-resolve-report"),
+                action: Message::new("desktop-unblock"),
             }),
             Action::AcknowledgeOrphanedReceipt => {
-                let evidence = self.orphaned_receipt.as_deref().unwrap_or_default();
+                let evidence = self.orphaned_receipt.clone().unwrap_or_default();
                 self.acknowledge_enabled().then(|| Confirmation {
                     command: Command::AcknowledgeOrphanedReceipt,
-                    title: "Wyjaśnij paragon".into(),
-                    text: format!(
-                        concat!(
-                            "{}\n\nSprawdź wydruk i uzgodnij dokument w Holuto. ",
-                            "Potwierdzenie zapisze lokalne wyjaśnienie i usunie blokadę. ",
-                            "Nie wydrukuje paragonu ponownie ani nie zmieni wyniku w Holuto."
-                        ),
-                        evidence
-                    ),
-                    action: "Potwierdź wyjaśnienie".into(),
+                    title: Message::new("desktop-resolve-receipt"),
+                    text: Message::new("desktop-confirm-resolve-receipt").arg("evidence", evidence),
+                    action: Message::new("desktop-acknowledge"),
                 })
             },
-            Action::Save
-            | Action::Pair
-            | Action::Start
-            | Action::Stop
-            | Action::Quit
-            | Action::PreviousPage
-            | Action::NextPage => None,
+            Action::Save | Action::Pair | Action::Start | Action::Stop | Action::Quit => None,
         };
-    }
-
-    fn queue_confirmation(&mut self) -> Option<Confirmation> {
-        let document = self
-            .selected
-            .and_then(|index| self.documents.items().get(index))?;
-        let text = self.nip.trim();
-        let buyer_nip = if text.is_empty() {
-            None
-        } else if let Ok(nip) = BuyerNip::parse(text) {
-            Some(nip)
-        } else {
-            self.say("NIP nabywcy musi zawierać 10 cyfr.".into(), Tone::Error);
-            return None;
-        };
-        Some(Confirmation {
-            command: Command::Queue {
-                document: document.clone(),
-                buyer_nip,
-            },
-            title: "Potwierdź paragon".into(),
-            text: format!(
-                "{} · zlecenie {} · {}\nNIP: {}\nZatwierdzenie wystawi paragon fiskalny.",
-                document.kind.label(),
-                document.order_number,
-                zloty(document.amount),
-                if text.is_empty() { "—" } else { text }
-            ),
-            action: "Dodaj do wydruku".into(),
-        })
     }
 
     fn periodic_confirmation(&mut self) -> Option<Confirmation> {
         let (from, to) = match report_range(&self.from, &self.to, self.today) {
             Ok(range) => range,
             Err(error) => {
-                self.say(error, Tone::Error);
+                self.problem(error);
                 return None;
             },
         };
@@ -512,66 +469,50 @@ impl Model {
                 to,
                 summary: self.summary,
             },
-            title: "Raport okresowy".into(),
-            text: format!(
-                "Wydrukować raport {} za okres {} – {}?",
-                if self.summary {
-                    "skrócony"
-                } else {
-                    "szczegółowy"
-                },
-                date_label(from),
-                date_label(to)
-            ),
-            action: "Drukuj".into(),
+            title: Message::new("desktop-periodic-report"),
+            text: Message::new(if self.summary {
+                "desktop-confirm-summary"
+            } else {
+                "desktop-confirm-detailed"
+            })
+            .arg("from", date_label(from))
+            .arg("to", date_label(to)),
+            action: Message::new("desktop-print"),
         })
     }
 
     pub(crate) fn confirm(&mut self, accepted: bool) -> Option<Command> {
         let pending = self.pending.take().filter(|_| accepted)?;
-        // The document list may have been refreshed while the confirmation was open.
-        if let Command::Queue { document, .. } = &pending.command
-            && !self
-                .documents()
-                .iter()
-                .any(|listed| listed.same_document(document))
-        {
-            self.say(
-                "Nie wysłano: dokument nie czeka już na paragon.".into(),
-                Tone::Error,
-            );
-            return None;
-        }
         // Readiness may have changed while the confirmation was open.
         let allowed = match &pending.command {
-            Command::Queue { .. } => self.queue_enabled(),
             Command::DailyReport => self.daily_report_enabled(),
             Command::MonthlyReport { .. } | Command::PeriodicReport { .. } => {
                 self.reports_enabled()
             },
             Command::ResolveReport => self.resolve_enabled(),
             Command::AcknowledgeOrphanedReceipt => self.acknowledge_enabled(),
-            Command::NextPage | Command::PreviousPage => false,
         };
         if !allowed {
-            // A closed dialog must not read as a printed receipt or report.
-            self.say(
-                "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.".into(),
-                Tone::Error,
-            );
+            // A closed dialog must not read as a printed report or a resolution.
+            self.problem(Message::new("desktop-not-sent"));
             return None;
-        }
-        if matches!(pending.command, Command::Queue { .. }) {
-            // The buyer NIP belongs to this receipt only.
-            self.nip.clear();
         }
         self.in_flight = true;
         Some(pending.command)
     }
 }
 
-fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), String> {
-    let date = |which, text: &str| {
+/// The brand as printed on the device and in its documentation.
+const fn vendor_label(vendor: Vendor) -> &'static str {
+    match vendor {
+        Vendor::Posnet => "Posnet",
+        Vendor::Novitus => "Novitus",
+        Vendor::Elzab => "Elzab",
+    }
+}
+
+fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), Message> {
+    let date = |start, text: &str| {
         let padded = text.len() == 10
             && text.bytes().enumerate().all(|(index, byte)| {
                 if index == 2 || index == 5 {
@@ -583,32 +524,35 @@ fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), Strin
         let date = Date::strptime("%d.%m.%Y", text)
             .ok()
             .filter(|_| padded)
-            .ok_or_else(|| format!("Data {which} musi mieć postać dd.mm.rrrr."))?;
+            .ok_or_else(|| {
+                Message::new(if start {
+                    "desktop-from-format"
+                } else {
+                    "desktop-to-format"
+                })
+            })?;
         if date < Date::constant(2000, 1, 1) {
-            return Err(format!(
-                "Data {which} nie może być wcześniejsza niż 01.01.2000."
-            ));
+            return Err(Message::new(if start {
+                "desktop-from-earliest"
+            } else {
+                "desktop-to-earliest"
+            }));
         }
         if date > today {
-            return Err(format!(
-                "Data {which} nie może być późniejsza niż dzisiejsza."
-            ));
+            return Err(Message::new(if start {
+                "desktop-from-future"
+            } else {
+                "desktop-to-future"
+            }));
         }
         Ok(date)
     };
-    let from = date("początkowa", from)?;
-    let to = date("końcowa", to)?;
+    let from = date(true, from)?;
+    let to = date(false, to)?;
     if from > to {
-        return Err("Data początkowa nie może być późniejsza niż końcowa.".to_owned());
+        return Err(Message::new("desktop-date-order"));
     }
     Ok((from, to))
-}
-const fn tone_number(tone: Tone) -> i32 {
-    match tone {
-        Tone::Info => 0,
-        Tone::Success => 1,
-        Tone::Error => 2,
-    }
 }
 fn date_label(date: Date) -> String {
     date.strftime("%d.%m.%Y").to_string()
@@ -629,24 +573,25 @@ pub(crate) fn strings<I: IntoIterator<Item = String>>(values: I) -> ModelRc<Shar
             .collect::<VecModel<_>>(),
     )
 }
-fn month_label(month: Date) -> String {
-    format!("{} {}", month_name(month.month()), month.year())
+fn month_label(month: Date) -> Message {
+    Message::new("desktop-month-year")
+        .arg("month", Message::new(month_key(month.month())))
+        .arg("year", month.year().to_string())
 }
-const fn month_name(month: i8) -> &'static str {
+const fn month_key(month: i8) -> &'static str {
     match month {
-        1 => "styczeń",
-        2 => "luty",
-        3 => "marzec",
-        4 => "kwiecień",
-        5 => "maj",
-        6 => "czerwiec",
-        7 => "lipiec",
-        8 => "sierpień",
-        9 => "wrzesień",
-        10 => "październik",
-        11 => "listopad",
-        12 => "grudzień",
-        _ => "",
+        2 => "desktop-month-2",
+        3 => "desktop-month-3",
+        4 => "desktop-month-4",
+        5 => "desktop-month-5",
+        6 => "desktop-month-6",
+        7 => "desktop-month-7",
+        8 => "desktop-month-8",
+        9 => "desktop-month-9",
+        10 => "desktop-month-10",
+        11 => "desktop-month-11",
+        12 => "desktop-month-12",
+        _ => "desktop-month-1",
     }
 }
 

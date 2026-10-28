@@ -125,11 +125,13 @@ wildcard_enum_match_arm = "warn"
 agent = { path = "crates/agent" }
 elzab = { path = "crates/elzab" }
 fiscal = { path = "crates/fiscal" }
+i18n = { path = "crates/i18n" }
 novitus = { path = "crates/novitus" }
 posnet = { path = "crates/posnet" }
 
-# Durable replace with directory fsync on Unix. Windows uses std's POSIX-semantics rename:
-# atomicwrites' MoveFileExW fails while a reader or scanner has the target open.
+# Non-Windows state and autostart replacement with directory fsync on Unix.
+# Windows state uses std's POSIX-semantics rename: atomicwrites' MoveFileExW
+# fails while a reader or scanner has the target open.
 atomicwrites = "0.4.4"
 # Europe/Warsaw civil time and DST folds for printer clocks, reports and history.
 jiff = { version = "0.2.38", features = ["serde"] }
@@ -138,6 +140,12 @@ known-folders = "1.4.2"
 # deny_unknown_fields, tagged enums and try_from keep stored formats fail closed.
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# One embedded Fluent catalog layer for UI labels and structured operator messages.
+fluent-bundle = "0.16.0"
+fluent-syntax = "0.12.0"
+unic-langid = "0.9.6"
+# Ordered native UI language preferences on Windows, macOS and Unix.
+sys-locale = "0.3.2"
 # sysfs enumeration avoids a libudev dependency; a native port layer would need unsafe Win32.
 serialport = { version = "4.10.1", default-features = false }
 # Desktop telemetry. The transport reuses our ureq agent (OS trust roots); no reqwest or tokio.
@@ -167,13 +175,6 @@ rustls = { version = "0.23.46", default-features = false, features = ["ring", "s
 url = "2.5.8"
 uuid = { version = "1.29.0", features = ["serde"] }
 
-# Build-time JSON Schema → Rust wire types; schemars is typify's input model, so
-# its version follows typify's (0.8), not schemars' latest.
-typify = { version = "0.8.0", default-features = false }
-schemars = { version = "0.8.22", default-features = false }
-# Fix typify's serde helper-attribute ordering structurally, at build time only.
-syn = { version = "3.0.9", features = ["full"] }
-quote = "1.0.47"
 # The feature-gated loopback fake validates the vendored OpenAPI 3.1 contract offline.
 jsonschema = { version = "0.60.1", default-features = false }
 
@@ -202,13 +203,17 @@ slint = { version = "1.18.1", default-features = false, features = [
     "std",
     "system-tray",
 ] }
-winresource = "0.1.34"
-# One windowless GUI/CLI executable and native per-user Windows login registration.
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_Registry"] }
+# Microsoft's safe registry wrapper for per-user Windows login registration (HKCU Run);
+# its io::Error conversion keeps Win32 codes, so "already absent" is `ErrorKind::NotFound`.
+windows-registry = "0.100.0"
 # macOS only: hook `applicationShouldTerminate:` so Dock/Cmd+Q quit waits for the worker.
-# Versions match the ones winit already pulls in.
+# winit 0.30 owns the app delegate and lacks that method; replace the hook with our own
+# delegate once Slint uses winit 0.31. Versions match Slint's winit backend.
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
+# macOS quit harness only: safe main-queue dispatch instead of hand-written libdispatch FFI.
+# From the objc2 project; without default features it adds only bitflags.
+dispatch2 = { version = "0.3.1", default-features = false, features = ["std"] }
 # Probe StatusNotifierWatcher using Slint's existing async-io zbus dependency.
 # Stay on the zbus major Slint's tray (ksni) uses; zbus 6 replaces async-io.
 zbus = { version = "5.19.0", default-features = false, features = ["async-io"] }

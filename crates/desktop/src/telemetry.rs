@@ -1,19 +1,24 @@
 //! Desktop Sentry lifecycle and structured-telemetry scrubbing.
+//!
+//! Native reporting starts before state locking. Secure its directories first,
+//! without opening the fiscal journal or acquiring the application's instance lock.
 #[path = "telemetry/privacy.rs"]
 mod privacy;
 #[path = "telemetry/transport.rs"]
 mod transport;
 
 use std::{
+    io,
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
-use agent::{settings::Settings, store::StateDir};
+use agent::{
+    api::DIAGNOSTICS_ENABLED as ENABLED,
+    settings::Settings,
+    store::{self, StateDir},
+};
 use sentry::{
     ClientInitGuard, ClientOptions, Envelope, Transport, TransportFactory, TransportOptions,
     integrations::{
@@ -24,7 +29,6 @@ use sentry::{
 };
 use tracing_subscriber::{Registry, prelude::*};
 
-static ENABLED: AtomicBool = AtomicBool::new(true);
 const FLUSH_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub(crate) fn is_crash_reporter_process() -> bool {
@@ -44,7 +48,8 @@ pub(crate) fn init() -> Option<ClientInitGuard> {
     let mut options = options().dsn(dsn).transport(HttpTransport);
     // Without a state directory the application cannot start, so there is nothing to dump.
     if let Some(state) = StateDir::default_path() {
-        options = options.add_integration(minidump(&state));
+        // Fail closed rather than let the SDK create permissive dump directories.
+        options = options.add_integration(minidump(&state).ok()?);
     }
     let guard = sentry::init(options);
     let _subscriber_already_set = tracing_subscriber::registry().with(layer()).try_init();
@@ -53,10 +58,13 @@ pub(crate) fn init() -> Option<ClientInitGuard> {
 
 /// Dumps can contain credentials, NIP or receipts and survive interrupted uploads.
 /// Keep them in the private state directory, never the SDK's shared temporary directory.
-fn minidump(state: &Path) -> MinidumpIntegration {
-    MinidumpIntegration::new()
+fn minidump(state: &Path) -> io::Result<MinidumpIntegration> {
+    let crashes = state.join("crashes");
+    store::create_private_dir(state)?;
+    store::create_private_dir(&crashes)?;
+    Ok(MinidumpIntegration::new()
         .flush_timeout(FLUSH_TIMEOUT)
-        .crashes_dir(state.join("crashes"))
+        .crashes_dir(crashes))
 }
 
 pub(crate) fn options() -> ClientOptions {
@@ -266,7 +274,6 @@ fn message(text: Option<&str>) -> &str {
             | "Worker panicked"
             | "Worker operation requires attention"
             | "Worker operation failed"
-            | "Could not load the receipt display history"
             | "Holuto session unavailable; retrying in 15 seconds"
             | "Printer unavailable at start; retrying in 15 seconds"
             | "Printed receipt conflicts with terminal Holuto state"

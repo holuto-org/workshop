@@ -54,7 +54,7 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
             api_url: fake.url().into(),
             token: "previous-secret-never-rendered".into(),
             port: "invalid-port-that-must-not-be-opened".into(),
-            ..Settings::default()
+            ..polish_settings()
         },
         simulator.link(),
     )?;
@@ -64,7 +64,11 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
-    assert!(rendered(&window, fake.url()), "the scan sees field values");
+    window.set_tab(2);
+    assert!(
+        rendered(&window, "invalid-port-that-must-not-be-opened"),
+        "the scan sees field values"
+    );
     assert!(
         !rendered(&window, "previous-secret-never-rendered"),
         "a stored token is never shown"
@@ -97,14 +101,11 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
         .map_err(|_panic| "pairing observer panicked")??;
     let saved = Settings::load(&app.borrow().dir)?.ok_or("missing paired settings")?;
     assert_eq!(saved.token.as_str(), format!("{:0>42}A", 1));
-    window.invoke_sort_documents(0, false);
+    window.invoke_refresh_ports();
     assert_eq!(app.borrow().model.settings.token, saved.token);
     assert_eq!(saved.port, "invalid-port-that-must-not-be-opened");
     assert_eq!(window.get_pairing_code().as_str(), "");
-    assert_eq!(
-        window.get_status().as_str(),
-        "Sparowano z Holuto. Możesz uruchomić obsługę drukarki."
-    );
+    assert_eq!(window.get_status(), "");
     assert!(!app.borrow().model.connected);
     assert!(app.borrow().worker.is_none());
     assert_eq!(
@@ -133,7 +134,7 @@ fn invalid_pairing_code_keeps_credentials_and_allows_operator_correction()
     let settings = Settings {
         api_url: fake.url().into(),
         token: "existing-paired-token".into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     settings.save(&dir)?;
     let app = make_app(dir, settings.clone(), simulator.link())?;
@@ -143,6 +144,7 @@ fn invalid_pairing_code_keeps_credentials_and_allows_operator_correction()
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ZZZZ-ZZZZ");
     button(&window, "Sparuj")?.invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;
@@ -151,7 +153,6 @@ fn invalid_pairing_code_keeps_credentials_and_allows_operator_correction()
     assert_eq!(window.get_pairing_code().as_str(), "ZZZZ-ZZZZ");
     assert_eq!(button(&window, "Sparuj")?.accessible_enabled(), Some(true));
     assert!(!app.borrow().model.pairing);
-    assert_eq!(window.get_status_tone(), 2);
     assert_eq!(
         window.get_status().as_str(),
         concat!(
@@ -177,7 +178,7 @@ fn malformed_pairing_code_is_rejected_locally_and_remains_editable() -> Result<(
     let settings = Settings {
         api_url: fake.url().into(),
         token: "existing-paired-token".into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     settings.save(&dir)?;
     let app = make_app(dir, settings.clone(), simulator.link())?;
@@ -187,6 +188,7 @@ fn malformed_pairing_code_is_rejected_locally_and_remains_editable() -> Result<(
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-123I");
     button(&window, "Sparuj")?.invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;
@@ -244,9 +246,8 @@ fn restore_settings(file: &Path, aside: &Path) -> io::Result<()> {
 }
 
 fn assert_reload_failed(app: &Application) {
-    assert_eq!(app.model.tone, Tone::Error, "{}", app.model.message);
     assert!(
-        app.model.message.starts_with(RELOAD_FAILED),
+        app.model.message.to_string().starts_with(RELOAD_FAILED),
         "{}",
         app.model.message
     );
@@ -265,7 +266,7 @@ fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<()
     let dir = Arc::new(StateDir::open(temporary.path().join("state"))?);
     let unpaired = Settings {
         api_url: "https://paired.example.test".into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     unpaired.save(&dir)?;
     let app = make_app(
@@ -319,7 +320,7 @@ fn start_after_a_failed_reload_connects_with_the_credentials_pairing_saved()
     let unpaired = Settings {
         api_url: holuto.url().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     unpaired.save(&dir)?;
     let app = make_app(Arc::clone(&dir), unpaired.clone(), simulator.link())?;

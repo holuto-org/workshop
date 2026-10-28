@@ -206,116 +206,67 @@ fn macos_login_agent_launched_through_the_cli_symlink_names_the_bundle_executabl
 #[cfg(windows)]
 #[test]
 #[expect(
-    unsafe_code,
     clippy::panic_in_result_fn,
-    reason = "Read and remove only this test's disposable HKCU key with checked buffers"
+    reason = "Assertions prove registry state; setup propagates errors"
 )]
 fn windows_login_value_contains_only_the_quoted_executable_and_is_removable() -> TestResult {
-    use std::ptr;
-    use windows_sys::Win32::{
-        Foundation::{ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR},
-        System::Registry::{
-            HKEY_CURRENT_USER, KEY_READ, RRF_RT_REG_SZ, RegCloseKey, RegDeleteKeyW, RegDeleteTreeW,
-            RegGetValueW, RegOpenKeyExW,
-        },
-    };
-    struct Cleanup(Vec<u16>);
-    impl Cleanup {
-        fn remove(&self) -> (WIN32_ERROR, WIN32_ERROR) {
-            let parent: Vec<_> = "Software\\HolutoWorkshopTests"
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
-            // SAFETY: live NUL-terminated names below this test's own HKCU subtree;
-            // deleting a parent that still has subkeys fails and leaves it intact.
-            unsafe {
-                (
-                    RegDeleteTreeW(HKEY_CURRENT_USER, self.0.as_ptr()),
-                    RegDeleteKeyW(HKEY_CURRENT_USER, parent.as_ptr()),
-                )
-            }
-        }
-    }
+    use std::io;
+    use windows_registry::{CURRENT_USER, Type};
+    struct Cleanup(String);
     impl Drop for Cleanup {
-        // Best effort after a failed assertion; the normal path checks `remove` itself.
+        // Best effort after a failed assertion; the normal path checks the removal itself.
         fn drop(&mut self) {
-            let _results = self.remove();
+            let _result = CURRENT_USER.remove_tree(&self.0);
         }
     }
     let temp = tempfile::tempdir()?;
+    // Directly below `Software`: removing this one key leaves nothing behind.
     let key = format!(
-        "Software\\HolutoWorkshopTests\\{}",
+        "Software\\HolutoWorkshopTest-{}",
         temp.path()
             .file_name()
             .ok_or("temp directory has no name")?
             .to_string_lossy()
     );
+    let cleanup = Cleanup(key.clone());
     let executable = Path::new("C:\\Users\\Operator\\Holuto Workshop\\workshop.exe");
-    let key_wide: Vec<_> = key.encode_utf16().chain(Some(0)).collect();
-    let cleanup = Cleanup(key_wide.clone());
+    let missing = |result: windows_registry::Result<()>| {
+        result
+            .map_err(io::Error::from)
+            .err()
+            .map(|error| error.kind())
+    };
+
     super::registry(&key, executable, true)?;
-    let name: Vec<_> = "Holuto Workshop".encode_utf16().chain(Some(0)).collect();
+    let value = CURRENT_USER.open(&key)?.get_value("Holuto Workshop")?;
+    assert_eq!(value.ty(), Type::String);
     let expected: Vec<_> = "\"C:\\Users\\Operator\\Holuto Workshop\\workshop.exe\""
         .encode_utf16()
         .chain(Some(0))
         .flat_map(u16::to_le_bytes)
         .collect();
-    let mut bytes = vec![0_u8; expected.len()];
-    let mut size = u32::try_from(bytes.len())?;
-    // SAFETY: live terminated strings, writable byte buffer and byte count match.
-    let found = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            key_wide.as_ptr(),
-            name.as_ptr(),
-            RRF_RT_REG_SZ,
-            ptr::null_mut(),
-            bytes.as_mut_ptr().cast(),
-            &raw mut size,
-        )
-    };
-    assert_eq!(found, ERROR_SUCCESS);
-    assert_eq!(bytes, expected);
+    assert_eq!(*value, *expected);
+
     super::registry(&key, executable, false)?;
-    // SAFETY: same live buffers as above; missing value leaves the buffer untouched.
-    let absent = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            key_wide.as_ptr(),
-            name.as_ptr(),
-            RRF_RT_REG_SZ,
-            ptr::null_mut(),
-            bytes.as_mut_ptr().cast(),
-            &raw mut size,
-        )
-    };
-    assert_eq!(absent, ERROR_FILE_NOT_FOUND);
-    let (leaf, parent) = cleanup.remove();
-    assert_eq!(leaf, ERROR_SUCCESS, "this test's key is deleted");
-    assert!(
-        // Another run's key keeps the parent (access denied) or already removed it.
-        matches!(
-            parent,
-            ERROR_SUCCESS | ERROR_ACCESS_DENIED | ERROR_FILE_NOT_FOUND
+    assert_eq!(
+        missing(
+            CURRENT_USER
+                .open(&key)?
+                .get_value("Holuto Workshop")
+                .map(drop)
         ),
-        "unexpected parent deletion result {parent}"
+        Some(io::ErrorKind::NotFound)
     );
-    let mut handle = ptr::null_mut();
-    // SAFETY: live NUL-terminated name; output is a local HKEY slot closed if opened.
-    let reopened = unsafe {
-        RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            key_wide.as_ptr(),
-            0,
-            KEY_READ,
-            &raw mut handle,
-        )
-    };
-    if reopened == ERROR_SUCCESS {
-        // SAFETY: successful open returned this owned handle, closed exactly once.
-        let _closed = unsafe { RegCloseKey(handle) };
-    }
-    assert_eq!(reopened, ERROR_FILE_NOT_FOUND, "no disposable key remains");
+
+    CURRENT_USER.remove_tree(&cleanup.0)?;
+    // Task Manager creates StartupApproved only on demand: disabling tolerates its absence
+    // and does not create it.
+    super::registry(&key, executable, false)?;
+    assert_eq!(
+        missing(CURRENT_USER.open(&key).map(drop)),
+        Some(io::ErrorKind::NotFound),
+        "no disposable key remains"
+    );
     Ok(())
 }
 
@@ -346,10 +297,8 @@ fn failed_preference_save_restores_registration_and_relative_xdg_uses_home() -> 
                 !previous,
             )
             .unwrap_err();
-            assert!(
-                matches!(error, AgentError::Store { action: "Nie można zapisać ustawień", path, .. }
-                if path == dir.path().join("settings.json"))
-            );
+            assert!(matches!(error, AgentError::Store { path, .. }
+                if path == dir.path().join("settings.json")));
             assert_eq!(
                 fs::read(&artifact).ok(),
                 before,
@@ -413,7 +362,7 @@ fn removing_a_registration_directory_reports_the_store_error_without_removing_it
     fs::create_dir(&artifact)?;
     let error = set_at(&artifact, Path::new("/unused"), false).unwrap_err();
     assert!(matches!(error, AgentError::Store {
-        action: "Nie można zmienić autostartu", path, ..
+        path, ..
     } if path == artifact));
     assert!(artifact.is_dir());
     Ok(())

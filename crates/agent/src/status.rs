@@ -14,6 +14,8 @@ use fiscal::device::Vendor;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+use i18n::Message;
+
 use crate::{
     Error,
     store::{self, StateDir},
@@ -45,7 +47,7 @@ impl Snapshot {
     pub fn load_at(directory: &Path) -> Result<Option<Self>, Error> {
         let path = directory.join(FILE);
         let unreadable = |source| Error::Store {
-            action: "Nie można odczytać stanu aplikacji",
+            action: Message::new("agent-read-status"),
             path: path.clone(),
             source,
         };
@@ -58,7 +60,7 @@ impl Snapshot {
                 // Serde errors may expose malformed values or keys.
                 unreadable(io::Error::new(
                     ErrorKind::InvalidData,
-                    "Nieprawidłowy JSON stanu aplikacji.",
+                    Message::new("agent-bad-status-json"),
                 ))
             })
     }
@@ -66,11 +68,10 @@ impl Snapshot {
     /// Durable atomic publication; private (0600) on Unix.
     pub fn save(&self, directory: &StateDir) -> Result<(), Error> {
         let path = directory.file(FILE);
-        let bytes = serde_json::to_vec_pretty(self).map_err(|_encoding| {
-            Error::Invalid("Nie można zakodować stanu aplikacji.".to_owned())
-        })?;
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|_encoding| Error::Invalid(Message::new("agent-encode-status")))?;
         store::write_durably(&path, &bytes).map_err(|source| Error::Store {
-            action: "Nie można zapisać stanu aplikacji",
+            action: Message::new("agent-write-status"),
             path,
             source,
         })

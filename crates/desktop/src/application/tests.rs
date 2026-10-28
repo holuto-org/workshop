@@ -26,22 +26,32 @@ use std::{
     time::Duration,
 };
 
-use agent::documents::{Document, ReceiptKind};
+use agent::settings::Theme;
 use fiscal::device::{Device, Vendor};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use jiff::Timestamp;
 use posnet::{capabilities::capabilities, simulator::Simulator};
 use sentry::{Client, ClientOptions, Envelope, Hub, Level, Transport, protocol::EnvelopeItem};
-use slint::{
-    Model as _,
-    platform::{Key, WindowEvent},
-};
+use slint::platform::{Key, PointerEventButton, WindowEvent};
 use tempfile::TempDir;
-use uuid::Uuid;
 
 use super::*;
 
 type UiFixture = (TempDir, Rc<RefCell<Application>>, AppWindow);
+
+// Compare what the operator reads; Fluent's bidi isolation is verified in i18n tests.
+fn visible_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| !matches!(character, '\u{2068}' | '\u{2069}'))
+        .collect()
+}
+
+fn polish_settings() -> Settings {
+    Settings {
+        language: i18n::LanguagePreference::Pl,
+        ..Settings::default()
+    }
+}
 
 fn fixture() -> Result<UiFixture, Box<dyn Error>> {
     i_slint_backend_testing::init_no_event_loop();
@@ -58,7 +68,7 @@ fn fixture_data() -> Result<UiFixture, Box<dyn Error>> {
     let simulator = Simulator::start();
     let app = make_app(
         Arc::new(StateDir::open(temp.path().to_owned())?),
-        Settings::default(),
+        polish_settings(),
         simulator.link(),
     )?;
     let window = app
@@ -128,108 +138,71 @@ fn ready(app: &Rc<RefCell<Application>>) {
         report_unresolved: false,
         orphaned_receipt: None,
     });
-    app.event(Event::Documents {
-        items: vec![Document {
-            kind: ReceiptKind::Sale,
-            order_id: Uuid::nil(),
-            order_number: 42,
-            allocation_id: None,
-            amount: 25_000,
-            customer_name: Some("Jan Kowalski".into()),
-            occurred_at: Timestamp::UNIX_EPOCH,
-            due_at: Timestamp::UNIX_EPOCH,
-            latest_at: Timestamp::UNIX_EPOCH,
-            is_overdue: false,
-        }],
-        page: 1,
-        has_next: true,
-    });
-    app.model.selected = Some(0);
     app.sync();
 }
 
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
+    reason = "Tests assert accessible application behavior"
 )]
-fn queue_confirmation_shows_amount_nip_and_local_pending_state() -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = fixture()?;
+fn status_is_the_first_tab_and_names_each_read_only_value() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture()?;
+    let shown = |window: &AppWindow| -> Result<Vec<String>, Box<dyn Error>> {
+        ["Obsługa drukarki", "Holuto", "Drukarka", "Stan drukarki"]
+            .into_iter()
+            .map(|label| {
+                // The header repeats Holuto and Drukarka while something is wrong; Stan is last.
+                ElementHandle::find_by_accessible_label(window, label)
+                    .filter(|element| element.accessible_role() == Some(AccessibleRole::Text))
+                    .last()
+                    .and_then(|element| element.accessible_value())
+                    .map(|value| value.to_string())
+                    .ok_or_else(|| format!("missing Stan value {label}").into())
+            })
+            .collect()
+    };
+    let start_hint = |window: &AppWindow| {
+        ElementHandle::find_by_accessible_label(window, "Uruchom obsługę drukarki w Ustawieniach.")
+            .next()
+            .is_some()
+    };
+    assert_eq!(window.get_tab(), 0);
+    assert_eq!(
+        shown(&window)?,
+        [
+            "Zatrzymana",
+            "Nie połączono",
+            "—",
+            "Niegotowa: brak połączenia"
+        ]
+    );
+    assert!(
+        ElementHandle::find_by_accessible_label(
+            &window,
+            "Paragony wystawiasz i przeglądasz w Holuto. Zadania z kolejki Holuto drukują się \
+             tutaj automatycznie."
+        )
+        .next()
+        .is_some(),
+        "Stan sends the operator to Holuto for receipts"
+    );
+    assert!(start_hint(&window), "a stopped app asks to start");
+    window.set_tab(2);
+    app.borrow_mut().capture();
+    app.borrow_mut().model.running = true;
     ready(&app);
-    control(&window, "NIP nabywcy", AccessibleRole::TextInput)?.set_accessible_value("1234567890");
-    button(&window, "Dodaj do wydruku")?.invoke_accessible_default_action();
+    assert_eq!(window.get_tab(), 0, "connecting shows Stan");
     assert_eq!(
-        window.get_confirm_text().as_str(),
-        concat!(
-            "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: 1234567890\n",
-            "Zatwierdzenie wystawi paragon fiskalny."
-        ),
-        "operator sees the binding amount and NIP"
+        shown(&window)?,
+        [
+            "Uruchomiona",
+            "Połączono",
+            "Posnet · TST0000000042 · test",
+            "Gotowa"
+        ]
     );
-    let confirm = ElementHandle::find_by_accessible_label(&window, "Dodaj do wydruku")
-        .filter(|element| element.accessible_role() == Some(AccessibleRole::Button))
-        .last()
-        .ok_or("missing confirmation button")?;
-    confirm.invoke_accessible_default_action();
-    assert_eq!(
-        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
-        Some(false),
-        "confirmed receipt waits for worker acknowledgement"
-    );
-    assert_eq!(
-        window.get_nip().as_str(),
-        "",
-        "a submitted buyer NIP is not carried over to the next receipt"
-    );
-    app.borrow_mut().event(Event::CommandCompleted);
-    app.borrow().sync();
-    assert_eq!(
-        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
-        Some(true),
-        "completion restores receipt action"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
-)]
-fn paging_buttons_reflect_the_worker_page() -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = fixture()?;
-    ready(&app);
-    assert_eq!(
-        button(&window, "Poprzednia strona")?.accessible_enabled(),
-        Some(false),
-        "first page has no predecessor"
-    );
-    assert_eq!(
-        button(&window, "Następna strona")?.accessible_enabled(),
-        Some(true),
-        "cursor exposes next page"
-    );
-    app.borrow_mut().event(Event::Documents {
-        items: Vec::new(),
-        page: 2,
-        has_next: false,
-    });
-    app.borrow().sync();
-    assert_eq!(
-        window.get_page_label().as_str(),
-        "Strona 2",
-        "operator sees current page"
-    );
-    assert_eq!(
-        button(&window, "Poprzednia strona")?.accessible_enabled(),
-        Some(true),
-        "second page can go back"
-    );
-    assert_eq!(
-        button(&window, "Następna strona")?.accessible_enabled(),
-        Some(false),
-        "last page has no successor"
-    );
+    assert!(!start_hint(&window), "a running app does not ask to start");
     Ok(())
 }
 
@@ -256,7 +229,7 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
 }"#;
     fs::write(temp.path().join("operation.json"), interrupted)?;
     let simulator = Simulator::start();
-    let app = make_app(dir, Settings::default(), simulator.link())?;
+    let app = make_app(dir, polish_settings(), simulator.link())?;
     let published = app
         .borrow()
         .status_requested
@@ -280,14 +253,12 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
     // On macOS the unavailable quit hook's error replaces this explanation in tests.
     if cfg!(not(target_os = "macos")) {
         // Save feedback stays hidden while blocked, so launch must explain the block itself.
-        let explanation = (
-            "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
-             wyjaśnić."
-                .to_owned(),
-            Tone::Error,
+        let explanation = concat!(
+            "Poprzednia operacja jest nierozstrzygnięta. ",
+            "Uruchom obsługę drukarki, aby ją wyjaśnić."
         );
         assert_eq!(
-            (app.borrow().model.message.clone(), app.borrow().model.tone),
+            app.borrow().model.message.to_string(),
             explanation,
             "launch explains the block instead of the pairing prompt"
         );
@@ -295,55 +266,12 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
         app.borrow_mut()
             .settings_saved(Ok(preferences::Outcome::Saved(settings)));
         assert_eq!(
-            (app.borrow().model.message.clone(), app.borrow().model.tone),
+            app.borrow().model.message.to_string(),
             explanation,
             "a later save keeps the block explanation visible"
         );
     }
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
-)]
-fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<(), Box<dyn Error>>
-{
-    let (_temp, app, window) = fixture()?;
-    ready(&app);
-    let mut state = app.borrow_mut();
-    let items = state.model.documents().to_vec();
-    state.event(Event::Documents {
-        items,
-        page: 3,
-        has_next: true,
-    });
-    state.event(Event::Stopped);
-    state.event(Event::Connected {
-        printer_id: "printer-42".into(),
-        unique_number: "TST0000000042".into(),
-        vendor: Vendor::Posnet,
-        port: "test".into(),
-    });
-    state.sync();
-    drop(state);
-    assert_eq!(window.get_page_label().as_str(), "Strona 1");
-    assert_eq!(
-        button(&window, "Poprzednia strona")?.accessible_enabled(),
-        Some(false),
-        "the new session has no previous page"
-    );
-    assert!(
-        app.borrow().model.documents().is_empty(),
-        "documents from the stopped session are not offered for printing"
-    );
-    assert_eq!(
-        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
-        Some(false),
-        "no stale selection can be queued"
-    );
     Ok(())
 }
 
@@ -393,7 +321,9 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
     struct Hotplug(Mutex<Vec<Candidate>>);
     impl Link for Hotplug {
         fn open(&self, port: &str, _baud_rate: u32) -> Result<Box<dyn Port>, LinkError> {
-            Err(LinkError::Invalid(format!("unexpected open of {port}")))
+            Err(LinkError::Invalid(
+                format!("unexpected open of {port}").into(),
+            ))
         }
 
         fn candidates(&self) -> Vec<Candidate> {
@@ -403,12 +333,15 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
                 .clone()
         }
     }
-    i_slint_backend_testing::init_no_event_loop();
+    i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
     let link = Arc::new(Hotplug::default());
     let app = make_app(
         Arc::new(StateDir::open(temporary.path().to_owned())?),
-        Settings::default(),
+        Settings {
+            port: "/dev/ttyUNKNOWN".into(),
+            ..polish_settings()
+        },
         Arc::<Hotplug>::clone(&link),
     )?;
     let window = app
@@ -424,12 +357,20 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
             port: "plugged-after-launch".into(),
             hint: Some(Vendor::Posnet),
         });
-    button(&window, "⌄")?.invoke_accessible_default_action();
+    window.set_tab(2);
+    i_slint_backend_testing::mock_elapsed_time(Duration::ZERO);
+    app.borrow().sync();
     assert_eq!(
         window.get_ports().iter().collect::<Vec<_>>(),
-        ["plugged-after-launch"],
-        "the list offers the printer connected while the app was running"
+        [
+            "Automatyczne wykrywanie",
+            "/dev/ttyUNKNOWN",
+            "plugged-after-launch"
+        ],
+        "showing Ustawienia lists a printer connected while the app was running, \
+         and the saved port stays offered even when enumeration skips it"
     );
+    assert_eq!(window.get_port_index(), 1, "the saved port stays selected");
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
@@ -439,35 +380,49 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
-fn stopped_worker_replaces_progress_text_but_keeps_errors() -> Result<(), Box<dyn Error>> {
+fn stopped_worker_keeps_errors() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
     ready(&app);
     let mut state = app.borrow_mut();
     state.model.running = true;
     state.model.stopping = true;
-    state.model.say(
-        "Zatrzymywanie po zakończeniu bieżącej operacji…".into(),
-        Tone::Info,
-    );
-    state.event(Event::Stopped);
-    state.sync();
-    assert_eq!(
-        window.get_status().as_str(),
-        "Zatrzymano.",
-        "a requested stop reports completion"
-    );
-    state.model.running = true;
-    state.model.stopping = true;
-    state.event(Event::Status {
-        text: "Błąd: brak połączenia".into(),
-        tone: Tone::Error,
-    });
+    state.event(Event::Problem(Some("Błąd: brak połączenia".into())));
     state.event(Event::Stopped);
     state.sync();
     assert_eq!(
         window.get_status().as_str(),
         "Błąd: brak połączenia",
         "a worker failure stays visible after it stops"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn all_clear_hides_the_problem_footer() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    app.borrow_mut()
+        .event(Event::Problem(Some("Błąd: brak połączenia".into())));
+    app.borrow().sync();
+    let footer = ElementHandle::find_by_accessible_label(&window, "Stan operacji")
+        .next()
+        .ok_or("missing problem footer")?;
+    assert_eq!(
+        footer.accessible_value().as_deref(),
+        Some("Błąd: brak połączenia")
+    );
+    app.borrow_mut().event(Event::Problem(None));
+    app.borrow().sync();
+    assert_eq!(window.get_status(), "");
+    assert!(
+        ElementHandle::find_by_accessible_label(&window, "Stan operacji")
+            .next()
+            .is_none(),
+        "all clear removes the footer from the accessible application"
     );
     Ok(())
 }
@@ -529,6 +484,7 @@ fn issues_after_stop_carry_no_previous_printer_identity() -> Result<(), Box<dyn 
 )]
 fn reload_after_pairing_keeps_a_diagnostics_choice_made_meanwhile() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
     // `Paired` submits Reload; the opt-out is written only after Reload has read the file.
     assert!(
         app.borrow_mut()
@@ -581,7 +537,7 @@ fn paired_fixture() -> Result<UiFixture, Box<dyn Error>> {
     let settings = Settings {
         api_url: "https://paired.example.test".into(),
         token: "already-paired-secret".into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     settings.save(&dir)?;
     let app = make_app(dir, settings, Simulator::start().link())?;
@@ -591,61 +547,8 @@ fn paired_fixture() -> Result<UiFixture, Box<dyn Error>> {
         .as_ref()
         .ok_or("missing app window")?
         .clone_strong();
+    window.set_tab(2);
     Ok((temp, app, window))
-}
-
-fn save_and_quit(
-    app: &Rc<RefCell<Application>>,
-    window: &AppWindow,
-) -> Result<Settings, Box<dyn Error>> {
-    button(window, "Zapisz")?.invoke_accessible_default_action();
-    app.borrow_mut().stop(true)?;
-    slint::run_event_loop_until_quit()?;
-    Ok(Settings::load(&app.borrow().dir)?.ok_or("missing saved settings")?)
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
-)]
-fn save_persists_operator_connection_choices_before_quitting() -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = paired_fixture()?;
-    control(&window, "Adres API", AccessibleRole::TextInput)?
-        .set_accessible_value("https://api.example.test");
-    let saved = save_and_quit(&app, &window)?;
-    assert_eq!(
-        saved.api_url, "https://api.example.test",
-        "save captures API input"
-    );
-    assert_eq!(
-        saved.token.as_str(),
-        "",
-        "a token paired with another API address is never saved for the new one"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
-)]
-fn a_reverted_api_address_edit_keeps_the_saved_pairing() -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = paired_fixture()?;
-    let address = control(&window, "Adres API", AccessibleRole::TextInput)?;
-    address.set_accessible_value("https://paired.example.tes");
-    // Any UI callback captures the half-edited field.
-    window.invoke_sort_documents(0, false);
-    address.set_accessible_value("https://paired.example.test");
-    let saved = save_and_quit(&app, &window)?;
-    assert_eq!(saved.api_url, "https://paired.example.test");
-    assert_eq!(
-        saved.token.as_str(),
-        "already-paired-secret",
-        "the pairing belongs to the saved address the operator restored"
-    );
-    Ok(())
 }
 
 #[test]
@@ -655,17 +558,13 @@ fn a_reverted_api_address_edit_keeps_the_saved_pairing() -> Result<(), Box<dyn E
 )]
 fn a_status_write_acknowledgement_keeps_settings_typed_meanwhile() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
-    control(&window, "Adres API", AccessibleRole::TextInput)?
-        .set_accessible_value("https://typed.example.test");
+    window.set_tab(2);
     control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-1234");
     app.borrow_mut().stop(true)?;
     slint::run_event_loop_until_quit()?;
     assert_eq!(
-        (
-            window.get_api_url().as_str(),
-            window.get_pairing_code().as_str()
-        ),
-        ("https://typed.example.test", "ABCD-1234"),
+        window.get_pairing_code().as_str(),
+        "ABCD-1234",
         "the launch status acknowledgement must not overwrite operator input"
     );
     Ok(())
@@ -682,7 +581,7 @@ fn quit_completes_when_the_final_status_cannot_be_submitted() -> Result<(), Box<
     let simulator = Simulator::start();
     let app = Rc::new(RefCell::new(Application::new(
         Arc::new(StateDir::open(temp.path().to_owned())?),
-        Settings::default(),
+        polish_settings(),
         simulator.link(),
         || Date::constant(2025, 10, 24),
     )));
@@ -731,6 +630,30 @@ fn an_older_status_acknowledgement_never_replaces_a_newer_unsubmitted_status()
     Ok(())
 }
 
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn a_start_whose_settings_cannot_be_submitted_can_be_retried() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = paired_fixture()?;
+    app.borrow_mut().settings_writer = Some(preferences::Writer::closed());
+    button(&window, "Uruchom")?.invoke_accessible_default_action();
+    assert!(
+        app.borrow()
+            .model
+            .message
+            .to_string()
+            .starts_with("Nie można zapisać ustawień")
+    );
+    assert_eq!(
+        button(&window, "Uruchom")?.accessible_enabled(),
+        Some(true),
+        "no completion will arrive, so Start must not stay pending"
+    );
+    Ok(())
+}
+
 /// Returns false if the deadline forced the event loop to quit.
 fn quit_before_deadline() -> Result<bool, Box<dyn Error>> {
     let (finished, quit) = mpsc::channel::<()>();
@@ -762,16 +685,15 @@ fn nested_ui_callback_is_drained_without_refcell_panic() -> Result<(), Box<dyn E
     let (_temp, _app, window) = fixture()?;
     with_app(|app| {
         with_app(|app| {
-            app.model
-                .say("Nested callback completed".into(), Tone::Success);
+            app.model.problem("Nested callback failed".into());
             Ok(())
         });
-        app.model.say("Outer callback completed".into(), Tone::Info);
+        app.model.problem("Outer callback failed".into());
         Ok(())
     });
     assert_eq!(
         window.get_status().as_str(),
-        "Nested callback completed",
+        "Nested callback failed",
         "reentrant action executes after outer mutation"
     );
     Ok(())
@@ -793,15 +715,12 @@ fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(
         orphaned_receipt: Some("Paragon 17 został wydrukowany dla zlecenia 42".into()),
     });
     // A later error must not replace the evidence the acknowledgement quotes.
-    state.event(Event::Status {
-        text: "Błąd: Holuto niedostępne".into(),
-        tone: Tone::Error,
-    });
+    state.event(Event::Problem(Some("Błąd: Holuto niedostępne".into())));
     state.sync();
     drop(state);
     button(&window, "Wyjaśnij paragon")?.invoke_accessible_default_action();
     assert_eq!(
-        window.get_confirm_text(),
+        visible_text(window.get_confirm_text().as_str()),
         concat!(
             "Paragon 17 został wydrukowany dla zlecenia 42\n\n",
             "Sprawdź wydruk i uzgodnij dokument w Holuto. ",
@@ -828,56 +747,6 @@ fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
-fn accessible_headers_sort_visible_rows_without_changing_the_selected_document()
--> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = fixture()?;
-    ready(&app);
-    let mut documents = app.borrow().model.documents().to_vec();
-    let mut other = documents.first().ok_or("missing fixture document")?.clone();
-    other.order_id = Uuid::from_u128(1);
-    other.order_number = 1;
-    documents.push(other);
-    app.borrow_mut().event(Event::Documents {
-        items: documents,
-        page: 1,
-        has_next: false,
-    });
-    app.borrow().sync();
-    button(&window, "Zlecenie")?.invoke_accessible_default_action();
-    assert_eq!(
-        window
-            .get_documents()
-            .row_data(0)
-            .and_then(|row| row.row_data(0))
-            .map(|cell| cell.text.to_string()),
-        Some("1".into()),
-        "ascending header sorts the rows the operator sees"
-    );
-    control(&window, "42", AccessibleRole::ListItem)?.invoke_accessible_default_action();
-    button(&window, "Zlecenie")?.invoke_accessible_default_action();
-    assert_eq!(
-        window
-            .get_documents()
-            .row_data(0)
-            .and_then(|row| row.row_data(0))
-            .map(|cell| cell.text.to_string()),
-        Some("42".into()),
-        "second header action sorts descending"
-    );
-    button(&window, "Dodaj do wydruku")?.invoke_accessible_default_action();
-    assert_eq!(
-        window.get_confirm_text(),
-        "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
-        "sorting must never move selection to another document"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
-)]
 fn close_without_a_tray_host_keeps_the_window_visible() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
     app.borrow_mut().close_after_probe(false);
@@ -886,7 +755,7 @@ fn close_without_a_tray_host_keeps_the_window_visible() -> Result<(), Box<dyn Er
         "closing without a tray must not strand the operator"
     );
     assert_eq!(
-        app.borrow().model.message,
+        app.borrow().model.message.to_string(),
         "Zasobnik systemowy jest niedostępny. Aby zakończyć aplikację, kliknij Zakończ.",
         "operator gets an explicit exit route"
     );
@@ -901,12 +770,9 @@ fn close_without_a_tray_host_keeps_the_window_visible() -> Result<(), Box<dyn Er
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
 fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<(), Box<dyn Error>> {
-    use slint::language::SortOrder;
-
     let (_temp, app, window) = fixture()?;
     ready(&app);
-    button(&window, "Zlecenie")?.invoke_accessible_default_action();
-    control(&window, "NIP nabywcy", AccessibleRole::TextInput)?.set_accessible_value("1234567890");
+    window.set_tab(1);
     app.borrow_mut().tray = Some(TrayIcon::new()?);
     app.borrow_mut().close_after_probe(true);
     assert!(
@@ -925,22 +791,13 @@ fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<()
         .ok_or("missing reopened window")?
         .clone_strong();
     assert!(reopened.window().is_visible());
-    assert_eq!(reopened.get_selected(), 0);
+    assert_eq!(reopened.get_tab(), 1, "the operator's tab survives");
     assert_eq!(
-        reopened
-            .get_document_columns()
-            .row_data(0)
-            .map(|column| column.sort_order),
-        Some(SortOrder::Ascending)
+        reopened.get_printer_identity(),
+        "Posnet · TST0000000042 · test"
     );
-    button(&reopened, "Dodaj do wydruku")?.invoke_accessible_default_action();
-    assert_eq!(
-        reopened.get_confirm_text(),
-        concat!(
-            "Sprzedaż · zlecenie 42 · 250,00 zł\nNIP: 1234567890\n",
-            "Zatwierdzenie wystawi paragon fiskalny."
-        )
-    );
+    button(&reopened, "Drukuj raport dobowy")?.invoke_accessible_default_action();
+    assert_eq!(reopened.get_confirm_title(), "Raport dobowy");
     Ok(())
 }
 
@@ -949,96 +806,57 @@ fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<()
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
-fn keyboard_navigation_selects_rows_and_enter_opens_the_selected_receipt_confirmation()
--> Result<(), Box<dyn Error>> {
+fn controls_behind_an_open_confirmation_cannot_change_its_report() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
     ready(&app);
-    let template = app
-        .borrow()
-        .model
-        .documents()
-        .first()
-        .ok_or("missing fixture")?
-        .clone();
-    app.borrow_mut().event(Event::Documents {
-        items: (1..=30)
-            .map(|number| Document {
-                order_number: number,
-                order_id: Uuid::from_u128(u128::try_from(number).unwrap_or_default()),
-                ..template.clone()
-            })
-            .collect(),
-        page: 1,
-        has_next: false,
-    });
-    app.borrow().sync();
-    control(&window, "1", AccessibleRole::ListItem)?.invoke_accessible_default_action();
-    for (key, row) in [
-        (Key::DownArrow, 1),
-        (Key::End, 29),
-        (Key::Home, 0),
-        (Key::PageDown, 7),
-        (Key::PageUp, 0),
-    ] {
-        window
-            .window()
-            .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
-        assert_eq!(
-            window.get_selected(),
-            row,
-            "keyboard navigation changes the operator's selected row"
-        );
-    }
-    window.window().dispatch_event(WindowEvent::KeyPressed {
-        text: Key::Return.into(),
-    });
-    assert_eq!(
-        window.get_confirm_text(),
-        "Sprzedaż · zlecenie 1 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
-        "Enter invokes the selected row's default action without printing yet"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
-)]
-fn keys_behind_an_open_confirmation_cannot_change_what_it_submits() -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = fixture()?;
-    ready(&app);
-    let template = app
-        .borrow()
-        .model
-        .documents()
-        .first()
-        .ok_or("missing fixture")?
-        .clone();
-    app.borrow_mut().event(Event::Documents {
-        items: (1..=3)
-            .map(|number| Document {
-                order_number: number,
-                order_id: Uuid::from_u128(u128::try_from(number).unwrap_or_default()),
-                ..template.clone()
-            })
-            .collect(),
-        page: 1,
-        has_next: false,
-    });
-    app.borrow().sync();
-    control(&window, "1", AccessibleRole::ListItem)?.invoke_accessible_default_action();
-    for key in [Key::Return, Key::DownArrow, Key::DownArrow, Key::Return] {
-        window
-            .window()
-            .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+    window.set_tab(1);
+    button(&window, "Drukuj raport dobowy")?.invoke_accessible_default_action();
+    for behind in ["Drukuj raport miesięczny", "Drukuj raport okresowy"] {
+        button(&window, behind)?.invoke_accessible_default_action();
     }
     assert!(window.get_confirming());
     assert_eq!(
-        window.get_confirm_text(),
-        "Sprzedaż · zlecenie 1 · 250,00 zł\nNIP: —\nZatwierdzenie wystawi paragon fiskalny.",
-        "the open confirmation keeps the receipt the operator opened"
+        (window.get_confirm_title(), window.get_confirm_text()),
+        (
+            "Raport dobowy".into(),
+            "Raport dobowy zamknie bieżącą sprzedaż dnia w pamięci fiskalnej. Wydrukować raport?"
+                .into()
+        ),
+        "the open confirmation keeps the report the operator opened"
     );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn enter_in_an_open_confirmation_cancels_without_printing() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    window.set_tab(1);
+    let enter = || {
+        let key = SharedString::from(Key::Return);
+        window
+            .window()
+            .dispatch_event(WindowEvent::KeyPressed { text: key.clone() });
+        window
+            .window()
+            .dispatch_event(WindowEvent::KeyReleased { text: key });
+    };
+    // Reopening builds a new dialog, so the safe focus must be set every time.
+    for _ in 0..2 {
+        button(&window, "Drukuj raport dobowy")?.invoke_accessible_default_action();
+        assert!(window.get_confirming());
+        enter();
+        assert!(!window.get_confirming(), "Enter closes the dialog");
+        assert_eq!(
+            button(&window, "Drukuj raport dobowy")?.accessible_enabled(),
+            Some(true),
+            "nothing was submitted: an in-flight report disables it"
+        );
+    }
     Ok(())
 }
 
@@ -1049,6 +867,7 @@ fn keys_behind_an_open_confirmation_cannot_change_what_it_submits() -> Result<()
 )]
 fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
     control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
         .invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;
@@ -1059,10 +878,40 @@ fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Err
         "opting out must not require an API URL or token"
     );
     assert!(
-        saved.api_url.is_empty(),
+        saved.api_url == Settings::default().api_url,
         "changing diagnostics must not invent connection settings"
     );
-    assert_eq!(window.get_status(), "Zapisano ustawienia diagnostyki.");
+    assert_eq!(window.get_status(), "");
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn theme_defaults_to_system_and_a_chosen_theme_is_saved_before_pairing()
+-> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
+    let theme = control(&window, "Motyw", AccessibleRole::Combobox)?;
+    assert_eq!(theme.accessible_value().as_deref(), Some("Systemowy"));
+    theme.invoke_accessible_expand_action();
+    let dark = ElementHandle::find_by_accessible_label(&window, "Ciemny")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing Ciemny choice")?;
+    dark.mock_single_click(PointerEventButton::Left);
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    let saved = Settings::load(&app.borrow().dir)?.ok_or("missing theme preference")?;
+    assert_eq!(saved.theme, Theme::Dark);
+    assert_eq!(
+        saved.api_url,
+        Settings::default().api_url,
+        "a look change must not invent connection settings"
+    );
+    assert_eq!(theme.accessible_value().as_deref(), Some("Ciemny"));
+    assert_eq!(window.get_status(), "");
     Ok(())
 }
 
@@ -1083,6 +932,7 @@ fn unticking_diagnostics_stops_reporting_from_the_running_app() -> Result<(), Bo
         }
     }
     let (_temp, _app, window) = fixture()?;
+    window.set_tab(2);
     let capture = Arc::new(Capture::default());
     let client = Arc::new(Client::from(
         telemetry::options()
@@ -1128,14 +978,15 @@ fn unticking_diagnostics_stops_reporting_from_the_running_app() -> Result<(), Bo
 )]
 fn missing_native_quit_hook_blocks_worker_start() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
-    assert_eq!(window.get_status().as_str(), NATIVE_QUIT_ERROR);
+    let warning = native_quit_error().render(app.borrow().model.language);
+    assert_eq!(window.get_status().as_str(), warning);
     app.borrow_mut().spawn_worker();
     app.borrow().sync();
     assert!(
         app.borrow().worker.is_none(),
         "no fiscal worker may start without safe native quit"
     );
-    assert_eq!(window.get_status().as_str(), NATIVE_QUIT_ERROR);
+    assert_eq!(window.get_status().as_str(), warning);
     Ok(())
 }
 
@@ -1152,7 +1003,7 @@ fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement(
     let simulator = Simulator::start();
     let app = Rc::new(RefCell::new(Application::new(
         Arc::clone(&dir),
-        Settings::default(),
+        polish_settings(),
         simulator.link(),
         || Date::constant(2025, 10, 24),
     )));
@@ -1165,6 +1016,7 @@ fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement(
             with_app(move |app| {
                 assert!(!app.model.saving, "status is not a settings save");
                 let window = app.window.as_ref().ok_or("missing window")?;
+                window.set_tab(2);
                 assert_eq!(
                     button(window, "Uruchom")
                         .map_err(|error| error.to_string())?
@@ -1203,7 +1055,7 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
     let simulator = Simulator::start();
     let app = Rc::new(RefCell::new(Application::new(
         Arc::clone(&dir),
-        Settings::default(),
+        polish_settings(),
         simulator.link(),
         || Date::constant(2025, 10, 24),
     )));
@@ -1233,8 +1085,8 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
         state
             .model
             .message
-            .starts_with("Nie można zapisać stanu aplikacji")
-            && state.model.tone == Tone::Error,
+            .to_string()
+            .starts_with("Nie można zapisać stanu aplikacji"),
         "the failure was shown: {}",
         state.model.message
     );
@@ -1274,7 +1126,7 @@ fn report_confirmations_show_exact_kind_dates_and_summary_and_cancel_sends_nothi
             .set_accessible_value("24.10.2025");
         button(&window, label)?.invoke_accessible_default_action();
         assert!(window.get_confirming());
-        assert_eq!(window.get_confirm_text().as_str(), expected);
+        assert_eq!(visible_text(window.get_confirm_text().as_str()), expected);
         button(&window, "Anuluj")?.invoke_accessible_default_action();
         assert!(!window.get_confirming());
         assert_eq!(button(&window, label)?.accessible_enabled(), Some(true));
@@ -1282,25 +1134,8 @@ fn report_confirmations_show_exact_kind_dates_and_summary_and_cancel_sends_nothi
     control(&window, "Skrócony", AccessibleRole::Checkbox)?.invoke_accessible_default_action();
     button(&window, "Drukuj raport okresowy")?.invoke_accessible_default_action();
     assert_eq!(
-        window.get_confirm_text(),
+        visible_text(window.get_confirm_text().as_str()),
         "Wydrukować raport skrócony za okres 29.02.2024 – 24.10.2025?"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Invalid assistive row selections must clear selection"
-)]
-fn selecting_the_end_index_never_enables_a_nonexistent_receipt() -> Result<(), Box<dyn Error>> {
-    let (_temporary, app, window) = fixture()?;
-    ready(&app);
-    window.invoke_selected_document(1);
-    assert_eq!(window.get_selected(), -1);
-    assert_eq!(
-        button(&window, "Dodaj do wydruku")?.accessible_enabled(),
-        Some(false)
     );
     Ok(())
 }
@@ -1339,14 +1174,14 @@ fn diagnostics_completion_preserves_the_unresolved_operation_notice() -> Result<
     });
     app.borrow_mut()
         .model
-        .say("Nierozstrzygnięty raport".into(), Tone::Error);
+        .problem("Nierozstrzygnięty raport".into());
     app.borrow().sync();
+    window.set_tab(2);
     control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
         .invoke_accessible_default_action();
     app.borrow_mut().stop(true)?;
     slint::run_event_loop_until_quit()?;
     assert_eq!(window.get_status(), "Nierozstrzygnięty raport");
-    assert_eq!(window.get_status_tone(), 2);
     Ok(())
 }
 
@@ -1372,7 +1207,7 @@ fn production_run_opens_the_window_and_publishes_stopped_state() -> Result<(), B
             app.stop(true)
         });
     })?;
-    run(Arc::clone(&dir), Settings::default(), simulator.link())?;
+    run(Arc::clone(&dir), polish_settings(), simulator.link())?;
     let status = Snapshot::load_at(dir.path())?.ok_or("missing stopped publication")?;
     assert!(!status.processing && !status.connected);
     assert!(
@@ -1398,44 +1233,192 @@ fn native_close_request_keeps_the_window_until_the_tray_probe_finishes()
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
-    reason = "Startup reloads the previous session's display cache"
+    reason = "The header shows connection and printer state only while something is wrong"
 )]
-fn startup_history_can_be_sorted_through_the_accessible_header() -> Result<(), Box<dyn Error>> {
-    i_slint_backend_testing::init_no_event_loop();
-    let temporary = TempDir::new()?;
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
-    fs::write(
-        dir.path().join("history.jsonl"),
-        concat!(
-            "{\"jobId\":\"00000000-0000-0000-0000-000000000001\",",
-            "\"printedAt\":\"2025-10-24T10:00:00Z\",\"receiptNumber\":\"10\",",
-            "\"total\":100,\"payments\":[],\"items\":[\"Usługa\"]}\n",
-            "{\"jobId\":\"00000000-0000-0000-0000-000000000002\",",
-            "\"printedAt\":\"2025-10-24T10:00:00Z\",\"receiptNumber\":\"2\",",
-            "\"total\":100,\"payments\":[],\"items\":[\"Olej\"]}\n"
+fn header_shows_holuto_and_printer_only_while_something_is_wrong() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture()?;
+    // Stan always lists Holuto and Drukarka after the header's copies.
+    let values = |label| {
+        ElementHandle::find_by_accessible_label(&window, label)
+            .filter(|element| element.accessible_role() == Some(AccessibleRole::Text))
+            .map(|element| visible_text(element.accessible_value().unwrap_or_default().as_str()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(values("Holuto"), ["Nie połączono", "Nie połączono"]);
+    app.borrow_mut().model.running = true;
+    app.borrow().sync();
+    assert_eq!(values("Holuto"), ["Łączenie…", "Łączenie…"]);
+    ready(&app);
+    assert_eq!(
+        (values("Holuto"), values("Drukarka")),
+        (
+            vec!["Połączono".to_owned()],
+            vec!["Posnet · TST0000000042 · test".to_owned()]
         ),
-    )?;
-    let app = make_app(dir, Settings::default(), Simulator::start().link())?;
-    let window = app
-        .borrow()
-        .window
-        .as_ref()
-        .ok_or("missing window")?
-        .clone_strong();
+        "a working setup is announced only in Stan"
+    );
+    app.borrow_mut()
+        .model
+        .device
+        .as_mut()
+        .ok_or("missing ready printer")?
+        .problems
+        .push("Brak papieru".into());
+    app.borrow().sync();
+    assert_eq!(
+        values("Drukarka"),
+        ["Niegotowa: Brak papieru", "Posnet · TST0000000042 · test"]
+    );
+    app.borrow_mut().event(Event::Device {
+        status: None,
+        blocked: true,
+        report_unresolved: false,
+        orphaned_receipt: None,
+    });
+    app.borrow().sync();
+    assert_eq!(values("Holuto"), ["Połączono"]);
+    assert_eq!(
+        values("Drukarka"),
+        [
+            "Zablokowana: wymaga rozstrzygnięcia",
+            "Posnet · TST0000000042 · test"
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Language selection must persist without losing operator input"
+)]
+fn language_selection_translates_the_open_window_and_persists_before_pairing()
+-> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture_with_event_loop()?;
+    app.borrow_mut().event(Event::Problem(Some(
+        Message::new("fiscal-timeout").arg("command", "trinit"),
+    )));
+    app.borrow().sync();
     window.set_tab(2);
-    for expected in [["2", "10"], ["10", "2"]] {
-        button(&window, "Nr paragonu")?.invoke_accessible_default_action();
-        assert_eq!(window.get_tab(), 2);
-        let numbers = window
-            .get_history()
-            .iter()
-            .map(|row| {
-                row.row_data(2)
-                    .ok_or("missing receipt number")
-                    .map(|cell| cell.text.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(numbers, expected);
-    }
+    control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-1234");
+    let language = control(&window, "Język", AccessibleRole::Combobox)?;
+    language.invoke_accessible_expand_action();
+    ElementHandle::find_by_accessible_label(&window, "Español")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing Spanish language choice")?
+        .mock_single_click(PointerEventButton::Left);
+    assert_eq!(button(&window, "Iniciar")?.accessible_enabled(), Some(true));
+    assert!(window.get_status().starts_with("Sin respuesta a "));
+    assert!(window.get_status().contains("trinit"));
+    assert!(
+        window
+            .get_status()
+            .ends_with("No se ha reenviado el comando.")
+    );
+    assert_eq!(
+        control(&window, "Código de vinculación", AccessibleRole::TextInput)?
+            .accessible_value()
+            .as_deref(),
+        Some("ABCD-1234")
+    );
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    let saved = fs::read_to_string(app.borrow().dir.path().join("settings.json"))?;
+    let saved: serde_json::Value = serde_json::from_str(&saved)?;
+    assert_eq!(saved["language"], "es");
+    assert!(!app.borrow().model.running);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Language selection must retain keyboard focus while preferences are saved"
+)]
+fn language_selection_keeps_focus_during_save() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
+    control(&window, "Język", AccessibleRole::Combobox)?
+        .mock_single_click(PointerEventButton::Left);
+    ElementHandle::find_by_accessible_label(&window, "English")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing English language choice")?
+        .mock_single_click(PointerEventButton::Left);
+    // No writer completion has reached the UI yet. Space must not toggle the
+    // diagnostics checkbox; Return must still open the language choices.
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyReleased { text: " ".into() });
+    assert!(
+        window.get_telemetry_enabled(),
+        "Space must not change consent"
+    );
+    let enter = SharedString::from(Key::Return);
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: enter.clone(),
+    });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyReleased { text: enter });
+    ElementHandle::find_by_accessible_label(&window, "Polski")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("Language lost focus instead of reopening its choices")?
+        .mock_single_click(PointerEventButton::Left);
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    let saved = Settings::load(&app.borrow().dir)?.ok_or("missing language preference")?;
+    assert_eq!(saved.language, i18n::LanguagePreference::Pl);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "A language change must preserve the operator's selected report period"
+)]
+fn report_months_retranslate_without_changing_the_selected_period() -> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture_with_event_loop()?;
+    ready(&app);
+    window.set_tab(1);
+    let months = window.get_months().iter().collect::<Vec<_>>();
+    assert_eq!(months.len(), 24);
+    assert_eq!(
+        visible_text(months.first().ok_or("missing newest month")?),
+        "wrzesień 2025"
+    );
+    assert_eq!(
+        visible_text(months.last().ok_or("missing oldest month")?),
+        "październik 2023"
+    );
+    let chosen = months
+        .iter()
+        .find(|month| visible_text(month.as_str()) == "kwiecień 2025")
+        .ok_or("missing April 2025")?;
+    control(&window, "Raport miesięczny", AccessibleRole::Combobox)?
+        .invoke_accessible_expand_action();
+    ElementHandle::find_by_accessible_label(&window, chosen.as_str())
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing April choice")?
+        .mock_single_click(PointerEventButton::Left);
+    window.set_tab(2);
+    control(&window, "Język", AccessibleRole::Combobox)?.invoke_accessible_expand_action();
+    ElementHandle::find_by_accessible_label(&window, "Русский")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing Russian language choice")?
+        .mock_single_click(PointerEventButton::Left);
+    window.set_tab(1);
+    let selected = control(&window, "Месячный отчёт", AccessibleRole::Combobox)?
+        .accessible_value()
+        .ok_or("missing selected month")?;
+    assert_eq!(visible_text(selected.as_str()), "апрель 2025");
+    button(&window, "Печать месячного отчёта")?.invoke_accessible_default_action();
+    assert!(window.get_confirming());
+    assert!(visible_text(window.get_confirm_text().as_str()).contains("апрель 2025"));
+    button(&window, "Отмена")?.invoke_accessible_default_action();
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
     Ok(())
 }

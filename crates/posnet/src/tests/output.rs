@@ -14,17 +14,14 @@ use fiscal::{
 };
 
 fn stream(sim: &Simulator, from: usize) -> String {
-    sim.frames()[from..]
-        .iter()
-        .map(|frame| {
-            frame
-                .iter()
-                .flat_map(|byte| byte.escape_ascii())
-                .map(char::from)
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut stream = String::new();
+    for (index, frame) in sim.frames()[from..].iter().enumerate() {
+        if index > 0 {
+            stream.push('\n');
+        }
+        stream.extend(frame.escape_ascii().map(char::from));
+    }
+    stream
 }
 
 fn receipt_stream(receipt: &Receipt, header: &str) -> String {

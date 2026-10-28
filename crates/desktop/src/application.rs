@@ -7,30 +7,34 @@ mod preferences;
 use std::{cell::RefCell, collections::VecDeque, fmt::Display, mem, rc::Rc, sync::Arc};
 
 use agent::{
-    history,
     settings::Settings,
     status::Snapshot,
     store::StateDir,
-    worker::{self, Command, Event, Tone, Worker},
+    worker::{self, Command, Event, Worker},
 };
 use fiscal::link::Link;
+use i18n::Message;
 use jiff::{Zoned, civil::Date};
 use slint::{
-    CloseRequestResponse, ComponentHandle, ModelRc, SharedString,
+    CloseRequestResponse, ComponentHandle, Model as _, SharedString,
     winit_030::{WinitWindowAccessor as _, winit::window::Window as NativeWindow},
 };
 
 use crate::{
-    model::{Model, Tab, strings},
+    localization,
+    model::{Model, Tab, strings, theme_at},
     telemetry, tray,
-    ui::{Action, AppWindow, TrayIcon},
+    ui::{Action, AppWindow, Translations, TrayIcon},
 };
+/// The first port choice; it stores an empty port, which the worker probes.
+fn auto_port(language: i18n::Language) -> String {
+    i18n::text("desktop-auto-port", language)
+}
 
 #[cfg(target_os = "macos")]
-const NATIVE_QUIT_ERROR: &str = concat!(
-    "Nie można bezpiecznie obsłużyć zamykania aplikacji w macOS. ",
-    "Obsługa drukarki jest wyłączona."
-);
+const fn native_quit_error() -> Message {
+    Message::new("desktop-native-quit-error")
+}
 
 thread_local! {
     // Cross-thread callbacks carry owned events, never GUI handles.
@@ -53,8 +57,8 @@ struct Application {
     window: Option<AppWindow>,
     tray: Option<TrayIcon>,
     quitting: bool,
-    /// Start's settings write is pending; Stop or Quit before it lands cancels the start.
-    starting: bool,
+    /// Detected candidates, refreshed when the window opens or Ustawienia is shown.
+    ports: Vec<String>,
     settings_writer: Option<preferences::Writer>,
     writes_pending: VecDeque<WriteKind>,
     /// Latest submitted status, so unchanged state is not written again.
@@ -73,6 +77,10 @@ pub(crate) fn run(
     })));
     APPLICATION.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
     let tray = TrayIcon::new()?;
+    localization::install(
+        &tray.global::<Translations<'_>>(),
+        app.borrow().model.language,
+    );
     tray.on_open(|| with_app(Application::open));
     tray.on_quit(|| with_app(|app| app.stop(true)));
     // Only sets `visible`; Slint creates the native icon later and cannot report failure,
@@ -103,7 +111,7 @@ where
             return;
         };
         if let Err(error) = callback(&mut state) {
-            state.model.say(error.to_string(), Tone::Error);
+            state.model.problem(Message::literal(error.to_string()));
         }
         state.sync();
     }
@@ -124,7 +132,7 @@ impl Application {
             window: None,
             tray: None,
             quitting: false,
-            starting: false,
+            ports: Vec::new(),
             settings_writer: None,
             writes_pending: VecDeque::new(),
             status_requested: None,
@@ -133,27 +141,20 @@ impl Application {
     }
 
     fn launch(&mut self) -> Result<(), slint::PlatformError> {
-        self.reload_history();
         // A block outlives restarts; `workshop status` must show it before Start.
         let block = worker::journal_block(&self.dir);
         self.model.blocked = block.blocked;
         self.model.report_unresolved = block.report_unresolved;
         if block.blocked {
             // Settings confirmations stay hidden while blocked; say why nothing may print.
-            self.model.say(
-                "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
-                 wyjaśnić."
-                    .into(),
-                Tone::Error,
-            );
+            self.model
+                .problem(Message::new("desktop-unresolved-at-start"));
         }
         self.open()?;
         #[cfg(unix)]
         if let Err(error) = quit_on_session_end() {
-            self.model.say(
-                format!("Nie można obsłużyć zamykania sesji: {error}"),
-                Tone::Error,
-            );
+            self.model
+                .problem(Message::new("desktop-session-end-error").arg("error", error));
         }
         self.publish_status();
         if self.model.settings.start_on_launch {
@@ -164,8 +165,27 @@ impl Application {
     }
 
     fn sync(&self) {
+        if let Some(tray) = &self.tray {
+            localization::set_language(&tray.global::<Translations<'_>>(), self.model.language);
+        }
         if let Some(window) = &self.window {
             self.model.sync(window);
+            // The saved port is always offered: enumeration skips unknown adapters it can open.
+            let saved = self.model.settings.port.as_str();
+            let mut choices = vec![auto_port(self.model.language)];
+            if !saved.is_empty() && !self.ports.iter().any(|port| port == saved) {
+                choices.push(saved.to_owned());
+            }
+            choices.extend(self.ports.iter().cloned());
+            let index = choices.iter().position(|port| port == saved).unwrap_or(0);
+            if window
+                .get_ports()
+                .iter()
+                .ne(choices.iter().map(SharedString::from))
+            {
+                window.set_ports(strings(choices));
+            }
+            window.set_port_index(i32::try_from(index).unwrap_or_default());
         }
     }
 
@@ -187,33 +207,11 @@ impl Application {
             return Ok(());
         }
         let window = AppWindow::new()?;
+        localization::install(&window.global::<Translations<'_>>(), self.model.language);
         window.on_action(|action| {
             with_app(move |app| {
                 app.capture();
                 app.action(action)
-            });
-        });
-        window.on_selected_document(|index| {
-            with_app(move |app| {
-                app.capture();
-                app.model.selected = usize::try_from(index)
-                    .ok()
-                    .filter(|index| *index < app.model.documents().len());
-                Ok(())
-            });
-        });
-        window.on_sort_documents(|column, descending| {
-            with_app(move |app| {
-                app.capture();
-                app.model.sort_documents(column, descending);
-                Ok(())
-            });
-        });
-        window.on_sort_history(|column, descending| {
-            with_app(move |app| {
-                app.capture();
-                app.model.sort_history(column, descending);
-                Ok(())
             });
         });
         window.on_confirm(|accepted| {
@@ -238,6 +236,25 @@ impl Application {
                 Ok(())
             });
         });
+        window.on_language_changed(|index| {
+            with_app(move |app| {
+                app.change_language(index);
+                Ok(())
+            });
+        });
+        window.on_theme_changed(|index| {
+            with_app(move |app| {
+                // Pairing saves the window's settings; a look change then waits.
+                if app.model.pairing {
+                    return Ok(());
+                }
+                app.capture();
+                let theme = theme_at(index);
+                app.model.settings.theme = theme;
+                let _submitted = app.write_settings(preferences::Request::Theme(theme));
+                Ok(())
+            });
+        });
         window.on_autostart_changed(|enabled| {
             with_app(move |app| {
                 if !app.model.pairing && !app.model.saving && !app.quitting {
@@ -253,46 +270,61 @@ impl Application {
         window.on_refresh_ports(|| {
             with_app(|app| {
                 app.capture();
-                if let Some(window) = &app.window {
-                    window.set_ports(app.ports());
-                }
+                app.ports = app.ports();
                 Ok(())
             });
         });
         window.window().on_close_requested(request_close);
-        window.set_ports(self.ports());
+        self.ports = self.ports();
         self.model.initialize(&window, (self.today)());
         window.show()?;
         #[cfg(target_os = "macos")]
         if !macos::install() {
-            self.model.say(NATIVE_QUIT_ERROR.into(), Tone::Error);
+            self.model.problem(native_quit_error());
         }
         self.window = Some(window);
         self.sync();
         Ok(())
     }
 
+    fn change_language(&mut self, index: i32) {
+        if self.model.pairing || self.quitting {
+            return;
+        }
+        let Some(preference) = localization::preference_at(index) else {
+            return;
+        };
+        self.capture();
+        self.model.set_language(preference);
+        if let Some(window) = &self.window {
+            self.model.initialize(window, (self.today)());
+        }
+        let _submitted = self.write_settings(preferences::Request::Language(preference));
+    }
+
     /// The worker probes the same candidates; enumeration never opens a port.
-    fn ports(&self) -> ModelRc<SharedString> {
-        strings(
-            self.link
-                .candidates()
-                .into_iter()
-                .map(|candidate| candidate.port),
-        )
+    fn ports(&self) -> Vec<String> {
+        self.link
+            .candidates()
+            .into_iter()
+            .map(|candidate| candidate.port)
+            .collect()
     }
 
     fn save(&mut self, start: bool) {
         // Start's pairing check needs the stored credential, so the writer validates it.
         if let Err(error) = self.model.settings.validate_configuration() {
-            self.model.say(error.to_string(), Tone::Error);
+            self.model.starting = false;
+            self.model.problem(error.message());
             return;
         }
-        self.starting |= start;
-        let _submitted = self.write_settings(preferences::Request::Save {
+        // An unsubmitted write never completes, so it must not leave Start pending.
+        if !self.write_settings(preferences::Request::Save {
             settings: self.model.settings.clone(),
             start,
-        });
+        }) {
+            self.model.starting = false;
+        }
     }
 
     fn write_settings(&mut self, request: preferences::Request) -> bool {
@@ -313,12 +345,14 @@ impl Application {
                     .map(|writer| slot.insert(writer))
             },
         };
-        let description = if is_status {
-            "stanu aplikacji"
-        } else {
-            "ustawień"
+        let failed = |error: &dyn Display| {
+            Message::new(if is_status {
+                "desktop-save-status-error"
+            } else {
+                "desktop-save-settings-error"
+            })
+            .arg("error", error.to_string())
         };
-        let failed = |error: &dyn Display| format!("Nie można zapisać {description}: {error}");
         let submitted = writer
             .map_err(|error| failed(&error))
             .and_then(|writer| writer.submit(request).map_err(|error| failed(&error)));
@@ -333,7 +367,7 @@ impl Application {
                 true
             },
             Err(message) => {
-                self.model.say(message, Tone::Error);
+                self.model.problem(message);
                 false
             },
         }
@@ -363,31 +397,33 @@ impl Application {
         match completion {
             Ok(preferences::Outcome::Start(settings)) => {
                 self.adopt_settings(settings);
-                if mem::take(&mut self.starting) {
+                if mem::take(&mut self.model.starting) {
                     self.spawn_worker();
                 }
             },
             Ok(preferences::Outcome::Saved(settings)) => {
                 self.adopt_settings(settings);
                 if !self.model.blocked {
-                    self.model.say("Zapisano ustawienia.".into(), Tone::Success);
+                    self.model.clear_problem();
                 }
             },
-            Ok(preferences::Outcome::Telemetry) if !self.model.blocked => {
-                self.model
-                    .say("Zapisano ustawienia diagnostyki.".into(), Tone::Success);
+            Ok(preferences::Outcome::Telemetry | preferences::Outcome::Theme)
+                if !self.model.blocked =>
+            {
+                self.model.clear_problem();
             },
             Ok(preferences::Outcome::Autostart(enabled)) => {
                 self.model.settings.start_on_launch = enabled;
                 if !self.model.blocked {
-                    self.model
-                        .say("Zapisano ustawienia uruchamiania.".into(), Tone::Success);
+                    self.model.clear_problem();
                 }
             },
             Ok(preferences::Outcome::Reload(settings)) => self.adopt_settings(settings),
             Ok(
                 preferences::Outcome::Port
                 | preferences::Outcome::Telemetry
+                | preferences::Outcome::Theme
+                | preferences::Outcome::Language
                 | preferences::Outcome::Status(_),
             ) => {},
             Err(error) => {
@@ -400,19 +436,28 @@ impl Application {
                 {
                     self.status_requested = None;
                 }
-                self.model.say(error, Tone::Error);
+                // A failed settings write never starts with settings it did not store.
+                if matches!(kind, Some(WriteKind::Settings)) {
+                    self.model.starting = false;
+                }
+                self.model.problem(error);
             },
         }
+        // Start pressed while a field's save was in flight runs once that save landed.
+        if self.model.starting && !self.model.saving && self.worker.is_none() && !self.quitting {
+            self.save(true);
+        }
         if let Err(error) = self.finish_quit() {
-            self.model.say(error.to_string(), Tone::Error);
+            self.model.problem(Message::literal(error.to_string()));
         }
     }
 
     fn adopt_settings(&mut self, mut settings: Settings) {
-        // A diagnostics choice made after the request was queued is written after it.
+        // Live choices made after the request was queued are written after it.
         settings.telemetry_enabled = self.model.settings.telemetry_enabled;
+        settings.theme = self.model.settings.theme;
+        settings.language = self.model.settings.language;
         self.model.settings = settings;
-        self.model.settings_persisted();
     }
 
     fn action(&mut self, action: Action) -> Result<(), slint::PlatformError> {
@@ -426,18 +471,7 @@ impl Application {
             Action::Start => self.start(),
             Action::Stop => return self.stop(false),
             Action::Quit => return self.stop(true),
-            Action::PreviousPage => {
-                if self.model.connected && self.model.page > 1 {
-                    self.submit(Command::PreviousPage);
-                }
-            },
-            Action::NextPage => {
-                if self.model.connected && self.model.has_next {
-                    self.submit(Command::NextPage);
-                }
-            },
-            Action::QueueReceipt
-            | Action::DailyReport
+            Action::DailyReport
             | Action::MonthlyReport
             | Action::PeriodicReport
             | Action::ResolveReport
@@ -452,7 +486,7 @@ impl Application {
         }
         #[cfg(target_os = "macos")]
         if !macos::install() {
-            self.model.say(NATIVE_QUIT_ERROR.into(), Tone::Error);
+            self.model.problem(native_quit_error());
             return;
         }
         match Worker::pair(
@@ -465,24 +499,29 @@ impl Application {
                 self.worker = Some(worker);
                 self.model.pairing = true;
                 self.model.stopping = false;
-                self.model.say("Parowanie z Holuto…".into(), Tone::Info);
+                self.model.clear_problem();
             },
-            Err(error) => self.model.say(error.to_string(), Tone::Error),
+            Err(error) => self.model.problem(error.message()),
         }
     }
 
+    /// A field's save on leaving it can still be in flight; Start then follows it.
     fn start(&mut self) {
-        if self.worker.is_none() && !self.model.saving && !self.quitting {
-            self.save(true);
+        if self.worker.is_none() && !self.model.starting && !self.quitting {
+            self.model.starting = true;
+            if !self.model.saving {
+                self.save(true);
+            }
         }
     }
 
     fn spawn_worker(&mut self) {
         #[cfg(target_os = "macos")]
         if !macos::install() {
-            self.model.say(NATIVE_QUIT_ERROR.into(), Tone::Error);
+            self.model.problem(native_quit_error());
             return;
         }
+        self.model.clear_problem();
         match Worker::spawn(
             Arc::clone(&self.dir),
             self.model.settings.clone(),
@@ -493,11 +532,9 @@ impl Application {
                 self.worker = Some(worker);
                 self.model.running = true;
                 self.model.stopping = false;
-                self.model
-                    .say("Łączenie z drukarką i Holuto…".into(), Tone::Info);
                 self.publish_status();
             },
-            Err(error) => self.model.say(error.to_string(), Tone::Error),
+            Err(error) => self.model.problem(error.message()),
         }
     }
 
@@ -534,12 +571,9 @@ impl Application {
         if let Some(worker) = &self.worker {
             worker.stop();
             self.model.stopping = true;
-            self.model.say(
-                "Zatrzymywanie po zakończeniu bieżącej operacji…".into(),
-                Tone::Info,
-            );
+            self.model.clear_problem();
         } else {
-            self.starting = false;
+            self.model.starting = false;
             self.publish_status();
             self.finish_quit()?;
         }
@@ -558,29 +592,18 @@ impl Application {
         Ok(())
     }
 
-    fn reload_history(&mut self) {
-        match history::load(&self.dir) {
-            Ok(history) => self.model.set_history(history),
-            Err(error) => self
-                .model
-                .say(format!("Nie można odczytać historii: {error}"), Tone::Error),
-        }
-    }
-
     fn event(&mut self, event: Event) {
         let publish = matches!(
             &event,
             Event::Connected { .. } | Event::Device { .. } | Event::Stopped
         );
         match event {
-            Event::Status { text, tone } => self.model.say(text, tone),
-            Event::PairingFailed { message, .. } => self.model.say(message, Tone::Error),
+            Event::Problem(Some(text)) => self.model.problem(text),
+            Event::Problem(None) => self.model.clear_problem(),
+            Event::PairingFailed { message, .. } => self.model.problem(message),
             Event::Paired { .. } => {
                 self.model.pairing_code.clear();
-                self.model.say(
-                    "Sparowano z Holuto. Możesz uruchomić obsługę drukarki.".into(),
-                    Tone::Success,
-                );
+                self.model.clear_problem();
                 let _submitted = self.write_settings(preferences::Request::Reload);
             },
             Event::PortDetected { port, vendor } => {
@@ -600,13 +623,8 @@ impl Application {
                 self.model.vendor = Some(vendor);
                 self.model.printer_id = Some(printer_id);
                 self.model.settings.port = port;
-                self.model.tab = Tab::Documents;
+                self.model.tab = Tab::Status;
             },
-            Event::Documents {
-                items,
-                page,
-                has_next,
-            } => self.model.set_documents(items, page, has_next),
             Event::Device {
                 status,
                 blocked,
@@ -621,7 +639,6 @@ impl Application {
                 self.model.report_unresolved = report_unresolved;
                 self.model.orphaned_receipt = orphaned_receipt;
             },
-            Event::HistoryChanged(history) => self.model.set_history(history),
             Event::CommandCompleted => self.model.command_completed(),
             Event::Stopped => {
                 // Operation completion precedes Stopped; joining cannot interrupt printer I/O.
@@ -629,10 +646,6 @@ impl Application {
                     worker.join();
                 }
                 telemetry::clear_printer();
-                // Pairing and worker failures already reported their outcome.
-                if self.model.stopping && !self.model.pairing && self.model.tone != Tone::Error {
-                    self.model.say("Zatrzymano.".into(), Tone::Info);
-                }
                 self.model.stopped();
                 self.model.pairing = false;
             },
@@ -640,7 +653,7 @@ impl Application {
         if publish {
             self.publish_status();
             if let Err(error) = self.finish_quit() {
-                self.model.say(error.to_string(), Tone::Error);
+                self.model.problem(Message::literal(error.to_string()));
             }
         }
     }
@@ -651,15 +664,11 @@ impl Application {
             if let Some(window) = self.window.take()
                 && let Err(error) = window.hide()
             {
-                self.model.say(error.to_string(), Tone::Error);
+                self.model.problem(Message::literal(error.to_string()));
                 self.window = Some(window);
             }
         } else {
-            self.model.say(
-                "Zasobnik systemowy jest niedostępny. Aby zakończyć aplikację, kliknij Zakończ."
-                    .into(),
-                Tone::Error,
-            );
+            self.model.problem(Message::new("desktop-no-tray"));
         }
     }
 
@@ -707,7 +716,7 @@ fn request_close() -> CloseRequestResponse {
     });
     if let Err(error) = check {
         with_app(move |app| {
-            app.model.say(error.to_string(), Tone::Error);
+            app.model.problem(Message::literal(error.to_string()));
             Ok(())
         });
     }

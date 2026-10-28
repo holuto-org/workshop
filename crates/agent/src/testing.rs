@@ -1,6 +1,7 @@
 //! Stateful loopback `/agent` fake exercised through the production HTTP client.
 //!
-//! Customer fixtures are synthetic; request logs never retain authorization values.
+//! Customer fixtures are synthetic; request captures never retain authorization values.
+//! Captured bodies are available for assertions, but `Debug` never prints their contents.
 //! `tiny_http` rejects non-ASCII headers before routing; non-UTF-8 header errors are not modeled.
 //! Contract violations panic on the server thread and are propagated to its owner on drop.
 
@@ -86,7 +87,7 @@ pub enum Fault {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RequestLog {
     pub method: String,
     pub path: String,
@@ -96,6 +97,21 @@ pub struct RequestLog {
     pub app_version: Option<String>,
     pub language: Option<String>,
     pub trace_headers: Vec<(String, String)>,
+}
+
+impl fmt::Debug for RequestLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RequestLog")
+            .field("method", &self.method)
+            .field("path", &self.path)
+            .field("body", &"[REDACTED]")
+            .field("authenticated", &self.authenticated)
+            .field("unique_number", &self.unique_number)
+            .field("app_version", &self.app_version)
+            .field("language", &self.language)
+            .field("trace_headers", &self.trace_headers)
+            .finish()
+    }
 }
 
 #[derive(Default)]
@@ -108,14 +124,10 @@ struct State {
     paired_token: Option<String>,
     token_generation: u64,
     jobs: HashMap<Uuid, Value>,
-    queue_job: Option<Value>,
     queue: VecDeque<Uuid>,
     reported: HashMap<Uuid, Value>,
-    documents: Vec<Value>,
-    pages: HashMap<Option<String>, Value>,
     faults: VecDeque<(String, String, Fault)>,
     requests: Vec<RequestLog>,
-    telemetry: Value,
     attempt: u128,
 }
 
@@ -235,21 +247,6 @@ impl Holuto {
             .extend(changes.as_object().unwrap().clone());
     }
 
-    pub fn documents(&self, documents: Vec<Value>) {
-        locked(&self.state).documents = documents;
-    }
-
-    /// Backend snapshot to return when a client queues a document.
-    pub fn queue_job(&self, job: Value) {
-        locked(&self.state).queue_job = Some(job);
-    }
-
-    pub fn page(&self, cursor: Option<&str>, page: Value) {
-        let _old = locked(&self.state)
-            .pages
-            .insert(cursor.map(str::to_owned), page);
-    }
-
     pub fn unauthorized(&self, unauthorized: bool) {
         locked(&self.state).unauthorized = unauthorized;
     }
@@ -282,7 +279,8 @@ impl Holuto {
         locked(&self.state).requests.clone()
     }
 
-    /// Staff can resolve only UNKNOWN; attempts stay unchanged.
+    /// Staff can resolve only UNKNOWN; attempts stay unchanged. A receipt number records the
+    /// resolution time as the receipt's issue time.
     pub fn resolve(&self, id: Uuid, receipt_number: Option<&str>) -> Result<(), &'static str> {
         let mut state = locked(&self.state);
         let job = state.jobs.get_mut(&id).ok_or("fiscal_not_found")?;
@@ -295,8 +293,14 @@ impl Holuto {
             "failed"
         });
         job["receiptNumber"] = json!(receipt_number);
+        let now = json!(Timestamp::now());
+        job["issuedAt"] = if receipt_number.is_some() {
+            now.clone()
+        } else {
+            Value::Null
+        };
         job["result"] = json!("Sprawdzono wydruk");
-        job["resolvedAt"] = json!(Timestamp::now());
+        job["resolvedAt"] = now;
         Ok(())
     }
 
@@ -465,21 +469,6 @@ fn problem_detail(code: &str) -> &'static str {
         },
         "fiscal_unique_number_mismatch" => "Ten token jest sparowany z inną fizyczną drukarką.",
         "fiscal_vendor_mismatch" => "Połącz drukarkę marki zapisanej dla tego parowania.",
-        "fiscal_printer_limits_unknown" => {
-            "Połącz drukarkę i odśwież jej możliwości przed zleceniem wydruku paragonu."
-        },
-        "fiscal_printer_advances_unsupported" => {
-            "Wybierz drukarkę obsługującą odliczanie zafiskalizowanych zaliczek \
-             przed zleceniem paragonu końcowego."
-        },
-        "fiscal_printer_zero_total_unsupported" => {
-            "Wybierz drukarkę obsługującą zamknięcie w pełni opłaconego paragonu końcowego \
-             z kwotą zerową."
-        },
-        "fiscal_printer_quantity_precision" => {
-            "Zmniejsz liczbę cyfr po przecinku w ilościach pozycji do limitu tej drukarki \
-             przed zleceniem paragonu."
-        },
         "fiscal_printer_duplicate_vat_letter" => "Podaj każdą literę VAT drukarki tylko raz.",
         "fiscal_printer_vat_letter_illegal" => {
             "Podaj prawidłową stawkę VAT dla tej litery: A=23%, B=8%, C=5%, D=0%, E=zwolnienie."
@@ -487,10 +476,6 @@ fn problem_detail(code: &str) -> &'static str {
         "fiscal_unique_number_invalid" => {
             "Podaj numer unikatowy pamięci fiskalnej: 3 wielkie litery i 10 cyfr."
         },
-        "fiscal_receipt_allocation_kind" => {
-            "Wybierz przypisanie płatności tylko dla paragonu zaliczkowego."
-        },
-        "invalid_page_size" => "Rozmiar strony musi być liczbą całkowitą od 1 do 100.",
         _ => "Podaj prawidłową wartość.",
     }
 }
@@ -540,106 +525,6 @@ fn pair(state: &mut State, request: &RequestLog) -> (u16, Value) {
     let token = format!("{:0>42}A", state.token_generation);
     state.paired_token = Some(token.clone());
     (200, json!({"token":token, "printerId":PRINTER_ID}))
-}
-
-fn blocks_queue(existing: &Value, requested: &Value) -> bool {
-    let state = existing["state"].as_str();
-    let active = matches!(state, Some("queued" | "taken" | "done" | "unknown"));
-    (existing["printerId"] == requested["printerId"] && state == Some("unknown"))
-        || (existing["orderId"] == requested["orderId"]
-            && ((existing["kind"] == requested["kind"]
-                && existing["allocationId"] == requested["allocationId"]
-                && active)
-                || (requested["kind"] == "sale"
-                    && existing["kind"] == "advance"
-                    && matches!(state, Some("queued" | "taken" | "unknown")))
-                || (requested["kind"] == "advance" && existing["kind"] == "sale" && active)))
-}
-
-fn document_available(document: &Value, jobs: &HashMap<Uuid, Value>) -> bool {
-    !jobs.values().any(|job| {
-        job["orderId"] == document["orderId"]
-            && matches!(
-                job["state"].as_str(),
-                Some("queued" | "taken" | "done" | "unknown")
-            )
-            && if document["kind"] == "sale" {
-                job["kind"] == "sale" || (job["kind"] == "advance" && job["state"] != "done")
-            } else {
-                job["kind"] == "sale" || job["allocationId"] == document["allocationId"]
-            }
-    })
-}
-
-#[expect(
-    clippy::unwrap_used,
-    reason = "document fixtures must carry valid timestamps and UUID identities"
-)]
-fn document_key(document: &Value) -> (Timestamp, Uuid, bool, Uuid) {
-    let order: Uuid = document["orderId"].as_str().unwrap().parse().unwrap();
-    let allocation = document["allocationId"]
-        .as_str()
-        .map(|id| id.parse::<Uuid>().unwrap());
-    (
-        document["occurredAt"].as_str().unwrap().parse().unwrap(),
-        order,
-        document["kind"] == "sale",
-        allocation.unwrap_or(order),
-    )
-}
-
-fn documents_page(state: &State, url: &url::Url) -> (u16, Value) {
-    let cursor = url
-        .query_pairs()
-        .find(|(name, _)| name == "cursor")
-        .map(|(_, value)| value.into_owned());
-    if let Some(page) = state.pages.get(&cursor) {
-        return (200, page.clone());
-    }
-    let limit = match url.query_pairs().find(|(name, _)| name == "limit") {
-        None => 50,
-        Some((_, value)) => match value.parse::<usize>() {
-            Ok(limit @ 1..=100) => limit,
-            _ => return invalid("#query/limit", "invalid_page_size"),
-        },
-    };
-    let after = match cursor {
-        None => None,
-        Some(cursor) => {
-            let Ok(id) = Uuid::parse_str(&cursor) else {
-                return refused(400, "invalid_cursor");
-            };
-            // Queuing hides documents, but their cursors must remain usable.
-            let Some(key) = state
-                .documents
-                .iter()
-                .map(document_key)
-                .find(|key| key.3 == id)
-            else {
-                return (200, json!({"items": [], "nextCursor": null}));
-            };
-            Some(key)
-        },
-    };
-    // Advances sort before sales for the same order.
-    let mut eligible: Vec<_> = state
-        .documents
-        .iter()
-        .filter(|document| document_available(document, &state.jobs))
-        .map(|document| (document_key(document), document))
-        .filter(|(key, _)| after.is_none_or(|after| *key > after))
-        .collect();
-    eligible.sort_unstable_by_key(|(key, _)| *key);
-    let items: Vec<_> = eligible
-        .iter()
-        .take(limit)
-        .map(|(_, document)| *document)
-        .collect();
-    let next = eligible
-        .get(limit)
-        .and_then(|_| eligible.get(limit - 1))
-        .map(|(key, _)| key.3.to_string());
-    (200, json!({"items": items, "nextCursor": next}))
 }
 
 #[expect(
@@ -700,7 +585,6 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         }
         state.vendor = Some(vendor.to_owned());
         state.unique_number = Some(unique_number.to_owned());
-        state.telemetry = request.body.clone();
         let mut status = status_json();
         status["printer"]["uniqueNumber"] = json!(unique_number);
         for name in [
@@ -733,9 +617,6 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
     if path == "/agent/heartbeat" && request.method == "POST" {
         return (204, Value::Null);
     }
-    if path == "/agent/documents" && request.method == "GET" {
-        return documents_page(state, &url);
-    }
     if path == "/agent/jobs/take" && request.method == "POST" {
         let paired = |job: &Value| job["printerId"] == json!(PRINTER_ID);
         if state
@@ -758,60 +639,6 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         job["takenAt"] = json!(Timestamp::now());
         job["state"] = json!("taken");
         return (200, job.clone());
-    }
-    if path == "/agent/jobs" && request.method == "POST" {
-        if (request.body["kind"] == "advance") == request.body["allocationId"].is_null() {
-            return invalid("/allocationId", "fiscal_receipt_allocation_kind");
-        }
-        if ["vendor", "capabilities"]
-            .iter()
-            .any(|field| state.telemetry[field].is_null())
-        {
-            return refused(409, "fiscal_printer_limits_unknown");
-        }
-        let mut job = state.queue_job.clone().unwrap_or_else(job_json);
-        let id = Uuid::from_u128(100 + u128::try_from(state.jobs.len()).unwrap());
-        job["id"] = json!(id);
-        for field in ["orderId", "kind", "allocationId", "buyerNip"] {
-            job[field] = request.body[field].clone();
-        }
-        if state
-            .jobs
-            .values()
-            .any(|existing| blocks_queue(existing, &job))
-        {
-            return refused(409, "fiscal_job_conflict");
-        }
-        if !job["advances"].as_array().unwrap().is_empty()
-            && state.telemetry["capabilities"]["advanceDeductions"] == false
-        {
-            return refused(409, "fiscal_printer_advances_unsupported");
-        }
-        if job["payments"].as_array().unwrap().is_empty()
-            && state.telemetry["capabilities"]["zeroTotalReceipts"] == false
-        {
-            return refused(409, "fiscal_printer_zero_total_unsupported");
-        }
-        let decimals = state.telemetry["capabilities"]["maxQuantityDecimals"]
-            .as_u64()
-            .unwrap();
-        if job["lines"].as_array().unwrap().iter().any(|line| {
-            line["quantity"]
-                .as_str()
-                .unwrap()
-                .split_once('.')
-                .is_some_and(|(_, fraction)| {
-                    u64::try_from(fraction.trim_end_matches('0').len()).unwrap() > decimals
-                })
-        }) {
-            return refused(409, "fiscal_printer_quantity_precision");
-        }
-        job["state"] = json!("queued");
-        job["attempt"] = Value::Null;
-        job["takenAt"] = Value::Null;
-        let _old = state.jobs.insert(id, job.clone());
-        state.queue.push_back(id);
-        return (201, job);
     }
     let Some(tail) = path.strip_prefix("/agent/jobs/") else {
         return refused(404, "fiscal_not_found");
@@ -869,7 +696,7 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
             {
                 return refused(409, "fiscal_job_conflict");
             }
-            for name in ["state", "receiptNumber", "result"] {
+            for name in ["state", "receiptNumber", "issuedAt", "result"] {
                 job[name] = form[name].clone();
             }
             let _old = state.reported.insert(id, form);
@@ -940,7 +767,7 @@ pub fn job_json() -> Value {
             {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
              "total": "50.00", "vatRate": "8", "vatLetter": "B"}
         ],
-        "attempt": ATTEMPT, "receiptNumber": null, "result": null,
+        "attempt": ATTEMPT, "receiptNumber": null, "issuedAt": null, "result": null,
         "createdAt": "2026-10-16T10:00:00Z", "takenAt": "2026-10-16T10:01:00Z",
         "resolvedAt": null, "etag": "0123456789abcdef0123456789abcdef"
     })
@@ -965,7 +792,13 @@ pub fn printer_json() -> Value {
 }
 pub fn status_json() -> Value {
     json!({
-        "printer": printer_json(), "isOnline": true, "isDeleted": false,
+        "printer": printer_json(),
+        "configuration": {
+            "id": PRINTER_ID, "branchId": Uuid::from_u128(11), "name": "Workshop",
+            "credentialRevision": 1, "deletedAt": null,
+            "etag": "0123456789abcdef0123456789abcdef"
+        },
+        "isOnline": true, "deletedAt": null,
         "lastSeenAt": "2026-10-16T10:00:00Z", "updatedAt": "2026-10-16T09:00:00Z"
     })
 }

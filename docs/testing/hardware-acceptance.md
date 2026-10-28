@@ -14,6 +14,14 @@ or `UNPROVEN`, the expected and observed values, timestamp, operator/reviewer,
 and evidence attachment IDs for **every numbered step below**. An absent
 measurement remains `UNPROVEN`; never substitute a simulator trace.
 
+This checklist is an evidence-record procedure, not a completed qualification
+record or a machine-readable import format. Keep separate rows for each
+scenario variant (payment, fault point, model and transport), not one blanket
+pass per phase. A passing expected refusal proves that refusal only; it does
+not qualify the refused capability. Explain inapplicable rows and retain them
+as `UNPROVEN`, not `PASS`. Link the source document/version/command, simulator
+fixture and physical capture separately so none can be mistaken for another.
+
 Record the Workshop commit/build hash, Rust toolchain, acceptance cfg present
 or absent, OS/version/architecture, driver version, printer label/model,
 firmware, masked fiscal unique number, demo/fiscal status, paper width/font,
@@ -23,10 +31,13 @@ wire captures in an access-controlled evidence store, not source control,
 Sentry or chat. Use approved synthetic company/NIP data on demo units.
 Record fiscalized test documents in Holuto and retain physical printouts.
 
-Supported candidates: Posnet Temo Online; Novitus HD II Online, Deon Online,
-Bono Online and Point; Elzab Zeta Online, Mera Online and Cube Online.
-Exclude legacy Zeta/D10, T10 (network only), other Posnet models, NoviAPI/XML
-and RNDIS/LAN. A USB hint or marketing name is not qualification.
+Candidates covered by this procedure: Posnet Temo Online; Novitus HD II Online,
+Deon Online, Bono Online and Point; Elzab Zeta Online, Mera Online and Cube Online.
+Exclude legacy Zeta/D10, T10, other Posnet models, NoviAPI/XML and RNDIS/LAN:
+they are outside Workshop's implemented serial profiles. A USB hint, marketing
+name or production-enabled flag is not hardware qualification. Use the
+[versioned vendor sources](../fiscal-contract.md#specification-sources) for
+protocol claims, not the simulator as a vendor reference.
 
 The evidence register must link each open item to the module docs and
 capability gates it qualifies (`crates/novitus/src/profile.rs`,
@@ -34,60 +45,76 @@ capability gates it qualifies (`crates/novitus/src/profile.rs`,
 
 ## Build and automated checks (no hardware)
 
-The simulator-only acceptance suite below is agent-runnable and runs in CI.
+The simulator-backed acceptance suite below is agent-runnable and runs in CI.
 Driver, preflight or profile changes must run it; only physical qualification
-requires a supervising person.
+requires a supervising person. These commands build and test; none launches
+Workshop against a configured printer. Native OS transport checks are separate
+from physical qualification; follow [platform procedures](platforms.md).
 
-Ordinary `--all-features` must continue to prove production behavior. Acceptance
-is **not a Cargo feature**. Its only switch is `cfg(workshop_acceptance)` via
-`RUSTFLAGS`; the workspace declares this cfg for `unexpected_cfgs` checking.
+Ordinary `--all-features`, **without the acceptance cfg**, must continue to prove
+production gates. Acceptance is **not a Cargo feature**. Its switch is
+`cfg(workshop_acceptance)`, supplied here through `RUSTFLAGS`; the workspace
+declares this cfg for `unexpected_cfgs` checking.
 
 ```sh
-cargo nextest run --workspace --all-features
+cargo nextest run --locked --workspace --all-features
 CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
-  cargo build -p workshop
+  cargo build --locked -p workshop
 CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
-  cargo clippy --workspace --all-targets --all-features -- -D warnings
+  cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
-  cargo nextest run --workspace --all-features
+  cargo nextest run --locked --workspace --all-features
 # REQUIRED negative check: must fail with the explicit compile_error below.
 CARGO_TARGET_DIR=target/acceptance RUSTFLAGS='--cfg workshop_acceptance' \
-  cargo build --release -p fiscal
+  cargo build --locked --release -p fiscal
 ```
 
 Expected release diagnostic:
 `workshop_acceptance is restricted to local debug builds.` The guard in
 `fiscal` applies even to standalone drivers; the desktop also declares it.
-A dependency/toolchain error is not evidence that the release guard worked.
+It checks `not(debug_assertions)`, not the profile name or who runs the binary;
+do not override release debug assertions to evade it. A dependency/toolchain
+error is not evidence that the release guard worked.
 `checks.yml` runs the whole workspace acceptance suite, Clippy and release guard
-in a separate job, never against hardware. Only exact production-only cases
-relaxed by the cfg are excluded; the ordinary workspace run still exercises them.
+in a separate Linux job, never against hardware. Only production cases relaxed
+by the cfg are excluded; the ordinary workspace run still exercises them.
 
-Production tests named `non_fiscal_device_is_not_ready_without_acceptance`
-run for all three brands. Novitus and Elzab also run
-`unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_command`;
-Elzab advances are enabled in production, so its refusals cover zero total/footer.
-Simulator `frames()` must contain no fiscal command after each refusal.
-Separate cfg-gated `acceptance` modules exercise the actual driver, not only
-command builders. Elzab's simulator still rejects zero close with 1008:
-acceptance permits an attempt, not an invented successful outcome.
+The ordinary driver suites test non-fiscal/training refusals: Posnet's
+preflight-problem table, Novitus's
+`non_fiscal_device_is_not_ready_without_acceptance`, and Elzab's status-bit
+matrix. Novitus and Elzab also test refusal of unqualified receipt capabilities;
+Elzab advances are production-enabled, so its refusals cover zero total/footer.
+Those refusals assert no fiscal frames or journal dispatches. Separate
+cfg-gated `acceptance` modules exercise each real driver through its simulator,
+not only command builders. Elzab's simulator still rejects zero close with
+1008: acceptance permits an attempt, not an invented successful outcome.
+The driver fixtures record journal callbacks, not durable agent recovery.
+Use the [fiscal-safety scenarios](fiscal-safety.md) for persisted intent,
+restart and resolution evidence; driver traces alone do not prove those paths.
 
 Acceptance enables the known profiles' unqualified flags: all three for
 Novitus; zero-total/footer for Elzab. Posnet has no unqualified receipt flags.
-It relaxes **only** non-fiscal/training readiness: Posnet `fs=0`, Novitus
-`11$i=0`, `23#s` fiscalized flag and ENQ fiscal bit, Elzab ySR package 2
-training bit 3. Read-only,
-identity, PC1, dialect, code page, header, VAT, clock, open document, busy,
-mechanism and power checks remain enforced. Journaling, no retry/reprint,
+Readiness relaxations are limited to non-fiscal/training state: Posnet `fs=0`,
+Novitus `11$i=0`, `23#s` fiscalized flag and ENQ fiscal bit, Elzab `ySR`
+package 2 training bit 3. Posnet demo monthly/periodic reports also omit
+`fmrecfisc` and its fiscalisation-date lower bound because there is no
+fiscalisation record; their printer-date upper-start guard remains.
+Read-only, identity, PC1, dialect, code page, header, VAT, clock, open document,
+busy, mechanism and power checks otherwise remain unchanged, including
+brand-specific read-only report permissions. Journaling, no retry/reprint,
 unknown blocking, worker ownership and human resolution remain unchanged.
 It never treats Elzab daily-report acceptance as completion.
 
-Build in a dedicated technician OS account and isolated Holuto test branch,
-with autostart off and no queued production jobs. Acceptance without the
-`simulator` feature uses that account's normal state directory; it does not
-create a new acceptance state path. Never delete or edit fiscal evidence to
-isolate a run. Do not ship this executable or set these flags in packaging.
-Only the supervising person launches it with the approved device connected.
+For human hardware work, use a dedicated technician OS account and an isolated,
+approved Holuto test branch with autostart off and no queued production jobs.
+Acceptance without the `simulator` feature uses that account's normal state
+directory; it does not create a new acceptance state path, isolate the API
+endpoint or force demo mode. The cfg also permits fiscalized devices: it is
+not a hardware safety interlock. Never delete or edit fiscal evidence to
+isolate a run. Configure and pair through the CLI/GUI with a one-time code;
+never copy credentials or inspect token-bearing settings. Do not ship this
+executable or set these flags in packaging. Only the supervising person
+launches it with the approved device connected.
 
 ## Phase A: read-only qualification
 
@@ -200,13 +227,16 @@ Holuto test queue. Confirm each scenario's full input and expected output.
 2. **Limits and text fidelity.** Print names at the candidate max and glyph
    repertoire, distinguish case/spacing/percent/Polish characters, quantities
    at max precision, boundary multiplication/rounding and approved magnitude
-   limits. Expected no normalization on paper, exact gross/VAT/payment sums;
-   over-limit jobs are refused before the first fiscal command. Record line
-   counts and adjustment-line consumption; do not infer receipt capacity from
-   PLU capacity. **Fills:** `Capabilities.{max_item_name,max_lines,
+   limits. Expected exact approved text and gross/VAT/payment sums. Record paper
+   fidelity separately from vendor-defined name matching/canonicalization;
+   equivalent lookup keys do not prove identical printed text. Over-limit jobs
+   are refused before the first fiscal command. Record line counts and
+   adjustment-line consumption; do not infer receipt capacity from PLU capacity.
+   **Fills:** `Capabilities.{max_item_name,max_lines,
    max_company_name,max_buyer_nip,max_quantity_decimals,allowed_characters}`.
-   Candidate Novitus max lines 255, names 40/60; Elzab 255 (host ceiling),
-   names 64 and quantities 5 decimals. No evidence means no increased limit.
+   Novitus and Elzab use 255-line host ceilings, not measured buffer sizes.
+   Candidate Novitus names are 40/60; Elzab names 64 and quantities 5 decimals.
+   No evidence means no increased limit.
 3. **Partial advances.** Single item, multiple same-VAT items, mixed VAT,
    duplicate/canonicalized names and more than one deduction. Expected exact
    per-slot settlement, remaining payment and taxable basis, no discount,
@@ -216,11 +246,13 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    `Capabilities.advance_deductions` for the tested model/firmware. A single
    Novitus 1000−100=900 example is insufficient for general qualification.
 4. **Fully prepaid close.** Deduct every slot completely and send zero total,
-   with no nominal 0.01 sale/payment. Expected fiscal zero total and correct
-   settlements if supported. Capture actual close bytes and any refusal;
-   Elzab error 1008 remains a failing capability, not proof of no effects.
-   **Fills:** `Capabilities.zero_total_receipts`; it stays false without a
-   successful legal print and vendor reconciliation of zero-close semantics.
+   with no nominal 0.01 sale/payment. Expected a demo zero-total document and
+   correct settlements if supported, not proof of a legal fiscalized print.
+   Capture actual close bytes and any refusal; Elzab error 1008 remains a failing
+   capability, not proof of no effects. **Fills:**
+   `Capabilities.zero_total_receipts`; an unqualified production gate stays
+   false pending reviewed demo evidence and vendor reconciliation of zero-close
+   semantics. Phase C separately checks approved fiscalized behavior.
 5. **Company text and completion.** Compare company present in header (no
    footer) with absent (exact full company footer). Novitus candidate: one
    `$h` additional line (`0;1$h<company>`), printed after the fiscal logo when
@@ -238,11 +270,12 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    [Posnet versus Novitus/Elzab date rules][report-dates] as the expected result.
    Record user confirmation.
    Expected Novitus date-guarded `#r`, monthly `#o` kind 6, periodic 0/1;
-   Posnet `rtcget` and `fmrecfisc` date guards before `monthlyrep` and
-   `periodicrepbydates` (a demo printer has no fiscalisation record);
-   Elzab monthly/periodic `RPP` with `S0`. Observe Elzab daily `RRP` ACK,
-   idle state, `RNR` increment and `RDR` record, then compare fiscal memory
-   with complete paper. ACK proves only acceptance; Workshop must remain
+   Posnet `rtcget` guards before `monthlyrep` and `periodicrepbydates`;
+   `fmrecfisc` and its lower bound apply only to fiscalized units, not this
+   demo phase. Elzab monthly/periodic `RPP` with `S0`. Record Elzab daily `RRP`
+   ACK, idle state, `RNR` and `RDR` observations and complete paper, including
+   counters/records unavailable in demo mode. Do not mark unavailable fiscal
+   memory evidence as passed. ACK proves only acceptance; Workshop must remain
    unknown/blocking even if all readbacks look successful. **Fills:** report
    date/classification/completion evidence; no existing profile field enables
    automatic daily completion. Such a policy change needs separate review.
@@ -291,14 +324,24 @@ behavior and specification examples cannot close a hardware question.
   over approved large date ranges, including monthly reports. The
   [current deadline](../fiscal-contract.md#silence-and-operator-waits) is not a
   measured worst-case print time; do not change it from simulator timing.
-- **Elzab receipt capacity:** measure item and adjustment-line consumption for
-  each model/firmware. The [advertised ceiling](../fiscal-contract.md#device-capabilities)
-  is a host policy, not a measured printer buffer.
+- **Native receipt capacity:** measure item and adjustment-line consumption for
+  each Novitus/Elzab model/firmware. The
+  [advertised ceilings](../fiscal-contract.md#device-capabilities) are host
+  policies, not measured printer buffers.
 - **Novitus `$y` separators:** the native protocol's `$y` table lists
   cash-register, cashier and system-number fields, each ending in `<CR>`, but
   says the system number "does not occur" when its flag is 0. The driver sends
   all three separators (`$y\r\r\r`) with the flag at 0. Capture whether the
   printer accepts that or expects two.
+- **Novitus periodic error 4:** the current host classifier treats a matched
+  `#o` error 4 as a certain refusal. Protocol v1.15 §3.7.2 (pp. 138–139)
+  describes date-parameter errors and no fiscal-memory records for the range,
+  but does not explicitly guarantee no print or fiscal effect before that
+  reply. Obtain vendor confirmation and scoped supervised evidence of paper,
+  memory/counters and restart state before claiming that guarantee. The
+  simulator's no-effect response proves its model, not physical behavior.
+  This is an unmeasured classification assumption, not a confirmed device bug;
+  it never authorizes retrying the report.
 
 [report-dates]: ../fiscal-contract.md#report-dates-and-printer-clock
 
@@ -310,13 +353,14 @@ vendor confirmations for unresolved semantics; list failed/unproven rows and
 capabilities that must stay false. No automatic promotion from an evidence
 file or one happy-path receipt is supported.
 
-Change the owning `profile.rs` lookup only for the proven scope; add literal
-identity/firmware entries, limits and per-profile qualified booleans with an
-evidence reference. Novitus currently has an exact firmware allowlist; Elzab
-has exact candidate names and reports actual firmware without a firmware gate.
-Do not enable an entire family from one firmware sample; refine the profile
-selection before doing so. USB evidence belongs in `fiscal::link` fixtures and
-filter rules. Parser/status/report-policy evidence belongs in that driver's
+Change the owning driver's profile/capabilities only for the proven scope,
+with an evidence reference; use existing capability flags, not a new evidence
+import or promotion mechanism. Novitus currently has an exact firmware
+allowlist; Elzab has exact candidate names and reports actual firmware without
+a firmware gate. Do not enable an entire family from one firmware sample;
+refine profile selection before doing so. USB evidence belongs in
+`fiscal::link` fixtures and filter rules. Parser/status/report-policy evidence
+belongs in that driver's
 module and regression tests, not invented profile fields. Preserve deliberate
 unknown classifications until separately justified and reviewed.
 

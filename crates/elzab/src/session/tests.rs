@@ -54,12 +54,12 @@ fn poison_prevents_any_further_send() {
             "eof" =>
                 matches!(error, Error::Io(error) if error.kind() == io::ErrorKind::UnexpectedEof),
             _ => matches!(error, Error::Protocol(message)
-                if message == "Nieprawidłowa ramka ElzabSTX."),
+                if message.to_string() == "Nieprawidłowa ramka ElzabSTX."),
         });
         assert!(matches!(
             session.command("FNR", "", Duration::from_secs(3)),
             Err(Error::NotReady(message))
-                if message == "Poprzednia odpowiedź Elzab jest niepewna. Zamknij sesję."
+                if message.to_string() == "Poprzednia odpowiedź Elzab jest niepewna. Zamknij sesję."
         ));
         assert_eq!(sim.frames(), [frame::encode("1", b"XTR").unwrap()]);
     }
@@ -78,7 +78,7 @@ fn every_transport_status_is_decoded_without_replay() {
             session.command("LOR", "C0", Duration::from_secs(3)),
             Err(Error::Device { code, command, detail, rejected: true })
                 if code == u32::from(status.bytes().last().unwrap())
-                    && command == "LOR" && detail == expected_detail
+                    && command == "LOR" && detail.to_string() == expected_detail
         ));
         assert_eq!(
             session.command("FNR", "", Duration::from_secs(3)).unwrap(),
@@ -259,7 +259,7 @@ fn rejected_local_text_sends_nothing_and_does_not_consume_an_id() {
     ] {
         assert!(
             matches!(session.command(command, fields, Duration::from_secs(3)),
-            Err(Error::Invalid(actual)) if actual == message)
+            Err(Error::Invalid(actual)) if actual.to_string() == message)
         );
         assert_eq!(sim.frames(), Vec::<Vec<u8>>::new());
     }
@@ -277,7 +277,7 @@ fn fresh_ids_ignore_late_replies_and_complete_device_errors_allow_the_next_comma
     sim.fault("FNR", Fault::Device(450));
     assert!(matches!(session.command("FNR", "", Duration::from_secs(3)),
         Err(Error::Device { code: 450, command, detail, rejected: false })
-        if command == "FNR" && detail == "Błąd drukarki Elzab 450 podczas FNR."));
+        if command == "FNR" && detail.to_string() == "Błąd drukarki Elzab 450 podczas FNR."));
     let mut reply = frame::encode("1", b"123").unwrap();
     reply.extend(frame::encode("2", b"\x1dBSECOND").unwrap());
     sim.fault("FNR", Fault::Reply(reply));
@@ -322,11 +322,11 @@ fn incomplete_invalid_and_foreign_only_replies_poison_before_another_write() {
         assert!(if timeout {
             matches!(error, Error::Timeout("FNR"))
         } else {
-            matches!(error, Error::Protocol(message) if message == "Nieprawidłowa ramka ElzabSTX.")
+            matches!(error, Error::Protocol(message) if message.to_string() == "Nieprawidłowa ramka ElzabSTX.")
         });
         assert!(matches!(session.command("XTR", "", Duration::from_secs(3)),
             Err(Error::NotReady(message))
-            if message == "Poprzednia odpowiedź Elzab jest niepewna. Zamknij sesję."));
+            if message.to_string() == "Poprzednia odpowiedź Elzab jest niepewna. Zamknij sesję."));
         assert_eq!(sim.frames(), [frame::encode("1", b"FNR").unwrap()]);
     }
 }
@@ -383,7 +383,7 @@ fn the_last_request_id_is_usable_once_and_exhaustion_never_wraps_or_sends() {
         "\x1dBABC1234567890"
     );
     assert!(matches!(session.command("XTR", "", Duration::from_secs(3)),
-        Err(Error::Protocol(message)) if message == "Nieprawidłowa ramka ElzabSTX."));
+        Err(Error::Protocol(message)) if message.to_string() == "Nieprawidłowa ramka ElzabSTX."));
     assert_eq!(sim.frames(), [frame::encode("999999999", b"FNR").unwrap()]);
 }
 
@@ -396,7 +396,7 @@ fn transport_rejection_after_a_multipart_start_is_corrupt_not_a_certain_refusal(
     let mut session = open(&sim);
     assert!(
         matches!(session.command("LOR", "C0", Duration::from_secs(3)),
-        Err(Error::Protocol(message)) if message == "Nieprawidłowa ramka ElzabSTX.")
+        Err(Error::Protocol(message)) if message.to_string() == "Nieprawidłowa ramka ElzabSTX.")
     );
     assert!(matches!(
         session.command("FNR", "", Duration::from_secs(3)),

@@ -11,7 +11,6 @@ pub(crate) const STX: u8 = 0x02;
 pub(crate) const ETX: u8 = 0x03;
 /// Two-letter keys, except `@` and the `?` error code.
 const KEY_LENGTH: usize = 2;
-const CORRUPT: &str = "Uszkodzona odpowiedź drukarki (CRC lub kodowanie).";
 
 /// Reply parameters in device order, with unique keys.
 #[derive(Debug)]
@@ -27,9 +26,7 @@ impl Reply {
 
     pub(crate) fn require(&self, key: &str) -> Result<&str, Error> {
         self.get(key).ok_or_else(|| {
-            Error::Protocol(format!(
-                "Niepełna odpowiedź drukarki: brak parametru {key}."
-            ))
+            Error::Protocol(i18n::Message::new("drivers-missing-parameter").arg("key", key))
         })
     }
 
@@ -44,11 +41,11 @@ impl Reply {
             return Err(Error::Device {
                 code,
                 command: named.to_owned(),
-                detail: format!(
-                    "Drukarka zwróciła błąd {code} ({named}{}).{}",
-                    parameter(self.get("fd").unwrap_or_default()),
-                    explanation(code),
-                ),
+                detail: i18n::Message::new("drivers-posnet-error")
+                    .arg("code", code)
+                    .arg("named", named)
+                    .arg("parameter", parameter(self.get("fd").unwrap_or_default()))
+                    .arg("explanation", explanation(code)),
                 rejected: command == "ERR",
             });
         }
@@ -94,31 +91,30 @@ fn valid_key(key: &str) -> bool {
 /// Values must be printable Windows-1250 without tabs or controls.
 pub(crate) fn encode(command: &str, params: &[(&str, String)]) -> Result<Vec<u8>, Error> {
     if !valid_command(command) {
-        return Err(Error::Invalid(
-            "Nieprawidłowe polecenie drukarki.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-invalid-command",
+        )));
     }
     let mut payload = String::from(command);
     payload.push('\t');
     for (key, value) in params {
         if !valid_key(key) {
-            return Err(Error::Invalid(
-                "Nieprawidłowy parametr drukarki.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-invalid-parameter",
+            )));
         }
         check_printable(value)?;
         payload.push_str(key);
         payload.push_str(value);
         payload.push('\t');
     }
-    let encoded = cp1250::encode(&payload).ok_or_else(|| {
-        Error::Invalid("Drukarka nie obsługuje niektórych znaków w tekście.".to_owned())
-    })?;
+    let encoded = cp1250::encode(&payload)
+        .ok_or_else(|| Error::Invalid(i18n::Message::new("drivers-unsupported-characters")))?;
     let frame = wrap(&encoded);
     if frame.len() > MAX_FRAME {
-        return Err(Error::Invalid(
-            "Polecenie drukarki jest zbyt długie.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-command-too-long",
+        )));
     }
     Ok(frame)
 }
@@ -134,7 +130,7 @@ pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
         .strip_prefix(&[STX])
         .and_then(|rest| rest.strip_suffix(&[ETX]))
         .filter(|_| frame.len() <= MAX_FRAME)
-        .ok_or_else(|| Error::Protocol("Nieprawidłowa ramka odpowiedzi drukarki.".to_owned()))?;
+        .ok_or_else(|| Error::Protocol(i18n::Message::new("drivers-invalid-response-frame")))?;
     let separator = body
         .iter()
         .rposition(|byte| *byte == b'#')
@@ -169,12 +165,15 @@ pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
                 return Err(corrupt());
             }
             if error.is_some() {
-                return Err(Error::Protocol(
-                    "Powtórzony kod błędu w odpowiedzi drukarki.".to_owned(),
-                ));
+                return Err(Error::Protocol(i18n::Message::new(
+                    "drivers-duplicate-error-code",
+                )));
             }
             error = Some(code.parse::<u32>().map_err(|parse| {
-                Error::Protocol(format!("Nieprawidłowy kod błędu drukarki: {parse}."))
+                Error::Protocol(
+                    i18n::Message::new("drivers-invalid-error-code")
+                        .arg("parse", parse.to_string()),
+                )
             })?);
         } else {
             let (key, value) = if let Some(value) = field.strip_prefix('@') {
@@ -183,9 +182,9 @@ pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
                 let split = field.char_indices().nth(KEY_LENGTH - 1);
                 let split = split.map(|(index, character)| index + character.len_utf8());
                 let Some(pair) = split.map(|index| field.split_at(index)) else {
-                    return Err(Error::Protocol(
-                        "Niepełny parametr odpowiedzi drukarki.".to_owned(),
-                    ));
+                    return Err(Error::Protocol(i18n::Message::new(
+                        "drivers-incomplete-response-parameter",
+                    )));
                 };
                 pair
             };
@@ -193,70 +192,67 @@ pub(crate) fn decode_response(frame: &[u8]) -> Result<(String, Reply), Error> {
                 return Err(corrupt());
             }
             if reply.iter().any(|(name, _)| name == key) {
-                return Err(Error::Protocol(
-                    "Powtórzony parametr w odpowiedzi drukarki.".to_owned(),
-                ));
+                return Err(Error::Protocol(i18n::Message::new(
+                    "drivers-duplicate-response-parameter",
+                )));
             }
             reply.push((key.to_owned(), value.to_owned()));
         }
     }
     let reply = Reply(reply, error);
     if command == "ERR" && error.is_none() {
-        return Err(Error::Protocol(
-            "Drukarka odrzuciła ramkę bez kodu błędu.".to_owned(),
-        ));
+        return Err(Error::Protocol(i18n::Message::new(
+            "drivers-rejected-without-code",
+        )));
     }
     Ok((command, reply))
 }
 
-fn corrupt() -> Error {
-    Error::Protocol(CORRUPT.to_owned())
+const fn corrupt() -> Error {
+    Error::Protocol(i18n::Message::new("drivers-corrupt-posnet"))
 }
 
 fn check_printable(value: &str) -> Result<(), Error> {
     if value.chars().any(char::is_control) {
-        return Err(Error::Invalid(
-            "Tekst nie może zawierać znaków sterujących.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-control-characters",
+        )));
     }
     if cp1250::encode(value).is_none() {
-        return Err(Error::Invalid(
-            "Drukarka nie obsługuje niektórych znaków w tekście.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-unsupported-characters",
+        )));
     }
     Ok(())
 }
 
-fn parameter(field: &str) -> String {
+fn parameter(field: &str) -> i18n::Message {
     if field.is_empty() {
-        String::new()
+        i18n::Message::literal("")
     } else {
-        format!(", parametr {field}")
+        i18n::Message::new("drivers-parameter").arg("field", field)
     }
 }
 
 /// Errors preflight cannot detect (POT-I-DEV-37 v5978, "Opisy błędów").
-const fn explanation(code: u32) -> &'static str {
+fn explanation(code: u32) -> i18n::Message {
     match code {
-        382 => " Nie można wykonać dwóch kolejnych zerowych raportów dobowych.",
-        383 => " Brak raportu dobowego za poprzedni dzień sprzedaży. Wykonaj raport dobowy.",
-        387 => " Sprzedaż zablokowana. Brak miejsca w pamięci.",
-        484 => " Minął czas pracy kasy, sprzedaż zablokowana.",
-        488 => " Subskrypcja wygasła, sprzedaż zablokowana.",
-        1039 | 2904 => " Pamięć chroniona zapełniona.",
-        2036 => " Urządzenie w stanie tylko do odczytu.",
-        2098 => " Pamięć fiskalna zapełniona.",
+        382 => i18n::Message::new("drivers-consecutive-empty-reports"),
+        383 => i18n::Message::new("drivers-previous-daily-missing"),
+        387 => i18n::Message::new("drivers-sales-memory-full"),
+        484 => i18n::Message::new("drivers-operating-time-expired"),
+        488 => i18n::Message::new("drivers-subscription-expired"),
+        1039 | 2904 => i18n::Message::new("drivers-protected-memory-full"),
+        2036 => i18n::Message::new("drivers-device-read-only"),
+        2098 => i18n::Message::new("drivers-fiscal-memory-full"),
         // Selling a name at a higher rate after a lower one (p. 296).
-        2106 => {
-            " Towar zablokowany: tę nazwę sprzedano wcześniej w niższej stawce VAT, a drukarka \
-             nie pozwala jej podwyższyć. Zmień nazwę pozycji."
-        },
-        3728 => " Upłynął termin ważności certyfikatu.",
-        3733 => " Sprzedaż zablokowana. Brak przekazanych kluczy do Repozytorium.",
-        3735 => " Sprzedaż zablokowana. Wgraj nowe certyfikaty.",
-        3903 => " Operacja w toku. Spróbuj ponownie.",
-        3929 => " Sprzedaż zablokowana. Brak klucza współdzielonego.",
-        _ => "",
+        2106 => i18n::Message::new("drivers-item-vat-increase"),
+        3728 => i18n::Message::new("drivers-certificate-expired"),
+        3733 => i18n::Message::new("drivers-repository-keys-missing"),
+        3735 => i18n::Message::new("drivers-new-certificates-required"),
+        3903 => i18n::Message::new("drivers-operation-in-progress"),
+        3929 => i18n::Message::new("drivers-shared-key-missing"),
+        _ => i18n::Message::literal(""),
     }
 }
 

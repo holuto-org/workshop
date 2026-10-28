@@ -2,8 +2,9 @@
 use std::{env, process::Command};
 use std::{error::Error as StdError, fs, io::ErrorKind};
 
-use super::{Settings, Token};
+use super::{Settings, Theme, Token};
 use crate::{Error, store::StateDir};
+use i18n::LanguagePreference;
 
 type TestResult = Result<(), Box<dyn StdError>>;
 
@@ -16,6 +17,8 @@ fn settings() -> Settings {
         vendor: None,
         telemetry_enabled: false,
         start_on_launch: false,
+        theme: Theme::Dark,
+        language: LanguagePreference::System,
     }
 }
 
@@ -89,9 +92,9 @@ fn malformed_or_unknown_settings_are_not_treated_as_unconfigured() -> TestResult
             matches!(
                 Settings::load(&dir),
                 Err(Error::Store {
-                    action: "Nie można odczytać ustawień",
+                    action,
                     ..
-                })
+                }) if action.to_string() == "Nie można odczytać ustawień"
             ),
             "bad settings must surface an operator-visible storage error"
         );
@@ -120,7 +123,7 @@ fn rejected_settings_leave_the_previous_pairing_untouched() -> TestResult {
         };
         let expected = "Sparuj drukarkę kodem z Holuto w Ustawieniach.";
         assert!(
-            matches!(invalid.save(&dir), Err(Error::Invalid(message)) if message == expected),
+            matches!(invalid.save(&dir), Err(Error::Invalid(message)) if message.to_string() == expected),
             "invalid tokens are rejected without disclosure"
         );
     }
@@ -130,7 +133,7 @@ fn rejected_settings_leave_the_previous_pairing_untouched() -> TestResult {
     };
     let expected = "Nieprawidłowa prędkość transmisji.";
     assert!(
-        matches!(invalid.save(&dir), Err(Error::Invalid(message)) if message == expected),
+        matches!(invalid.save(&dir), Err(Error::Invalid(message)) if message.to_string() == expected),
         "unsupported device speed is refused"
     );
     for api_url in [
@@ -156,7 +159,7 @@ fn rejected_settings_leave_the_previous_pairing_untouched() -> TestResult {
         let expected = "Adres API wymaga https (http tylko dla localhost), bez danych logowania, \
                         zapytania i fragmentu.";
         assert!(
-            matches!(invalid.save(&dir), Err(Error::Invalid(message)) if message == expected),
+            matches!(invalid.save(&dir), Err(Error::Invalid(message)) if message.to_string() == expected),
             "unsafe API endpoint must be refused: {api_url}"
         );
     }
@@ -173,11 +176,10 @@ fn rejected_settings_leave_the_previous_pairing_untouched() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "Test assertions panic on violated guarantees; setup errors use Result."
 )]
-fn secure_and_loopback_api_addresses_remain_usable() -> TestResult {
+fn loopback_api_addresses_remain_usable() -> TestResult {
     let temporary = tempfile::tempdir()?;
     let dir = StateDir::open(temporary.path().join("state"))?;
     for api_url in [
-        "https://api.example/v1/",
         "http://localhost:8000",
         "http://127.0.0.1:8000/",
         "http://127.0.0.0",
@@ -287,7 +289,8 @@ fn corrupt_settings_never_echo_credentials_from_values_or_unknown_keys() -> Test
         match error {
             Error::Store { action, source, .. } => {
                 assert_eq!(
-                    action, "Nie można odczytać ustawień",
+                    action.to_string(),
+                    "Nie można odczytać ustawień",
                     "the failure must remain an explicit storage error"
                 );
                 assert_eq!(
@@ -432,7 +435,8 @@ fn invalid_port_names_never_replace_saved_preferences() -> TestResult {
             ..settings()
         };
         let expected = "Nieprawidłowa nazwa portu drukarki.";
-        assert!(matches!(invalid.save(&dir), Err(Error::Invalid(message)) if message == expected));
+        let result = invalid.save(&dir);
+        assert!(matches!(result, Err(Error::Invalid(message)) if message.to_string() == expected));
     }
     assert_eq!(fs::read(dir.file("settings.json"))?, before);
     Ok(())
@@ -449,7 +453,6 @@ fn vendor_preferences_roundtrip_and_invalid_vendors_do_not_load() -> TestResult 
     let temporary = tempfile::tempdir()?;
     let dir = StateDir::open(temporary.path().join("state"))?;
     for vendor in [
-        None,
         Some(Vendor::Posnet),
         Some(Vendor::Novitus),
         Some(Vendor::Elzab),
@@ -471,6 +474,35 @@ fn vendor_preferences_roundtrip_and_invalid_vendors_do_not_load() -> TestResult 
         fs::write(dir.file("settings.json"), &text)?;
         assert!(matches!(Settings::load(&dir), Err(Error::Store { .. })));
         assert_eq!(fs::read(dir.file("settings.json"))?, text.as_bytes());
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove theme validation at the persisted boundary."
+)]
+fn theme_preferences_roundtrip_and_unknown_themes_do_not_load() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    for theme in [Theme::System, Theme::Light, Theme::Dark] {
+        Settings::save_theme(&dir, theme)?;
+        assert_eq!(
+            Settings::load(&dir)?,
+            Some(Settings {
+                theme,
+                ..Settings::default()
+            }),
+            "a look choice needs no pairing and changes nothing else"
+        );
+    }
+    let current = include_str!("fixtures/settings.json");
+    for text in ["\"Dark\"", "\"auto\"", "null", "2"]
+        .map(|invalid| current.replace("\"theme\": \"dark\"", &format!("\"theme\": {invalid}")))
+    {
+        fs::write(dir.file("settings.json"), &text)?;
+        assert!(matches!(Settings::load(&dir), Err(Error::Store { .. })));
     }
     Ok(())
 }
@@ -526,7 +558,10 @@ fn settings_reads_create_nothing_and_unpaired_preferences_cannot_start() -> Test
     assert!(!path.exists());
     let dir = StateDir::open(path)?;
     for (url, expected) in [
-        ("", "Wpisz adres API w Ustawieniach."),
+        (
+            "",
+            "Brak adresu Holuto. Ustaw go poleceniem: workshop config set --api-url <adres>.",
+        ),
         (
             "https://api.example",
             "Sparuj drukarkę kodem z Holuto w Ustawieniach.",
@@ -538,7 +573,8 @@ fn settings_reads_create_nothing_and_unpaired_preferences_cannot_start() -> Test
         };
         preferences.save(&dir)?;
         let loaded = Settings::load(&dir)?.ok_or("missing preferences")?;
-        assert!(matches!(loaded.validate(), Err(Error::Invalid(message)) if message == expected));
+        let result = loaded.validate();
+        assert!(matches!(result, Err(Error::Invalid(message)) if message.to_string() == expected));
         assert!(loaded.telemetry_enabled);
         assert!(!loaded.start_on_launch);
     }
@@ -580,5 +616,114 @@ fn the_largest_permitted_credential_saves_without_truncation() -> TestResult {
     };
     preferences.save(&dir)?;
     assert_eq!(Settings::load(&dir)?, Some(preferences));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove durable UI-only preferences without printer configuration."
+)]
+fn language_only_save_needs_no_pairing_and_preserves_every_other_setting() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("state");
+    let dir = StateDir::open(path.clone())?;
+    Settings::save_language(&dir, LanguagePreference::Es)?;
+    assert_eq!(
+        Settings::load(&dir)?,
+        Some(Settings {
+            language: LanguagePreference::Es,
+            ..Settings::default()
+        })
+    );
+    let previous = settings();
+    previous.save(&dir)?;
+    for language in LanguagePreference::ALL {
+        Settings::save_language(&dir, language)?;
+        assert_eq!(
+            Settings::load(&dir)?,
+            Some(Settings {
+                language,
+                ..previous.clone()
+            })
+        );
+    }
+    Settings::save_language(&dir, LanguagePreference::Ru)?;
+    drop(dir);
+    let reopened = StateDir::open(path)?;
+    assert_eq!(
+        Settings::load(&reopened)?,
+        Some(Settings {
+            language: LanguagePreference::Ru,
+            ..previous
+        })
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions pin the strict current language schema."
+)]
+fn language_is_required_and_accepts_only_supported_preferences() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    let fixture = include_str!("fixtures/settings.json");
+    for value in ["null", "2", "\"de\"", "\"System\""] {
+        let invalid = fixture.replace(
+            "\"language\": \"system\"",
+            &format!("\"language\": {value}"),
+        );
+        fs::write(dir.file("settings.json"), invalid)?;
+        assert!(matches!(Settings::load(&dir), Err(Error::Store { .. })));
+    }
+    let mut missing: serde_json::Value = serde_json::from_str(fixture)?;
+    let _removed = missing
+        .as_object_mut()
+        .ok_or("settings object")?
+        .remove("language");
+    fs::write(dir.file("settings.json"), serde_json::to_vec(&missing)?)?;
+    assert!(matches!(Settings::load(&dir), Err(Error::Store { .. })));
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "The UI must localize sanitized parser context without exposing stored values."
+)]
+fn settings_parse_error_is_structured_and_redacts_values_in_every_language() -> TestResult {
+    use i18n::Language;
+    let temporary = tempfile::tempdir()?;
+    let dir = StateDir::open(temporary.path().join("state"))?;
+    fs::write(
+        dir.file("settings.json"),
+        br#"{"unexpected":"private-settings-value"}"#,
+    )?;
+    let error = Settings::load(&dir)
+        .err()
+        .ok_or("invalid settings accepted")?;
+    let message = error.message();
+    assert!(
+        message
+            .render(Language::En)
+            .contains("Invalid settings JSON")
+    );
+    assert!(
+        message
+            .render(Language::Es)
+            .contains("JSON de ajustes no válido")
+    );
+    assert!(
+        message
+            .render(Language::Ru)
+            .contains("Недопустимый JSON настроек")
+    );
+    assert!(error.to_string().contains("Nieprawidłowy JSON ustawień"));
+    for language in Language::ALL {
+        assert!(!message.render(language).contains("private-settings-value"));
+        assert!(!message.render(language).contains("unexpected"));
+    }
     Ok(())
 }

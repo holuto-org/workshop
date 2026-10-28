@@ -26,7 +26,7 @@ fn stop_while_start_is_saving_settings_cancels_the_start() -> Result<(), Box<dyn
         api_url: fake.url().into(),
         token: fake.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     settings.save(&dir)?;
     let app = Rc::new(RefCell::new(Application::new(
@@ -60,6 +60,7 @@ fn stop_while_start_is_saving_settings_cancels_the_start() -> Result<(), Box<dyn
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     button(&window, "Uruchom")?.invoke_accessible_default_action();
     assert!(app.borrow().model.saving, "start waits for its settings");
     // Assistive technology can activate the disabled button.
@@ -98,7 +99,7 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
         token: fake.token().into(),
         port: simulator.address().into(),
         start_on_launch,
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     // The application loads its pairing from disk, as `main` does; Start saves the port.
@@ -114,6 +115,7 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
+    window.set_tab(2);
     if !start_on_launch {
         button(&window, "Uruchom")?.invoke_accessible_default_action();
     }
@@ -134,7 +136,12 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
                     assert!(app.model.running, "held connection keeps worker alive");
                     // Tray Quit and signals stop without a window callback capturing first.
                     let window = app.window.as_ref().ok_or("missing window")?.clone_strong();
-                    window.set_nip("5261040828".into());
+                    assert_eq!(
+                        (window.get_processing_state(), window.get_holuto_state()),
+                        ("Uruchomiona".into(), "Łączenie…".into()),
+                        "Stan shows the held connection"
+                    );
+                    window.set_from_date("01.10.2025".into());
                     app.stop(true)?;
                     assert!(
                         app.worker.is_some(),
@@ -143,8 +150,8 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
                     with_app(move |app| {
                         let window = app.window.as_ref().ok_or("missing window")?;
                         assert_eq!(
-                            window.get_nip().as_str(),
-                            "5261040828",
+                            window.get_from_date().as_str(),
+                            "01.10.2025",
                             "quitting keeps text the operator typed"
                         );
                         release.send(()).map_err(|error| error.to_string())?;
@@ -199,7 +206,7 @@ fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     settings.save(&dir)?;
@@ -220,9 +227,9 @@ fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration
         .as_ref()
         .ok_or("missing window")?
         .clone_strong();
-    control(&window, "Adres API", AccessibleRole::TextInput)?
-        .set_accessible_value("https://unsaved.example.test");
-    for label in ["Zapisz", "Uruchom", "Sparuj"] {
+    window.set_tab(2);
+    control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD1234");
+    for label in ["Uruchom", "Sparuj"] {
         button(&window, label)?.invoke_accessible_default_action();
         assert!(
             !app.borrow().model.saving,
@@ -239,100 +246,6 @@ fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration
     release.send(())?;
     slint::run_event_loop_until_quit()?;
     assert!(app.borrow().worker.is_none());
-    APPLICATION.with(|slot| *slot.borrow_mut() = None);
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Real paging callbacks send only navigation allowed by the page"
-)]
-fn page_callbacks_reject_disabled_actions_and_navigate_next_then_previous()
--> Result<(), Box<dyn Error>> {
-    use serde_json::json;
-    i_slint_backend_testing::init_integration_test_with_mock_time();
-    let temporary = TempDir::new()?;
-    let simulator = Simulator::start();
-    let holuto = Arc::new(Holuto::new());
-    let document = |number: u32| {
-        json!({
-            "kind":"sale", "orderId":Uuid::from_u128(u128::from(number)), "orderNumber":number,
-            "allocationId":null, "amount":"1.00", "customerName":null,
-            "occurredAt":"2025-10-24T10:00:00Z", "dueAt":"2025-10-24T10:00:00Z",
-            "latestAt":"2025-10-24T10:00:00Z", "isOverdue":false
-        })
-    };
-    holuto.page(
-        None,
-        json!({"items":[document(10)],"nextCursor":"second-page"}),
-    );
-    holuto.page(
-        Some("second-page"),
-        json!({"items":[document(11)],"nextCursor":null}),
-    );
-    let settings = Settings {
-        api_url: holuto.url().into(),
-        token: holuto.token().into(),
-        port: simulator.address().into(),
-        ..Settings::default()
-    };
-    let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
-    let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
-    let pages = Arc::new(AtomicUsize::new(0));
-    let observed = Arc::clone(&pages);
-    let worker = Worker::spawn(dir, settings, simulator.link(), move |event| {
-        let step = matches!(event, Event::Documents { .. })
-            .then(|| observed.fetch_add(1, Ordering::SeqCst));
-        let _scheduled = slint::invoke_from_event_loop(move || {
-            with_app(move |app| {
-                app.event(event);
-                app.sync();
-                let window = app.window.as_ref().ok_or("missing window")?;
-                if let Some(step) = step {
-                    assert_eq!(app.model.page, if step == 1 { 2 } else { 1 });
-                    match step {
-                        0 => {
-                            button(window, "Poprzednia strona")
-                                .map_err(|error| error.to_string())?
-                                .invoke_accessible_default_action();
-                            button(window, "Następna strona")
-                                .map_err(|error| error.to_string())?
-                                .invoke_accessible_default_action();
-                        },
-                        1 => {
-                            button(window, "Następna strona")
-                                .map_err(|error| error.to_string())?
-                                .invoke_accessible_default_action();
-                            button(window, "Poprzednia strona")
-                                .map_err(|error| error.to_string())?
-                                .invoke_accessible_default_action();
-                        },
-                        2 => app.stop(true)?,
-                        _ => panic!("unexpected page refresh"),
-                    }
-                }
-                Ok(())
-            });
-        });
-    })?;
-    app.borrow_mut().worker = Some(worker);
-    app.borrow_mut().model.running = true;
-    slint::run_event_loop_until_quit()?;
-    assert_eq!(pages.load(Ordering::SeqCst), 3);
-    assert_eq!(
-        holuto
-            .requests()
-            .into_iter()
-            .filter(|request| request.path.starts_with("/agent/documents"))
-            .map(|request| request.path)
-            .collect::<Vec<_>>(),
-        [
-            "/agent/documents?limit=100",
-            "/agent/documents?limit=100&cursor=second-page",
-            "/agent/documents?limit=100"
-        ]
-    );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }

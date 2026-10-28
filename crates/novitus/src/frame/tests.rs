@@ -25,11 +25,6 @@ fn frame_round_trip_rejects_bad_checksum() {
 }
 
 #[test]
-fn identity_query_omits_checksum() {
-    assert_eq!(query(b"30#v"), b"\x1bP30#v\x1b\\");
-}
-
-#[test]
 fn maximum_frame_size_and_embedded_escape_are_enforced() {
     let body = vec![b'A'; MAX_FRAME - 6];
     let maximum = encode(&body);

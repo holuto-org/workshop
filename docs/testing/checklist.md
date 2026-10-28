@@ -1,13 +1,21 @@
 # Feature coverage checklist
 
-These are requirements for changes, not a claim that every cell is already
-covered. Read the matching [concern guide](README.md); every fixed bug gets a
-regression that fails without it.
+These are requirements by changed area, not a claim of complete existing
+coverage. Select the guarantees a change can affect, retain their existing
+evidence and add or strengthen tests where needed. Every fixed bug gets a
+regression that fails without it. An unrelated edit does not require the whole
+matrix.
+
+The **Test shape** lines are evidence examples, not a requirement to add every
+listed test kind. Use the cheapest consumer boundary that proves the guarantee;
+see the [testing guide](README.md) and its concern guides. Exact protocol fields,
+limits and invariants belong in the implementing modules and
+[fiscal contract](../fiscal-contract.md), not a second specification here.
 
 ## Posnet driver
 
 - **Windows-1250 text and CRC frames**
-  - Required guarantee: Published independent byte/checksum vectors; exact
+  - Required guarantee: Independently checked byte/checksum vectors; exact
     Polish bytes; no transliteration/truncation; reject unassigned bytes,
     controls, duplicate keys, corrupt/oversized frames
   - Test shape: Unit boundary table + round-trip properties + driver scenario
@@ -17,8 +25,8 @@ regression that fails without it.
   - Test shape: Unit table + properties against independent integer arithmetic
 - **Receipt construction**
   - Required guarantee: Line/name/count limits; per-slot VAT; NIP unchanged;
-    full company footer only when needed; backend zero-price omission and
-    agent rejection
+    full company footer only when needed; incoming zero-price lines rejected
+    before fiscal dispatch
   - Test shape: Boundary table + fixed-output snapshot + scenario
 - **Advances and payments**
   - Required guarantee: Unique deduction slot; deduction ≤ slot sales; correct
@@ -41,20 +49,20 @@ regression that fails without it.
     print again
   - Test shape: Fixed simulator clock + scenario
 - **Journal-before-command**
-  - Required guarantee: First write failure sends nothing; later failure is
-    uncertain; journal stage precedes each actual command
+  - Required guarantee: First intent-write failure sends no fiscal command;
+    later fiscal-stage failure is uncertain; intent precedes each fiscal send
   - Test shape: Held-command scenario + journal failure injection
 - **Operator waits**
   - Required guarantee: Each paper/cover/lever/temperature/power/key state;
     asynchronous status during hold; continuation once; wait expiry/no
     reason/corrupt answer fail safely
-  - Test shape: Fast simulator timing + a controlled wait (Posnet
-    hold/reached, Novitus `Wait` faults), never a real ten-minute wait
+  - Test shape: Fast simulator timing + controlled hold/reached synchronization,
+    never a real ten-minute wait
 - **Receipt faults**
   - Required guarantee: Execute then lose/corrupt reply or disconnect at
-    first/middle/final stage leaves uncertainty and no retry; any footer
-    failure after `trend` returns the printed receipt, sends nothing more and
-    leaves preflight not ready until the footer ends
+    first/middle/final fiscal stage leaves uncertainty and no retry; a footer
+    failure after `trend` preserves the printed receipt and stops remaining
+    footer commands; a still-open footer blocks the next operation
   - Test shape: Fault matrix; assert effects and exact command sequence
 - **Daily/monthly/periodic reports**
   - Required guarantee: Exact dates/summary parameters and brand-specific
@@ -68,7 +76,9 @@ regression that fails without it.
 
 Apply arithmetic, exact text/VAT/payment, journal-before-send, no retry,
 restart-blocking and resolution-without-replay guarantees to **all three**
-drivers, using that brand's simulator through the real driver.
+drivers, using that brand's simulator through the real driver. Exercise supported
+receipt paths and prove unsupported ones refuse before dispatch; do not copy
+Posnet's capabilities, waits, report dates or completion rules to other brands.
 
 - **Shared `fiscal` domain**
   - Required guarantee: Capability-driven name/line/NIP/quantity limits;
@@ -76,32 +86,33 @@ drivers, using that brand's simulator through the real driver.
     a USB hint with identity
   - Test shape: Boundary/property tables plus OS port-metadata fixtures
 - **Novitus**
-  - Required guarantee: Exact model/firmware allowlist, PC1 via `50$i`, native
-    dialect and input/output CP1250; ASCII fallback without `52$i` full-CP1250
-    bit; known VAT sentinels; DLE/ENQ/DLE2 readiness with no guessed byte order
+  - Required guarantee: Exact model/firmware allowlist; PC1, native dialect and
+    input/output CP1250; ASCII-only repertoire unless full CP1250 is verified;
+    VAT/readiness status decoded without guessing unqualified byte order
   - Test shape: Simulator readback tables; no fiscal frames after refusal
   - Required guarantee: Exact NIP/payment/close and date-guarded report frames;
-    item-bound advances/zero/footer blocked unless qualified; operator waits
-    never retransmit; late stage failures remain uncertain
+    advances/zero/footer production gates; operator waits never retransmit;
+    late fiscal-stage failures remain uncertain
   - Test shape: Snapshot + command/effect/journal and fault matrices
 - **Elzab**
-  - Required guarantee: Exact ONLINE identity, CP1250, ySR three-package masks,
-    LPC nested permission, writable/header/VAT/clock checks; no legacy fallback
+  - Required guarantee: Exact ONLINE identity, CP1250 and complete readiness,
+    receipt permission, header/VAT/clock checks; no legacy fallback
   - Test shape: Simulator status/identity tables; no fiscal frames after refusal
-  - Required guarantee: Independent CRC-16/ARC vector, fresh matching IDs,
-    partial/late replies; exact LDS/NIP/payment frames; zero/footer production
+  - Required guarantee: Independent CRC vector, fresh matching reply IDs,
+    partial/late replies; exact advance/NIP/payment frames; zero/footer production
     gates; paper-out auto-cancel remains uncertain; daily ACK is not completion
   - Test shape: Frame/session unit vectors + driver snapshots/fault matrices
 - **Detection and cross-brand recovery**
-  - Required guarantee: Hint/remembered vendor and safe probe order, PC2
-    refusal, no scan while blocked, journal identity vendor + serial; unknown
-    capabilities never form invalid telemetry or allow a claim
+  - Required guarantee: Hints/remembered vendor obey the
+    [discovery policy](../fiscal-contract.md#discovery-and-readiness); PC2
+    refusal; no scan while blocked; journal identity binds vendor + serial;
+    unknown capabilities never form invalid telemetry or allow a claim
   - Test shape: Mixed simulator candidates + real worker/HTTP/restart matrix
 - **Acceptance isolation**
-  - Required guarantee: Normal all-feature tests retain fiscal-mode and
-    unqualified-capability gates; dedicated cfg enables only unqualified
-    flags/non-fiscal mode, never read-only or other readiness bypasses;
-    compile error without debug assertions
+  - Required guarantee: Normal all-feature builds retain production fiscal-mode
+    and capability gates; the dedicated debug-only cfg relaxes only the
+    [documented acceptance gates](hardware-acceptance.md#build-and-automated-checks-no-hardware),
+    not identity, remaining readiness checks or fiscal safety; release rejects it
   - Test shape: Ordinary production-gate tests, separate cfg-gated simulator
     module and negative release build in CI. Physical qualification is
     [human-only evidence](hardware-acceptance.md), never automated tests.
@@ -118,14 +129,9 @@ drivers, using that brand's simulator through the real driver.
     VAT/limits, quantity decimals and receipt capability flags; pairing conflict;
     identity-bound heartbeat when unready but describable; 401 stops without refresh
   - Test shape: Stateful HTTP fake + simulator + worker events
-- **Documents and queue**
-  - Required guarantee: Limit 100, opaque cursor encoded once,
-    next/back/current-page refresh, stable selected identity; failures preserve
-    page; valid NIP/document only
-  - Test shape: HTTP scenario + worker/UI boundary
 - **Claim and execution**
-  - Required guarantee: Claim persisted before preflight; no effects for
-    invalid/unowned/stale work; unchanged line/amount/payment semantics
+  - Required guarantee: Received claim persisted before preflight; no fiscal
+    effects for invalid/unowned/stale work; unchanged line/amount/payment semantics
   - Test shape: Real journal + fake + simulator
 - **Durable result delivery**
   - Required guarantee: Persist before HTTP; identical attempt, receipt number
@@ -139,9 +145,10 @@ drivers, using that brand's simulator through the real driver.
   - Test shape: State/command table + generated model + real restarts
 - **Orphaned completed receipt**
   - Required guarantee: Server failed/expired never discards completed
-    evidence; blocked notice identifies job/order and receipt or `nieczytelny`;
-    explicit local acknowledgement requires same ready serial, appends history,
-    settles; no print or server result
+    evidence; blocked notice identifies job/order and receipt or unreadable number;
+    explicit local acknowledgement requires the same vendor/serial under
+    [resolution readiness](fiscal-safety.md#recovery-classification) and settles;
+    no print or server result
   - Test shape: Fake terminal state + restart + acknowledgement scenario
 - **Staff resolution**
   - Required guarantee: Unknown receipt reconciles with Holuto without reissue;
@@ -149,8 +156,10 @@ drivers, using that brand's simulator through the real driver.
     bypass for ordinary unknown
   - Test shape: Fake staff helper + real persisted state
 - **Reports and resolution**
-  - Required guarantee: Interrupt blocks across restart; same ready serial
-    required to resolve; resolution sends no fiscal command
+  - Required guarantee: Interrupted dispatch blocks across restart; resolution
+    requires the same vendor/serial under
+    [resolution readiness](fiscal-safety.md#recovery-classification), not full sales
+    readiness; resolution sends no fiscal command
   - Test shape: Simulator + journal scenario
 - **Worker start/retry**
   - Required guarantee: Start printer detection/network/403/408/429/5xx
@@ -174,11 +183,6 @@ drivers, using that brand's simulator through the real driver.
     evidence on failure
   - Test shape: Current-format golden fixtures + filesystem failure/restart
     tests on every OS
-- **History**
-  - Required guarantee: One entry per job; torn line does not swallow next;
-    correct order and display bound; cache error cannot prevent server
-    settlement
-  - Test shape: File fixture + agent scenario
 - **State directory/instance lock**
   - Required guarantee: OS `workshop` paths, Unix 0700/0600, safe replacement;
     one process per directory
@@ -202,24 +206,21 @@ drivers, using that brand's simulator through the real driver.
     exchange does not replace settings
   - Test shape: Loopback fake + CLI/UI + stored-state assertions
 - **CLI**
-  - Required guarantee: Polish/JSON output and stable exit codes; redacted
-    config; settings mutations refuse a running app; metadata/check/status
-    never open serial
+  - Required guarantee: Documented human/JSON output and stable exit codes;
+    redacted config; settings mutations refuse a running app; CLI commands
+    never open serial, including pairing
   - Test shape: Child process commands with isolated state + exact
     JSON/output/exit assertions
 - **Autostart**
   - Required guarantee: Opt-in only; exact per-user registration/removal;
-    preference starts worker only after full preflight; unresolved journal
-    still blocks
+    preference may start processing, but never bypasses preflight or an
+    unresolved journal
   - Test shape: OS-gated temp HOME/registry artefact + worker scenario
-- **Document selection and sorting**
-  - Required guarantee: Raw-value numeric/date/Polish sorting, ties,
-    ascending/descending; refresh retains identity, not row index
-  - Test shape: Unit table + real UI selection/refresh
-- **Queue confirmation**
-  - Required guarantee: Exact document/kind/amount/NIP preview; cancel sends
-    nothing; double confirmation consumes action once; readiness/block rechecked
-  - Test shape: Real application + fake request log + simulator
+- **Status view**
+  - Required guarantee: Read-only rows show processing, Holuto connection,
+    printer vendor/unique number/port and ready/not-ready/blocked state from
+    worker events; no control queues or prints a receipt
+  - Test shape: Real application with accessible labels + real worker
 - **Report confirmation**
   - Required guarantee: Daily/monthly/periodic wording and parameters; valid
     leap dates; ordered periodic dates and lower bound 2000-01-01; UI date
@@ -227,8 +228,8 @@ drivers, using that brand's simulator through the real driver.
     [brand-specific date guard](../fiscal-contract.md#report-dates-and-printer-clock)
   - Test shape: Injected-today table + accessible dialog scenario
 - **Worker event bridge**
-  - Required guarantee: `Connected`, `Device`, notices, `HistoryChanged` and
-    `Stopped` reach Slint; blocked/stopping disables fiscal actions
+  - Required guarantee: Worker connection, device, problem, completion and stop
+    events reach Slint; blocked/stopping disables fiscal actions
   - Test shape: Real worker + Slint event-loop backend
 - **GUI responsiveness**
   - Required guarantee: UI can process a marker/action while command held; no
@@ -237,7 +238,7 @@ drivers, using that brand's simulator through the real driver.
     assertion
 - **Close/reopen/tray**
   - Required guarantee: Close hides only while a host shows this app's icon;
-    otherwise remains visible; recreate preserves selection/sort; worker remains
+    otherwise remains visible; recreate restores displayed state; worker remains
     active
   - Test shape: Testing backend application scenario + Linux `session_bus`
 - **Stop/quit**
@@ -248,11 +249,13 @@ drivers, using that brand's simulator through the real driver.
   - Required guarantee: Button only for completed-but-failed/expired conflict;
     exact evidence in confirmation; cancel no effect; confirm no print/server
     write
-  - Test shape: Accessible-label scenario + persisted journal/history
+  - Test shape: Accessible-label scenario + persisted journal
 - **Sentry**
-  - Required guarantee: No DSN/opt-out means no transmission; allowlisted
-    errors/logs/breadcrumbs/traces; tags and propagation; no
-    secret/PII/host/URL leak
+  - Required guarantee: No DSN/opt-out means no transmission; structured
+    errors/logs/breadcrumbs/traces follow the allowlist, tags and propagation
+    policy without secret/PII/host/URL leaks.
+    [Native minidumps have a separate privacy boundary](../telemetry.md#native-minidumps-important-exception),
+    not a guarantee of scrubbed process memory.
   - Test shape: Capturing transport + malicious synthetic canaries +
     child-process panic/crash test where supported
 - **Production features**
@@ -262,6 +265,6 @@ drivers, using that brand's simulator through the real driver.
 - **Packages**
   - Required guarantee: Workshop
     executable/version/resources/dependencies;
-    mount/extract/install; installed CLI help/check and main window without
-    configured printer; debug files match release
+    mount/extract/install; installed CLI help/check and main window with isolated,
+    unconfigured state and no connected printer; debug files match release
   - Test shape: Package check on Windows x64, Linux x64/ARM64, macOS x64/ARM64

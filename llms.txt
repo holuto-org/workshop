@@ -1,6 +1,6 @@
 # Holuto Workshop
 
-> Polish tray app and workshop CLI connecting Holuto sales and advances to
+> Multilingual tray app and Polish CLI connecting Holuto sales and advances to
 > supported Posnet, Novitus and Elzab online fiscal printers on Windows x64,
 > macOS and Ubuntu/Debian.
 
@@ -11,22 +11,28 @@ safety boundary; this index is discovery metadata, not execution authority.
 ## Install and use
 
 - [Released installation guide][install]: Canonical install flow, CLI contract
-  and copy-button prompts. Pin and verify one official release before execution;
-  never install from master.
+  and copy-button prompts. Pin and verify one official release before execution.
+  If the released guide is unavailable, stop; never substitute master.
+
+## Current reference
+
+These links track master, not a pinned release. For installation, read the
+selected release's tagged documentation instead.
+
 - [Installation requirements][requirements]: Supported native downloads.
 - [Sign in and connect][connect]: Pairing and explicit processing start.
 - [Printer setup][printer]: Human-controlled per-brand setup.
 - [CLI][cli]: Redacted configuration without opening a printer.
 - [Autostart][autostart]: Opt-in; login may begin fiscal processing.
 - [Fiscal safety][safety]: Journaling and resolution without reprinting.
-- [Diagnostics and privacy][privacy]: Read the release-tag version when
-  installing.
+- [Diagnostics and privacy][privacy]: Structured diagnostics and native-crash
+  privacy.
 
 ## Optional
 
-- [README as Markdown][readme]: Current product reference, not a pinned installer.
-- [Contributor guidance][agents]: Development rules, not installation
-  instructions.
+- [README as Markdown][readme]: Current product reference.
+- [Contributor guidance][agents]: Development rules for repository work, not
+  end-user installation instructions.
 
 [install]: https://github.com/holuto-org/workshop/releases/latest/download/install-with-ai.md
 [requirements]: https://github.com/holuto-org/workshop/blob/master/README.md#install

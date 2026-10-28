@@ -1,22 +1,17 @@
 //! Per-user login registration for the CLI and background settings writer.
 
+#[cfg(windows)]
+use std::ffi::OsString;
 use std::{env, io, path::Path};
 #[cfg(not(windows))]
 use std::{fs, io::Write as _, path::PathBuf};
 #[cfg(windows)]
-use std::{iter, os::windows::ffi::OsStrExt as _, ptr};
-#[cfg(windows)]
-use windows_sys::Win32::{
-    Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
-    System::Registry::{
-        HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
-        RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW,
-    },
-};
+use windows_registry::{CURRENT_USER, HSTRING};
 
 use agent::{Error, settings::Settings, store::StateDir};
 #[cfg(not(windows))]
 use atomicwrites::{AtomicFile, OverwriteBehavior};
+use i18n::Message;
 
 pub(crate) fn configure(
     dir: &StateDir,
@@ -73,7 +68,7 @@ fn artifact_path() -> Result<PathBuf, Error> {
                 local_error(
                     Path::new("~"),
                     io::ErrorKind::NotFound,
-                    "Nie można ustalić katalogu domowego dla autostartu.",
+                    Message::new("desktop-no-home"),
                 )
             })
     };
@@ -94,14 +89,14 @@ fn artifact_path() -> Result<PathBuf, Error> {
 
 fn store_error(path: &Path, source: io::Error) -> Error {
     Error::Store {
-        action: "Nie można zmienić autostartu",
+        action: Message::new("desktop-autostart-error"),
         path: path.to_owned(),
         source,
     }
 }
 
 /// The environment, not the saved configuration, prevents registration.
-fn local_error(path: &Path, kind: io::ErrorKind, reason: &str) -> Error {
+fn local_error(path: &Path, kind: io::ErrorKind, reason: Message) -> Error {
     store_error(path, io::Error::new(kind, reason))
 }
 
@@ -122,7 +117,7 @@ fn set_at(artifact: &Path, executable: &Path, enabled: bool) -> Result<(), Error
             local_error(
                 executable,
                 io::ErrorKind::InvalidInput,
-                "Ścieżka aplikacji nie nadaje się do autostartu.",
+                Message::new("desktop-bad-executable"),
             )
         })?;
     // `/proc/self/exe` marks a binary a package upgrade renamed over the running one;
@@ -181,85 +176,37 @@ fn registration(executable: &str) -> String {
 }
 
 #[cfg(windows)]
-#[expect(
-    unsafe_code,
-    reason = "Win32 registry calls contain raw buffers and close every acquired handle"
-)]
 fn registry(key: &str, executable: &Path, enabled: bool) -> Result<(), Error> {
-    let key: Vec<_> = key.encode_utf16().chain(Some(0)).collect();
-    let name: Vec<_> = "Holuto Workshop".encode_utf16().chain(Some(0)).collect();
-    let mut handle = ptr::null_mut();
-    // SAFETY: NUL-terminated names remain alive; output is a local valid HKEY slot.
-    let opened = unsafe {
-        if enabled {
-            RegCreateKeyExW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                0,
-                ptr::null(),
-                REG_OPTION_NON_VOLATILE,
-                KEY_SET_VALUE,
-                ptr::null(),
-                &raw mut handle,
-                ptr::null_mut(),
-            )
-        } else {
-            RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                0,
-                KEY_SET_VALUE,
-                &raw mut handle,
-            )
-        }
-    };
-    if !enabled && opened == ERROR_FILE_NOT_FOUND {
-        return Ok(());
+    const NAME: &str = "Holuto Workshop";
+    let failed = |source: io::Error| store_error(executable, source);
+    let mut current_user = CURRENT_USER.options();
+    let options = current_user.write();
+    if !enabled {
+        return match options.open(key).and_then(|key| key.remove_value(NAME)) {
+            Ok(()) => Ok(()),
+            Err(error) => match io::Error::from(error) {
+                // A missing key or value already means "not registered".
+                absent if absent.kind() == io::ErrorKind::NotFound => Ok(()),
+                error => Err(failed(error)),
+            },
+        };
     }
-    if opened != ERROR_SUCCESS {
-        return Err(registry_error(executable, opened));
+    let mut quoted = OsString::from("\"");
+    quoted.push(executable);
+    quoted.push("\"");
+    let value = HSTRING::from(quoted);
+    if value.len() > 260 {
+        return Err(local_error(
+            executable,
+            io::ErrorKind::InvalidInput,
+            Message::new("desktop-long-executable"),
+        ));
     }
-    let changed = if enabled {
-        let quoted: Vec<_> = iter::once(u16::from(b'"'))
-            .chain(executable.as_os_str().encode_wide())
-            .chain([u16::from(b'"'), 0])
-            .collect();
-        if quoted.len() > 261 {
-            // SAFETY: successful open returned this owned handle, closed exactly once.
-            let _closed = unsafe { RegCloseKey(handle) };
-            return Err(local_error(
-                executable,
-                io::ErrorKind::InvalidInput,
-                "Ścieżka autostartu przekracza limit 260 znaków Windows.",
-            ));
-        }
-        let bytes: Vec<_> = quoted.into_iter().flat_map(u16::to_le_bytes).collect();
-        let count = u32::try_from(bytes.len()).map_err(|error| {
-            local_error(executable, io::ErrorKind::InvalidInput, &error.to_string())
-        })?;
-        // SAFETY: live byte buffer includes the UTF-16 NUL; byte length is checked.
-        unsafe { RegSetValueExW(handle, name.as_ptr(), 0, REG_SZ, bytes.as_ptr(), count) }
-    } else {
-        // SAFETY: valid open handle and live NUL-terminated value name.
-        unsafe { RegDeleteValueW(handle, name.as_ptr()) }
-    };
-    // SAFETY: successful open returned this owned handle, closed exactly once.
-    let closed = unsafe { RegCloseKey(handle) };
-    if changed != ERROR_SUCCESS && (enabled || changed != ERROR_FILE_NOT_FOUND) {
-        return Err(registry_error(executable, changed));
-    }
-    if closed != ERROR_SUCCESS {
-        return Err(registry_error(executable, closed));
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn registry_error(path: &Path, code: u32) -> Error {
-    store_error(
-        path,
-        io::Error::from_raw_os_error(i32::try_from(code).unwrap_or(i32::MAX)),
-    )
+    options
+        .create()
+        .open(key)
+        .and_then(|key| key.set_hstring(NAME, &value))
+        .map_err(|error| failed(error.into()))
 }
 
 #[cfg(test)]

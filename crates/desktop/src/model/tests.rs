@@ -1,27 +1,11 @@
 use std::slice;
 
 use super::*;
-use agent::documents::ReceiptKind;
 use fiscal::device::Problem;
 use posnet::capabilities::capabilities;
-use uuid::Uuid;
 
 fn today() -> Date {
     Date::constant(2025, 10, 24)
-}
-fn document() -> Document {
-    Document {
-        kind: ReceiptKind::Sale,
-        order_id: Uuid::nil(),
-        order_number: 42,
-        allocation_id: None,
-        amount: 25_000,
-        customer_name: Some("Jan Kowalski".into()),
-        occurred_at: Timestamp::UNIX_EPOCH,
-        due_at: Timestamp::UNIX_EPOCH,
-        latest_at: Timestamp::UNIX_EPOCH,
-        is_overdue: false,
-    }
 }
 fn ready() -> Model {
     let mut model = Model::new(Settings::default(), today());
@@ -35,21 +19,12 @@ fn ready() -> Model {
         vat: Vec::new(),
         capabilities: capabilities(),
     });
-    model.set_documents(vec![document()], 1, false);
-    model.selected = Some(0);
     model
 }
 
 #[test]
 fn confirmed_actions_cannot_be_submitted_again_until_worker_completion() {
     for (action, expected) in [
-        (
-            Action::QueueReceipt,
-            Command::Queue {
-                document: document(),
-                buyer_nip: None,
-            },
-        ),
         (Action::DailyReport, Command::DailyReport),
         (
             Action::MonthlyReport,
@@ -124,8 +99,8 @@ fn accepting_a_confirmation_the_stopped_printer_can_no_longer_run_says_nothing_w
     commands.extend(model.confirm(true));
     assert_eq!(commands, []);
     assert_eq!(
-        model.tone,
-        Tone::Error,
+        model.message.to_string(),
+        "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.",
         "the operator must not take the closed dialog for a printed report"
     );
 }
@@ -224,7 +199,11 @@ fn periodic_dates_require_padded_day_month_and_year_at_least_2000() {
         ),
     ] {
         let error = report_range(from, to, today()).err();
-        assert_eq!(error.as_deref(), Some(message), "range {from} – {to}");
+        assert_eq!(
+            error.map(|message| message.to_string()).as_deref(),
+            Some(message),
+            "range {from} – {to}"
+        );
     }
     assert_eq!(
         report_range("01.01.2000", "24.10.2025", today()).ok(),
@@ -242,64 +221,20 @@ fn periodic_dates_require_padded_day_month_and_year_at_least_2000() {
 fn cancelled_or_newly_blocked_confirmation_sends_nothing() {
     for accepted in [false, true] {
         let mut model = ready();
-        model.request(Action::QueueReceipt);
+        model.request(Action::DailyReport);
         model.blocked = accepted;
         let mut commands = Vec::new();
         commands.extend(model.confirm(accepted));
         assert!(
             commands.is_empty(),
-            "cancelled or blocked receipt must not be sent"
+            "a cancelled or newly blocked report must not be sent"
         );
     }
 }
 
 #[test]
-fn a_receipt_that_left_the_pending_list_while_confirming_is_not_queued() {
-    let mut model = ready();
-    model.request(Action::QueueReceipt);
-    model.set_documents(vec![], 1, false);
-    assert_eq!(model.confirm(true), None);
-    assert_eq!(
-        (model.message.as_str(), model.tone),
-        (
-            "Nie wysłano: dokument nie czeka już na paragon.",
-            Tone::Error
-        )
-    );
-    assert!(!model.in_flight);
-}
-
-#[test]
-fn the_receipt_carries_the_buyer_nip_it_showed_and_an_invalid_nip_sends_nothing() {
-    let mut model = ready();
-    model.nip = "526104082".into();
-    model.request(Action::QueueReceipt);
-    assert!(
-        model.pending.is_none(),
-        "a 9-digit NIP opens no confirmation"
-    );
-    assert_eq!(
-        (model.message.as_str(), model.tone),
-        ("NIP nabywcy musi zawierać 10 cyfr.", Tone::Error)
-    );
-    model.nip = " 5261040828 ".into();
-    let mut commands = Vec::new();
-    model.request(Action::QueueReceipt);
-    commands.extend(model.confirm(true));
-    assert_eq!(
-        commands,
-        [Command::Queue {
-            document: document(),
-            buyer_nip: BuyerNip::parse("5261040828").ok(),
-        }]
-    );
-    assert!(model.nip.is_empty(), "the NIP belongs to this receipt only");
-}
-
-#[test]
 fn a_stop_requested_while_a_confirmation_is_open_sends_nothing() {
     for action in [
-        Action::QueueReceipt,
         Action::DailyReport,
         Action::MonthlyReport,
         Action::PeriodicReport,
@@ -316,8 +251,8 @@ fn a_stop_requested_while_a_confirmation_is_open_sends_nothing() {
         commands.extend(model.confirm(true));
         assert_eq!(commands, [], "{action:?} must not reach a stopping worker");
         assert_eq!(
-            model.tone,
-            Tone::Error,
+            model.message.to_string(),
+            "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.",
             "{action:?} must say nothing was sent"
         );
     }
@@ -344,36 +279,6 @@ fn month_rollover_preserves_the_operator_choice() {
 }
 
 #[test]
-fn sorted_refresh_retains_document_identity_not_row_index() {
-    let mut model = ready();
-    let mut other = document();
-    other.order_id = Uuid::from_u128(1);
-    other.order_number = 1;
-    model.set_documents(vec![document(), other.clone()], 1, true);
-    model.sort_documents(0, false);
-    assert_eq!(
-        model.selected,
-        Some(1),
-        "sort follows the selected document"
-    );
-    let mut inserted = document();
-    inserted.order_id = Uuid::from_u128(10);
-    inserted.order_number = 10;
-    model.set_documents(vec![other, document(), inserted], 2, false);
-    model.request(Action::QueueReceipt);
-    let mut commands = Vec::new();
-    commands.extend(model.confirm(true));
-    assert_eq!(
-        commands,
-        [Command::Queue {
-            document: document(),
-            buyer_nip: None
-        }],
-        "refresh must not queue the old row index"
-    );
-}
-
-#[test]
 fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data() {
     let mut model = ready();
     model.running = true;
@@ -385,7 +290,6 @@ fn stopped_status_retains_identity_and_fiscal_blocks_but_no_private_model_data()
     model.orphaned_receipt = Some("Paragon 17".into());
     model.settings.api_url = "https://private-api.example.test".into();
     model.settings.token = "private-token-canary".into();
-    model.nip = "1234567890".into();
     let updated_at = Timestamp::UNIX_EPOCH;
     model.stopped();
     assert_eq!(
@@ -445,108 +349,148 @@ fn capture_rejects_assistive_connection_edits_while_running_saving_or_pairing() 
         model.running = locked == 0;
         model.saving = locked == 1;
         model.pairing = locked == 2;
-        window.set_api_url("https://untrusted.example.test".into());
         window.set_port("unsaved-port".into());
         window.set_baud_index(0);
         window.set_pairing_code("ABCD1234".into());
         model.capture(&window, today());
         model.sync(&window);
         assert_eq!(model.settings, settings);
-        assert_eq!(window.get_api_url(), "https://paired.example.test");
         assert_eq!(window.get_port(), "saved-port");
         assert_eq!(window.get_pairing_code(), "");
     }
 }
 
-#[test]
-fn window_sync_shows_connection_state_and_readiness_with_error_precedence() {
-    i_slint_backend_testing::init_no_event_loop();
-    let window = AppWindow::new().unwrap();
-    let mut model = Model::new(Settings::default(), today());
-    for (running, connected, problem, blocked, text, tone) in [
-        (false, false, false, false, "Nie połączono", 0),
-        (true, false, false, false, "Łączenie…", 0),
-        (true, true, false, false, "Połączono · SERIAL42", 0),
-        (
-            true,
-            true,
-            true,
-            false,
-            "Drukarka niegotowa: Brak papieru",
-            2,
-        ),
-        (
-            true,
-            true,
-            true,
-            true,
-            "Zablokowane: wymaga rozstrzygnięcia",
-            2,
-        ),
-    ] {
-        model.running = running;
-        model.connected = connected;
-        model.blocked = blocked;
-        model.unique_number = "SERIAL42".into();
-        model.device = connected.then(|| ready().device.unwrap());
-        if problem {
-            model
-                .device
-                .as_mut()
-                .unwrap()
-                .problems
-                .push("Brak papieru".into());
-        }
-        model.sync(&window);
-        assert_eq!(window.get_connection_text(), text);
-        assert_eq!(window.get_connection_tone(), tone);
-    }
+fn stan(model: &Model) -> [String; 5] {
+    [
+        model.processing_text().to_string(),
+        model.holuto_text().to_string(),
+        model.printer_identity(),
+        model
+            .printer_problem()
+            .unwrap_or_else(|| Message::new("desktop-ready"))
+            .to_string(),
+        model.start_hint().to_string(),
+    ]
 }
 
 #[test]
-fn window_initialization_lists_every_polish_month_and_tab_capture_round_trips() {
-    use slint::Model as _;
-    i_slint_backend_testing::init_no_event_loop();
-    let window = AppWindow::new().unwrap();
-    let mut model = Model::new(Settings::default(), Date::constant(2026, 1, 1));
-    model.initialize(&window, Date::constant(2026, 1, 1));
+fn stan_follows_the_worker_from_stopped_through_ready_and_blocked_to_stopping() {
+    let mut model = Model::new(Settings::default(), today());
+    let start = "Uruchom obsługę drukarki w Ustawieniach.";
     assert_eq!(
-        window
-            .get_months()
-            .iter()
-            .map(|month| month.to_string())
-            .collect::<Vec<_>>(),
+        stan(&model),
         [
-            "grudzień 2025",
-            "listopad 2025",
-            "październik 2025",
-            "wrzesień 2025",
-            "sierpień 2025",
-            "lipiec 2025",
-            "czerwiec 2025",
-            "maj 2025",
-            "kwiecień 2025",
-            "marzec 2025",
-            "luty 2025",
-            "styczeń 2025",
-            "grudzień 2024",
-            "listopad 2024",
-            "październik 2024",
-            "wrzesień 2024",
-            "sierpień 2024",
-            "lipiec 2024",
-            "czerwiec 2024",
-            "maj 2024",
-            "kwiecień 2024",
-            "marzec 2024",
-            "luty 2024",
-            "styczeń 2024",
+            "Zatrzymana",
+            "Nie połączono",
+            "—",
+            "Niegotowa: brak połączenia",
+            start
         ]
     );
-    for index in [0, 1, 2, 3] {
-        window.set_tab(index);
-        model.capture(&window, Date::constant(2026, 1, 1));
-        model.sync(&window);
-        assert_eq!(window.get_tab(), index);
+    model.starting = true;
+    assert_eq!(
+        stan(&model),
+        [
+            "Uruchamianie…",
+            "Nie połączono",
+            "—",
+            "Niegotowa: brak połączenia",
+            ""
+        ]
+    );
+    model.starting = false;
+    model.running = true;
+    assert_eq!(
+        stan(&model),
+        [
+            "Uruchomiona",
+            "Łączenie…",
+            "—",
+            "Niegotowa: brak połączenia",
+            ""
+        ]
+    );
+    let ready_device = ready().device;
+    model.connected = true;
+    model.vendor = Some(Vendor::Novitus);
+    model.unique_number = "NOV0000000001".into();
+    model.settings.port = "/dev/ttyUSB0".into();
+    assert_eq!(
+        stan(&model),
+        [
+            "Uruchomiona",
+            "Połączono",
+            "Novitus · NOV0000000001 · /dev/ttyUSB0",
+            "Niegotowa: brak połączenia",
+            ""
+        ],
+        "a connection is not ready until the printer reported its state"
+    );
+    model.device = ready_device;
+    assert_eq!(
+        stan(&model),
+        [
+            "Uruchomiona",
+            "Połączono",
+            "Novitus · NOV0000000001 · /dev/ttyUSB0",
+            "Gotowa",
+            ""
+        ]
+    );
+    model
+        .device
+        .as_mut()
+        .unwrap()
+        .problems
+        .push("Brak papieru".into());
+    assert_eq!(stan(&model)[3], "Niegotowa: Brak papieru");
+    model.blocked = true;
+    assert_eq!(
+        stan(&model)[3],
+        "Zablokowana: wymaga rozstrzygnięcia",
+        "a fiscal block outranks every readiness problem"
+    );
+    model.stopping = true;
+    assert_eq!(stan(&model)[0], "Zatrzymywanie…");
+    model.stopped();
+    assert_eq!(
+        stan(&model),
+        [
+            "Zatrzymana",
+            "Nie połączono",
+            "Novitus · NOV0000000001 · /dev/ttyUSB0",
+            "Zablokowana: wymaga rozstrzygnięcia",
+            start
+        ],
+        "Stop keeps the last printer identity and the fiscal block"
+    );
+}
+
+#[test]
+fn stan_names_every_brand_and_omits_an_unknown_port() {
+    let mut model = Model::new(Settings::default(), today());
+    model.unique_number = "DEM0000000001".into();
+    assert_eq!(model.printer_identity(), "—", "no brand, no identity");
+    for (vendor, label) in [
+        (Vendor::Posnet, "Posnet"),
+        (Vendor::Novitus, "Novitus"),
+        (Vendor::Elzab, "Elzab"),
+    ] {
+        model.vendor = Some(vendor);
+        assert_eq!(model.printer_identity(), format!("{label} · DEM0000000001"));
     }
+    model.unique_number.clear();
+    assert_eq!(
+        model.printer_identity(),
+        "—",
+        "no unique number, no identity"
+    );
+}
+
+#[test]
+fn stopping_a_pairing_worker_never_reads_as_stopping_the_printer() {
+    let mut model = Model::new(Settings::default(), today());
+    model.pairing = true;
+    model.stopping = true;
+    assert_eq!(model.processing_text().to_string(), "Zatrzymana");
 }

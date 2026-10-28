@@ -3,7 +3,8 @@ use std::{
     error::Error as StdError,
     fmt, fs, io,
     process::Command,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
+    time::Duration,
 };
 
 use fiscal::device::Vendor;
@@ -26,11 +27,7 @@ use super::{
 };
 use crate::{
     Error,
-    documents::{BuyerNip, Document, ReceiptKind},
-    testing::{
-        ATTEMPT, Fault, Holuto, JOB_ID, ORDER_ID, PRINTER_ID, job_json, status_json, telemetry,
-        with,
-    },
+    testing::{ATTEMPT, Fault, Holuto, JOB_ID, PRINTER_ID, job_json, status_json, telemetry, with},
 };
 
 type TestResult = Result<(), Box<dyn StdError>>;
@@ -136,7 +133,7 @@ fn a_result_reply_that_does_not_echo_the_report_is_not_accepted() -> TestResult 
     };
     let echo = with(
         server.job(JOB_ID),
-        &json!({"state": "done", "receiptNumber": "123"}),
+        &json!({"state": "done", "receiptNumber": "123", "issuedAt": "2025-01-02T12:00:00Z"}),
     );
     let path = format!("/agent/jobs/{JOB_ID}/result");
     server.fault(
@@ -151,7 +148,7 @@ fn a_result_reply_that_does_not_echo_the_report_is_not_accepted() -> TestResult 
     for changes in [
         json!({"id": Uuid::from_u128(98)}),
         json!({"attempt": Uuid::from_u128(98)}),
-        json!({"state": "failed", "receiptNumber": null}),
+        json!({"state": "failed", "receiptNumber": null, "issuedAt": null}),
         json!({"receiptNumber": "124"}),
     ] {
         server.fault(
@@ -164,7 +161,7 @@ fn a_result_reply_that_does_not_echo_the_report_is_not_accepted() -> TestResult 
         );
         assert!(
             matches!(api.report(job.id, &form), Err(ApiError::Response(message))
-                if message == "wynik zadania nie został zapisany zgodnie z raportem"),
+                if message.to_string() == "wynik zadania nie został zapisany zgodnie z raportem"),
             "{changes}"
         );
     }
@@ -195,7 +192,7 @@ fn a_result_reply_that_does_not_echo_the_report_is_not_accepted() -> TestResult 
         } else {
             assert!(
                 matches!(reported, Err(ApiError::Response(message))
-                    if message == "wynik zadania nie został zapisany zgodnie z raportem"),
+                    if message.to_string() == "wynik zadania nie został zapisany zgodnie z raportem"),
                 "an unchanged {state} job did not record the outcome"
             );
         }
@@ -245,7 +242,7 @@ fn malformed_json_is_a_contract_error_not_a_connection_error() -> TestResult {
     );
     assert!(
         matches!(api.session(&telemetry()), Err(ApiError::Response(message))
-        if message == "expected ident at line 1 column 2")
+        if message.to_string() == "expected ident at line 1 column 2")
     );
     Ok(())
 }
@@ -337,10 +334,6 @@ impl<S: Subscriber> Layer<S> for Routes {
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "Exact request and telemetry tables cover every API route together."
-)]
 fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestResult {
     let server = Holuto::new();
     let routes = Routes::default();
@@ -351,13 +344,6 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
     profile.capabilities.allowed_characters = "AĄa 1".to_owned();
     api.session(&profile)?;
     api.heartbeat()?;
-    let _page = api.documents(None)?;
-    api.queue(&super::model::QueueForm {
-        allocation_id: None,
-        buyer_nip: None,
-        kind: ReceiptKind::Sale,
-        order_id: Uuid::from_u128(1000),
-    })?;
     let job = api.take()?.ok_or("missing job")?;
     let _remote = api.job(job.id)?;
     api.report(
@@ -379,8 +365,6 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
         vec![
             "/agent/session",
             "/agent/heartbeat",
-            "/agent/documents?limit=100",
-            "/agent/jobs",
             "/agent/jobs/take",
             "/agent/jobs/00000000-0000-0000-0000-000000000007",
             "/agent/jobs/00000000-0000-0000-0000-000000000007/result"
@@ -391,7 +375,7 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
             .iter()
             .map(|request| request.method.as_str())
             .collect::<Vec<_>>(),
-        ["POST", "POST", "GET", "POST", "POST", "GET", "POST"]
+        ["POST", "POST", "POST", "GET", "POST"]
     );
     assert_eq!(
         requests
@@ -411,9 +395,6 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
                 }
             }),
             serde_json::Value::Null,
-            serde_json::Value::Null,
-            json!({"kind":"sale","orderId":Uuid::from_u128(1000),
-                "allocationId":null,"buyerNip":null}),
             serde_json::Value::Null,
             serde_json::Value::Null,
             json!({"attempt":job.attempt,"state":"failed","receiptNumber":null,
@@ -447,8 +428,6 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
         [
             "/agent/session",
             "/agent/heartbeat",
-            "/agent/documents",
-            "/agent/jobs",
             "/agent/jobs/take",
             "/agent/jobs/{id}",
             "/agent/jobs/{id}/result"
@@ -654,25 +633,6 @@ fn mismatched_job_id_and_result_attempt_are_not_acknowledged() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn opaque_cursor_is_encoded_once() -> TestResult {
-    let server = Holuto::new();
-    let cursor = "a+/=?ąć%";
-    server.page(Some(cursor), json!({"items":[],"nextCursor":null}));
-    let mut api = api(&server)?;
-    api.session(&telemetry())?;
-    let _page = api.documents(Some(cursor))?;
-    assert_eq!(
-        server.requests().last().ok_or("no request")?.path,
-        "/agent/documents?limit=100&cursor=a%2B%2F%3D%3F%C4%85%C4%87%25"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "test assertions intentionally panic while setup errors use Result"
-)]
 fn invalid_physical_serial_is_refused_without_sending() -> TestResult {
     let server = Holuto::new();
     let _valid = api(&server)?;
@@ -712,14 +672,14 @@ fn cleartext_or_credentialed_remote_api_urls_are_refused_before_any_request() {
         assert!(
             matches!(
                 Api::new(url, server.token(), "DEM0000000001"),
-                Err(Error::Invalid(message)) if message == refused
+                Err(Error::Invalid(message)) if message.to_string() == refused
             ),
             "{url}"
         );
         assert!(
             matches!(
                 Api::pair(url, "ABCD1234"),
-                Err(Error::Invalid(message)) if message == refused
+                Err(Error::Invalid(message)) if message.to_string() == refused
             ),
             "{url}"
         );
@@ -961,15 +921,6 @@ fn pairing_accepts_only_well_formed_credentials_and_never_echoes_rejected_ones()
     Ok(())
 }
 
-fn listed_document() -> serde_json::Value {
-    json!({
-        "kind":"sale", "orderId":Uuid::from_u128(10), "orderNumber":42,
-        "allocationId":null, "amount":"12.34", "customerName":null,
-        "occurredAt":"2026-10-24T10:00:00Z", "dueAt":"2026-10-24T10:00:00Z",
-        "latestAt":"2026-10-24T10:00:00Z", "isOverdue":false
-    })
-}
-
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -1015,74 +966,7 @@ fn response_body_limit_accepts_exact_bound_and_rejects_one_more_byte() -> TestRe
         );
         assert!(
             matches!(api.session(&telemetry()), Err(ApiError::Response(message))
-            if message == "przekroczony limit rozmiaru odpowiedzi")
-        );
-    }
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "HTTP boundary assertions use Result for setup."
-)]
-fn document_page_bounds_and_identity_are_checked_before_publication() -> TestResult {
-    let server = Holuto::new();
-    let mut api = api(&server)?;
-    api.session(&telemetry())?;
-    let document = listed_document();
-    server.page(
-        None,
-        json!({"items":vec![document.clone();100],"nextCursor":"opaque-next"}),
-    );
-    let page = api.documents(None)?;
-    assert_eq!(
-        serde_json::to_value(&page)?,
-        json!({
-            "items":vec![document.clone();100], "nextCursor":"opaque-next"
-        })
-    );
-    assert_eq!(page.items.first().ok_or("missing item")?.amount, 1234);
-    for (items, cursor, expected) in [
-        (
-            vec![document.clone(); 101],
-            json!(null),
-            "strona przekracza limit",
-        ),
-        (
-            vec![document.clone()],
-            json!(""),
-            "pusty kursor następnej strony",
-        ),
-        (
-            vec![
-                document.clone(),
-                with(document.clone(), &json!({"orderNumber":0})),
-            ],
-            json!(null),
-            "numer zlecenia musi być dodatni",
-        ),
-        (
-            vec![with(document.clone(), &json!({"kind":"advance"}))],
-            json!(null),
-            "zaliczka bez identyfikatora alokacji",
-        ),
-        (
-            vec![with(document, &json!({"allocationId":Uuid::from_u128(12)}))],
-            json!(null),
-            "sprzedaż z identyfikatorem alokacji",
-        ),
-    ] {
-        server.fault(
-            "GET",
-            "/agent/documents",
-            Fault::Body {
-                status: 200,
-                body: serde_json::to_vec(&json!({"items":items,"nextCursor":cursor}))?,
-            },
-        );
-        assert!(
-            matches!(api.documents(None), Err(ApiError::Response(message)) if message == expected)
+            if message.to_string() == "przekroczony limit rozmiaru odpowiedzi")
         );
     }
     Ok(())
@@ -1109,7 +993,7 @@ fn a_rejected_session_cannot_replace_the_previously_bound_printer() -> TestResul
     );
     assert!(
         matches!(api.session(&telemetry()), Err(ApiError::Response(message))
-        if message == "parowanie przypisane do innej drukarki")
+        if message.to_string() == "parowanie przypisane do innej drukarki")
     );
     assert_eq!(api.printer_id(), Some(PRINTER_ID));
     api.session(&telemetry())?;
@@ -1122,7 +1006,7 @@ fn a_rejected_session_cannot_replace_the_previously_bound_printer() -> TestResul
     clippy::panic_in_result_fn,
     reason = "HTTP boundary assertions use Result for setup."
 )]
-fn api_path_prefix_and_advance_queue_fields_reach_the_peer_unchanged() -> TestResult {
+fn api_path_prefix_reaches_the_peer_unchanged() -> TestResult {
     let server = Holuto::new();
     server.fault(
         "POST",
@@ -1140,33 +1024,23 @@ fn api_path_prefix_and_advance_queue_fields_reach_the_peer_unchanged() -> TestRe
     api.session(&telemetry())?;
     server.fault(
         "POST",
-        "/prefix/agent/jobs",
+        "/prefix/agent/jobs/take",
         Fault::Body {
-            status: 201,
+            status: 200,
             body: serde_json::to_vec(&job_json())?,
         },
     );
-    let document: Document = serde_json::from_value(with(
-        listed_document(),
-        &json!({"kind":"advance","allocationId":Uuid::from_u128(12)}),
-    ))?;
-    let form = super::queue_form(&document, Some(BuyerNip::parse(" 5260250274 ")?))?;
-    api.queue(&form)?;
-    let requests = server.requests();
+    assert_eq!(api.take()?.map(|job| job.id), Some(JOB_ID));
     assert_eq!(
-        requests
+        server
+            .requests()
             .iter()
             .map(|request| (request.method.as_str(), request.path.as_str()))
             .collect::<Vec<_>>(),
         [
             ("POST", "/prefix/agent/session"),
-            ("POST", "/prefix/agent/jobs")
+            ("POST", "/prefix/agent/jobs/take")
         ]
-    );
-    assert_eq!(
-        requests.last().ok_or("missing queue")?.body,
-        json!({"kind":"advance","orderId":Uuid::from_u128(10),
-            "allocationId":Uuid::from_u128(12),"buyerNip":"5260250274"})
     );
     Ok(())
 }
@@ -1238,8 +1112,6 @@ fn every_authenticated_endpoint_propagates_http_failures_without_retry_or_mutati
     for (operation, method, path) in [
         ("session", "POST", "/agent/session"),
         ("heartbeat", "POST", "/agent/heartbeat"),
-        ("documents", "GET", "/agent/documents"),
-        ("queue", "POST", "/agent/jobs"),
         ("take", "POST", "/agent/jobs/take"),
         (
             "job",
@@ -1252,7 +1124,7 @@ fn every_authenticated_endpoint_propagates_http_failures_without_retry_or_mutati
             "/agent/jobs/00000000-0000-0000-0000-000000000007/result",
         ),
     ] {
-        for status in [401, 403, 408, 429, 500, 503] {
+        for status in [400, 401, 403, 408, 429, 500, 503] {
             let server = Holuto::new();
             let previous = job_json();
             server.insert(previous.clone());
@@ -1270,13 +1142,6 @@ fn every_authenticated_endpoint_propagates_http_failures_without_retry_or_mutati
             let response = match operation {
                 "session" => api.session(&telemetry()),
                 "heartbeat" => api.heartbeat(),
-                "documents" => api.documents(None).map(drop),
-                "queue" => api.queue(&super::model::QueueForm {
-                    allocation_id: None,
-                    buyer_nip: None,
-                    kind: ReceiptKind::Sale,
-                    order_id: ORDER_ID,
-                }),
                 "take" => api.take().map(drop),
                 "job" => api.job(JOB_ID).map(drop),
                 "report" => api.report(
@@ -1302,18 +1167,13 @@ fn every_authenticated_endpoint_propagates_http_failures_without_retry_or_mutati
                 );
             }
             assert!(!format!("{error:?} {error}").contains(server.token()));
-            let expected_path = if operation == "documents" {
-                "/agent/documents?limit=100"
-            } else {
-                path
-            };
             assert_eq!(
                 server
                     .requests()
                     .iter()
                     .map(|request| (request.method.as_str(), request.path.as_str()))
                     .collect::<Vec<_>>(),
-                [("POST", "/agent/session"), (method, expected_path)],
+                [("POST", "/agent/session"), (method, path)],
                 "{operation}/{status}: no retries or token refresh"
             );
             assert_eq!(server.job(JOB_ID), previous, "{operation}/{status}");
@@ -1387,7 +1247,7 @@ fn an_oversized_response_header_is_a_contract_error_not_a_protocol_error() -> Te
     );
     assert!(
         matches!(api.session(&telemetry()),Err(ApiError::Response(message))
-        if message == "przekroczony limit rozmiaru odpowiedzi")
+        if message.to_string() == "przekroczony limit rozmiaru odpowiedzi")
     );
     Ok(())
 }
@@ -1426,7 +1286,7 @@ fn session_uploads_all_seven_legal_vat_letters_and_refuses_an_eighth() -> TestRe
         vat,
         capabilities: capabilities(),
     };
-    assert_eq!(profile.describe(&device), Vec::<String>::new());
+    assert_eq!(profile.describe(&device), Vec::<i18n::Message>::new());
     api.session(&profile)?;
     let expected = json!([
         {"letter":"A","vatRate":"23"},{"letter":"B","vatRate":"8"},
@@ -1437,7 +1297,7 @@ fn session_uploads_all_seven_legal_vat_letters_and_refuses_an_eighth() -> TestRe
         server.requests().last().ok_or("missing session")?.body["vatRates"],
         expected
     );
-    for count in [7, 8, 9] {
+    for count in [7, 8] {
         let mut status = status_json();
         let mut rates = expected.as_array().ok_or("missing VAT table")?.clone();
         rates.resize(count, json!({"letter":"F","vatRate":"8"}));
@@ -1455,8 +1315,47 @@ fn session_uploads_all_seven_legal_vat_letters_and_refuses_an_eighth() -> TestRe
             result?;
         } else {
             let expected = "nieprawidłowe litery VAT";
-            assert!(matches!(result,Err(ApiError::Response(message)) if message == expected));
+            assert!(
+                matches!(result,Err(ApiError::Response(message)) if message.to_string() == expected)
+            );
         }
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "transport deadline and no-retry assertions"
+)]
+fn take_transport_timeout_is_not_retried() -> TestResult {
+    let server = Holuto::new();
+    let mut api = api(&server)?;
+    api.session(&telemetry())?;
+    api.agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .proxy(None)
+            .timeout_global(Some(Duration::from_secs(1)))
+            .build(),
+    );
+    let (reached, arrived) = mpsc::channel();
+    let (release, held) = mpsc::channel();
+    server.fault(
+        "POST",
+        "/agent/jobs/take",
+        Fault::Hold {
+            reached,
+            release: held,
+        },
+    );
+    let response = api.take();
+    release.send(())?;
+    arrived.recv_timeout(Duration::from_secs(5))?;
+    assert!(matches!(
+        response,
+        Err(ApiError::Transport(super::TransportFailure::Timeout))
+    ));
+    assert_eq!(server.requests().len(), 2);
     Ok(())
 }

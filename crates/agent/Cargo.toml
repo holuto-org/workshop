@@ -13,6 +13,7 @@ testing = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "dep:tiny
 [dependencies]
 elzab.workspace = true
 fiscal.workspace = true
+i18n.workspace = true
 icu_normalizer.workspace = true
 icu_properties.workspace = true
 jiff.workspace = true
@@ -46,13 +47,6 @@ tiny_http.workspace = true
 proptest.workspace = true
 proptest-state-machine.workspace = true
 tracing-subscriber.workspace = true
-
-[build-dependencies]
-serde_json.workspace = true
-typify.workspace = true
-schemars.workspace = true
-syn.workspace = true
-quote.workspace = true
 
 [lints]
 workspace = true

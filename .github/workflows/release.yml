@@ -35,6 +35,7 @@ jobs:
         shell: bash
     env:
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+      HOLUTO_API_URL: ${{ vars.HOLUTO_API_URL }}
       SENTRY_ENVIRONMENT: production
 
     steps:
@@ -54,8 +55,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libfontconfig1-dev fonts-dejavu-core xvfb xauth dbus-x11 xdotool x11-utils desktop-file-utils binutils
 
-      - name: Require the production telemetry configuration
-        run: test -n "$SENTRY_DSN"
+      - name: Require the production telemetry and Holuto configuration
+        run: test -n "$SENTRY_DSN" && test -n "$HOLUTO_API_URL"
 
       - name: Build native package
         run: bash packaging/build.sh

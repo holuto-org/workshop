@@ -72,9 +72,9 @@ impl Driver for Printer {
             .device
             .require_unique_number(&expected.unique_number)?;
         if expected.vendor != Vendor::Novitus || checked.device.vat != expected.vat {
-            return Err(Error::Invalid(
-                "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-device-vat-changed",
+            )));
         }
         if receipt.sales().keys().any(|slot| {
             checked
@@ -83,9 +83,7 @@ impl Driver for Printer {
                 .get(usize::from(slot.get()))
                 .is_none_or(|rate| !rate.active())
         }) {
-            return Err(Error::Invalid(
-                "Wybrana stawka VAT jest nieaktywna.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new("drivers-inactive-vat")));
         }
         let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
         let issued_at = timestamp(checked.clock)?;
@@ -128,13 +126,13 @@ impl Driver for Printer {
                 Duration::from_secs(120),
             ),
             Report::Monthly { year, month } => {
-                let from =
-                    Date::new(year, month, 1).map_err(|error| Error::Invalid(error.to_string()))?;
+                let from = Date::new(year, month, 1)
+                    .map_err(|error| Error::Invalid(error.to_string().into()))?;
                 let to = from.last_of_month();
                 if to >= today {
-                    return Err(Error::Invalid(
-                        "Raport miesięczny wymaga zakończonego miesiąca.".to_owned(),
-                    ));
+                    return Err(Error::Invalid(i18n::Message::new(
+                        "drivers-month-not-ended",
+                    )));
                 }
                 (
                     "#o",
@@ -144,9 +142,9 @@ impl Driver for Printer {
             },
             Report::Periodic { from, to, summary } => {
                 if from > to || to > today {
-                    return Err(Error::Invalid(
-                        "Nieprawidłowy zakres dat raportu.".to_owned(),
-                    ));
+                    return Err(Error::Invalid(i18n::Message::new(
+                        "drivers-invalid-report-range",
+                    )));
                 }
                 (
                     "#o",
@@ -238,12 +236,12 @@ fn preflight_identity(
     if !known {
         device
             .problems
-            .push("Nieznany model lub firmware Novitus".into());
+            .push(i18n::Message::new("drivers-unknown-novitus").into());
     }
     if !pc1 {
         device
             .problems
-            .push("Połączenie nie prowadzi do fiskalnego portu PC1".into());
+            .push(i18n::Message::new("drivers-not-pc1").into());
         return Ok(Checked {
             device,
             header: String::new(),
@@ -254,7 +252,7 @@ fn preflight_identity(
     if !matches!(dialect.options.as_slice(), [(5, value)] if value == "1") {
         device
             .problems
-            .push("Wymagany jest natywny protokół NOVITUS".into());
+            .push(i18n::Message::new("drivers-native-novitus-required").into());
     }
     let pages = session.command("0;1^c91/92/", TIMEOUT)?;
     let cp1250 = matches!(
@@ -264,7 +262,7 @@ fn preflight_identity(
     if !cp1250 {
         device
             .problems
-            .push("Ustaw wejście i wyjście PC na Windows-1250".into());
+            .push(i18n::Message::new("drivers-pc-code-page").into());
     }
     read_readiness(session, &mut device.problems)?;
     // Header text in another code page may hold bytes Windows-1250 cannot decode.
@@ -281,7 +279,7 @@ fn preflight_identity(
     if cp1250 && header.trim().is_empty() {
         device
             .problems
-            .push("Brak zaprogramowanego nagłówka".into());
+            .push(i18n::Message::new("drivers-missing-header").into());
     }
     let vat = session.command("23#s", TIMEOUT)?;
     let (rates, unique_number, idle) = vat_table(&vat.body)?;
@@ -290,10 +288,12 @@ fn preflight_identity(
     if !idle {
         device
             .problems
-            .push("Status fiskalny wskazuje otwartą transakcję lub błąd".into());
+            .push(i18n::Message::new("drivers-fiscal-status-error").into());
     }
     if !device.vat.iter().any(|rate| rate.active()) {
-        device.problems.push("Brak aktywnych stawek VAT".into());
+        device
+            .problems
+            .push(i18n::Message::new("drivers-no-active-vat").into());
     }
     let clock = clock(session)?;
     if known {
@@ -318,7 +318,7 @@ fn read_repertoire(session: &mut Session, device: &mut Device) {
             if !matches!(error, Error::Device { .. }) {
                 device
                     .problems
-                    .push("Nie można bezpiecznie odczytać możliwości znaków drukarki".into());
+                    .push(i18n::Message::new("drivers-unreadable-repertoire").into());
             }
         },
     }
@@ -360,10 +360,10 @@ fn read_readiness(session: &mut Session, problems: &mut Vec<Problem>) -> Result<
         Some("2") => problems.push(Problem::ReadOnly {
             periodic_reports: false,
         }),
-        _ => problems.push("Drukarka nie jest w czynnym trybie fiskalnym".into()),
+        _ => problems.push(i18n::Message::new("drivers-not-active-fiscal").into()),
     }
     if fields.clone().nth(5) != Some("0") {
-        problems.push("Nieobsługiwany typ drukarki fiskalnej".into());
+        problems.push(i18n::Message::new("drivers-unsupported-printer-type").into());
     }
     let dle = DleStatus::decode(session.realtime(DLE)?)?;
     // ENQ is synchronous: an off-line, paper-out, failed or busy printer may never answer it,
@@ -377,7 +377,7 @@ fn read_readiness(session: &mut Session, problems: &mut Vec<Problem>) -> Result<
         }
     };
     if busy {
-        problems.push("Drukarka jest zajęta, ma otwarty dokument lub wymaga obsługi".into());
+        problems.push(i18n::Message::new("drivers-busy-document-service").into());
     }
     Ok(())
 }
@@ -472,15 +472,19 @@ fn timestamp(datetime: DateTime) -> Result<Timestamp, Error> {
     // The wire has no UTC offset: reject DST gaps/folds instead of guessing.
     let timestamp = TimeZone::get("Europe/Warsaw")
         .and_then(|zone| zone.to_ambiguous_timestamp(datetime).unambiguous())
-        .map_err(|error| Error::Protocol(format!("Nieprawidłowy zegar drukarki: {error}.")))?;
+        .map_err(|error| {
+            Error::Protocol(
+                i18n::Message::new("drivers-invalid-clock").arg("error", error.to_string()),
+            )
+        })?;
     Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
         .map_err(|_error| frame::corrupt())
 }
 fn date_fields(date: Date) -> Result<String, Error> {
     if !(2000..=2099).contains(&date.year()) {
-        return Err(Error::Invalid(
-            "Rok raportu musi należeć do zakresu 2000–2099.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-report-year-range",
+        )));
     }
     Ok(format!(
         "{};{};{}",
@@ -509,10 +513,12 @@ fn dispatch(session: &mut Session, steps: &[Step], journal: &mut dyn Journal) ->
     }
     Ok(())
 }
-/// Refusals the specification places before any printing.
+/// Initial-stage refusals admitted by the current host classifier.
 ///
-/// `$h` prints nothing; daily report 36 (zero totals, already recorded today) and 37
-/// (keyboard cancel); periodic report 4 (invalid dates or no fiscal records in the range).
+/// `$h` prints nothing; daily report 36 is an already-recorded zero total and 37
+/// is keyboard cancellation before printing. Periodic report 4 describes invalid
+/// dates or missing records; its no-effect classification remains an unmeasured
+/// host assumption, not an explicit specification guarantee.
 fn refusal_is_certain(error: &Error, sent: &str) -> bool {
     matches!(error, Error::Device { command, code, .. } if command == sent && matches!(
         (sent, code),
@@ -539,9 +545,9 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
             let _integrity = session.extended_status_until(*cap)?;
             let dle = DleStatus::decode(session.realtime_until(DLE, *cap)?)?;
             if dle.paper_or_battery {
-                Ok(Some("Brak papieru lub niskie napięcie akumulatora"))
+                Ok(Some(i18n::Message::new("drivers-paper-or-battery")))
             } else if dle.mechanism_error {
-                Ok(Some("Błąd mechanizmu drukarki"))
+                Ok(Some(i18n::Message::new("drivers-mechanism-error")))
             } else {
                 Ok(None)
             }
@@ -563,7 +569,7 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
                         "Printer resumed after operator intervention"
                     );
                 }
-                journal.waiting(problem);
+                journal.waiting(problem.as_ref());
                 shown = problem;
             },
             // Only a matching ACK completes; status reads may have queued it.

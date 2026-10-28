@@ -21,6 +21,15 @@ pub enum Report {
 }
 
 impl Report {
+    pub const fn message(self) -> i18n::Message {
+        i18n::Message::new(match self {
+            Self::Daily => "fiscal-report-daily",
+            Self::Monthly { .. } => "fiscal-report-monthly",
+            Self::Periodic { .. } => "fiscal-report-periodic",
+        })
+    }
+
+    /// Stable Polish label for journal and CLI diagnostics.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Daily => "Raport dobowy",

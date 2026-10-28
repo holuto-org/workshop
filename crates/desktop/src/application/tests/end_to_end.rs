@@ -5,9 +5,8 @@ use objc2::{runtime::NSObject, sel};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSApplicationTerminateReply;
 
-use agent::testing::{self, Holuto, ORDER_ID};
+use agent::testing::{self, Holuto};
 use serde_json::json;
-use slint::Model as _;
 
 use super::*;
 
@@ -16,95 +15,59 @@ use super::*;
     clippy::panic_in_result_fn,
     reason = "End-to-end tests assert while propagating fixture errors"
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "One UI-to-print lifecycle proves callback ordering and exact server effects"
-)]
-fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<dyn Error>> {
+fn a_job_queued_in_holuto_prints_once_and_stan_shows_the_ready_printer()
+-> Result<(), Box<dyn Error>> {
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
     let simulator = Arc::new(Simulator::start());
     simulator.set_clock("2025-10-24T10:00:00Z".parse()?);
     let holuto = Arc::new(Holuto::new());
-    holuto.documents(vec![json!({
-        "kind": "sale", "orderId": ORDER_ID, "orderNumber": 10, "allocationId": null,
-        "amount": "250.00", "customerName": "Klient testowy",
-        "occurredAt": "2025-10-24T10:00:00Z", "dueAt": "2025-10-24T10:00:00Z",
-        "latestAt": "2025-10-24T10:00:00Z", "isOverdue": false
-    })]);
+    // Receipts are queued in the Holuto web app; the desktop only prints them.
+    let job = holuto.enqueue(testing::with(
+        testing::job_json(),
+        &json!({"buyerNip": "5261040828"}),
+    ));
     let settings = Settings {
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    settings.save(&dir)?;
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
-    let queued = Arc::new(AtomicBool::new(false));
     let fake = Arc::clone(&holuto);
-    let printer = Arc::clone(&simulator);
     let sink = move |event: Event| {
-        let first_documents = matches!(&event, Event::Documents { items, .. } if !items.is_empty())
-            && !queued.swap(true, Ordering::SeqCst);
-        let history = matches!(&event, Event::HistoryChanged(entries) if !entries.is_empty());
-        let fake = Arc::clone(&fake);
-        let printer = Arc::clone(&printer);
+        let device = matches!(&event, Event::Device { .. });
+        Application::worker_event(event);
+        // The worker publishes the device after each poll, so the job has settled by then.
+        if !device || fake.job(job)["state"] != "done" {
+            return;
+        }
         let _scheduled = slint::invoke_from_event_loop(move || {
             with_app(move |app| {
-                app.event(event);
-                app.sync();
-                let window = app.window.as_ref().ok_or("missing window")?.clone_strong();
-                if first_documents {
-                    control(&window, "10", AccessibleRole::ListItem)
-                        .map_err(|error| error.to_string())?
-                        .invoke_accessible_default_action();
-                    button(&window, "Dodaj do wydruku")
-                        .map_err(|error| error.to_string())?
-                        .invoke_accessible_default_action();
-                    // Wait for the queued selection and queue callbacks before confirming.
-                    with_app(|app| {
-                        let window = app.window.as_ref().ok_or("missing confirmation window")?;
-                        assert_eq!(
-                            window.get_confirm_text(),
-                            concat!(
-                                "Sprzedaż · zlecenie 10 · 250,00 zł\nNIP: —\n",
-                                "Zatwierdzenie wystawi paragon fiskalny."
-                            )
-                        );
-                        let confirmation =
-                            ElementHandle::find_by_accessible_label(window, "Dodaj do wydruku")
-                                .filter(|element| {
-                                    element.accessible_role() == Some(AccessibleRole::Button)
-                                })
-                                .last()
-                                .ok_or("missing confirmation")?;
-                        confirmation.invoke_accessible_default_action();
-                        confirmation.invoke_accessible_default_action();
-                        Ok(())
-                    });
+                if app.model.stopping {
+                    return Ok(());
                 }
-                if history {
-                    assert_eq!(
-                        printer.receipts().len(),
-                        1,
-                        "one operator confirmation creates one fiscal receipt"
-                    );
-                    assert_eq!(
-                        fake.job(Uuid::from_u128(100))["state"],
-                        "done",
-                        "Holuto accepts the printed result"
-                    );
-                    assert_eq!(
-                        window
-                            .get_history()
-                            .row_data(0)
-                            .and_then(|row| row.row_data(2))
-                            .map(|cell| cell.text.to_string()),
-                        Some("1".into()),
-                        "operator sees printer-assigned receipt number"
-                    );
-                    app.stop(true)?;
-                }
+                let window = app.window.as_ref().ok_or("missing window")?;
+                window.set_tab(2);
+                let language = control(window, "Język", AccessibleRole::Combobox)
+                    .map_err(|error| error.to_string())?;
+                assert_eq!(language.accessible_enabled(), Some(true));
+                language.invoke_accessible_expand_action();
+                ElementHandle::find_by_accessible_label(window, "English")
+                    .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+                    .ok_or("missing English language choice")?
+                    .mock_single_click(PointerEventButton::Left);
+                // The real callback queues behind this worker-event callback.
+                with_app(|app| {
+                    let window = app.window.as_ref().ok_or("missing translated window")?;
+                    assert_eq!(window.get_processing_state(), "Running");
+                    assert_eq!(window.get_holuto_state(), "Connected");
+                    assert_eq!(window.get_printer_state(), "Ready");
+                    assert!(app.worker.is_some());
+                    app.stop(true)
+                });
                 Ok(())
             });
         });
@@ -115,24 +78,44 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
     state.model.running = true;
     drop(state);
     slint::run_event_loop_until_quit()?;
-    assert!(
-        !app.borrow().model.running,
-        "quit waits for Stopped and joins the worker"
+    assert!(!app.borrow().model.running);
+    let receipts = simulator.receipts();
+    assert_eq!(
+        (
+            receipts.len(),
+            receipts.first().map(|receipt| receipt.total)
+        ),
+        (1, Some(25_000)),
+        "the queued job leaves exactly one printed receipt for its total"
     );
     assert_eq!(
-        simulator.receipts().len(),
-        1,
-        "the queued document leaves one printed receipt"
+        receipts
+            .first()
+            .and_then(|receipt| receipt.buyer_nip.as_deref()),
+        Some("5261040828"),
+        "the buyer NIP comes from the Holuto job"
+    );
+    let settled = holuto.job(job);
+    assert_eq!(
+        (&settled["state"], &settled["receiptNumber"]),
+        (&json!("done"), &json!("1")),
+        "Holuto accepts the printer-assigned receipt number"
+    );
+    let results = holuto
+        .requests()
+        .iter()
+        .filter(|request| request.path.ends_with("/result"))
+        .count();
+    assert_eq!(
+        results, 1,
+        "language selection never reprints or resends a result"
     );
     assert_eq!(
-        holuto
-            .requests()
-            .into_iter()
-            .filter(|request| request.method == "POST" && request.path == "/agent/jobs")
-            .map(|request| request.body)
-            .collect::<Vec<_>>(),
-        [json!({"kind":"sale", "orderId": ORDER_ID, "allocationId":null, "buyerNip":null})],
-        "a second accessible confirmation cannot queue a second fiscal job"
+        Settings::load(&app.borrow().dir)?
+            .ok_or("missing saved language")?
+            .language,
+        i18n::LanguagePreference::En,
+        "language selection persists while the fiscal worker is running"
     );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
@@ -167,7 +150,7 @@ fn overdue_elzab_daily_report_is_available_and_leaves_an_unresolved_block()
         token: holuto.token().into(),
         port: simulator.address().into(),
         vendor: Some(Vendor::Elzab),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
@@ -296,7 +279,7 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
@@ -402,7 +385,7 @@ fn event_loop_ending_without_quit_still_finishes_the_held_print() -> Result<(), 
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
@@ -475,17 +458,11 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
     simulator.set_clock("2025-10-24T10:00:00Z".parse()?);
     simulator.fault("dailyrep", Fault::CorruptReply);
     let holuto = Holuto::new();
-    holuto.documents(vec![json!({
-        "kind": "sale", "orderId": ORDER_ID, "orderNumber": 10, "allocationId": null,
-        "amount": "250.00", "customerName": "private-customer-canary",
-        "occurredAt": "2025-10-24T10:00:00Z", "dueAt": "2025-10-24T10:00:00Z",
-        "latestAt": "2025-10-24T10:00:00Z", "isOverdue": false
-    })]);
     let settings = Settings {
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = Rc::new(RefCell::new(Application::new(
@@ -516,7 +493,6 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
                 for private in [
                     private_url.as_str(),
                     private_token.as_str(),
-                    "private-customer-canary",
                     "customerName",
                     "orderId",
                     "amount",
@@ -578,7 +554,7 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
                         });
                     }
                     if quit {
-                        window.set_tab(3);
+                        window.set_tab(2);
                         app.capture();
                         app.sync();
                         button(&window, "Zakończ")

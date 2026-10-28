@@ -8,13 +8,14 @@
 use std::{
     env,
     error::Error,
+    fs,
     io::{self, Write},
     path::Path,
     process::Command,
 };
 
 #[cfg(target_os = "macos")]
-use agent::{history, status::Snapshot, store::StateDir, testing::JOB_ID, worker};
+use agent::{status::Snapshot, store::StateDir, testing::JOB_ID, worker};
 #[cfg(target_os = "macos")]
 use serde_json::json;
 
@@ -46,6 +47,9 @@ mod application {
 )]
 #[path = "../autostart.rs"]
 mod autostart;
+#[cfg(target_os = "macos")]
+#[path = "../localization.rs"]
+mod localization;
 #[cfg(target_os = "macos")]
 #[expect(
     dead_code,
@@ -129,17 +133,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         "AppKit exited before the stopped status was published"
     );
     let dir = StateDir::open(state.path().to_owned())?;
+    let accepted: serde_json::Value =
+        serde_json::from_slice(&fs::read(state.path().join("accepted-job.json"))?)?;
     assert_eq!(
-        serde_json::to_value(history::load(&dir)?)?,
-        json!([{
-            "jobId": JOB_ID,
-            "printedAt": "2025-10-24T10:00:00Z",
-            "receiptNumber": "1",
-            "total": 25000,
-            "payments": [["card", 25000]],
-            "items": ["Wymiana oleju", "Klocki hamulcowe"]
-        }]),
-        "the held receipt printed and settled before exit"
+        accepted.get("id"),
+        Some(&json!(JOB_ID)),
+        "the evidence describes the queued job"
+    );
+    assert_eq!(
+        accepted.get("state"),
+        Some(&json!("done")),
+        "Holuto accepted the result before native exit"
+    );
+    assert_eq!(
+        accepted.get("receiptNumber"),
+        Some(&json!("1")),
+        "Holuto recorded the printed receipt number"
     );
     assert!(
         !worker::journal_block(&dir).blocked,

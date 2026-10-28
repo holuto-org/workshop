@@ -4,6 +4,7 @@
 //! Drivers fill [`Capabilities`]; receipt validation and Holuto telemetry read them, so
 //! no vendor's limits live outside its driver crate.
 
+use i18n::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::{decimal, error::Error, receipt::VAT_SLOTS};
@@ -57,16 +58,23 @@ impl VatRate {
         !matches!(self.kind, VatKind::Inactive)
     }
 
-    pub fn label(self) -> String {
-        let letter = char::from(b'A'.saturating_add(self.slot));
+    pub fn message(self) -> Message {
+        let letter = char::from(b'A'.saturating_add(self.slot)).to_string();
         let rate = match self.kind {
-            VatKind::Exempt => "zwolniona".to_owned(),
-            VatKind::Rate { basis_points } => {
-                format!("{}%", decimal::format(basis_points.into(), 2)).replace('.', ",")
-            },
-            VatKind::Inactive => "nieaktywna".to_owned(),
+            VatKind::Exempt => Message::new("fiscal-vat-exempt"),
+            VatKind::Rate { basis_points } => Message::literal(
+                format!("{}%", decimal::format(basis_points.into(), 2)).replace('.', ","),
+            ),
+            VatKind::Inactive => Message::new("fiscal-vat-inactive"),
         };
-        format!("{letter} · {rate}")
+        Message::new("fiscal-vat-label")
+            .arg("letter", letter)
+            .arg("rate", rate)
+    }
+
+    /// Stable Polish label for persisted diagnostics.
+    pub fn label(self) -> String {
+        self.message().to_string()
     }
 }
 
@@ -96,7 +104,7 @@ impl Capabilities {
 /// Readiness failures shared by drivers, independent of vendor status bits.
 #[derive(Clone, Debug)]
 pub enum Problem {
-    Blocking(String),
+    Blocking(Message),
     DailyReportOverdue,
     /// Sales and daily reports are refused. Monthly and periodic reports print only when
     /// `periodic_reports` is set, i.e. the driver's specification permits them in this mode.
@@ -106,18 +114,24 @@ pub enum Problem {
 }
 
 impl Problem {
-    fn description(&self) -> &str {
+    pub fn message(&self) -> Message {
         match self {
-            Self::Blocking(message) => message,
-            Self::DailyReportOverdue => "Wymagany zaległy raport dobowy",
-            Self::ReadOnly { .. } => "Drukarka jest w trybie tylko do odczytu",
+            Self::Blocking(message) => message.clone(),
+            Self::DailyReportOverdue => Message::new("fiscal-daily-overdue"),
+            Self::ReadOnly { .. } => Message::new("fiscal-read-only"),
         }
     }
 }
 
 impl From<&str> for Problem {
     fn from(value: &str) -> Self {
-        Self::Blocking(value.to_owned())
+        Self::Blocking(Message::literal(value))
+    }
+}
+
+impl From<Message> for Problem {
+    fn from(value: Message) -> Self {
+        Self::Blocking(value)
     }
 }
 
@@ -176,23 +190,21 @@ impl Device {
             && self.problems.iter().all(tolerated)
     }
 
-    pub fn description(&self) -> String {
+    pub fn message(&self) -> Message {
         if self.ready() {
-            "Gotowa do drukowania".to_owned()
+            Message::new("fiscal-ready")
         } else if !valid_unique_number(&self.unique_number) {
-            "Nieprawidłowy numer unikatowy drukarki".to_owned()
+            Message::new("fiscal-invalid-unique-number")
         } else if !self.vat.iter().all(|r| r.legal_letter()) {
-            "Nieprawidłowe przypisanie liter VAT A–E".to_owned()
+            Message::new("fiscal-invalid-vat-letters")
         } else {
-            let mut description = String::new();
-            for problem in &self.problems {
-                if !description.is_empty() {
-                    description.push_str(". ");
-                }
-                description.push_str(problem.description());
-            }
-            description
+            Message::join(self.problems.iter().map(Problem::message), ". ")
         }
+    }
+
+    /// Stable Polish description for CLI and persisted diagnostics.
+    pub fn description(&self) -> String {
+        self.message().to_string()
     }
 
     /// Refuses while any problem needs operator intervention.
@@ -200,7 +212,7 @@ impl Device {
         if self.ready() {
             Ok(())
         } else {
-            Err(Error::NotReady(self.description()))
+            Err(Error::NotReady(self.message()))
         }
     }
 
@@ -209,7 +221,7 @@ impl Device {
         if self.daily_report_allowed() {
             Ok(())
         } else {
-            Err(Error::NotReady(self.description()))
+            Err(Error::NotReady(self.message()))
         }
     }
 
@@ -219,7 +231,7 @@ impl Device {
         if self.periodic_reports_allowed() {
             Ok(())
         } else {
-            Err(Error::NotReady(self.description()))
+            Err(Error::NotReady(self.message()))
         }
     }
 
@@ -235,7 +247,7 @@ impl Device {
         }) {
             Ok(())
         } else {
-            Err(Error::NotReady(self.description()))
+            Err(Error::NotReady(self.message()))
         }
     }
 
@@ -244,11 +256,11 @@ impl Device {
         if self.unique_number == unique_number {
             Ok(())
         } else {
-            Err(Error::Invalid(format!(
-                "Podłączona drukarka {} nie jest drukarką {unique_number}, \
-                 której dotyczy operacja.",
-                self.unique_number
-            )))
+            Err(Error::Invalid(
+                Message::new("fiscal-wrong-printer")
+                    .arg("actual", self.unique_number.as_str())
+                    .arg("unique_number", unique_number),
+            ))
         }
     }
 }

@@ -39,8 +39,8 @@ fn login_checkbox_registers_and_persists_without_pairing_or_unsaved_edits()
         return Ok(());
     }
     let (_temporary, app, window) = fixture_with_event_loop()?;
-    // Typed but never saved: only Zapisz, Uruchom or pairing may persist connection edits.
-    window.set_api_url("https://unsaved.example".into());
+    window.set_tab(2);
+    // Not committed yet: only committing a field, Uruchom or pairing persists connection edits.
     window.set_port("/dev/ttyUNSAVED".into());
     // An opt-out whose own write has not landed yet must still reach the new file.
     window.set_telemetry_enabled(false);

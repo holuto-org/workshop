@@ -72,7 +72,7 @@ fn demo_mode_keeps_all_other_preflight_gates() {
         let mut journal = Recorder::default();
         assert!(matches!(
             driver.print_receipt(&sale(), &expected, &mut journal),
-            Err(Error::NotReady(reason)) if reason == problem
+            Err(Error::NotReady(reason)) if reason.to_string() == problem
         ));
         assert_eq!(journal.stages, Vec::<&str>::new());
         assert_eq!(fiscal_commands(&sim), Vec::<String>::new());

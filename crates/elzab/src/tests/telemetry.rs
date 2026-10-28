@@ -85,8 +85,10 @@ fn refused_step_traces_command_and_code_but_never_fiscal_payloads() {
 fn accepted_daily_report_is_traced_as_uncertain_not_printed() {
     let captured = capture(|| {
         let sim = Simulator::start();
+        let driver = printer(&sim);
+        let unique_number = driver.probe().unwrap().unique_number;
         assert!(matches!(
-            printer(&sim).print_report(Report::Daily, &sim_unique(&sim), &mut Log::default()),
+            driver.print_report(Report::Daily, &unique_number, &mut Log::default()),
             Err(Error::Uncertain(_))
         ));
     });
@@ -100,10 +102,6 @@ fn accepted_daily_report_is_traced_as_uncertain_not_printed() {
         );
     }
     assert!(!captured.contains("Report printed"), "{captured}");
-}
-
-fn sim_unique(sim: &Simulator) -> String {
-    printer(sim).probe().unwrap().unique_number
 }
 
 #[test]

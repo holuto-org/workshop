@@ -409,16 +409,14 @@ fn pair(path: &Path, code: String) -> Result<Response, Failure> {
                 result = Err(Failure {
                     exit,
                     code,
-                    message,
+                    message: message.to_string(),
                 });
             },
             Event::Stopped => break,
-            Event::Status { .. }
+            Event::Problem(_)
             | Event::PortDetected { .. }
             | Event::Connected { .. }
-            | Event::Documents { .. }
             | Event::Device { .. }
-            | Event::HistoryChanged(_)
             | Event::CommandCompleted => {},
         }
     }

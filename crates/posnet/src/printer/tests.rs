@@ -43,8 +43,8 @@ impl Journal for Operator<'_> {
         Ok(())
     }
 
-    fn waiting(&mut self, problem: Option<&str>) {
-        self.heard.push(problem.map(str::to_owned));
+    fn waiting(&mut self, problem: Option<&i18n::Message>) {
+        self.heard.push(problem.map(ToString::to_string));
         match (self.action, problem) {
             (Action::Resume, Some(_)) => {
                 self.sim.set_paper(true);
@@ -151,7 +151,7 @@ fn every_error_exit_clears_the_operator_notice() {
         if matches!(action, Action::CorruptQuery) {
             assert!(
                 matches!(&error, Error::Protocol(message)
-                    if message == "Uszkodzona odpowiedź drukarki (CRC lub kodowanie)."),
+                    if message.to_string() == "Uszkodzona odpowiedź drukarki (CRC lub kodowanie)."),
                 "{error:?}"
             );
         } else {
@@ -253,7 +253,7 @@ impl Journal for Silent {
         Ok(())
     }
 
-    fn waiting(&mut self, problem: Option<&str>) {
+    fn waiting(&mut self, problem: Option<&i18n::Message>) {
         panic!("no operator wait was reported, got {problem:?}");
     }
 }

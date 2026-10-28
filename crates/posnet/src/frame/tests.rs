@@ -44,7 +44,7 @@ fn documented_device_errors_preserve_the_command_code_and_field() {
             matches!(&error,
                 Error::Device { code:2036, command, detail, rejected }
                 if command == "trinit"
-                    && detail == "Drukarka zwróciła błąd 2036 (trinit, parametr ts). Urządzenie w stanie tylko do odczytu."
+                    && detail.to_string() == "Drukarka zwróciła błąd 2036 (trinit, parametr ts). Urządzenie w stanie tylko do odczytu."
                     && *rejected == expected_rejected),
             "{error:?}"
         );

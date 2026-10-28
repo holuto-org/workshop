@@ -14,6 +14,7 @@ use std::{
     error::Error as StdError,
     fmt,
     io::{ErrorKind, Read as _},
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -26,31 +27,33 @@ use ureq::{
 };
 use uuid::Uuid;
 
-use crate::{
-    Error,
-    documents::{BuyerNip, Document},
-    settings,
-};
-use model::{Job, Page, Pairing, PrinterStatus, QueueForm, ResultForm, Telemetry};
+use i18n::Message;
 
-/// Backend page-size limit.
-pub const DOCUMENTS_LIMIT: usize = 100;
+use crate::{Error, settings};
+use model::{Job, Pairing, PrinterStatus, ResultForm, Telemetry};
+
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
 /// Sent as `agent/<SemVer>` for the backend's `App-Version` gate.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Process-wide diagnostics consent shared with the desktop's capture and transport.
+///
+/// The desktop initializes this before starting any worker and updates it on live opt-out.
+/// Sampling or a disabled transport alone does not suppress SDK propagation headers.
+pub static DIAGNOSTICS_ENABLED: AtomicBool = AtomicBool::new(true);
+
 #[derive(thiserror::Error)]
 pub enum ApiError {
     /// Stops processing; tokens are never refreshed automatically.
-    #[error("Holuto odrzuciło parowanie drukarki (401). Sparuj drukarkę ponownie w Ustawieniach.")]
+    #[error("{}", self.message())]
     Unauthorized,
-    #[error("Holuto odpowiedziało błędem {status}{}", problem(.detail.as_deref()))]
+    #[error("{}", self.message())]
     Status { status: u16, detail: Option<String> },
-    #[error("Błąd komunikacji z Holuto: {0}")]
+    #[error("{}", self.message())]
     Transport(TransportFailure),
-    #[error("Nieprawidłowa odpowiedź Holuto ({0}).")]
-    Response(String),
+    #[error("{}", self.message())]
+    Response(Message),
 }
 
 impl fmt::Debug for ApiError {
@@ -70,22 +73,54 @@ impl fmt::Debug for ApiError {
 /// Categories only: never retains peer-controlled strings or credentials.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TransportFailure {
-    #[error("Przekroczono czas oczekiwania.")]
+    #[error("{}", self.message())]
     Timeout,
-    #[error("Serwer odrzucił połączenie.")]
+    #[error("{}", self.message())]
     ConnectionRefused,
-    #[error("Nie udało się nawiązać połączenia.")]
+    #[error("{}", self.message())]
     Connection,
-    #[error("Nie można odnaleźć serwera.")]
+    #[error("{}", self.message())]
     Dns,
-    #[error("Nie można zweryfikować bezpiecznego połączenia TLS.")]
+    #[error("{}", self.message())]
     Tls,
-    #[error("Nieprawidłowa odpowiedź protokołu HTTP.")]
+    #[error("{}", self.message())]
     Protocol,
-    #[error("Przerwano transmisję danych.")]
+    #[error("{}", self.message())]
     Io,
-    #[error("Nie można połączyć przez skonfigurowany serwer proxy.")]
+    #[error("{}", self.message())]
     Proxy,
+}
+
+impl ApiError {
+    pub fn message(&self) -> Message {
+        match self {
+            Self::Unauthorized => Message::new("agent-api-unauthorized"),
+            Self::Status { status, detail } => Message::new("agent-api-status")
+                .arg("status", *status)
+                .arg("detail", problem(detail.as_deref())),
+            Self::Transport(failure) => {
+                Message::new("agent-api-transport").arg("detail", failure.message())
+            },
+            Self::Response(detail) => {
+                Message::new("agent-api-response").arg("detail", detail.clone())
+            },
+        }
+    }
+}
+
+impl TransportFailure {
+    pub const fn message(self) -> Message {
+        Message::new(match self {
+            Self::Timeout => "agent-transport-timeout",
+            Self::ConnectionRefused => "agent-transport-refused",
+            Self::Connection => "agent-transport-connection",
+            Self::Dns => "agent-transport-dns",
+            Self::Tls => "agent-transport-tls",
+            Self::Protocol => "agent-transport-protocol",
+            Self::Io => "agent-transport-io",
+            Self::Proxy => "agent-transport-proxy",
+        })
+    }
 }
 
 impl From<ureq::Error> for ApiError {
@@ -124,7 +159,7 @@ impl From<ureq::Error> for ApiError {
                 TransportFailure::Proxy
             },
             ureq::Error::BodyExceedsLimit(_) | ureq::Error::LargeResponseHeader(..) => {
-                return Self::Response("przekroczony limit rozmiaru odpowiedzi".to_owned());
+                return Self::Response(Message::new("agent-response-limit"));
             },
             _ => TransportFailure::Protocol,
         };
@@ -153,12 +188,11 @@ impl Api {
     /// Exchanges a single-use human code; never sends a token or printer identity.
     pub fn pair(api_url: &str, code: &str) -> Result<Pairing, Error> {
         if api_url.trim().is_empty() {
-            return Err(Error::Invalid("Wpisz adres API w Ustawieniach.".to_owned()));
+            return Err(Error::Invalid(settings::Settings::missing_api_url()));
         }
         // Typos must not consume the backend's per-address pairing attempts.
-        let code = pairing_code(code).ok_or_else(|| {
-            Error::Invalid("Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234.".to_owned())
-        })?;
+        let code =
+            pairing_code(code).ok_or_else(|| Error::Invalid(Message::new("agent-pair-code")))?;
         let base_url = settings::api_url(api_url)?;
         let span = tracing::info_span!(
             "holuto.request",
@@ -178,11 +212,9 @@ impl Api {
             .send_json(model::PairForm { code })
             .map_err(ApiError::from)?;
         // Malformed responses may contain credentials; discard body and parser text.
-        let paired: Pairing = decode(response)
+        let paired: Pairing = decode(response, None)
             .map_err(|error| match error {
-                ApiError::Response(_) => {
-                    ApiError::Response("nieprawidłowe dane parowania".to_owned())
-                },
+                ApiError::Response(_) => ApiError::Response(Message::new("agent-response-pairing")),
                 ApiError::Status { status, .. } => ApiError::Status {
                     status,
                     detail: match status {
@@ -205,7 +237,7 @@ impl Api {
                 .is_some_and(|byte| b"AEIMQUYcgkosw048".contains(byte))
             || paired.printer_id.is_nil()
         {
-            return Err(ApiError::Response("nieprawidłowe dane parowania".to_owned()).into());
+            return Err(ApiError::Response(Message::new("agent-response-pairing")).into());
         }
         Ok(paired)
     }
@@ -214,15 +246,11 @@ impl Api {
         let base_url = settings::api_url(api_url)?;
         if !(1..=4096).contains(&token.len()) || !token.bytes().all(|byte| byte.is_ascii_graphic())
         {
-            return Err(Error::Invalid(
-                "Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-pair-required")));
         }
         let identity_valid = valid_unique_number(unique_number);
         if !identity_valid {
-            return Err(Error::Invalid(
-                "Numer unikatowy musi zawierać 3 wielkie litery i 10 cyfr.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-invalid-identity")));
         }
         Ok(Self {
             agent: http_agent(&base_url),
@@ -233,11 +261,7 @@ impl Api {
         })
     }
 
-    fn get<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-    ) -> Result<Option<T>, ApiError> {
+    fn get<T: DeserializeOwned>(&self, path: &str) -> Result<Option<T>, ApiError> {
         let span = tracing::info_span!(
             "holuto.request",
             sentry.op = "http.client",
@@ -247,8 +271,7 @@ impl Api {
         );
         let _entered = span.enter();
         let request = self.headers(self.agent.get(self.url(path)), path);
-        decode(request.query_pairs(query.iter().copied()).call()?)
-            .map_err(|error| self.redact(error))
+        decode(request.call()?, Some(self.credential())).map_err(|error| self.redact(error))
     }
 
     fn post<T: DeserializeOwned>(
@@ -265,15 +288,25 @@ impl Api {
         );
         let _entered = span.enter();
         let request = self.headers(self.agent.post(self.url(path)), path);
-        decode(match body {
-            Some(body) => request.send_json(body),
-            None => request.send_empty(),
-        }?)
+        decode(
+            match body {
+                Some(body) => request.send_json(body),
+                None => request.send_empty(),
+            }?,
+            Some(self.credential()),
+        )
         .map_err(|error| self.redact(error))
     }
 
     fn url(&self, path: &str) -> String {
         format!("{}/agent/{path}", self.base_url)
+    }
+
+    fn credential(&self) -> &str {
+        self.authorization
+            .as_str()
+            .strip_prefix("Bearer ")
+            .unwrap_or_default()
     }
 
     fn redact(&self, mut error: ApiError) -> ApiError {
@@ -286,11 +319,11 @@ impl Api {
             ApiError::Status {
                 detail: Some(detail),
                 ..
-            }
-            | ApiError::Response(detail) => {
+            } => {
                 *detail = detail.replace(token, "[REDACTED]");
             },
             ApiError::Unauthorized
+            | ApiError::Response(_)
             | ApiError::Transport(_)
             | ApiError::Status { detail: None, .. } => {},
         }
@@ -326,9 +359,7 @@ impl Api {
             .check(&self.unique_number)
             .map_err(ApiError::Response)?;
         if self.printer_id.is_some_and(|id| id != printer.id) {
-            return Err(ApiError::Response(
-                "parowanie przypisane do innej drukarki".to_owned(),
-            ));
+            return Err(ApiError::Response(Message::new("agent-response-printer")));
         }
         self.printer_id = Some(printer.id);
         Ok(())
@@ -344,9 +375,9 @@ impl Api {
     }
 
     pub fn job(&self, id: Uuid) -> Result<Job, ApiError> {
-        let job: Job = self.get(&format!("jobs/{id}"), &[])?.ok_or_else(empty)?;
+        let job: Job = self.get(&format!("jobs/{id}"))?.ok_or_else(empty)?;
         if job.id != id {
-            return Err(ApiError::Response("stan innego zadania".to_owned()));
+            return Err(ApiError::Response(Message::new("agent-response-job")));
         }
         Ok(job)
     }
@@ -360,27 +391,8 @@ impl Api {
             && job.state == result.state.into()
             && job.receipt_number == result.receipt_number;
         if !echoed {
-            return Err(ApiError::Response(
-                "wynik zadania nie został zapisany zgodnie z raportem".to_owned(),
-            ));
+            return Err(ApiError::Response(Message::new("agent-response-result")));
         }
-        Ok(())
-    }
-
-    pub fn documents(&self, cursor: Option<&str>) -> Result<Page, ApiError> {
-        let limit = DOCUMENTS_LIMIT.to_string();
-        let mut query = vec![("limit", limit.as_str())];
-        if let Some(cursor) = cursor {
-            query.push(("cursor", cursor));
-        }
-        let page: Page = self.get("documents", &query)?.ok_or_else(empty)?;
-        page.check().map_err(ApiError::Response)?;
-        Ok(page)
-    }
-
-    /// Parses the unused job to enforce the response contract.
-    pub fn queue(&self, form: &QueueForm) -> Result<(), ApiError> {
-        let _job: Job = self.post("jobs", Some(form))?.ok_or_else(empty)?;
         Ok(())
     }
 }
@@ -402,6 +414,9 @@ fn pairing_code(input: &str) -> Option<String> {
 
 /// sentry-core emits sentry-trace, not baggage; do not fabricate headers.
 fn trace_headers<B>(request: RequestBuilder<B>) -> RequestBuilder<B> {
+    if !DIAGNOSTICS_ENABLED.load(Ordering::SeqCst) {
+        return request;
+    }
     sentry_core::Hub::with_active(|hub| {
         hub.configure_scope(|scope| scope.iter_trace_propagation_headers().collect::<Vec<_>>())
     })
@@ -435,15 +450,16 @@ fn route(path: &str) -> &'static str {
     match path {
         "session" => "/agent/session",
         "heartbeat" => "/agent/heartbeat",
-        "documents" => "/agent/documents",
         "jobs/take" => "/agent/jobs/take",
-        "jobs" => "/agent/jobs",
         other if other.ends_with("/result") => "/agent/jobs/{id}/result",
         _ => "/agent/jobs/{id}",
     }
 }
 
-fn decode<T: DeserializeOwned>(response: Response<Body>) -> Result<Option<T>, ApiError> {
+fn decode<T: DeserializeOwned>(
+    response: Response<Body>,
+    credential: Option<&str>,
+) -> Result<Option<T>, ApiError> {
     let status = response.status();
     let _recorded = tracing::Span::current().record("status", status.as_u16());
     if status == StatusCode::UNAUTHORIZED {
@@ -457,15 +473,20 @@ fn decode<T: DeserializeOwned>(response: Response<Body>) -> Result<Option<T>, Ap
         .read_to_end(&mut bytes)
         .map_err(ureq::Error::from)?;
     if !u64::try_from(bytes.len()).is_ok_and(|length| length <= MAX_RESPONSE) {
-        return Err(ApiError::Response(
-            "przekroczony limit rozmiaru odpowiedzi".to_owned(),
-        ));
+        return Err(ApiError::Response(Message::new("agent-response-limit")));
     }
     match status {
         StatusCode::NO_CONTENT => Ok(None),
-        StatusCode::OK | StatusCode::CREATED => serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|error| ApiError::Response(error.to_string())),
+        StatusCode::OK | StatusCode::CREATED => {
+            serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+                let detail = error.to_string();
+                let redacted = match credential {
+                    Some(token) => detail.replace(token, "[REDACTED]"),
+                    None => detail,
+                };
+                ApiError::Response(Message::literal(redacted))
+            })
+        },
         other => Err(ApiError::Status {
             status: other.as_u16(),
             detail: problem_detail(&bytes),
@@ -491,21 +512,8 @@ fn problem(detail: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-fn empty() -> ApiError {
-    ApiError::Response("pusta odpowiedź".to_owned())
-}
-
-/// Rejects inconsistent document identities before queueing.
-pub fn queue_form(document: &Document, buyer_nip: Option<BuyerNip>) -> Result<QueueForm, Error> {
-    document
-        .check()
-        .map_err(|problem| Error::Invalid(format!("Nieprawidłowy dokument: {problem}.")))?;
-    Ok(QueueForm {
-        allocation_id: document.allocation_id,
-        buyer_nip: buyer_nip.map(BuyerNip::into_string),
-        kind: document.kind,
-        order_id: document.order_id,
-    })
+const fn empty() -> ApiError {
+    ApiError::Response(Message::new("agent-response-empty"))
 }
 
 #[cfg(test)]

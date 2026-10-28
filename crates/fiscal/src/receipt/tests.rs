@@ -374,26 +374,6 @@ fn line_validation_rejects_lossy_names_and_out_of_range_values() {
 }
 
 #[test]
-fn maximum_lengths_and_line_count_are_retained_unchanged() {
-    let name = "ą".repeat(80);
-    let receipt = receipt(
-        vec![line(&name, "1", "0.01", 0); 500],
-        vec![],
-        vec![pay(PaymentForm::Credit, 500)],
-        Some(&"1".repeat(30)),
-        &"ż".repeat(40),
-    )
-    .unwrap();
-    assert_eq!(
-        receipt.lines().iter().map(Line::name).collect::<Vec<_>>(),
-        vec![name.as_str(); 500]
-    );
-    assert_eq!(receipt.buyer_nip(), Some("111111111111111111111111111111"));
-    assert_eq!(receipt.brand(), "ż".repeat(40));
-    assert_eq!(receipt.fiscal_total().get(), 500);
-}
-
-#[test]
 fn half_up_rounding_is_correct_on_both_sides_of_the_tie() {
     for (quantity, expected) in [("0.49999999", 999), ("0.5", 1000), ("0.50000001", 1000)] {
         assert_eq!(

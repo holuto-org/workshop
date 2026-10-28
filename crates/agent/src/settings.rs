@@ -10,6 +10,8 @@ use fiscal::device::Vendor;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
+use i18n::{LanguagePreference, Message};
+
 use crate::{
     Error,
     store::{self, StateDir},
@@ -49,6 +51,17 @@ impl fmt::Debug for Token {
     }
 }
 
+/// The window's color scheme; the GUI applies it, the worker ignores it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    /// Follows the operating system's light or dark setting.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Settings {
@@ -62,23 +75,35 @@ pub struct Settings {
     pub vendor: Option<Vendor>,
     pub telemetry_enabled: bool,
     pub start_on_launch: bool,
+    pub theme: Theme,
+    /// UI-only preference; fiscal content and diagnostics remain Polish.
+    pub language: LanguagePreference,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            api_url: String::new(),
+            // Release builds carry the production address; `config set --api-url` overrides it.
+            api_url: option_env!("HOLUTO_API_URL").unwrap_or_default().to_owned(),
             token: Token::default(),
             port: String::new(),
             baud_rate: DEFAULT_BAUD_RATE,
             vendor: None,
             telemetry_enabled: true,
             start_on_launch: false,
+            theme: Theme::System,
+            language: LanguagePreference::System,
         }
     }
 }
 
 impl Settings {
+    /// Release builds carry the address, so only a development build or a cleared
+    /// override can lack it; the app has no address field.
+    pub const fn missing_api_url() -> Message {
+        Message::new("agent-missing-api")
+    }
+
     /// Safe before telemetry initialization, including crash-reporter subprocesses.
     /// Missing settings opt in; unreadable settings fail closed.
     pub fn telemetry_enabled_at_default_path() -> bool {
@@ -100,7 +125,7 @@ impl Settings {
     pub fn load_at(dir: &Path) -> Result<Option<Self>, Error> {
         let path = dir.join(FILE);
         let unreadable = |source| Error::Store {
-            action: "Nie można odczytać ustawień",
+            action: Message::new("agent-read-settings"),
             path: path.clone(),
             source,
         };
@@ -111,12 +136,10 @@ impl Settings {
             // Serde errors may echo credentials in malformed values or keys.
             unreadable(io::Error::new(
                 ErrorKind::InvalidData,
-                format!(
-                    "Nieprawidłowy JSON ustawień ({:?}, wiersz {}, kolumna {}).",
-                    error.classify(),
-                    error.line(),
-                    error.column()
-                ),
+                Message::new("agent-invalid-settings-json")
+                    .arg("category", format!("{:?}", error.classify()))
+                    .arg("line", error.line())
+                    .arg("column", error.column()),
             ))
         })
     }
@@ -133,12 +156,26 @@ impl Settings {
         settings.write(dir)
     }
 
+    /// A look preference, also allowed before pairing or printer configuration.
+    pub fn save_theme(dir: &StateDir, theme: Theme) -> Result<(), Error> {
+        let mut settings = Self::load(dir)?.unwrap_or_default();
+        settings.theme = theme;
+        settings.write(dir)
+    }
+
+    /// Saves only the UI language, including before pairing or printer configuration.
+    pub fn save_language(dir: &StateDir, language: LanguagePreference) -> Result<(), Error> {
+        let mut settings = Self::load(dir)?.unwrap_or_default();
+        settings.language = language;
+        settings.write(dir)
+    }
+
     fn write(&self, dir: &StateDir) -> Result<(), Error> {
         let path = dir.file(FILE);
-        let bytes =
-            serde_json::to_vec_pretty(self).map_err(|error| Error::Invalid(error.to_string()))?;
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|error| Error::Invalid(Message::literal(error.to_string())))?;
         store::write_durably(&path, &bytes).map_err(|source| Error::Store {
-            action: "Nie można zapisać ustawień",
+            action: Message::new("agent-write-settings"),
             path,
             source,
         })
@@ -158,13 +195,11 @@ impl Settings {
 
     pub fn validate(&self) -> Result<(), Error> {
         if self.api_url.trim().is_empty() {
-            return Err(Error::Invalid("Wpisz adres API w Ustawieniach.".to_owned()));
+            return Err(Error::Invalid(Self::missing_api_url()));
         }
         self.validate_configuration()?;
         if self.token.as_str().is_empty() {
-            return Err(Error::Invalid(
-                "Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-pair-required")));
         }
         Ok(())
     }
@@ -176,19 +211,13 @@ impl Settings {
         }
         let token = self.token.as_str();
         if token.len() > MAX_TOKEN_LENGTH || !token.bytes().all(|byte| byte.is_ascii_graphic()) {
-            return Err(Error::Invalid(
-                "Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-pair-required")));
         }
         if self.port.chars().any(char::is_control) {
-            return Err(Error::Invalid(
-                "Nieprawidłowa nazwa portu drukarki.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-invalid-port")));
         }
         if !BAUD_RATES.contains(&self.baud_rate) {
-            return Err(Error::Invalid(
-                "Nieprawidłowa prędkość transmisji.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-invalid-baud")));
         }
         Ok(())
     }
@@ -205,13 +234,7 @@ pub(crate) const fn is_loopback(host: &Host<&str>) -> bool {
 /// Preserves path prefixes and strips trailing slashes. HTTP is allowed only on loopback;
 /// credentials, queries and fragments are rejected.
 pub(crate) fn api_url(text: &str) -> Result<String, Error> {
-    let refused = || {
-        Error::Invalid(
-            "Adres API wymaga https (http tylko dla localhost), bez danych logowania, zapytania i \
-             fragmentu."
-                .to_owned(),
-        )
-    };
+    let refused = || Error::Invalid(Message::new("agent-invalid-api"));
     let url = Url::parse(text.trim()).map_err(|_unparsable| refused())?;
     let Some(host) = url.host() else {
         return Err(refused());

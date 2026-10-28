@@ -27,6 +27,8 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use i18n::Message;
+
 use crate::{
     Error,
     api::model::{JobState, Outcome, ResultForm},
@@ -36,8 +38,6 @@ use crate::{
 const FILE: &str = "operation.json";
 /// API `Note` limit.
 const MAX_REASON_LENGTH: usize = 2000;
-const UNNUMBERED: &str = "Wydruk zakończony, ale nie odczytano numeru paragonu. Sprawdź wydruk i \
-                          rozstrzygnij zadanie w Holuto.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -145,14 +145,10 @@ impl JobResult {
     /// An unreadable receipt number stays UNKNOWN until staff supply it.
     pub(crate) fn done(receipt_number: Option<String>) -> Self {
         let Some(raw) = receipt_number else {
-            return Self::unknown(UNNUMBERED);
+            return Self::unknown(&Message::new("agent-unnumbered").to_string());
         };
         receipt_code(&raw).map_or_else(
-            || {
-                Self::unknown(
-                    "Nieprawidłowy numer wydrukowanego paragonu. Uzupełnij numer w Holuto.",
-                )
-            },
+            || Self::unknown(&Message::new("agent-invalid-receipt-number").to_string()),
             |receipt_number| Self::Done { receipt_number },
         )
     }
@@ -256,7 +252,7 @@ impl<'dir> Journal<'dir> {
     /// Never writes; an unreadable or invalid journal blocks.
     pub(crate) fn load(&self) -> Result<Option<Operation>, Error> {
         let bytes = store::read_optional(&self.path).map_err(|source| Error::Store {
-            action: "Nie można odczytać rejestru operacji. Drukowanie zablokowane",
+            action: Message::new("agent-read-journal"),
             path: self.path.clone(),
             source,
         })?;
@@ -265,18 +261,12 @@ impl<'dir> Journal<'dir> {
         };
         serde_json::from_slice(&bytes)
             .map(Some)
-            .map_err(|_invalid_json| {
-                Error::Blocked(
-                    "Uszkodzony rejestr operacji lub nieobsługiwany format. \
-             Drukowanie zablokowane; nie usuwaj pliku."
-                        .to_owned(),
-                )
-            })
+            .map_err(|_invalid_json| Error::Blocked(Message::new("agent-bad-journal")))
     }
 
     pub(crate) fn save(&self, operation: &Operation) -> Result<(), Error> {
         self.write(operation).map_err(|source| Error::Store {
-            action: "Nie można zapisać rejestru operacji",
+            action: Message::new("agent-write-journal"),
             path: self.path.clone(),
             source,
         })
@@ -365,7 +355,7 @@ fn note(reason: &str) -> String {
         cleaned.truncate(end);
     }
     if cleaned.is_empty() {
-        "Brak opisu błędu.".to_owned()
+        Message::new("agent-no-error-description").to_string()
     } else {
         cleaned
     }

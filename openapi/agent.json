@@ -15,9 +15,9 @@
     }
   ],
   "paths": {
-    "/agent/documents": {
-      "get": {
-        "operationId": "agent_documents",
+    "/agent/documents/search": {
+      "post": {
+        "operationId": "agent_document_search",
         "parameters": [
           {
             "name": "X-Device-Unique-Number",
@@ -27,29 +27,18 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "description": "Opaque: pass the previous page's `nextCursor` unchanged.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "default": 50,
-              "maximum": 100,
-              "minimum": 1
-            }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableSearch_AgentDocumentFilter_DocumentSearch_DocumentSort"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -75,6 +64,12 @@
           "408": {
             "$ref": "#/components/responses/RequestTimeout"
           },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "426": {
             "$ref": "#/components/responses/UpgradeRequired"
           },
@@ -94,7 +89,7 @@
     },
     "/agent/heartbeat": {
       "post": {
-        "operationId": "heartbeat",
+        "operationId": "agent_printer_heartbeat",
         "parameters": [
           {
             "name": "X-Device-Unique-Number",
@@ -140,7 +135,7 @@
     "/agent/jobs": {
       "post": {
         "summary": "Missing telemetry answers 409 `fiscal_printer_limits_unknown`. Names are never truncated.",
-        "operationId": "device_queue",
+        "operationId": "agent_job_create",
         "parameters": [
           {
             "name": "X-Device-Unique-Number",
@@ -200,6 +195,81 @@
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {
+            "bearerToken": []
+          }
+        ]
+      }
+    },
+    "/agent/jobs/search": {
+      "post": {
+        "operationId": "agent_job_search",
+        "parameters": [
+          {
+            "name": "X-Device-Unique-Number",
+            "in": "header",
+            "description": "Fiscal memory unique number pinned by the printer's first session.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableSearch_AgentJobFilter_JobSearch_JobSort"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_JobView"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "408": {
+            "$ref": "#/components/responses/RequestTimeout"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "426": {
             "$ref": "#/components/responses/UpgradeRequired"
           },
@@ -219,7 +289,7 @@
     },
     "/agent/jobs/take": {
       "post": {
-        "operationId": "take",
+        "operationId": "agent_job_take",
         "parameters": [
           {
             "name": "X-Device-Unique-Number",
@@ -283,7 +353,7 @@
     },
     "/agent/jobs/{jobId}": {
       "get": {
-        "operationId": "agent_job",
+        "operationId": "agent_job_get",
         "parameters": [
           {
             "name": "jobId",
@@ -355,7 +425,7 @@
     },
     "/agent/jobs/{jobId}/result": {
       "post": {
-        "operationId": "result",
+        "operationId": "agent_job_result_report",
         "parameters": [
           {
             "name": "jobId",
@@ -424,6 +494,9 @@
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "426": {
             "$ref": "#/components/responses/UpgradeRequired"
           },
@@ -444,7 +517,7 @@
     "/agent/pair": {
       "post": {
         "summary": "Redeem a human pairing proof once. Existing device authority is revoked only on success.",
-        "operationId": "redeem_pairing_code",
+        "operationId": "agent_printer_pair",
         "requestBody": {
           "content": {
             "application/json": {
@@ -487,6 +560,9 @@
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "426": {
             "$ref": "#/components/responses/UpgradeRequired"
           },
@@ -501,7 +577,7 @@
     },
     "/agent/session": {
       "post": {
-        "operationId": "session",
+        "operationId": "agent_session_create",
         "requestBody": {
           "content": {
             "application/json": {
@@ -543,6 +619,9 @@
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
           "426": {
             "$ref": "#/components/responses/UpgradeRequired"
           },
@@ -562,7 +641,7 @@
     },
     "/health": {
       "get": {
-        "operationId": "health",
+        "operationId": "health_get",
         "responses": {
           "200": {
             "content": {
@@ -584,7 +663,7 @@
     },
     "/openapi/{file}": {
       "get": {
-        "operationId": "openapi_document",
+        "operationId": "openapi_document_get",
         "parameters": [
           {
             "name": "file",
@@ -624,7 +703,7 @@
     },
     "/ready": {
       "get": {
-        "operationId": "ready",
+        "operationId": "readiness_get",
         "responses": {
           "200": {
             "content": {
@@ -735,6 +814,38 @@
           "orderNumber": {
             "type": "integer",
             "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentDocumentFilter": {
+        "type": "object",
+        "description": "The device feed's `filter` member is empty. Send the `TableSearch` envelope with a required\n`cursor` object, not an empty body.",
+        "additionalProperties": false
+      },
+      "AgentJobFilter": {
+        "type": "object",
+        "description": "The device feed is always its own printer's; it filters no other printer.",
+        "properties": {
+          "orderId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ServiceOrderId_ServiceOrderId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FiscalJobState"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
@@ -883,9 +994,11 @@
       },
       "CursorPage_AgentDocument": {
         "type": "object",
+        "description": "One window of a collection. A null cursor means its direction has nothing to continue;\na present one continues there even if those rows have since been deleted.",
         "required": [
           "items",
-          "nextCursor"
+          "nextCursor",
+          "previousCursor"
         ],
         "properties": {
           "items": {
@@ -965,6 +1078,80 @@
               "string",
               "null"
             ]
+          },
+          "previousCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CursorPage_JobView": {
+        "type": "object",
+        "description": "One window of a collection. A null cursor means its direction has nothing to continue;\na present one continues there even if those rows have since been deleted.",
+        "required": [
+          "items",
+          "nextCursor",
+          "previousCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A job-history row. The order's current names live outside [`Job`], so renaming a customer\nnever changes a job's representation or its `etag`.",
+              "required": [
+                "job",
+                "customerName",
+                "vehiclePlate",
+                "source"
+              ],
+              "properties": {
+                "customerName": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Name",
+                      "description": "The order's customer, or the contact name of an order without one."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "job": {
+                  "$ref": "#/components/schemas/Versioned_Job"
+                },
+                "source": {
+                  "$ref": "#/components/schemas/JobSource"
+                },
+                "vehiclePlate": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/LicensePlate",
+                      "description": "The order vehicle's current plate."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "previousCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -977,7 +1164,7 @@
               "string",
               "null"
             ],
-            "description": "Opaque: pass the previous page's `nextCursor` unchanged."
+            "description": "Opaque: pass a page's `nextCursor` or `previousCursor` unchanged."
           },
           "limit": {
             "type": "integer",
@@ -1024,6 +1211,48 @@
           }
         },
         "additionalProperties": false
+      },
+      "DocumentSearch": {
+        "type": "object",
+        "description": "Documents-feed criteria; customer names are personal data, so they travel only in a body.",
+        "properties": {
+          "q": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SearchText",
+                "description": "Literal space/comma-separated words; each must occur in the order number or customer name."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "DocumentSearch_DocumentSearch": {
+        "type": "object",
+        "description": "Documents-feed criteria; customer names are personal data, so they travel only in a body.",
+        "properties": {
+          "q": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SearchText",
+                "description": "Literal space/comma-separated words; each must occur in the order number or customer name."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "DocumentSort": {
+        "type": "string",
+        "enum": [
+          "OccurredAt"
+        ]
       },
       "Etag": {
         "type": "string",
@@ -1144,6 +1373,7 @@
           "payments",
           "attempt",
           "receiptNumber",
+          "issuedAt",
           "result",
           "createdAt",
           "takenAt",
@@ -1195,6 +1425,14 @@
           },
           "id": {
             "$ref": "#/components/schemas/FiscalJobId"
+          },
+          "issuedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The printer's issue time of the job's receipt."
           },
           "kind": {
             "$ref": "#/components/schemas/FiscalReceiptKind"
@@ -1264,6 +1502,98 @@
         },
         "additionalProperties": false
       },
+      "JobSearch": {
+        "type": "object",
+        "description": "Job-history criteria; customer names and plates are personal data, so they travel only in a\nbody.",
+        "properties": {
+          "q": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SearchText",
+                "description": "Literal space/comma-separated words, folded for case and accents; each must occur in the\norder number, customer name (or the order's contact name), receipt number, vehicle plate\nor a line name."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "JobSearch_JobSearch": {
+        "type": "object",
+        "description": "Job-history criteria; customer names and plates are personal data, so they travel only in a\nbody.",
+        "properties": {
+          "q": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SearchText",
+                "description": "Literal space/comma-separated words, folded for case and accents; each must occur in the\norder number, customer name (or the order's contact name), receipt number, vehicle plate\nor a line name."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "JobSort": {
+        "type": "string",
+        "enum": [
+          "Id",
+          "CreatedAt"
+        ]
+      },
+      "JobSource": {
+        "type": "string",
+        "description": "Who queued a job. Staff identities are never exposed through this.",
+        "enum": [
+          "staff",
+          "device"
+        ]
+      },
+      "JobView": {
+        "type": "object",
+        "description": "A job-history row. The order's current names live outside [`Job`], so renaming a customer\nnever changes a job's representation or its `etag`.",
+        "required": [
+          "job",
+          "customerName",
+          "vehiclePlate",
+          "source"
+        ],
+        "properties": {
+          "customerName": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Name",
+                "description": "The order's customer, or the contact name of an order without one."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "job": {
+            "$ref": "#/components/schemas/Versioned_Job"
+          },
+          "source": {
+            "$ref": "#/components/schemas/JobSource"
+          },
+          "vehiclePlate": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LicensePlate",
+                "description": "The order vehicle's current plate."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "Label": {
         "type": "string",
         "examples": [
@@ -1281,6 +1611,14 @@
           "es",
           "ru"
         ]
+      },
+      "LicensePlate": {
+        "type": "string",
+        "description": "Normalized on input; responses always match `^[A-Z0-9]{2,12}$`.",
+        "examples": [
+          "WA12345"
+        ],
+        "minLength": 1
       },
       "Name": {
         "type": "string",
@@ -1315,27 +1653,6 @@
           "failed",
           "unknown"
         ]
-      },
-      "PageQuery": {
-        "type": "object",
-        "required": [
-          "page",
-          "pageSize"
-        ],
-        "properties": {
-          "page": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 1
-          },
-          "pageSize": {
-            "type": "integer",
-            "format": "int32",
-            "maximum": 100,
-            "minimum": 1
-          }
-        },
-        "additionalProperties": false
       },
       "PairForm": {
         "type": "object",
@@ -1529,14 +1846,22 @@
         "type": "object",
         "required": [
           "printer",
+          "configuration",
           "isOnline",
           "lastSeenAt",
           "updatedAt",
-          "isDeleted"
+          "deletedAt"
         ],
         "properties": {
-          "isDeleted": {
-            "type": "boolean",
+          "configuration": {
+            "$ref": "#/components/schemas/Versioned_PrinterConfiguration"
+          },
+          "deletedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
             "description": "ID lookups resolve deleted printers; they can no longer pair, queue or print."
           },
           "isOnline": {
@@ -1694,12 +2019,127 @@
         },
         "additionalProperties": false
       },
+      "SearchText": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+      },
       "ServiceOrderId": {
         "type": "string",
         "format": "uuid",
         "examples": [
           "0199aabc-1234-7000-8000-000000000001"
         ]
+      },
+      "ServiceOrderId_ServiceOrderId": {
+        "type": "string",
+        "format": "uuid",
+        "examples": [
+          "0199aabc-1234-7000-8000-000000000001"
+        ]
+      },
+      "TableSearch_AgentDocumentFilter_DocumentSearch_DocumentSort": {
+        "type": "object",
+        "description": "`POST …/search`: a table read with body-only criteria, an allowlisted sort and a cursor.\n\nPersonal criteria, including `q`, belong only in `search`. Empty sorting uses the service\ndefault; at most 100 keys are accepted. The `cursor` object is required and its token\noptional; `limit` defaults to `min(50, ClientLimits.max_page_size)`. Handlers must be\nside-effect free.",
+        "required": [
+          "filter",
+          "search",
+          "cursor"
+        ],
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/CursorQuery"
+          },
+          "filter": {
+            "type": "object",
+            "description": "The device feed's `filter` member is empty. Send the `TableSearch` envelope with a required\n`cursor` object, not an empty body.",
+            "additionalProperties": false
+          },
+          "search": {
+            "$ref": "#/components/schemas/DocumentSearch_DocumentSearch"
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "occurredAt",
+                "-occurredAt"
+              ]
+            },
+            "default": [
+              "occurredAt"
+            ],
+            "maxItems": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "TableSearch_AgentJobFilter_JobSearch_JobSort": {
+        "type": "object",
+        "description": "`POST …/search`: a table read with body-only criteria, an allowlisted sort and a cursor.\n\nPersonal criteria, including `q`, belong only in `search`. Empty sorting uses the service\ndefault; at most 100 keys are accepted. The `cursor` object is required and its token\noptional; `limit` defaults to `min(50, ClientLimits.max_page_size)`. Handlers must be\nside-effect free.",
+        "required": [
+          "filter",
+          "search",
+          "cursor"
+        ],
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/CursorQuery"
+          },
+          "filter": {
+            "type": "object",
+            "description": "The device feed is always its own printer's; it filters no other printer.",
+            "properties": {
+              "orderId": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ServiceOrderId_ServiceOrderId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "state": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/FiscalJobState"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "search": {
+            "$ref": "#/components/schemas/JobSearch_JobSearch"
+          },
+          "sort": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "id",
+                "-id",
+                "createdAt",
+                "-createdAt"
+              ]
+            },
+            "default": [
+              "-createdAt",
+              "-id"
+            ],
+            "maxItems": 100
+          }
+        },
+        "additionalProperties": false
       },
       "Telemetry": {
         "type": "object",
@@ -1811,6 +2251,7 @@
           "payments",
           "attempt",
           "receiptNumber",
+          "issuedAt",
           "result",
           "createdAt",
           "takenAt",
@@ -1866,6 +2307,14 @@
           },
           "id": {
             "$ref": "#/components/schemas/FiscalJobId"
+          },
+          "issuedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The printer's issue time of the job's receipt."
           },
           "kind": {
             "$ref": "#/components/schemas/FiscalReceiptKind"
@@ -1931,6 +2380,44 @@
           },
           "total": {
             "$ref": "#/components/schemas/PositiveAmount_Amount"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Versioned_PrinterConfiguration": {
+        "type": "object",
+        "description": "Stable staff command target, separate from live device telemetry and pairing proofs.",
+        "required": [
+          "id",
+          "branchId",
+          "name",
+          "credentialRevision",
+          "deletedAt",
+          "etag"
+        ],
+        "properties": {
+          "branchId": {
+            "$ref": "#/components/schemas/BranchId"
+          },
+          "credentialRevision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "deletedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "etag": {
+            "$ref": "#/components/schemas/Etag"
+          },
+          "id": {
+            "$ref": "#/components/schemas/FiscalPrinterId"
+          },
+          "name": {
+            "$ref": "#/components/schemas/Label"
           }
         },
         "additionalProperties": false
@@ -2049,6 +2536,16 @@
       },
       "UnexpectedError": {
         "description": "An unexpected server failure.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "description": "The request Content-Type is not supported.",
         "content": {
           "application/problem+json": {
             "schema": {

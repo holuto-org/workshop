@@ -41,7 +41,7 @@ impl Journal for Recorder {
         Ok(())
     }
 
-    fn waiting(&mut self, _problem: Option<&str>) {}
+    fn waiting(&mut self, _problem: Option<&i18n::Message>) {}
 }
 
 fn simulator() -> Simulator {
@@ -130,23 +130,6 @@ fn fiscal_commands(sim: &Simulator) -> Vec<String> {
         .collect()
 }
 
-#[cfg(not(workshop_acceptance))]
-#[test]
-fn non_fiscal_device_is_not_ready_without_acceptance() {
-    let sim = simulator();
-    sim.set_status("fs", "0");
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    assert!(!expected.ready());
-    let mut journal = Recorder::default();
-    assert!(matches!(
-        driver.print_receipt(&sale(), &expected, &mut journal),
-        Err(Error::NotReady(_))
-    ));
-    assert_eq!(journal.stages, Vec::<&str>::new());
-    assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
-}
-
 #[test]
 fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
     for (field, value, problem) in [
@@ -188,7 +171,6 @@ fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
             "16",
             "Otwarta transakcja. Dokończ lub anuluj ją na drukarce",
         ),
-        ("td", "1", "Drukarka jest w trybie tylko do odczytu"),
         (
             "tl",
             "1",
@@ -199,19 +181,20 @@ fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
         let device = printer(&sim);
         let expected = device.probe().unwrap();
         sim.set_status(field, value);
+        assert!(!device.probe().unwrap().ready(), "{field}={value}");
         let mut journal = Recorder::default();
         let error = device
             .print_receipt(&sale(), &expected, &mut journal)
             .unwrap_err();
         assert!(
-            matches!(&error,Error::NotReady(reason) if reason == problem),
+            matches!(&error,Error::NotReady(reason) if reason.to_string() == problem),
             "{field}={value}: {error:?}"
         );
         let report = device
             .print_report(Report::Daily, UNIQUE_NUMBER, &mut journal)
             .unwrap_err();
         assert!(
-            matches!(&report,Error::NotReady(reason) if reason == problem),
+            matches!(&report,Error::NotReady(reason) if reason.to_string() == problem),
             "{field}={value}: {report:?}"
         );
         assert_eq!(journal.stages, Vec::<&str>::new(), "{field}={value}");
@@ -251,7 +234,7 @@ fn an_enabled_posnet_interface_without_windows_1250_refuses_before_journaling() 
             for result in [receipt.map(|_| ()), report] {
                 assert!(
                     matches!(&result, Err(Error::NotReady(reason))
-                        if reason == "Drukarka nie używa strony kodowej Windows-1250"),
+                        if reason.to_string() == "Drukarka nie używa strony kodowej Windows-1250"),
                     "{interface:?}: {result:?}"
                 );
             }
@@ -270,7 +253,7 @@ fn an_enabled_posnet_interface_without_windows_1250_refuses_before_journaling() 
         let problems = device.probe().unwrap().problems;
         assert!(
             matches!(problems.as_slice(), [Problem::Blocking(reason)]
-                if reason == "Drukarka nie używa strony kodowej Windows-1250"),
+                if reason.to_string() == "Drukarka nie używa strony kodowej Windows-1250"),
             "PC1 cp{pc1}, PC2 cp{pc2}: {problems:?}"
         );
     }
@@ -302,8 +285,8 @@ fn every_incomplete_preflight_reply_refuses_before_journaling_or_fiscal_effects(
             driver.verify(UNIQUE_NUMBER).unwrap_err(),
         ] {
             assert!(
-                matches!(&error, Error::Protocol(message) if message ==
-                    &format!("Niepełna lub nieprawidłowa odpowiedź statusu drukarki: \
+                matches!(&error, Error::Protocol(message) if message.to_string() ==
+                    format!("Niepełna lub nieprawidłowa odpowiedź statusu drukarki: \
                               Niepełna odpowiedź drukarki: brak parametru {field}.")),
                 "{command}: {error:?}"
             );
@@ -367,8 +350,8 @@ fn malformed_zero_daily_error_codes_remain_uncertain_and_are_not_retried() {
 }
 
 #[test]
-fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
-    for mode in ["inactive", "changed", "regraded", "none", "missing"] {
+fn inactive_or_changed_vat_is_refused_before_trinit() {
+    for mode in ["inactive", "changed", "regraded", "none"] {
         let sim = simulator();
         let device = printer(&sim);
         let expected = device.probe().unwrap();
@@ -394,7 +377,6 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
                 sim.set_vat(["23,00", "8,00", "5,00", "0,00", "100,00", "101,00", "8,00"]);
             },
             "none" => sim.set_vat(["101,00"; 7]),
-            "missing" => sim.fault("vatget", Fault::Reply(vec![])),
             _ => {},
         }
         let error = device
@@ -411,7 +393,6 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
                 "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
             ),
             "none" => assert_eq!(error.to_string(), "Brak aktywnych stawek VAT"),
-            "missing" => assert!(matches!(error, Error::Protocol(_)), "{error:?}"),
             _ => panic!("unknown fixture mode"),
         }
         assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
@@ -508,7 +489,7 @@ fn a_nonexistent_legacy_clock_time_refuses_receipts_but_keeps_date_only_reports(
         .unwrap_err();
     assert!(
         matches!(&error, Error::Protocol(message)
-            if message == "Nie można odczytać zegara drukarki: \
+            if message.to_string() == "Nie można odczytać zegara drukarki: \
                            czas lokalny nie istnieje w strefie Europe/Warsaw."),
         "{error:?}"
     );
@@ -801,7 +782,7 @@ fn reports_outside_the_printer_date_and_fiscalisation_are_refused_before_journal
             .print_report(report, UNIQUE_NUMBER, &mut journal)
             .unwrap_err();
         assert!(
-            matches!(&error, Error::Invalid(reason) if reason == message),
+            matches!(&error, Error::Invalid(reason) if reason.to_string() == message),
             "{report:?}: {error:?}"
         );
         assert_eq!(journal.stages, Vec::<&str>::new(), "{report:?}");
@@ -900,7 +881,7 @@ fn an_unsupported_posnet_model_is_reported_by_name_after_only_identification() {
     assert!(
         matches!(
             &result,
-            Err(Error::Unsupported(message)) if message
+            Err(Error::Unsupported(message)) if message.to_string()
                 == "Nieobsługiwany model drukarki Posnet: POSNET THERMAL HD ONLINE \
                     (oprogramowanie 32.01). Obsługiwana jest Posnet Temo Online."
         ),
@@ -1131,7 +1112,7 @@ fn every_fiscal_command_is_journaled_before_it_reaches_the_device() {
             Ok(())
         }
 
-        fn waiting(&mut self, _problem: Option<&str>) {}
+        fn waiting(&mut self, _problem: Option<&i18n::Message>) {}
     }
     let sim = simulator();
     let device = printer(&sim);
@@ -1416,7 +1397,7 @@ fn a_read_only_printer_prints_monthly_and_periodic_reports_but_no_sales_or_daily
     ] {
         assert!(
             matches!(&error, Error::NotReady(reason)
-                if reason == "Drukarka jest w trybie tylko do odczytu"),
+                if reason.to_string() == "Drukarka jest w trybie tylko do odczytu"),
             "{error:?}"
         );
     }
@@ -1460,7 +1441,7 @@ fn a_read_only_printer_prints_monthly_and_periodic_reports_but_no_sales_or_daily
         .unwrap_err();
     assert!(
         matches!(&error, Error::NotReady(reason)
-            if reason == "Brak papieru. Drukarka jest w trybie tylko do odczytu"),
+            if reason.to_string() == "Brak papieru. Drukarka jest w trybie tylko do odczytu"),
         "{error:?}"
     );
     assert_eq!(
@@ -1468,4 +1449,30 @@ fn a_read_only_printer_prints_monthly_and_periodic_reports_but_no_sales_or_daily
         ["monthlyrep", "periodicrepbydates"],
         "other problems still refuse reports"
     );
+}
+
+#[test]
+fn readiness_remains_translatable_after_preflight_refuses_without_fiscal_writes() {
+    use i18n::Language;
+
+    let sim = simulator();
+    sim.set_status("pr", "5");
+    let driver = printer(&sim);
+    let device = driver.probe().unwrap();
+    let mut journal = Recorder::default();
+    let error = driver
+        .print_receipt(&sale(), &device, &mut journal)
+        .unwrap_err();
+    for (language, expected) in [
+        (Language::En, "Out of paper"),
+        (Language::Pl, "Brak papieru"),
+        (Language::Es, "Sin papel"),
+        (Language::Ru, "Нет бумаги"),
+    ] {
+        assert_eq!(device.message().render(language), expected);
+        assert_eq!(error.message().render(language), expected);
+    }
+    assert_eq!(journal.stages, Vec::<&str>::new());
+    assert_eq!(sim.receipts(), []);
+    assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
 }

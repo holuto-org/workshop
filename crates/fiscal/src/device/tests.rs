@@ -144,7 +144,9 @@ fn readiness_tolerates_only_the_problems_allowed_for_each_operation() {
         ] {
             match (result, allowed) {
                 (Ok(()), true) => {},
-                (Err(Error::NotReady(message)), false) => assert_eq!(message, description),
+                (Err(Error::NotReady(message)), false) => {
+                    assert_eq!(message.to_string(), description);
+                },
                 (result, _) => panic!("{description}: {result:?}"),
             }
         }
@@ -189,7 +191,8 @@ fn invalid_identity_blocks_every_operation_even_when_problems_are_tolerated() {
         ] {
             match result {
                 Err(Error::NotReady(message)) => assert_eq!(
-                    message, "Nieprawidłowy numer unikatowy drukarki",
+                    message.to_string(),
+                    "Nieprawidłowy numer unikatowy drukarki",
                     "{identity:?}"
                 ),
                 result => panic!("{identity:?}: {result:?}"),
@@ -246,7 +249,10 @@ fn vat_assignments_gate_readiness_reports_resolution_and_telemetry() {
             match (result, legal) {
                 (Ok(()), true) => {},
                 (Err(Error::NotReady(message)), false) => {
-                    assert_eq!(message, "Nieprawidłowe przypisanie liter VAT A–E");
+                    assert_eq!(
+                        message.to_string(),
+                        "Nieprawidłowe przypisanie liter VAT A–E"
+                    );
                 },
                 (result, _) => panic!("{label}: {result:?}"),
             }
@@ -314,4 +320,46 @@ fn operation_binding_compares_the_complete_unique_number_without_normalizing() {
         );
         assert_eq!(device.unique_number, "TST0000000001");
     }
+}
+
+#[test]
+fn existing_readiness_and_uncertainty_messages_render_in_each_ui_language() {
+    use i18n::Language;
+
+    let mut device = device();
+    device.problems.push(Problem::DailyReportOverdue);
+    let error = Error::Uncertain(Box::new(device.require_ready().unwrap_err()));
+    for (language, readiness, warning) in [
+        (
+            Language::En,
+            "Overdue daily report required",
+            "Do not send it again",
+        ),
+        (
+            Language::Pl,
+            "Wymagany zaległy raport dobowy",
+            "Nie wysyłaj jej ponownie",
+        ),
+        (
+            Language::Es,
+            "Se requiere el informe diario pendiente",
+            "No vuelva a enviarla",
+        ),
+        (
+            Language::Ru,
+            "Требуется просроченный суточный отчёт",
+            "Не отправляйте её повторно",
+        ),
+    ] {
+        let text = error.message().render(language);
+        assert!(text.contains(readiness), "{text}");
+        assert!(text.contains(warning), "{text}");
+    }
+    assert_eq!(
+        error.to_string(),
+        concat!(
+            "Wymagany zaległy raport dobowy\nWynik operacji wymaga sprawdzenia. ",
+            "Nie wysyłaj jej ponownie przed sprawdzeniem drukarki."
+        )
+    );
 }

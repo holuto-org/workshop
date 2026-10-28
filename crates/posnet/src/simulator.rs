@@ -1,4 +1,5 @@
 //! Offline TCP Temo peer using the driver's [`Session`](crate::session::Session), one at a time.
+//! Receipt lines require canonical VAT-slot names (`0`–`6`) and an active rate.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -635,15 +636,15 @@ fn number(params: &Params, key: &str) -> Result<u64, ()> {
 }
 
 impl State {
-    fn active_slots(&self) -> Vec<String> {
-        self.vat
-            .iter()
-            .enumerate()
-            .filter(|(_, rate)| {
-                decimal::parse(&rate.replace(',', "."), 2).is_some_and(|units| units <= 10_000)
+    fn active_slot(&self, slot: &str) -> bool {
+        ["0", "1", "2", "3", "4", "5", "6"]
+            .into_iter()
+            .zip(&self.vat)
+            .any(|(name, rate)| {
+                name == slot
+                    && decimal::parse(&rate.replace(',', "."), 2)
+                        .is_some_and(|units| units <= 10_000)
             })
-            .map(|(slot, _)| slot.to_string())
-            .collect()
     }
 
     fn query(&self, command: &str) -> Option<Vec<(String, String)>> {
@@ -747,7 +748,7 @@ impl State {
                     .ok_or(())?;
                 let value = quantity.times(number(&params, "pr")?).ok_or(())?;
                 let slot = params.get("vt").ok_or(())?;
-                if number(&params, "wa")? != value || !self.active_slots().contains(slot) {
+                if number(&params, "wa")? != value || !self.active_slot(slot) {
                     return Err(());
                 }
                 self.lines.push(params);

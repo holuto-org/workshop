@@ -66,7 +66,7 @@ fn another_process_cannot_open_state_until_the_holder_releases_it() -> TestResul
                 path.display()
             );
             assert!(
-                matches!(StateDir::open(path), Err(Error::Busy(message)) if message == expected),
+                matches!(StateDir::open(path), Err(Error::Busy(message)) if message.to_string() == expected),
                 "a competing process must receive the exact lock refusal"
             );
         } else {
@@ -125,34 +125,45 @@ fn atomic_replacement_keeps_an_open_reader_on_the_previous_complete_file() -> Te
     Ok(())
 }
 
+#[cfg(windows)]
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
-    reason = "Test assertions panic on violated guarantees; setup errors use Result."
+    reason = "Stale temporary files must not block a new write or lose crash evidence."
 )]
-fn failed_replacement_preserves_the_original_target() -> TestResult {
+fn stale_windows_temporaries_do_not_prevent_durable_replacement() -> TestResult {
+    use std::process::id;
+
+    const PATH: &str = "HOLUTO_TEST_STALE_TEMPORARY_PATH";
+    if let Some(path) = env::var_os(PATH) {
+        let path = PathBuf::from(path);
+        fs::write(&path, b"previous complete content")?;
+        let mut stale = Vec::new();
+        for counter in 0..2 {
+            let mut name = path.file_name().ok_or("missing filename")?.to_owned();
+            name.push(format!(".{}.{counter}.tmp", id()));
+            let temporary = path.with_file_name(name);
+            fs::write(&temporary, b"retained crash evidence")?;
+            stale.push(temporary);
+        }
+        // The fresh child has not written durably yet: its first candidate is counter zero.
+        write_durably(&path, b"replacement complete content")?;
+        assert_eq!(fs::read(&path)?, b"replacement complete content");
+        for temporary in stale {
+            assert_eq!(fs::read(temporary)?, b"retained crash evidence");
+        }
+        assert_eq!(
+            fs::read_dir(path.parent().ok_or("missing parent")?)?.count(),
+            3,
+            "the successful write removes only its own temporary name"
+        );
+        return child_succeeded();
+    }
     let temporary = tempfile::tempdir()?;
-    let path = temporary.path().join("settings.json");
-    fs::create_dir(&path)?;
-    fs::write(path.join("evidence"), b"keep this")?;
-    assert!(
-        write_durably(&path, b"replacement").is_err(),
-        "replacing a directory must fail without permission tricks"
-    );
-    assert_eq!(
-        fs::read(path.join("evidence"))?,
-        b"keep this",
-        "failed writes preserve the previous target"
-    );
-    let names = fs::read_dir(temporary.path())?
-        .map(|entry| entry.map(|entry| entry.file_name()))
-        .collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(
-        names,
-        ["settings.json"],
-        "failed writes clean their staging directory"
-    );
-    Ok(())
+    let mut command =
+        child("store::tests::stale_windows_temporaries_do_not_prevent_durable_replacement")?;
+    let _command = command.env(PATH, temporary.path().join("Ustawienia – Łódź.json"));
+    assert_child(&mut command)
 }
 
 #[cfg(unix)]
@@ -387,7 +398,7 @@ fn a_second_open_in_the_same_process_cannot_bypass_the_instance_lock() -> TestRe
         path.display()
     );
     assert!(
-        matches!(StateDir::open(path.clone()), Err(Error::Blocked(message)) if message == expected),
+        matches!(StateDir::open(path.clone()), Err(Error::Blocked(message)) if message.to_string() == expected),
         "opening a second handle must not bypass the lock"
     );
     drop(dir);
@@ -483,7 +494,10 @@ fn unreadable_application_lock_is_an_error_instead_of_a_false_stopped_status() -
     else {
         return Err("unreadable lock must report a store error".into());
     };
-    assert_eq!(action, "Nie można odczytać blokady katalogu stanu");
+    assert_eq!(
+        action.to_string(),
+        "Nie można odczytać blokady katalogu stanu"
+    );
     assert_eq!(failed_path, path);
     assert!(path.is_dir());
     Ok(())

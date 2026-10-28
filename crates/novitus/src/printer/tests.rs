@@ -37,8 +37,8 @@ impl Journal for Log {
         Ok(())
     }
 
-    fn waiting(&mut self, problem: Option<&str>) {
-        self.waits.push(problem.map(str::to_owned));
+    fn waiting(&mut self, problem: Option<&i18n::Message>) {
+        self.waits.push(problem.map(ToString::to_string));
     }
 }
 fn connection(sim: &Simulator) -> Connection {
@@ -195,7 +195,7 @@ fn read_only_printer_refuses_printing_but_allows_resolution() {
     ] {
         assert!(matches!(
             driver.print_report(report, "ABC1234567890", &mut log),
-            Err(Error::NotReady(message)) if message == expected.description()
+            Err(Error::NotReady(message)) if message.to_string() == expected.description()
         ));
     }
     assert_eq!(log.commands, Vec::<&str>::new());
@@ -235,7 +235,7 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
         let mut log = Log::default();
         assert!(matches!(
             driver.print_receipt(&receipt(advances), &expected, &mut log),
-            Err(Error::Invalid(text)) if text == message
+            Err(Error::Invalid(text)) if text.to_string() == message
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new(), "case {case}");
@@ -306,7 +306,7 @@ fn identify_accepts_supported_models_only() {
             let mut log = Log::default();
             assert!(matches!(
                 printer(&sim).print_receipt(&receipt(vec![]), &device, &mut log),
-                Err(Error::NotReady(message)) if message == device.description()
+                Err(Error::NotReady(message)) if message.to_string() == device.description()
             ));
             assert_eq!(log.commands, Vec::<&str>::new());
         } else {
@@ -535,11 +535,11 @@ fn preflight_refusals_are_rechecked_before_receipts_and_reports() {
         let mut log = Log::default();
         assert!(matches!(
             driver.print_receipt(&receipt(vec![]), &expected, &mut log),
-            Err(Error::NotReady(text)) if text == message
+            Err(Error::NotReady(text)) if text.to_string() == message
         ));
         assert!(matches!(
             driver.print_report(Report::Daily, "ABC1234567890", &mut log),
-            Err(Error::NotReady(text)) if text == message
+            Err(Error::NotReady(text)) if text.to_string() == message
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
@@ -647,8 +647,8 @@ fn operator_wait_resumes_without_resending() {
             Ok(())
         }
 
-        fn waiting(&mut self, problem: Option<&str>) {
-            self.events.push(problem.map(str::to_owned));
+        fn waiting(&mut self, problem: Option<&i18n::Message>) {
+            self.events.push(problem.map(ToString::to_string));
             if problem.is_some() {
                 self.sim.resume();
             }
@@ -749,9 +749,10 @@ fn periodic_report_past_printer_date_or_inverted_never_dispatches() {
         periodic("2026-10-20", "2026-10-19"),
     ] {
         let mut log = Log::default();
+        let expected = "Nieprawidłowy zakres dat raportu.";
         assert!(matches!(
             driver.print_report(report, "ABC1234567890", &mut log),
-            Err(Error::Invalid(message)) if message == "Nieprawidłowy zakres dat raportu."
+            Err(Error::Invalid(message)) if message.to_string() == expected
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
     }
@@ -779,7 +780,7 @@ fn monthly_report_of_the_printer_month_never_dispatches() {
             assert!(matches!(
                 driver.print_report(monthly(month), "ABC1234567890", &mut log),
                 Err(Error::Invalid(message))
-                    if message == "Raport miesięczny wymaga zakończonego miesiąca."
+                    if message.to_string() == "Raport miesięczny wymaga zakończonego miesiąca."
             ));
             assert_eq!(log.commands, Vec::<&str>::new());
         }
@@ -821,7 +822,7 @@ fn brand_across_padded_header_lines_needs_no_footer() {
             assert_eq!(sim.receipts(), 1);
         } else {
             assert!(
-                matches!(&result, Err(Error::Invalid(text)) if text == FOOTER_REFUSAL),
+                matches!(&result, Err(Error::Invalid(text)) if text.to_string() == FOOTER_REFUSAL),
                 "{header:?}: {result:?}"
             );
             assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
@@ -911,9 +912,9 @@ fn stale_vat_wrong_device_and_inactive_slot_never_begin() {
             _ => "Wybrana stawka VAT jest nieaktywna.",
         };
         if problem == 1 {
-            assert!(matches!(result, Err(Error::NotReady(text)) if text == message));
+            assert!(matches!(result, Err(Error::NotReady(text)) if text.to_string() == message));
         } else {
-            assert!(matches!(result, Err(Error::Invalid(text)) if text == message));
+            assert!(matches!(result, Err(Error::Invalid(text)) if text.to_string() == message));
         }
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     }
@@ -1206,18 +1207,6 @@ fn printing_session_checks_cp1250_capability_again_before_begin() {
 }
 
 #[test]
-fn discovery_identifies_printer_in_power_on_error_mode() {
-    let sim = Simulator::start();
-    supported(&sim);
-    let device = identify(sim.link().as_ref(), &connection(&sim))
-        .unwrap()
-        .unwrap();
-    assert!(device.ready(), "{}", device.description());
-    assert_eq!(bodies(&sim).first().map(String::as_str), Some("30#v"));
-    assert!(!bodies(&sim).iter().any(|body| body == "3#e"));
-}
-
-#[test]
 fn discovery_tolerates_printer_already_in_mode_three() {
     let sim = Simulator::start();
     supported(&sim);
@@ -1237,6 +1226,9 @@ fn printing_session_selects_mode_three_on_a_power_on_printer() {
     let device = identify(sim.link().as_ref(), &connection(&sim))
         .unwrap()
         .unwrap();
+    assert!(device.ready(), "{}", device.description());
+    assert_eq!(bodies(&sim).first().map(String::as_str), Some("30#v"));
+    assert!(!bodies(&sim).iter().any(|body| body == "3#e"));
     let printed = printer(&sim)
         .print_receipt(&receipt(vec![]), &device, &mut Log::default())
         .unwrap();
@@ -1435,7 +1427,7 @@ fn report_year_outside_wire_epoch_is_refused_without_dispatch() {
         assert!(matches!(
             printer(&sim).print_report(report, "ABC1234567890", &mut log),
             Err(Error::Invalid(message))
-                if message == "Rok raportu musi należeć do zakresu 2000–2099."
+                if message.to_string() == "Rok raportu musi należeć do zakresu 2000–2099."
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
@@ -1526,7 +1518,7 @@ fn line_and_payment_limits_are_revalidated_at_the_driver_boundary() {
             assert_eq!(fiscal_bodies(&sim), frames);
             assert_eq!(sim.receipts(), 1);
         } else {
-            assert!(matches!(result, Err(Error::Invalid(text)) if text == message));
+            assert!(matches!(result, Err(Error::Invalid(text)) if text.to_string() == message));
             assert_eq!(log.commands, Vec::<&str>::new());
             assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
             assert_eq!(sim.receipts(), 0);
@@ -1545,13 +1537,15 @@ fn operator_wait_reason_changes_and_resume_do_not_repeat_the_report() {
             Ok(())
         }
 
-        fn waiting(&mut self, problem: Option<&str>) {
-            self.events.push(problem.map(str::to_owned));
+        fn waiting(&mut self, problem: Option<&i18n::Message>) {
+            self.events.push(problem.map(ToString::to_string));
             match problem {
-                Some("Brak papieru lub niskie napięcie akumulatora") => {
+                Some(message) if message == &i18n::Message::new("drivers-paper-or-battery") => {
                     self.sim.set_status(0x75, 0x6D, "@s0;0;0;00000000;");
                 },
-                Some("Błąd mechanizmu drukarki") => self.sim.resume(),
+                Some(message) if message == &i18n::Message::new("drivers-mechanism-error") => {
+                    self.sim.resume();
+                },
                 _ => {},
             }
         }
@@ -1587,7 +1581,7 @@ fn corrupt_wait_status_after_execution_is_uncertain_without_a_resend() {
             Ok(())
         }
 
-        fn waiting(&mut self, _: Option<&str>) {}
+        fn waiting(&mut self, _: Option<&i18n::Message>) {}
     }
     let sim = Simulator::start();
     supported(&sim);
@@ -1712,7 +1706,9 @@ fn each_fiscal_status_source_is_checked_independently_in_the_execution_session()
             assert_eq!(log.commands, RECEIPT_COMMANDS);
             assert_eq!(sim.receipts(), 1);
         } else {
-            assert!(matches!(result, Err(Error::NotReady(message)) if message == problem));
+            assert!(
+                matches!(result, Err(Error::NotReady(message)) if message.to_string() == problem)
+            );
             assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
             assert_eq!(log.commands, Vec::<&str>::new());
             assert_eq!(sim.receipts(), 0);
@@ -1739,7 +1735,7 @@ fn malformed_status_and_unique_number_are_protocol_errors_before_dispatch() {
         assert!(matches!(
             driver.print_receipt(&receipt(vec![]), &expected, &mut log),
             Err(Error::Protocol(message))
-                if message == "Uszkodzona ramka Novitus (suma kontrolna lub format)."
+                if message.to_string() == "Uszkodzona ramka Novitus (suma kontrolna lub format)."
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
@@ -1841,7 +1837,7 @@ fn exact_text_and_nip_limits_accept_the_boundary_and_reject_excess_before_begin(
             );
             assert_eq!(sim.receipts(), 1);
         } else {
-            assert!(matches!(result, Err(Error::Invalid(text)) if text == message));
+            assert!(matches!(result, Err(Error::Invalid(text)) if text.to_string() == message));
             assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
             assert_eq!(log.commands, Vec::<&str>::new());
             assert_eq!(sim.receipts(), 0);
@@ -1871,7 +1867,7 @@ fn company_repertoire_is_revalidated_even_when_the_header_already_contains_it() 
     assert!(matches!(
         driver.print_receipt(&job, &expected, &mut log),
         Err(Error::Invalid(message))
-            if message == "Paragon przekracza limity tekstu lub liczby pozycji Novitus."
+            if message.to_string() == "Paragon przekracza limity tekstu lub liczby pozycji Novitus."
     ));
     assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());
     assert_eq!(log.commands, Vec::<&str>::new());
