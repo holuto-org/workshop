@@ -161,7 +161,7 @@ fn a_result_reply_that_does_not_echo_the_report_is_not_accepted() -> TestResult 
         );
         assert!(
             matches!(api.report(job.id, &form), Err(ApiError::Response(message))
-                if message == "wynik zadania nie został zapisany zgodnie z raportem"),
+                if message.to_string() == "wynik zadania nie został zapisany zgodnie z raportem"),
             "{changes}"
         );
     }
@@ -192,7 +192,7 @@ fn a_result_reply_that_does_not_echo_the_report_is_not_accepted() -> TestResult 
         } else {
             assert!(
                 matches!(reported, Err(ApiError::Response(message))
-                    if message == "wynik zadania nie został zapisany zgodnie z raportem"),
+                    if message.to_string() == "wynik zadania nie został zapisany zgodnie z raportem"),
                 "an unchanged {state} job did not record the outcome"
             );
         }
@@ -242,7 +242,7 @@ fn malformed_json_is_a_contract_error_not_a_connection_error() -> TestResult {
     );
     assert!(
         matches!(api.session(&telemetry()), Err(ApiError::Response(message))
-        if message == "expected ident at line 1 column 2")
+        if message.to_string() == "expected ident at line 1 column 2")
     );
     Ok(())
 }
@@ -672,14 +672,14 @@ fn cleartext_or_credentialed_remote_api_urls_are_refused_before_any_request() {
         assert!(
             matches!(
                 Api::new(url, server.token(), "DEM0000000001"),
-                Err(Error::Invalid(message)) if message == refused
+                Err(Error::Invalid(message)) if message.to_string() == refused
             ),
             "{url}"
         );
         assert!(
             matches!(
                 Api::pair(url, "ABCD1234"),
-                Err(Error::Invalid(message)) if message == refused
+                Err(Error::Invalid(message)) if message.to_string() == refused
             ),
             "{url}"
         );
@@ -966,7 +966,7 @@ fn response_body_limit_accepts_exact_bound_and_rejects_one_more_byte() -> TestRe
         );
         assert!(
             matches!(api.session(&telemetry()), Err(ApiError::Response(message))
-            if message == "przekroczony limit rozmiaru odpowiedzi")
+            if message.to_string() == "przekroczony limit rozmiaru odpowiedzi")
         );
     }
     Ok(())
@@ -993,7 +993,7 @@ fn a_rejected_session_cannot_replace_the_previously_bound_printer() -> TestResul
     );
     assert!(
         matches!(api.session(&telemetry()), Err(ApiError::Response(message))
-        if message == "parowanie przypisane do innej drukarki")
+        if message.to_string() == "parowanie przypisane do innej drukarki")
     );
     assert_eq!(api.printer_id(), Some(PRINTER_ID));
     api.session(&telemetry())?;
@@ -1247,7 +1247,7 @@ fn an_oversized_response_header_is_a_contract_error_not_a_protocol_error() -> Te
     );
     assert!(
         matches!(api.session(&telemetry()),Err(ApiError::Response(message))
-        if message == "przekroczony limit rozmiaru odpowiedzi")
+        if message.to_string() == "przekroczony limit rozmiaru odpowiedzi")
     );
     Ok(())
 }
@@ -1286,7 +1286,7 @@ fn session_uploads_all_seven_legal_vat_letters_and_refuses_an_eighth() -> TestRe
         vat,
         capabilities: capabilities(),
     };
-    assert_eq!(profile.describe(&device), Vec::<String>::new());
+    assert_eq!(profile.describe(&device), Vec::<i18n::Message>::new());
     api.session(&profile)?;
     let expected = json!([
         {"letter":"A","vatRate":"23"},{"letter":"B","vatRate":"8"},
@@ -1315,7 +1315,9 @@ fn session_uploads_all_seven_legal_vat_letters_and_refuses_an_eighth() -> TestRe
             result?;
         } else {
             let expected = "nieprawidłowe litery VAT";
-            assert!(matches!(result,Err(ApiError::Response(message)) if message == expected));
+            assert!(
+                matches!(result,Err(ApiError::Response(message)) if message.to_string() == expected)
+            );
         }
     }
     Ok(())

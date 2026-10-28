@@ -25,6 +25,7 @@ pub mod testing;
 use std::{fmt, io, path::PathBuf};
 
 use fiscal::error::Error as PrinterError;
+use i18n::Message;
 
 use api::ApiError;
 
@@ -36,20 +37,47 @@ pub enum Error {
     Api(#[from] ApiError),
     #[error("{action} ({path}): {source}")]
     Store {
-        action: &'static str,
+        action: Message,
         path: PathBuf,
         #[source]
         source: io::Error,
     },
     /// Operator-correctable input.
     #[error("{0}")]
-    Invalid(String),
+    Invalid(Message),
     /// Requires human resolution before fiscal operations can continue.
     #[error("{0}")]
-    Blocked(String),
+    Blocked(Message),
     /// Another `workshop` command holds the state directory; retry once it finishes.
     #[error("{0}")]
-    Busy(String),
+    Busy(Message),
+}
+
+impl Error {
+    pub fn message(&self) -> Message {
+        match self {
+            Self::Printer(error) => error.message(),
+            Self::Api(error) => error.message(),
+            Self::Store {
+                action,
+                path,
+                source,
+            } => Message::new("agent-store-error")
+                .arg("action", action.clone())
+                .arg("path", path.display().to_string())
+                .arg(
+                    "detail",
+                    source
+                        .get_ref()
+                        .and_then(|error| error.downcast_ref::<Message>())
+                        .cloned()
+                        .unwrap_or_else(|| Message::literal(source.to_string())),
+                ),
+            Self::Invalid(message) | Self::Blocked(message) | Self::Busy(message) => {
+                message.clone()
+            },
+        }
+    }
 }
 
 impl fmt::Debug for Error {

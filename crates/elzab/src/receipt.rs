@@ -34,22 +34,20 @@ pub(crate) fn amount(amount: Grosze) -> String {
 }
 fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Result<(), Error> {
     if !receipt.advances().is_empty() && !caps.advance_deductions {
-        return Err(Error::Invalid(
-            "Drukarka nie obsługuje rozliczenia zaliczek.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-advances-unsupported",
+        )));
     }
     if receipt.fiscal_total() == Grosze::ZERO && !caps.zero_total_receipts {
-        return Err(Error::Invalid(
-            "Drukarka nie obsługuje paragonu opłaconego w całości zaliczkami.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-advance-only-unsupported",
+        )));
     }
     // The name stays out of the message: failure reasons are stored and sent onward.
     if footer.is_some() && !caps.company_footer {
-        return Err(Error::Invalid(
-            "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka nie drukuje jej \
-             w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem drukarki."
-                .to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-company-header-mismatch",
+        )));
     }
     if receipt.lines().len() > caps.max_lines
         || receipt.brand().chars().count() > caps.max_company_name
@@ -58,18 +56,18 @@ fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Res
             .buyer_nip()
             .is_some_and(|nip| nip.chars().count() > caps.max_buyer_nip || !caps.allows(nip))
     {
-        return Err(Error::Invalid(
-            "Dane paragonu przekraczają możliwości Elzab.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-elzab-receipt-limits",
+        )));
     }
     for line in receipt.lines() {
         if line.name().chars().count() > caps.max_item_name
             || !caps.allows(line.name())
             || !line.quantity().units().is_multiple_of(1000)
         {
-            return Err(Error::Invalid(
-                "Pozycja nie mieści się w profilu Elzab (64 znaki, 5 miejsc ilości).".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-elzab-item-limits",
+            )));
         }
     }
     Ok(())
@@ -118,9 +116,9 @@ pub(crate) fn steps(
         .enumerate()
     {
         if index >= 7 {
-            return Err(Error::Invalid(
-                "Elzab przyjmuje najwyżej 7 wpisów płatności.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-elzab-payment-limit",
+            )));
         }
         let (kind, name) = match payment.form {
             PaymentForm::Cash => (1, "GOTÓWKA"),

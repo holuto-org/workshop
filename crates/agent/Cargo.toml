@@ -13,6 +13,7 @@ testing = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "dep:tiny
 [dependencies]
 elzab.workspace = true
 fiscal.workspace = true
+i18n.workspace = true
 icu_normalizer.workspace = true
 icu_properties.workspace = true
 jiff.workspace = true

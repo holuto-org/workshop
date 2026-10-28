@@ -409,7 +409,7 @@ fn pair(path: &Path, code: String) -> Result<Response, Failure> {
                 result = Err(Failure {
                     exit,
                     code,
-                    message,
+                    message: message.to_string(),
                 });
             },
             Event::Stopped => break,

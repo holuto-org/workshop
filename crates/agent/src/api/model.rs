@@ -10,6 +10,8 @@
 
 use std::fmt;
 
+use i18n::Message;
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -31,11 +33,11 @@ pub enum ReceiptKind {
 }
 
 impl ReceiptKind {
-    pub(crate) fn check_allocation(self, allocation_id: Option<Uuid>) -> Result<(), String> {
+    pub(crate) const fn check_allocation(self, allocation_id: Option<Uuid>) -> Result<(), Message> {
         match (self, allocation_id) {
             (Self::Advance, Some(_)) | (Self::Sale, None) => Ok(()),
-            (Self::Advance, None) => Err("zaliczka bez identyfikatora alokacji".to_owned()),
-            (Self::Sale, Some(_)) => Err("sprzedaż z identyfikatorem alokacji".to_owned()),
+            (Self::Advance, None) => Err(Message::new("agent-allocation-missing")),
+            (Self::Sale, Some(_)) => Err(Message::new("agent-allocation-sale")),
         }
     }
 }
@@ -310,7 +312,7 @@ impl Telemetry {
         }
     }
 
-    pub(crate) fn describe(&mut self, device: &Device) -> Vec<String> {
+    pub(crate) fn describe(&mut self, device: &Device) -> Vec<Message> {
         let (rates, skipped) = printer_slots(&device.vat);
         self.vendor = device.vendor;
         device.model.clone_into(&mut self.model);
@@ -330,17 +332,17 @@ impl Telemetry {
     }
 }
 impl PrinterInfo {
-    pub(crate) fn check(&self, unique_number: &str) -> Result<(), String> {
+    pub(crate) fn check(&self, unique_number: &str) -> Result<(), Message> {
         if self
             .unique_number
             .as_deref()
             .is_some_and(|paired| paired != unique_number)
         {
-            return Err("sparowano z inną drukarką".to_owned());
+            return Err(Message::new("agent-paired-other"));
         }
         if let Some(c) = &self.capabilities {
             if c.max_quantity_decimals > 8 {
-                return Err("nieprawidłowa precyzja ilości drukarki".to_owned());
+                return Err(Message::new("agent-invalid-precision"));
             }
             if [
                 c.max_item_name_length,
@@ -349,19 +351,31 @@ impl PrinterInfo {
             ]
             .contains(&0)
             {
-                return Err("zerowy limit drukarki".to_owned());
+                return Err(Message::new("agent-zero-limit"));
             }
             if c.allowed_characters.is_empty() {
-                return Err("pusta lista znaków drukarki".to_owned());
+                return Err(Message::new("agent-empty-characters"));
             }
         }
         if self.vat_rates.len() > usize::from(VAT_SLOTS) {
-            return Err("nieprawidłowe litery VAT".to_owned());
+            return Err(Message::new("agent-invalid-vat-letters"));
         }
         Ok(())
     }
 }
 impl JobState {
+    pub(crate) const fn message(self) -> Message {
+        Message::new(match self {
+            Self::Queued => "agent-state-queued",
+            Self::Taken => "agent-state-taken",
+            Self::Done => "agent-state-done",
+            Self::Failed => "agent-state-failed",
+            Self::Expired => "agent-state-expired",
+            Self::Unknown => "agent-state-unknown",
+            Self::Voided => "agent-state-voided",
+        })
+    }
+
     pub const fn terminal(self) -> bool {
         matches!(
             self,
@@ -371,34 +385,34 @@ impl JobState {
 }
 impl Job {
     /// Holuto's binding of this job to the paired printer.
-    pub(crate) fn check_printer(&self, printer_id: Option<Uuid>) -> Result<(), String> {
+    pub(crate) fn check_printer(&self, printer_id: Option<Uuid>) -> Result<(), Message> {
         if printer_id != Some(self.printer_id) {
-            return Err("zadanie innej drukarki".to_owned());
+            return Err(Message::new("agent-job-other-printer"));
         }
         Ok(())
     }
 
     /// Job shape; a claimed job that breaks it fails before any fiscal command.
-    pub(crate) fn check(&self, max_lines: usize) -> Result<(), String> {
+    pub(crate) fn check(&self, max_lines: usize) -> Result<(), Message> {
         self.kind.check_allocation(self.allocation_id)?;
         if self.order_number <= 0 {
-            return Err("numer zlecenia musi być dodatni".to_owned());
+            return Err(Message::new("agent-order-positive"));
         }
         if self.lines.is_empty() {
-            return Err("zadanie musi mieć co najmniej jedną pozycję".to_owned());
+            return Err(Message::new("agent-job-empty"));
         }
         if self.lines.len() > max_lines {
-            return Err(format!("zadanie musi mieć od 1 do {max_lines} pozycji"));
+            return Err(Message::new("agent-job-lines").arg("max", max_lines));
         }
         if self.kind == ReceiptKind::Advance && !self.advances.is_empty() {
-            return Err("zaliczka nie może odliczać zaliczek".to_owned());
+            return Err(Message::new("agent-advance-deducts"));
         }
         if self
             .buyer_nip
             .as_deref()
             .is_some_and(|nip| nip.len() != 10 || !nip.bytes().all(|b| b.is_ascii_digit()))
         {
-            return Err("nieprawidłowy NIP nabywcy".to_owned());
+            return Err(Message::new("agent-invalid-nip"));
         }
         Ok(())
     }
@@ -412,7 +426,7 @@ impl From<Outcome> for JobState {
         }
     }
 }
-pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<String>) {
+pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<Message>) {
     let mut mapped = Vec::new();
     let mut skipped = Vec::new();
     for rate in rates.iter().filter(|rate| rate.active()) {
@@ -421,10 +435,7 @@ pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<Stri
         };
         match VatCode::of(*rate) {
             Some(vat_rate) => mapped.push(VatRateMapping { letter, vat_rate }),
-            None => skipped.push(format!(
-                "Pomijam nieobsługiwaną stawkę VAT w slocie {}",
-                rate.label()
-            )),
+            None => skipped.push(Message::new("agent-skipped-vat").arg("slot", rate.message())),
         }
     }
     (mapped, skipped)

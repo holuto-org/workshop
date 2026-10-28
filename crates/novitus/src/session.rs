@@ -33,7 +33,7 @@ pub struct DleStatus {
     pub mechanism_error: bool,
 }
 impl DleStatus {
-    pub fn decode(byte: u8) -> Result<Self, Error> {
+    pub const fn decode(byte: u8) -> Result<Self, Error> {
         if !status_matches(DLE, byte) {
             return Err(frame::corrupt());
         }
@@ -51,7 +51,7 @@ pub struct EnqStatus {
     pub transaction: bool,
 }
 impl EnqStatus {
-    pub fn decode(byte: u8) -> Result<Self, Error> {
+    pub const fn decode(byte: u8) -> Result<Self, Error> {
         if !status_matches(ENQ, byte) {
             return Err(frame::corrupt());
         }
@@ -164,12 +164,12 @@ impl Session {
     /// Uncertain replies block new commands, but permit raw status reads.
     pub fn command(&mut self, body: &str, timeout: Duration) -> Result<Reply, Error> {
         if self.blocked {
-            return Err(Error::Protocol(
-                "Sesja Novitus ma nierozstrzygnięte polecenie.".to_owned(),
-            ));
+            return Err(Error::Protocol(i18n::Message::new(
+                "drivers-novitus-unresolved-command",
+            )));
         }
         let command = identifier(body)
-            .ok_or_else(|| Error::Invalid("Nieprawidłowe polecenie Novitus.".to_owned()))?;
+            .ok_or_else(|| Error::Invalid(i18n::Message::new("drivers-invalid-novitus-command")))?;
         let bytes = encode_body(body)?;
         let raw = if no_request_checksum(body) {
             frame::query(&bytes)
@@ -177,9 +177,9 @@ impl Session {
             frame::encode(&bytes)
         };
         if raw.len() > frame::MAX_FRAME {
-            return Err(Error::Invalid(
-                "Polecenie Novitus jest zbyt długie.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-novitus-command-too-long",
+            )));
         }
         self.blocked = true;
         let timeout = self.timeout(timeout);
@@ -236,9 +236,11 @@ impl Session {
                     continue;
                 }
                 if answered != command {
-                    return Err(Error::Protocol(format!(
-                        "Oczekiwano ACK {command}, otrzymano {answered}."
-                    )));
+                    return Err(Error::Protocol(
+                        i18n::Message::new("drivers-unexpected-ack")
+                            .arg("command", command)
+                            .arg("answered", answered),
+                    ));
                 }
                 device_result(code, answered)?;
                 completed = true;
@@ -417,8 +419,11 @@ fn acknowledgment(body: &[u8]) -> Result<Option<(u32, &str)>, Error> {
         return Ok(None);
     }
     // ACK fields are ASCII decimal and command syntax, never wire text.
-    let body = str::from_utf8(body)
-        .map_err(|error| Error::Protocol(format!("Nieprawidłowy ACK Novitus: {error}.")))?;
+    let body = str::from_utf8(body).map_err(|error| {
+        Error::Protocol(
+            i18n::Message::new("drivers-invalid-novitus-ack").arg("error", error.to_string()),
+        )
+    })?;
     let (code, command) = body.split_once("#Z").ok_or_else(frame::corrupt)?;
     if identifier(command) != Some(command) {
         return Err(frame::corrupt());
@@ -432,29 +437,25 @@ fn device_result(code: u32, command: &str) -> Result<(), Error> {
     Err(Error::Device {
         code,
         command: command.to_owned(),
-        detail: format!(
-            "Drukarka Novitus zwróciła błąd {code} ({command}).{}",
-            explanation(command, code)
-        ),
+        detail: i18n::Message::new("drivers-novitus-error")
+            .arg("code", code)
+            .arg("command", command)
+            .arg("explanation", explanation(command, code)),
         rejected: false,
     })
 }
 /// Refusals of the commands sent here; codes are numbered per command.
-fn explanation(command: &str, code: u32) -> &'static str {
+fn explanation(command: &str, code: u32) -> i18n::Message {
     match (command, code) {
-        ("$h" | "#r" | "#o", 1) => " Nie zainicjowano zegara drukarki.",
-        ("$h" | "#r" | "#o", 6) => " Błąd pamięci fiskalnej. Wezwij serwis.",
-        ("$h", 40) => " Brak nagłówka w pamięci drukarki.",
-        ("$h", 94) => " Sprzedaż zablokowana: założona zwora serwisowa.",
-        ("#r", 7) => {
-            " Data drukarki jest wcześniejsza niż ostatni zapis albo zmieniła się przed raportem."
-        },
-        ("#r", 36) => " Raport dobowy bez sprzedaży jest już zapisany z tą datą.",
-        ("#r", 37) => " Raport przerwano na klawiaturze drukarki.",
-        ("#o", 4) => {
-            " Nieprawidłowy zakres dat lub brak zapisów w pamięci fiskalnej dla tego zakresu."
-        },
-        _ => "",
+        ("$h" | "#r" | "#o", 1) => i18n::Message::new("drivers-clock-uninitialized"),
+        ("$h" | "#r" | "#o", 6) => i18n::Message::new("drivers-fiscal-memory-error"),
+        ("$h", 40) => i18n::Message::new("drivers-header-memory-missing"),
+        ("$h", 94) => i18n::Message::new("drivers-service-jumper"),
+        ("#r", 7) => i18n::Message::new("drivers-printer-date-regressed"),
+        ("#r", 36) => i18n::Message::new("drivers-empty-report-recorded"),
+        ("#r", 37) => i18n::Message::new("drivers-report-keyboard-cancel"),
+        ("#o", 4) => i18n::Message::new("drivers-report-range-no-records"),
+        _ => i18n::Message::literal(""),
     }
 }
 
@@ -519,12 +520,12 @@ pub(crate) fn encode_body(body: &str) -> Result<Vec<u8>, Error> {
         .chars()
         .any(|character| character.is_control() && character != '\r')
     {
-        return Err(Error::Invalid(
-            "Niedozwolony znak sterujący w poleceniu Novitus.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-novitus-control-character",
+        )));
     }
     cp1250::encode(body)
-        .ok_or_else(|| Error::Invalid("Tekst nie mieści się w Windows-1250.".to_owned()))
+        .ok_or_else(|| Error::Invalid(i18n::Message::new("drivers-windows-1250-text")))
 }
 fn decode_body(body: &[u8]) -> Result<String, Error> {
     let text = cp1250::decode(body).ok_or_else(frame::corrupt)?;

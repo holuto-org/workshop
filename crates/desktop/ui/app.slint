@@ -2,18 +2,28 @@ import { Button, LineEdit, ComboBox, CheckBox, TabWidget, Palette } from "std-wi
 
 export enum Action { save, pair, start, stop, quit, daily-report, monthly-report, periodic-report, resolve-report, acknowledge-orphaned-receipt }
 
-/// The Holuto web app's Ant Design tokens: default light algorithm with its
-/// description text raised to 0.65 for 4.5:1 contrast. Names follow antd.
+export global Translations {
+    in-out property <int> language;
+    pure callback lookup(string, int) -> string;
+    public pure function text(key: string) -> string { return self.lookup(key, self.language); }
+}
+
+/// The Holuto web app's Ant Design tokens: the default light and dark
+/// algorithms with description text raised to 0.65 for 4.5:1 contrast, as the
+/// web app does. Names follow antd. `Palette` resolves the system scheme.
 global Theme {
-    out property <color> color-text: #000000e0;
-    out property <color> color-text-secondary: #000000a6;
-    out property <color> color-text-description: #000000a6;
-    out property <color> color-error-text: #ff4d4f;
-    out property <color> color-bg-layout: #f5f5f5;
-    out property <color> color-bg-container: #ffffff;
+    private property <color> background: Palette.background;
+    out property <bool> dark: self.background.to-hsv().value < 0.5;
+    out property <color> color-text: self.dark ? #ffffffd9 : #000000e0;
+    out property <color> color-text-secondary: self.dark ? #ffffffa6 : #000000a6;
+    out property <color> color-text-description: self.dark ? #ffffffa6 : #000000a6;
+    out property <color> color-error-text: self.dark ? #dc4446 : #ff4d4f;
+    out property <color> color-bg-layout: self.dark ? #000000 : #f5f5f5;
+    out property <color> color-bg-container: self.dark ? #141414 : #ffffff;
+    out property <color> color-bg-elevated: self.dark ? #1f1f1f : #ffffff;
     out property <color> color-bg-mask: #00000073;
-    out property <color> color-border-secondary: #f0f0f0;
-    out property <color> color-split: #0505050f;
+    out property <color> color-border-secondary: self.dark ? #303030 : #f0f0f0;
+    out property <color> color-split: self.dark ? #fdfdfd1f : #0505050f;
     out property <length> border-radius-lg: 8px;
     out property <length> font-size-sm: 12px;
     out property <length> font-size-heading-4: 20px;
@@ -83,6 +93,15 @@ export component AppWindow inherits Window {
     in-out property <bool> summary;
     in-out property <bool> telemetry-enabled;
     callback telemetry-changed(bool);
+    // Index into Systemowy, Jasny, Ciemny; the model keeps the order.
+    in-out property <int> theme-index;
+    callback theme-changed(int);
+    in-out property <int> language-index;
+    callback language-changed(int);
+    changed theme-index => { root.apply-theme(); }
+    function apply-theme() {
+        Palette.color-scheme = root.theme-index == 1 ? ColorScheme.light : root.theme-index == 2 ? ColorScheme.dark : ColorScheme.unknown;
+    }
     in-out property <bool> start-on-launch;
     callback autostart-changed(bool);
     callback refresh-ports();
@@ -101,35 +120,35 @@ export component AppWindow inherits Window {
             confirmation.close();
         }
     }
-    init => { Palette.color-scheme = ColorScheme.light; }
+    init => { root.apply-theme(); }
     VerticalLayout {
         padding: Theme.padding-lg; spacing: Theme.padding;
         // The header speaks only while something is wrong; the title bar names the app.
         if root.holuto-text != "" || root.printer-text != "": HorizontalLayout {
             spacing: Theme.padding-lg; alignment: start;
             if root.holuto-text != "": VerticalLayout { spacing: 4px; Hint { text: "Holuto"; accessible-role: none; } Text { accessible-label: "Holuto"; accessible-value: root.holuto-text; text: root.holuto-text; color: Theme.color-text; } }
-            if root.printer-text != "": VerticalLayout { spacing: 4px; Hint { text: "Drukarka"; accessible-role: none; } Text { accessible-label: "Drukarka"; accessible-value: root.printer-text; text: root.printer-text; color: root.printer-tone == 2 ? Theme.color-error-text : Theme.color-text; } }
+            if root.printer-text != "": VerticalLayout { spacing: 4px; Hint { text: Translations.text("desktop-printer"); accessible-role: none; } Text { accessible-label: Translations.text("desktop-printer"); accessible-value: root.printer-text; text: root.printer-text; color: root.printer-tone == 2 ? Theme.color-error-text : Theme.color-text; } }
         }
         TabWidget {
             current-index <=> root.tab;
             Tab {
-                title: "Stan";
+                title: Translations.text("desktop-status-tab");
                 VerticalLayout {
                     padding-top: Theme.padding;
                     Card {
                         vertical-stretch: 0;
                         VerticalLayout {
                             padding: Theme.padding-lg; spacing: Theme.padding; alignment: start;
-                            StatusRow { label: "Obsługa drukarki"; value: root.processing-state; }
+                            StatusRow { label: Translations.text("desktop-processing-label"); value: root.processing-state; }
                             Divider { }
                             StatusRow { label: "Holuto"; value: root.holuto-state; }
                             Divider { }
-                            StatusRow { label: "Drukarka"; value: root.printer-identity; }
+                            StatusRow { label: Translations.text("desktop-printer"); value: root.printer-identity; }
                             Divider { }
-                            StatusRow { label: "Stan drukarki"; value: root.printer-state; alert: root.printer-tone == 2; }
+                            StatusRow { label: Translations.text("desktop-printer-state-label"); value: root.printer-state; alert: root.printer-tone == 2; }
                             VerticalLayout {
                                 spacing: 4px;
-                                Hint { text: "Paragony wystawiasz i przeglądasz w Holuto. Zadania z kolejki Holuto drukują się tutaj automatycznie."; }
+                                Hint { text: Translations.text("desktop-queue-hint"); }
                                 if root.start-hint != "": Hint { text: root.start-hint; }
                             }
                         }
@@ -138,25 +157,25 @@ export component AppWindow inherits Window {
                 }
             }
             Tab {
-                title: "Raporty";
+                title: Translations.text("desktop-reports-tab");
                 VerticalLayout {
                     padding-top: Theme.padding;
                     Card {
                         vertical-stretch: 0;
                         VerticalLayout {
                             padding: Theme.padding-lg; spacing: Theme.padding; alignment: start;
-                            HorizontalLayout { spacing: Theme.padding-lg; VerticalLayout { horizontal-stretch: 1; spacing: Theme.padding-xs; Heading { text: "Raport dobowy"; } Hint { text: "Po zakończeniu sprzedaży, najpóźniej przed pierwszą sprzedażą następnego dnia."; } } VerticalLayout { alignment: center; Button { width: 240px; text: "Drukuj raport dobowy"; enabled: root.daily-report-enabled; clicked => { root.action(Action.daily-report); } } } }
+                            HorizontalLayout { spacing: Theme.padding-lg; VerticalLayout { horizontal-stretch: 1; spacing: Theme.padding-xs; Heading { text: Translations.text("desktop-daily-report"); } Hint { text: Translations.text("desktop-daily-hint"); } } VerticalLayout { alignment: center; Button { width: 240px; text: Translations.text("desktop-print-daily"); enabled: root.daily-report-enabled; clicked => { root.action(Action.daily-report); } } } }
                             Divider { }
-                            HorizontalLayout { spacing: Theme.padding-lg; VerticalLayout { horizontal-stretch: 1; spacing: Theme.padding-xs; Heading { text: "Raport miesięczny"; } Hint { text: "Po zakończeniu miesiąca, najpóźniej do 25. dnia następnego miesiąca."; } } VerticalLayout { alignment: center; ComboBox { model: root.months; current-index <=> root.month-index; width: 190px; } } VerticalLayout { alignment: center; Button { width: 240px; text: "Drukuj raport miesięczny"; enabled: root.reports-enabled; clicked => { root.action(Action.monthly-report); } } } }
+                            HorizontalLayout { spacing: Theme.padding-lg; VerticalLayout { horizontal-stretch: 1; spacing: Theme.padding-xs; Heading { text: Translations.text("desktop-monthly-report"); } Hint { text: Translations.text("desktop-monthly-hint"); } } VerticalLayout { alignment: center; ComboBox { model: root.months; current-index <=> root.month-index; width: 190px; } } VerticalLayout { alignment: center; Button { width: 240px; text: Translations.text("desktop-print-monthly"); enabled: root.reports-enabled; clicked => { root.action(Action.monthly-report); } } } }
                             Divider { }
-                            VerticalLayout { spacing: Theme.padding-sm; Heading { text: "Raport okresowy"; } HorizontalLayout { spacing: Theme.padding-sm; Text { text: "Od"; color: Theme.color-text; vertical-alignment: center; } LineEdit { text <=> root.from-date; placeholder-text: "dd.mm.rrrr"; width: 130px; accessible-label: "Data początkowa"; } Text { text: "do"; color: Theme.color-text; vertical-alignment: center; } LineEdit { text <=> root.to-date; placeholder-text: "dd.mm.rrrr"; width: 130px; accessible-label: "Data końcowa"; } CheckBox { text: "Skrócony"; checked <=> root.summary; } Rectangle { horizontal-stretch: 1; } Button { width: 240px; text: "Drukuj raport okresowy"; enabled: root.reports-enabled; clicked => { root.action(Action.periodic-report); } } } }
+                            VerticalLayout { spacing: Theme.padding-sm; Heading { text: Translations.text("desktop-periodic-report"); } HorizontalLayout { spacing: Theme.padding-sm; Text { text: Translations.text("desktop-from"); color: Theme.color-text; vertical-alignment: center; } LineEdit { text <=> root.from-date; placeholder-text: Translations.text("desktop-date-format"); width: 130px; accessible-label: Translations.text("desktop-from-date"); } Text { text: Translations.text("desktop-to"); color: Theme.color-text; vertical-alignment: center; } LineEdit { text <=> root.to-date; placeholder-text: Translations.text("desktop-date-format"); width: 130px; accessible-label: Translations.text("desktop-to-date"); } CheckBox { text: Translations.text("desktop-summary"); checked <=> root.summary; } Rectangle { horizontal-stretch: 1; } Button { width: 240px; text: Translations.text("desktop-print-periodic"); enabled: root.reports-enabled; clicked => { root.action(Action.periodic-report); } } } }
                         }
                     }
                     Rectangle { vertical-stretch: 1; }
                 }
             }
             Tab {
-                title: "Ustawienia";
+                title: Translations.text("desktop-settings-tab");
                 VerticalLayout {
                     padding-top: Theme.padding;
                     Card {
@@ -165,18 +184,20 @@ export component AppWindow inherits Window {
                             padding: Theme.padding-lg; spacing: Theme.padding; alignment: start;
                             VerticalLayout {
                                 spacing: Theme.padding-sm;
-                                HorizontalLayout { spacing: Theme.padding-sm; Text { text: "Kod parowania"; color: Theme.color-text; width: 140px; vertical-alignment: center; } LineEdit { accessible-label: "Kod parowania"; text <=> root.pairing-code; placeholder-text: "XXXX-XXXX"; enabled: root.settings-editable; } Button { text: "Sparuj"; accessible-label: "Sparuj"; enabled: root.settings-editable; clicked => { root.action(Action.pair); } } }
-                                HorizontalLayout { spacing: Theme.padding-sm; Text { text: "Port drukarki"; color: Theme.color-text; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: "Port drukarki"; model: root.ports; current-index <=> root.port-index; enabled: root.settings-editable; selected(value) => { root.port = self.current-index == 0 ? "" : value; root.action(Action.save); } } }
-                                HorizontalLayout { spacing: Theme.padding-sm; Text { text: "Prędkość transmisji"; color: Theme.color-text; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: "Prędkość transmisji"; model: root.baud-rates; current-index <=> root.baud-index; enabled: root.settings-editable; selected => { root.action(Action.save); } } }
+                                HorizontalLayout { spacing: Theme.padding-sm; Text { text: Translations.text("desktop-pairing-code"); color: Theme.color-text; width: 140px; vertical-alignment: center; } LineEdit { accessible-label: Translations.text("desktop-pairing-code"); text <=> root.pairing-code; placeholder-text: "XXXX-XXXX"; enabled: root.settings-editable; } Button { text: Translations.text("desktop-pair"); accessible-label: Translations.text("desktop-pair"); enabled: root.settings-editable; clicked => { root.action(Action.pair); } } }
+                                HorizontalLayout { spacing: Theme.padding-sm; Text { text: Translations.text("desktop-printer-port"); color: Theme.color-text; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: Translations.text("desktop-printer-port"); model: root.ports; current-index <=> root.port-index; enabled: root.settings-editable; selected(value) => { root.port = self.current-index == 0 ? "" : value; root.action(Action.save); } } }
+                                HorizontalLayout { spacing: Theme.padding-sm; Text { text: Translations.text("desktop-baud-rate"); color: Theme.color-text; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: Translations.text("desktop-baud-rate"); model: root.baud-rates; current-index <=> root.baud-index; enabled: root.settings-editable; selected => { root.action(Action.save); } } }
+                                HorizontalLayout { spacing: Theme.padding-sm; Text { text: Translations.text("desktop-theme"); color: Theme.color-text; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: Translations.text("desktop-theme"); model: [Translations.text("desktop-system"), Translations.text("desktop-light"), Translations.text("desktop-dark")]; current-index <=> root.theme-index; enabled: !root.pairing; selected => { root.theme-changed(self.current-index); } } }
+                                HorizontalLayout { spacing: Theme.padding-sm; Text { text: Translations.text("desktop-language"); color: Theme.color-text; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: Translations.text("desktop-language"); model: [Translations.text("desktop-system"), "English", "Polski", "Español", "Русский"]; current-index <=> root.language-index; enabled: !root.pairing && !root.saving-settings; selected => { root.language-changed(self.current-index); } } }
                             }
                             VerticalLayout {
                                 spacing: 4px;
-                                CheckBox { text: "Udostępniaj diagnostykę"; accessible-label: "Udostępniaj diagnostykę"; enabled: !root.pairing; checked <=> root.telemetry-enabled; toggled => { root.telemetry-changed(self.checked); } }
-                                Hint { text: "Wysyła błędy i logi, aby ułatwić naprawę aplikacji. Zrzuty awarii mogą zawierać dane wrażliwe. Wyłączenie działa od razu, a dla zrzutów awarii i przy włączaniu — po restarcie."; }
+                                CheckBox { text: Translations.text("desktop-diagnostics"); accessible-label: Translations.text("desktop-diagnostics"); enabled: !root.pairing; checked <=> root.telemetry-enabled; toggled => { root.telemetry-changed(self.checked); } }
+                                Hint { text: Translations.text("desktop-diagnostics-hint"); }
                             }
-                            CheckBox { text: "Uruchamiaj przy logowaniu"; accessible-label: "Uruchamiaj przy logowaniu"; enabled: !root.pairing && !root.saving-settings; checked <=> root.start-on-launch; toggled => { root.autostart-changed(self.checked); } }
-                            HorizontalLayout { spacing: Theme.padding-xs; Button { text: "Uruchom"; primary: true; enabled: !root.running && !root.pairing && !root.starting; clicked => { root.action(Action.start); } } Button { text: "Zatrzymaj"; enabled: (root.running || root.pairing) && !root.stopping; clicked => { root.action(Action.stop); } } Rectangle { horizontal-stretch: 1; } Button { text: "Zakończ"; clicked => { root.action(Action.quit); } } }
-                            if root.running: Hint { text: "Aby zmienić ustawienia, najpierw zatrzymaj obsługę drukarki."; }
+                            CheckBox { text: Translations.text("desktop-autostart"); accessible-label: Translations.text("desktop-autostart"); enabled: !root.pairing && !root.saving-settings; checked <=> root.start-on-launch; toggled => { root.autostart-changed(self.checked); } }
+                            HorizontalLayout { spacing: Theme.padding-xs; Button { text: Translations.text("desktop-start"); primary: true; enabled: !root.running && !root.pairing && !root.starting; clicked => { root.action(Action.start); } } Button { text: Translations.text("desktop-stop"); enabled: (root.running || root.pairing) && !root.stopping; clicked => { root.action(Action.stop); } } Rectangle { horizontal-stretch: 1; } Button { text: Translations.text("desktop-quit"); clicked => { root.action(Action.quit); } } }
+                            if root.running: Hint { text: Translations.text("desktop-stop-to-edit"); }
                         }
                     }
                     Rectangle { vertical-stretch: 1; }
@@ -185,9 +206,9 @@ export component AppWindow inherits Window {
         }
         if root.status != "": HorizontalLayout {
             spacing: Theme.padding;
-            Text { accessible-label: "Stan operacji"; accessible-value: root.status; text: root.status; color: Theme.color-error-text; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
-            if root.report-unresolved: Button { text: "Wyjaśnij raport"; clicked => { root.action(Action.resolve-report); } }
-            if root.orphaned-receipt: Button { text: "Wyjaśnij paragon"; accessible-label: "Wyjaśnij paragon"; clicked => { root.action(Action.acknowledge-orphaned-receipt); } }
+            Text { accessible-label: Translations.text("desktop-operation-status"); accessible-value: root.status; text: root.status; color: Theme.color-error-text; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+            if root.report-unresolved: Button { text: Translations.text("desktop-resolve-report"); clicked => { root.action(Action.resolve-report); } }
+            if root.orphaned-receipt: Button { text: Translations.text("desktop-resolve-receipt"); accessible-label: Translations.text("desktop-resolve-receipt"); clicked => { root.action(Action.acknowledge-orphaned-receipt); } }
         }
     }
     // Slint's modal popup: pointer input outside it reaches nothing and it
@@ -198,13 +219,14 @@ export component AppWindow inherits Window {
         init => { cancel.focus(); }
         Rectangle { width: 100%; height: 100%; background: Theme.color-bg-mask; }
         Card {
+            background: Theme.color-bg-elevated;
             width: 500px; height: dialog-layout.preferred-height;
             x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
             dialog-layout := VerticalLayout {
                 padding: Theme.padding-lg; spacing: Theme.padding-lg;
                 Heading { text: root.confirm-title; font-size: Theme.font-size-heading-4; }
-                Text { accessible-label: "Treść potwierdzenia"; accessible-value: root.confirm-text; text: root.confirm-text; wrap: word-wrap; color: Theme.color-text-secondary; }
-                HorizontalLayout { alignment: end; spacing: Theme.padding-xs; cancel := Button { text: "Anuluj"; clicked => { root.confirm(false); } } Button { text: root.confirm-action; primary: true; clicked => { root.confirm(true); } } }
+                Text { accessible-label: Translations.text("desktop-confirmation-content"); accessible-value: root.confirm-text; text: root.confirm-text; wrap: word-wrap; color: Theme.color-text-secondary; }
+                HorizontalLayout { alignment: end; spacing: Theme.padding-xs; cancel := Button { text: Translations.text("desktop-cancel"); clicked => { root.confirm(false); } } Button { text: root.confirm-action; primary: true; clicked => { root.confirm(true); } } }
             }
         }
     }
@@ -217,13 +239,13 @@ export component TrayIcon inherits SystemTrayIcon {
     callback open;
     callback quit;
     clicked => { root.open(); }
-    Menu { MenuItem { title: "Otwórz"; activated => { root.open(); } } MenuSeparator {} MenuItem { title: "Zakończ"; activated => { root.quit(); } } }
+    Menu { MenuItem { title: Translations.text("desktop-open"); activated => { root.open(); } } MenuSeparator {} MenuItem { title: Translations.text("desktop-quit"); activated => { root.quit(); } } }
 }
 
 export component ErrorWindow inherits Dialog {
-    title: "Holuto Workshop — błąd"; icon: @image-url("../assets/icon.png"); preferred-width: 520px; background: Theme.color-bg-layout;
+    title: Translations.text("desktop-error-title"); icon: @image-url("../assets/icon.png"); preferred-width: 520px; background: Theme.color-bg-layout;
     in property <string> message;
     callback dismiss;
-    VerticalLayout { padding: Theme.padding-lg; spacing: Theme.padding; alignment: start; vertical-stretch: 1; Heading { text: "Nie można uruchomić aplikacji"; font-size: Theme.font-size-heading-4; } Text { text: root.message; wrap: word-wrap; color: Theme.color-error-text; } }
-    Button { text: "Zamknij"; primary: true; dialog-button-role: accept; clicked => { root.dismiss(); } }
+    VerticalLayout { padding: Theme.padding-lg; spacing: Theme.padding; alignment: start; vertical-stretch: 1; Heading { text: Translations.text("desktop-cannot-start"); font-size: Theme.font-size-heading-4; } Text { text: root.message; wrap: word-wrap; color: Theme.color-error-text; } }
+    Button { text: Translations.text("desktop-close"); primary: true; dialog-button-role: accept; clicked => { root.dismiss(); } }
 }

@@ -16,9 +16,9 @@ const MAX_QUANTITY: u64 = 9_999_999_999 * QUANTITY_UNIT;
 pub struct VatSlot(u8);
 
 impl VatSlot {
-    pub fn new(slot: u8) -> Result<Self, Error> {
+    pub const fn new(slot: u8) -> Result<Self, Error> {
         if slot >= VAT_SLOTS {
-            return Err(Error::Invalid("Nieprawidłowa stawka VAT.".to_owned()));
+            return Err(Error::Invalid(i18n::Message::new("fiscal-invalid-vat")));
         }
         Ok(Self(slot))
     }
@@ -61,13 +61,7 @@ impl Quantity {
         decimal::parse(text, QUANTITY_SCALE)
             .filter(|units| *units <= MAX_QUANTITY)
             .map(Self)
-            .ok_or_else(|| {
-                Error::Invalid(
-                    "Ilość musi być zapisana cyframi, z najwyżej 8 miejscami po przecinku, i \
-                     wynosić najwyżej 9 999 999 999."
-                        .to_owned(),
-                )
-            })
+            .ok_or_else(|| Error::Invalid(i18n::Message::new("fiscal-quantity-format")))
     }
 
     pub const fn units(self) -> u64 {
@@ -119,42 +113,35 @@ impl Line {
         capabilities: &Capabilities,
     ) -> Result<Self, Error> {
         if name.trim().is_empty() {
-            return Err(Error::Invalid(
-                "Nazwa usługi nie może być pusta.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new("fiscal-empty-item-name")));
         }
         if name.chars().count() > capabilities.max_item_name {
-            return Err(Error::Invalid(format!(
-                "Nazwa usługi może mieć najwyżej {} znaków.",
-                capabilities.max_item_name
-            )));
+            return Err(Error::Invalid(
+                i18n::Message::new("fiscal-item-name-limit")
+                    .arg("limit", capabilities.max_item_name),
+            ));
         }
         if !capabilities.allows(name) {
-            return Err(Error::Invalid(
-                "Nazwa usługi zawiera znaki, których drukarka nie drukuje.".to_owned(),
-            ));
-        }
-        if !quantity.fits_decimals(capabilities.max_quantity_decimals) {
-            return Err(Error::Invalid(format!(
-                "Ilość może mieć najwyżej {} miejsc po przecinku.",
-                capabilities.max_quantity_decimals
+            return Err(Error::Invalid(i18n::Message::new(
+                "fiscal-item-name-characters",
             )));
         }
-        if quantity.0 == 0 || unit_price == Grosze::ZERO {
+        if !quantity.fits_decimals(capabilities.max_quantity_decimals) {
             return Err(Error::Invalid(
-                "Ilość i cena muszą być dodatnimi liczbami.".to_owned(),
+                i18n::Message::new("fiscal-quantity-decimals")
+                    .arg("limit", capabilities.max_quantity_decimals),
             ));
+        }
+        if quantity.0 == 0 || unit_price == Grosze::ZERO {
+            return Err(Error::Invalid(i18n::Message::new(
+                "fiscal-positive-quantity-price",
+            )));
         }
         let total = quantity
             .times(unit_price.get())
             .and_then(|grosze| Grosze::new(grosze).ok())
             .filter(|total| *total > Grosze::ZERO)
-            .ok_or_else(|| {
-                Error::Invalid(
-                    "Wartość pozycji przekracza zakres drukarki lub zaokrągla się do zera."
-                        .to_owned(),
-                )
-            })?;
+            .ok_or_else(|| Error::Invalid(i18n::Message::new("fiscal-item-total-range")))?;
         Ok(Self {
             name: name.to_owned(),
             quantity,
@@ -213,29 +200,27 @@ impl Receipt {
             || brand.chars().count() > capabilities.max_company_name
             || !capabilities.allows(brand)
         {
-            return Err(Error::Invalid(format!(
-                "Nazwa firmy musi mieć od 1 do {} znaków obsługiwanych przez drukarkę. Zmień ją \
-                 w profilu firmy w Holuto.",
-                capabilities.max_company_name
-            )));
+            return Err(Error::Invalid(
+                i18n::Message::new("fiscal-company-name-limit")
+                    .arg("limit", capabilities.max_company_name),
+            ));
         }
         if !(1..=capabilities.max_lines).contains(&lines.len()) {
-            return Err(Error::Invalid(format!(
-                "Paragon musi zawierać od 1 do {} pozycji.",
-                capabilities.max_lines
-            )));
+            return Err(Error::Invalid(
+                i18n::Message::new("fiscal-receipt-lines").arg("limit", capabilities.max_lines),
+            ));
         }
         if let Some(nip) = &buyer_nip {
             if nip.trim().is_empty() || nip.chars().count() > capabilities.max_buyer_nip {
-                return Err(Error::Invalid(format!(
-                    "NIP nabywcy musi zawierać od 1 do {} znaków.",
-                    capabilities.max_buyer_nip
-                )));
+                return Err(Error::Invalid(
+                    i18n::Message::new("fiscal-buyer-nip-limit")
+                        .arg("limit", capabilities.max_buyer_nip),
+                ));
             }
             if !capabilities.allows(nip) {
-                return Err(Error::Invalid(
-                    "NIP nabywcy zawiera niedozwolone znaki.".to_owned(),
-                ));
+                return Err(Error::Invalid(i18n::Message::new(
+                    "fiscal-buyer-nip-characters",
+                )));
             }
         }
         let mut sales = BTreeMap::<VatSlot, Grosze>::new();
@@ -251,26 +236,26 @@ impl Receipt {
         }
         for (index, advance) in advances.iter().enumerate() {
             if advance.amount == Grosze::ZERO {
-                return Err(Error::Invalid(
-                    "Kwota zaliczki musi być dodatnia.".to_owned(),
-                ));
+                return Err(Error::Invalid(i18n::Message::new(
+                    "fiscal-positive-advance",
+                )));
             }
             if advances
                 .iter()
                 .take(index)
                 .any(|earlier| earlier.vat == advance.vat)
             {
-                return Err(Error::Invalid(
-                    "Powtórzony slot VAT zaliczki. Wymagana jest jedna kwota na slot.".to_owned(),
-                ));
+                return Err(Error::Invalid(i18n::Message::new(
+                    "fiscal-duplicate-advance-vat",
+                )));
             }
             if sales
                 .get(&advance.vat)
                 .is_none_or(|slot_sales| advance.amount > *slot_sales)
             {
-                return Err(Error::Invalid(
-                    "Zaliczki przekraczają sprzedaż w slocie VAT.".to_owned(),
-                ));
+                return Err(Error::Invalid(i18n::Message::new(
+                    "fiscal-advance-exceeds-sales",
+                )));
             }
         }
         // Per-slot bounds above ensure deductions cannot exceed total sales.
@@ -285,9 +270,9 @@ impl Receipt {
             .sum::<Grosze>()
             != fiscal_total
         {
-            return Err(Error::Invalid(
-                "Suma płatności nie odpowiada wartości fiskalnej paragonu.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "fiscal-payment-mismatch",
+            )));
         }
         Ok(Self {
             lines,
@@ -341,8 +326,8 @@ impl Receipt {
     }
 }
 
-fn receipt_too_large() -> Error {
-    Error::Invalid("Suma paragonu przekracza zakres drukarki.".to_owned())
+const fn receipt_too_large() -> Error {
+    Error::Invalid(i18n::Message::new("fiscal-receipt-total-range"))
 }
 
 #[cfg(test)]

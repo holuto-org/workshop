@@ -26,7 +26,7 @@ fn stop_while_start_is_saving_settings_cancels_the_start() -> Result<(), Box<dyn
         api_url: fake.url().into(),
         token: fake.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     settings.save(&dir)?;
     let app = Rc::new(RefCell::new(Application::new(
@@ -99,7 +99,7 @@ fn connect_and_stop(start_on_launch: bool) -> Result<(), Box<dyn Error>> {
         token: fake.token().into(),
         port: simulator.address().into(),
         start_on_launch,
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     // The application loads its pairing from disk, as `main` does; Start saves the port.
@@ -206,7 +206,7 @@ fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     settings.save(&dir)?;

@@ -1,8 +1,10 @@
 # Testing Holuto Workshop
 
-Tests protect irreversible fiscal records, not a test count. Start here when
-planning or reviewing a change; use the [feature checklist](checklist.md) to
-select its required evidence.
+Tests protect irreversible fiscal records, not a test count. Start here to rank
+the risk and choose a boundary; use the [feature checklist](checklist.md) and the
+changed module's invariants to select the guarantees affected by a change.
+The concern guides below describe evidence to seek, not a claim that the suite
+already covers every case.
 
 - **[Fiscal safety](fiscal-safety.md)**: Exact output, delivery guarantees,
   journal, recovery and fault injection
@@ -19,13 +21,17 @@ select its required evidence.
 
 ## Why tests exist
 
-A test earns its place by catching a plausible user-visible failure: assert
-behavior at the consumer boundary (printer frames and executed effects, HTTP
-requests/results, durable files, visible UI and worker events), fake only
-outside systems, and never hide ordering with sleeps or flakes with retries.
-Coverage, assertion counts and tests per function are not proof. The
-[writing-tests rule](../../.omp/rules/writing-tests.md) owns harnesses,
-placement and fixtures.
+A test earns its place by catching a plausible failure of a supported guarantee.
+Consumer boundaries include printer frames and executed effects, HTTP
+requests/results, durable files, visible UI and worker events. Small value and
+parser tests can prove their own contracts directly; not every guarantee needs
+a worker or an end-to-end scenario. Coverage, assertion counts and tests per
+function are not proof.
+
+This guide owns risk and boundary selection. The
+[writing-tests rule](../../.omp/rules/writing-tests.md) owns test construction,
+placement and shared fixtures; [workflows](../workflows.md#finishing-a-change)
+owns commands, snapshot review and regression-seed handling.
 
 ## Rank what must never break
 
@@ -40,10 +46,9 @@ placement and fixtures.
 4. **Unverified printer state.** Verify identity and readiness in the session
    that executes, including fresh VAT mapping; never switch devices while
    blocked.
-5. **Secret or personal-data disclosure.** Token, customer/NIP/receipt data and
-   host information must not enter structured logs, errors or telemetry. Native
-   dumps have a separate disclosed privacy risk; see
-   [telemetry](../telemetry.md).
+5. **Secret or personal-data disclosure.** Keep tokens, customer/NIP/receipt
+   data and host identity out of structured diagnostics; preserve the
+   [telemetry allowlist and native-dump privacy distinction](../telemetry.md).
 6. **Frozen UI or abandoned worker.** The event loop stays responsive and
    cooperative quit finishes the operation before joining.
 7. **Corrupt local state on one OS.** Journal durability, private settings,
@@ -51,55 +56,59 @@ placement and fixtures.
 8. **Availability.** Bound network bodies; recover from handled outages
    without stale status, busy loops or false fiscal certainty.
 
-Prioritize stronger fault, model and concurrency tests for the higher ranks.
-This is risk-based engineering, not a claim of safety certification.
-[NASA's fault-tolerance guidance](https://www.nasa.gov/wp-content/uploads/2015/04/tb-23-06-091923.pdf)
-motivates off-nominal input/fault testing and warns that reboot alone does not
-repair erroneous state. Our hard constraint is stricter than
-hardware-in-the-loop guidance: never exercise a real fiscal printer.
+Prioritize fault, model and concurrency evidence where these risks are present,
+not merely because a test technique is available. This is risk-based
+engineering, not a claim of safety certification. Automated tests use offline
+simulators and local fakes, never real fiscal printers or live Holuto.
+Simulator traces establish modeled behavior, not measured printer behavior;
+[physical qualification](hardware-acceptance.md) is a separate human-only task.
 
 ## What a change must prove
 
-Every invariant in the changed module's docs and every applicable
-[checklist](checklist.md) row stays proven. A fixed bug needs a regression that
-fails without the fix. Document a new decision before encoding it as an expected
-result.
+Preserve evidence for existing safety invariants. Identify which behavior the
+change can affect, including callers and dependents, then retain or extend the
+applicable [checklist](checklist.md) evidence at the cheapest sufficient boundary.
+Do not add a new test per row or repeat an unchanged matrix just to satisfy a
+test shape. A fixed bug needs a regression that fails without the fix; a new
+expected behavior needs a documented decision, not an accidental implementation
+detail promoted into a requirement.
 
-For a fiscal effect, prove success, certain refusal, uncertainty after
-execution, restart, and resolution without replay. For an API call, prove
-headers/body and each failure through the production client. For a refusal,
-prove unchanged journal, device effects and server state as appropriate. For a
-UI change, prove the real callback wiring as well as its displayed state. Format
-changes update the literal fixtures (after the first release they also read the
-previous ones); platform changes need the platform that implements them.
+When changing dispatch or recovery, keep the affected success, certain-refusal,
+post-execution uncertainty, restart and resolution-without-replay paths proven;
+use the [fiscal fault matrix](fiscal-safety.md#fault-matrix). A refusal's evidence
+includes which device, journal and server effects did **not** occur. API
+serialization and error handling need the production-client boundary; UI callback
+or event-delivery changes need the real wiring, not just a displayed-state test.
+[Compatibility](compatibility.md) owns stored-format evidence and
+[platforms](platforms.md) owns native evidence and isolation.
 
 ## Choosing the test
 
-Use the cheapest boundary that proves the whole guarantee, not a private helper
-below it.
+Use the cheapest boundary that proves the whole guarantee. These are choices,
+not a requirement to use every technique for every change:
 
 - **Driver preflight, command order, waits and device failures**: Driver scenario
   through the simulator; assert frames, actual simulated effects and journal
   callbacks
 - **Claim, print, result, recovery, reports and worker**: Agent scenario through
-  loopback Holuto fake + simulator + real state directory
+  loopback `agent::testing::Holuto` + simulator + temporary on-disk state directory
 - **Controls, confirmations, event delivery, close/quit**: Real application
   through Slint testing backend, accessible labels and real worker where involved
 - **Holuto queue to receipt, result and visible state**: End-to-end scenario
-  combining the three boundaries; one per essential legal path, not every
-  parser case
+  combining the three boundaries when their integration is the risk; keep parser
+  cases at their smaller boundary
 - **Parser, formatter, date or value boundary**: Named unit table with exact
   accepted/rejected values
-- **Large numeric/text space**: `proptest` against an independent
-  integer/reference oracle, round trip or documented relation
-- **Journal/recovery lifecycle**: `proptest-state-machine` reference model,
-  invariants after **every** transition, plus real boundary scenarios
+- **Large numeric/text space**: `proptest` with an independent reference oracle
+  or documented relation; a round trip alone cannot prove correct encoding
+- **Lifecycle sequence interactions**: `proptest-state-machine` reference model
+  plus real boundary scenarios; a model does not prove filesystem durability
 - **Binding receipt/report output**: Reviewed `insta` snapshot of fixed printer
   output, checked against the protocol; never a substitute for semantic assertions
 - **Serial transport, locks, Known Folder, session bus**: Platform-gated test on
-  the actual OS, using pty/com0com/fake bus, not real hardware
-- **Release artifact**: Package metadata/dependencies/resources check and
-  isolated headless launch of the packaged application
+  the actual OS, using pty/com0com/private bus rather than hardware or a live bus
+- **Release artifact**: Package metadata/dependencies/resources and isolated
+  packaged-application checks from the [platform guide](platforms.md#package-checks)
 
 [Proptest's state-machine guide](https://proptest-rs.github.io/proptest/proptest/state-machine.html)
 describes sequence shrinking and per-transition invariants. It currently
@@ -110,20 +119,29 @@ integration.
 
 ## Measuring the suite
 
-- **Coverage:** local `cargo-llvm-cov` reports identify unexecuted paths; a
-  covered line is not a proven one. No percentage target or coverage workflow.
-- **Stress:** repeat controlled worker/race tests with nextest; repetitions
-  reveal flakes but never justify sleeps/retries. Run generated models with more
-  cases when changing recovery.
-- **Resource bounds:** assert exact body limits and bounded work or output,
-  not wall-clock speed on a shared runner.
+- **Coverage:** local `cargo-llvm-cov` reports help find unexecuted paths; a
+  covered line is not a proven guarantee.
+- **Stress:** repeat controlled worker/race tests to expose flakes; increase
+  generated cases when sequence interactions are the risk. Neither repetition
+  nor a passing rerun explains a failure.
+- **Resource bounds:** assert the documented body, work or output limit rather
+  than wall-clock speed on a shared runner.
+
+Run and review procedures live in
+[workflows](../workflows.md#finishing-a-change); CI's actual checks live in
+[CI configuration](../ci.md).
 
 ## Tests that prove nothing
 
-Delete constants/default/derive restatements; private-helper tests already
-proven at a boundary; mocks of our own code; status/count-only assertions when
-exact output is known; broad `contains` error checks; duplicate examples with no
-new boundary; fixtures that bypass the transition being tested; and snapshots
-accepted without reading them. A no-retry test must show executed effects and
-retained evidence, not merely that one helper was invoked. A GUI test that wires
-replacement callbacks proves those replacements, not the app.
+Judge a test by what regression it can detect, not its size or whether it calls
+a private helper. Defaults, enum values and literal bytes deserve tests when
+they are stored-format, wire or user-visible contracts; merely restating an
+initializer does not.
+
+Before deleting an apparent duplicate, identify the guarantee and failure mode
+it covers and where that evidence will remain. Replace weak assertions when
+they miss the promised behavior: a success/count assertion alone cannot prove
+exact output, one helper invocation cannot prove no replay after restart, and
+a snapshot cannot prove the device effect. Fixtures that bypass the transition
+under test, mocks replacing the promised production path and UI replacement
+callbacks do not prove that path.

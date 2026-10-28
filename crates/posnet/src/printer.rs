@@ -92,20 +92,16 @@ impl Driver for Printer {
                     || SIGNIFICANT_SYMBOLS.contains(character)
             })
         }) {
-            return Err(Error::Invalid(
-                "Nazwa usługi musi zawierać literę, cyfrę lub jeden ze znaków , . / \\ %."
-                    .to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-item-name-content",
+            )));
         }
         let mut session = self.session()?;
         let device = read_device(&mut session)?;
         device.require_ready()?;
         device.require_unique_number(&expected.unique_number)?;
         if device.vat != expected.vat {
-            return Err(Error::Invalid(
-                "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
-                    .to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new("drivers-vat-changed")));
         }
         let inactive = receipt.sales().keys().any(|slot| {
             device
@@ -114,9 +110,9 @@ impl Driver for Printer {
                 .is_none_or(|rate| !rate.active())
         });
         if inactive {
-            return Err(Error::Invalid(
-                "Wybrana stawka VAT jest nieaktywna na drukarce.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-inactive-printer-vat",
+            )));
         }
         let header = session.command("hdrget", &[], DEFAULT_TIMEOUT)?;
         let header = text::header_text(header.get("tx").unwrap_or_default());
@@ -148,9 +144,9 @@ impl Driver for Printer {
         if let Report::Periodic { from, to, .. } = report
             && from > to
         {
-            return Err(Error::Invalid(
-                "Data początkowa nie może być późniejsza niż końcowa.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-reversed-report-dates",
+            )));
         }
         let mut session = self.session()?;
         let (device, fiscal) = read_status(&mut session)?;
@@ -161,7 +157,7 @@ impl Driver for Printer {
         }
         device.require_unique_number(unique_number)?;
         let today = civil_date(&session.command("rtcget", &[], DEFAULT_TIMEOUT)?)
-            .ok_or_else(|| Error::Protocol("Nie można odczytać daty drukarki.".to_owned()))?;
+            .ok_or_else(|| Error::Protocol(i18n::Message::new("drivers-unreadable-date")))?;
         let step = match report {
             Report::Daily => Step {
                 command: "dailyrep",
@@ -170,7 +166,10 @@ impl Driver for Printer {
             },
             Report::Monthly { year, month } => {
                 let first = Date::new(year, month, 1).map_err(|error| {
-                    Error::Invalid(format!("Nieprawidłowy miesiąc raportu: {error}."))
+                    Error::Invalid(
+                        i18n::Message::new("drivers-invalid-report-month")
+                            .arg("error", error.to_string()),
+                    )
                 })?;
                 require_report_dates(&mut session, fiscal, first, first.last_of_month(), today)?;
                 // A monthly report prints the periodic report for that month (p. 216).
@@ -209,22 +208,22 @@ fn require_report_dates(
     today: Date,
 ) -> Result<(), Error> {
     if from > today {
-        return Err(Error::Invalid(format!(
-            "Raport nie może zaczynać się po dacie drukarki ({}).",
-            today.strftime("%d.%m.%Y")
-        )));
+        return Err(Error::Invalid(
+            i18n::Message::new("drivers-report-after-printer-date")
+                .arg("date", today.strftime("%d.%m.%Y").to_string()),
+        ));
     }
     // Only a fiscal printer has a fiscalisation record (p. 405); demo mode is acceptance-only.
     if fiscal {
         let fiscalised = civil_date(&session.command("fmrecfisc", &[], DEFAULT_TIMEOUT)?)
             .ok_or_else(|| {
-                Error::Protocol("Nie można odczytać daty fiskalizacji drukarki.".to_owned())
+                Error::Protocol(i18n::Message::new("drivers-unreadable-fiscalisation-date"))
             })?;
         if to < fiscalised {
-            return Err(Error::Invalid(format!(
-                "Raport nie może kończyć się przed fiskalizacją drukarki ({}).",
-                fiscalised.strftime("%d.%m.%Y")
-            )));
+            return Err(Error::Invalid(
+                i18n::Message::new("drivers-report-before-fiscalisation")
+                    .arg("date", fiscalised.strftime("%d.%m.%Y").to_string()),
+            ));
         }
     }
     Ok(())
@@ -313,7 +312,7 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
     let command = step.command;
     let mut deadline = session.send(command, &step.params, step.timeout)?;
     let mut since: Option<(Instant, Duration)> = None;
-    let mut shown: Option<String> = None;
+    let mut shown: Option<i18n::Message> = None;
     let answered = (|| {
         loop {
             let cap = since.map(|(since, limit)| since + limit);
@@ -367,7 +366,7 @@ fn execute(session: &mut Session, step: &Step, journal: &mut dyn Journal) -> Res
 enum Watch {
     /// The command's own reply arrived meanwhile.
     Answered(Result<Reply, Error>),
-    Waiting(String),
+    Waiting(i18n::Message),
     Ready,
     /// At least one status query went unanswered.
     Unanswered,
@@ -408,9 +407,11 @@ fn watch(
             {
                 answered = Some(result);
             } else if answered.is_none() {
-                return Err(Error::Protocol(format!(
-                    "Oczekiwano odpowiedzi {command}, otrzymano {name}."
-                )));
+                return Err(Error::Protocol(
+                    i18n::Message::new("drivers-unexpected-reply")
+                        .arg("command", command)
+                        .arg("name", name),
+                ));
             }
         }
     }
@@ -432,12 +433,13 @@ fn query(session: &mut Session, query: &'static str) -> Result<String, Error> {
 }
 
 /// Operator-fixable mechanism or keypad state (spec pp. 384-385); `None` when ready.
-fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<String> {
+fn operator_problem(mechanism: &Reply, device: &Reply) -> Option<i18n::Message> {
     let code = mechanism.get("pr").unwrap_or_default();
     if matches!(code, "1" | "3" | "5" | "6") {
         return mechanism_problem(code);
     }
-    matches!(device.get("ds"), Some("2" | "3")).then(|| "Drukarka oczekuje na operatora".to_owned())
+    matches!(device.get("ds"), Some("2" | "3"))
+        .then(|| i18n::Message::new("drivers-operator-required"))
 }
 
 /// An unlisted model named POSNET is reported by name instead of as an absent printer;
@@ -453,11 +455,17 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
         {
             return Ok(None);
         }
-        return Err(Error::Unsupported(format!(
-            "Nieobsługiwany model drukarki Posnet: {model} (oprogramowanie {}). Obsługiwana \
-             jest Posnet Temo Online.",
-            identity.get("vr").unwrap_or("nieznane")
-        )));
+        return Err(Error::Unsupported(
+            i18n::Message::new("drivers-unsupported-posnet")
+                .arg("model", model)
+                .arg(
+                    "firmware",
+                    identity.get("vr").map_or_else(
+                        || i18n::Message::new("drivers-unknown-firmware"),
+                        i18n::Message::literal,
+                    ),
+                ),
+        ));
     }
     read_device(&mut session).map(Some)
 }
@@ -465,35 +473,34 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
 /// Prefer ISO8601 `tm` (spec p. 17), preserving the autumn-hour offset; seconds round down.
 /// Older replies with only civil `da` reject gaps and choose the earlier repeated instant.
 fn clock(session: &mut Session) -> Result<Timestamp, Error> {
-    let unreadable = |problem: String| {
-        Error::Protocol(format!("Nie można odczytać zegara drukarki: {problem}."))
+    let unreadable = |problem: i18n::Message| {
+        Error::Protocol(i18n::Message::new("drivers-unreadable-clock").arg("problem", problem))
     };
     let reply = session.command("rtcget", &[], DEFAULT_TIMEOUT)?;
     if let Some(value) = reply.get("tm") {
         let timestamp = value
             .parse::<Timestamp>()
-            .map_err(|error| unreadable(error.to_string()))?;
+            .map_err(|error| unreadable(i18n::Message::literal(error.to_string())))?;
         return Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
-            .map_err(|error| unreadable(error.to_string()));
+            .map_err(|error| unreadable(i18n::Message::literal(error.to_string())));
     }
     let value = reply
         .get("da")
-        .ok_or_else(|| unreadable("brak parametru da".to_owned()))?;
+        .ok_or_else(|| unreadable(i18n::Message::new("drivers-missing-clock-date")))?;
     let (time, _rest) = BrokenDownTime::parse_prefix("%Y-%m-%d;%H:%M", value)
-        .map_err(|error| unreadable(error.to_string()))?;
+        .map_err(|error| unreadable(i18n::Message::literal(error.to_string())))?;
     let time = time
         .to_datetime()
-        .map_err(|error| unreadable(error.to_string()))?;
-    let zone = TimeZone::get(PRINTER_ZONE).map_err(|error| unreadable(error.to_string()))?;
+        .map_err(|error| unreadable(i18n::Message::literal(error.to_string())))?;
+    let zone = TimeZone::get(PRINTER_ZONE)
+        .map_err(|error| unreadable(i18n::Message::literal(error.to_string())))?;
     let timestamp = zone.to_ambiguous_timestamp(time);
     if matches!(timestamp.offset(), AmbiguousOffset::Gap { .. }) {
-        return Err(unreadable(
-            "czas lokalny nie istnieje w strefie Europe/Warsaw".to_owned(),
-        ));
+        return Err(unreadable(i18n::Message::new("drivers-clock-time-gap")));
     }
     timestamp
         .earlier()
-        .map_err(|error| unreadable(error.to_string()))
+        .map_err(|error| unreadable(i18n::Message::literal(error.to_string())))
 }
 
 fn read_device(session: &mut Session) -> Result<Device, Error> {
@@ -522,9 +529,9 @@ fn read_status(session: &mut Session) -> Result<(Device, bool), Error> {
         &interfaces,
     )
     .map_err(|error| {
-        Error::Protocol(format!(
-            "Niepełna lub nieprawidłowa odpowiedź statusu drukarki: {error}"
-        ))
+        Error::Protocol(
+            i18n::Message::new("drivers-invalid-status-response").arg("error", error.message()),
+        )
     })
 }
 
@@ -551,7 +558,12 @@ fn device_from(
             let raw = vat.require(&key)?;
             let basis_points = decimal::parse(&raw.replace(',', "."), 2)
                 .and_then(|units| u32::try_from(units).ok())
-                .ok_or_else(|| Error::Protocol(format!("nieprawidłowa stawka VAT {raw:?}")))?;
+                .ok_or_else(|| {
+                    Error::Protocol(
+                        i18n::Message::new("drivers-invalid-vat-value")
+                            .arg("raw", format!("{raw:?}")),
+                    )
+                })?;
             let kind = match basis_points {
                 EXEMPT_BASIS_POINTS => VatKind::Exempt,
                 ..=MAX_ACTIVE_BASIS_POINTS => VatKind::Rate { basis_points },
@@ -562,19 +574,19 @@ fn device_from(
         .collect::<Result<Vec<_>, Error>>()?;
     let mut problems = Vec::new();
     if name != TEMO || unique_number.trim().is_empty() {
-        problems.push("Wybrane urządzenie nie jest drukarką Temo Online".into());
+        problems.push(i18n::Message::new("drivers-not-temo").into());
     }
     if !fiscal && !cfg!(workshop_acceptance) {
-        problems.push("Drukarka nie jest w trybie fiskalnym".into());
+        problems.push(i18n::Message::new("drivers-not-fiscal").into());
     }
     if !header {
-        problems.push("Drukarka nie ma zaprogramowanego nagłówka".into());
+        problems.push(i18n::Message::new("drivers-no-header").into());
     }
     if device.require("ds")? != "0" {
-        problems.push("Drukarka oczekuje na operatora lub jest w menu".into());
+        problems.push(i18n::Message::new("drivers-operator-or-menu").into());
     }
     if !queue_empty {
-        problems.push("Drukarka ma oczekujące polecenia".into());
+        problems.push(i18n::Message::new("drivers-pending-commands").into());
     }
     problems.extend(mechanism_problem(mechanism.require("pr")?).map(Problem::Blocking));
     // The specification permits monthly and periodic reports in read-only mode.
@@ -584,13 +596,13 @@ fn device_from(
         });
     }
     if device.require("tl")? != "0" {
-        problems.push("Zasoby transakcji są zajęte przez inny interfejs".into());
+        problems.push(i18n::Message::new("drivers-interface-busy").into());
     }
     if transaction_open || common.require("ts")? != "0" {
-        problems.push("Otwarta transakcja. Dokończ lub anuluj ją na drukarce".into());
+        problems.push(i18n::Message::new("drivers-open-transaction").into());
     }
     if !rates.iter().any(|rate| rate.active()) {
-        problems.push("Brak aktywnych stawek VAT".into());
+        problems.push(i18n::Message::new("drivers-no-active-vat").into());
     }
     let mut foreign = false;
     // Validate every interface even after finding a foreign code page.
@@ -598,7 +610,7 @@ fn device_from(
         foreign |= foreign_code_page(interface)?;
     }
     if foreign {
-        problems.push("Drukarka nie używa strony kodowej Windows-1250".into());
+        problems.push(i18n::Message::new("drivers-wrong-code-page").into());
     }
     let device = Device {
         vendor: Vendor::Posnet,
@@ -621,14 +633,14 @@ fn foreign_code_page(interface: &Reply) -> Result<bool, Error> {
 }
 
 /// Mechanism `pr` codes (spec p. 384); `None` when ready.
-fn mechanism_problem(code: &str) -> Option<String> {
+fn mechanism_problem(code: &str) -> Option<i18n::Message> {
     Some(match code {
         "0" => return None,
-        "1" => "Podniesiona dźwignia".to_owned(),
-        "3" => "Otwarta pokrywa".to_owned(),
-        "5" => "Brak papieru".to_owned(),
-        "6" => "Nieprawidłowa temperatura lub zasilanie".to_owned(),
-        other => format!("Błąd mechanizmu: {other}"),
+        "1" => i18n::Message::new("drivers-lever-raised"),
+        "3" => i18n::Message::new("drivers-cover-open"),
+        "5" => i18n::Message::new("drivers-paper-out"),
+        "6" => i18n::Message::new("drivers-temperature-power"),
+        other => i18n::Message::new("drivers-mechanism-code").arg("other", other),
     })
 }
 
@@ -652,9 +664,9 @@ fn boolean(value: &str) -> Result<bool, Error> {
     match value {
         "1" | "y" | "Y" | "t" | "T" => Ok(true),
         "0" | "n" | "N" => Ok(false),
-        _ => Err(Error::Protocol(format!(
-            "nieprawidłowy status logiczny {value:?}"
-        ))),
+        _ => Err(Error::Protocol(
+            i18n::Message::new("drivers-invalid-boolean").arg("value", format!("{value:?}")),
+        )),
     }
 }
 

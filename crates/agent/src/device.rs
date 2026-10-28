@@ -1,5 +1,7 @@
 //! Read-only brand discovery; unresolved operations never scan or switch brands.
 
+use i18n::Message;
+
 use elzab::printer as elzab_printer;
 use fiscal::{
     device::{Device, Vendor},
@@ -18,7 +20,7 @@ pub fn detect(
     remembered: Option<Vendor>,
     may_switch: bool,
 ) -> Result<(Box<dyn Driver>, Device), Error> {
-    let mut error = Error::Invalid("Nie znaleziono obsługiwanej drukarki fiskalnej.".to_owned());
+    let mut error = Error::Invalid(Message::new("agent-no-printer"));
     let mut denied = None;
     // Unopenable, or its brand already answered: probing it again cannot help.
     let mut settled = false;
@@ -82,10 +84,7 @@ pub fn detect(
         }
     }
     Err(denied.map_or(error, |port| {
-        Error::Invalid(format!(
-            "Brak uprawnień do portu {port}. Na Linuksie dodaj użytkownika do grupy dialout i \
-         zaloguj się ponownie."
-        ))
+        Error::Invalid(Message::new("agent-port-permission").arg("port", port))
     }))
 }
 
@@ -103,7 +102,7 @@ fn probe(
         ],
         |vendor| [Some(vendor), None, None],
     );
-    let mut error = Error::Invalid("Nie znaleziono obsługiwanej drukarki fiskalnej.".to_owned());
+    let mut error = Error::Invalid(Message::new("agent-no-printer"));
     for vendor in vendors
         .into_iter()
         .flatten()

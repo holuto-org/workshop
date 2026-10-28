@@ -2,37 +2,40 @@
 description:
   "Privacy and signal policy for tracing, error capture and Sentry lifecycle"
 condition:
-  - "tracing|sentry|before_send|before_breadcrumb|instrument|log::"
-scope: "tool:edit(crates/*/src/**), tool:write(crates/*/src/**)"
+  - ".*"
+scope:
+  - "tool:edit(crates/*/src/**)"
+  - "tool:write(crates/*/src/**)"
+  - "tool:edit(crates/desktop/ui/**)"
+  - "tool:write(crates/desktop/ui/**)"
+  - "tool:edit(Cargo.toml)"
+  - "tool:write(Cargo.toml)"
+  - "tool:edit(docs/telemetry.md)"
+  - "tool:write(docs/telemetry.md)"
 interruptMode: never
 ---
 
 # Telemetry
 
-Read [the telemetry policy](../../docs/telemetry.md) before changing capture.
-It owns the data allowlist, severity levels, sampling, propagation and consent
-lifecycle. Instrument driver/agent code through `tracing`; keep Sentry client
-ownership in desktop.
+Read [the privacy contract](../../docs/telemetry.md) before changing capture,
+SDK features, transport or consent. It owns the allowlist, signal policy and
+lifecycle; do not duplicate those inventories here.
 
-- Instrument only IDs, command names, states, attempts and device error codes;
-  the structured transport retains a narrower allowlist, not arbitrary fields.
-  Never customer/company names, NIP, line text, amounts, token, full URL/path/query,
-  hostname, local paths or raw request/response/problem bodies. Do not instrument
-  arguments with automatic `Debug`; skip payloads/secrets. Route names are fixed
-  templates, not actual IDs/URLs.
-- Follow the [signal policy](../../docs/telemetry.md#what-is-sent); do not add
-  poll-specific root spans or INFO messages. Keep normal HTTP-call spans.
-- Agent owns the single fiscal-operation span with
-  `sentry.op = "fiscal.receipt"` or `"fiscal.report"`; receipt roots include
-  job ID/attempt/kind. Nested driver spans use `device.receipt`/`device.report`.
-  One HTTP-call span
-  with `sentry.op = "http.client"`, method/template/status. Forward only
-  SDK-provided trace headers to Holuto; never fabricate or log their contents.
-- Test errors, breadcrumbs, logs **and transactions** through a capturing
-  transport with synthetic secret/PII canaries, not just `before_send`.
-- Preserve the [native reporter lifecycle](../../docs/telemetry.md#native-minidumps-important-exception):
-  initialize before the instance lock, fiscal journal or worker; enter
-  initialization in reporter children even after consent changes.
+- Keep sensitive data out of instrumentation at its source, not merely out of
+  the final event. Skip payloads/secrets in `#[instrument]`; never dump settings,
+  jobs, receipts or HTTP bodies through `Debug`, messages or fields. An ID is
+  not automatically anonymous or allowed by the contract.
+- Choose stable, actionable signals rather than successful-poll noise. Review
+  both message text and fields: a new fixed message may need allowlisting, but
+  a useful local field is not by itself a reason to export it.
+- Preserve synthetic secret/PII canaries at the serialized-envelope boundary
+  across errors/panics, breadcrumbs, logs **and transactions**. `before_send`
+  alone does not cover them all; use capturing transports, never live ingestion.
+- Read the [native reporter exception and lifecycle](../../docs/telemetry.md#native-minidumps-important-exception)
+  before moving startup or shutdown work. The reporter re-executes this binary.
+  Structured scrubbing does not sanitize dump memory; server-side deletion does
+  not mean sensitive bytes were never transmitted.
 
-Changing capture fields, retention or opt-out behavior changes the documented
-privacy contract: update policy and tests in the same change.
+When a change alters capture, retention or opt-out behavior, update the privacy
+contract and its tests together. Do not weaken a privacy canary to accommodate
+new instrumentation.

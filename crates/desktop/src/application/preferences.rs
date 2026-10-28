@@ -15,6 +15,7 @@ use agent::{
     store::StateDir,
 };
 use fiscal::device::Vendor;
+use i18n::{LanguagePreference, Message};
 
 use crate::autostart;
 
@@ -25,6 +26,7 @@ pub(super) enum Request {
     },
     Telemetry(bool),
     Theme(Theme),
+    Language(LanguagePreference),
     Port {
         port: String,
         vendor: Vendor,
@@ -43,13 +45,14 @@ pub(super) enum Outcome {
     Start(Settings),
     Telemetry,
     Theme,
+    Language,
     Port,
     Autostart(bool),
     Reload(Settings),
     Status(Snapshot),
 }
 
-pub(super) type Completion = Result<Outcome, String>;
+pub(super) type Completion = Result<Outcome, Message>;
 
 pub(super) struct Writer {
     sender: Sender<Request>,
@@ -65,7 +68,7 @@ impl Writer {
             .name("application settings".into())
             .spawn(move || {
                 while let Ok(request) = receiver.recv() {
-                    sink(persist(&dir, request).map_err(|error| error.to_string()));
+                    sink(persist(&dir, request).map_err(|error| error.message()));
                 }
             })?;
         // Quit waits for write acknowledgements, not this idle receiver.
@@ -112,6 +115,10 @@ fn persist(dir: &StateDir, request: Request) -> Result<Outcome, Error> {
         Request::Theme(theme) => {
             Settings::save_theme(dir, theme)?;
             Ok(Outcome::Theme)
+        },
+        Request::Language(language) => {
+            Settings::save_language(dir, language)?;
+            Ok(Outcome::Language)
         },
         Request::Port { port, vendor } => {
             if let Some(mut settings) = Settings::load(dir)? {

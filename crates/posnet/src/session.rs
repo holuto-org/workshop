@@ -91,9 +91,11 @@ impl Session {
                 continue;
             }
             if answered != command && answered != "ERR" {
-                return Err(Error::Protocol(format!(
-                    "Oczekiwano odpowiedzi {command}, otrzymano {answered}."
-                )));
+                return Err(Error::Protocol(
+                    i18n::Message::new("drivers-unexpected-session-reply")
+                        .arg("command", command)
+                        .arg("answered", answered),
+                ));
             }
             return reply.into_result(&answered);
         }
@@ -136,7 +138,9 @@ impl Session {
                 return frame::decode_response(raw.get(start..).unwrap_or_default());
             }
             if self.pending.len() >= MAX_FRAME {
-                return Err(Error::Protocol("Zbyt długa odpowiedź drukarki.".to_owned()));
+                return Err(Error::Protocol(i18n::Message::new(
+                    "drivers-response-too-long",
+                )));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {

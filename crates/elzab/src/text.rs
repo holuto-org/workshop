@@ -12,12 +12,12 @@ pub(crate) fn encode_body(command: &str, fields: &str) -> Result<Vec<u8>, Error>
         .chars()
         .any(|c| c.is_control() && !matches!(c, '\u{1d}' | '\u{1e}' | '\u{1f}'))
     {
-        return Err(Error::Invalid(
-            "Niedozwolony znak w poleceniu ElzabSTX.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-elzab-invalid-character",
+        )));
     }
     cp1250::encode(&body)
-        .ok_or_else(|| Error::Invalid("Polecenie nie mieści się w CP1250.".to_owned()))
+        .ok_or_else(|| Error::Invalid(i18n::Message::new("drivers-cp1250-command")))
 }
 
 pub fn printable_cp1250() -> String {

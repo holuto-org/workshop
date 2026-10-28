@@ -10,6 +10,8 @@ use fiscal::device::Vendor;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
+use i18n::{LanguagePreference, Message};
+
 use crate::{
     Error,
     store::{self, StateDir},
@@ -74,6 +76,8 @@ pub struct Settings {
     pub telemetry_enabled: bool,
     pub start_on_launch: bool,
     pub theme: Theme,
+    /// UI-only preference; fiscal content and diagnostics remain Polish.
+    pub language: LanguagePreference,
 }
 
 impl Default for Settings {
@@ -88,6 +92,7 @@ impl Default for Settings {
             telemetry_enabled: true,
             start_on_launch: false,
             theme: Theme::System,
+            language: LanguagePreference::System,
         }
     }
 }
@@ -95,8 +100,9 @@ impl Default for Settings {
 impl Settings {
     /// Release builds carry the address, so only a development build or a cleared
     /// override can lack it; the app has no address field.
-    pub const MISSING_API_URL: &str =
-        "Brak adresu Holuto. Ustaw go poleceniem: workshop config set --api-url <adres>.";
+    pub const fn missing_api_url() -> Message {
+        Message::new("agent-missing-api")
+    }
 
     /// Safe before telemetry initialization, including crash-reporter subprocesses.
     /// Missing settings opt in; unreadable settings fail closed.
@@ -119,7 +125,7 @@ impl Settings {
     pub fn load_at(dir: &Path) -> Result<Option<Self>, Error> {
         let path = dir.join(FILE);
         let unreadable = |source| Error::Store {
-            action: "Nie można odczytać ustawień",
+            action: Message::new("agent-read-settings"),
             path: path.clone(),
             source,
         };
@@ -130,12 +136,10 @@ impl Settings {
             // Serde errors may echo credentials in malformed values or keys.
             unreadable(io::Error::new(
                 ErrorKind::InvalidData,
-                format!(
-                    "Nieprawidłowy JSON ustawień ({:?}, wiersz {}, kolumna {}).",
-                    error.classify(),
-                    error.line(),
-                    error.column()
-                ),
+                Message::new("agent-invalid-settings-json")
+                    .arg("category", format!("{:?}", error.classify()))
+                    .arg("line", error.line())
+                    .arg("column", error.column()),
             ))
         })
     }
@@ -159,12 +163,19 @@ impl Settings {
         settings.write(dir)
     }
 
+    /// Saves only the UI language, including before pairing or printer configuration.
+    pub fn save_language(dir: &StateDir, language: LanguagePreference) -> Result<(), Error> {
+        let mut settings = Self::load(dir)?.unwrap_or_default();
+        settings.language = language;
+        settings.write(dir)
+    }
+
     fn write(&self, dir: &StateDir) -> Result<(), Error> {
         let path = dir.file(FILE);
-        let bytes =
-            serde_json::to_vec_pretty(self).map_err(|error| Error::Invalid(error.to_string()))?;
+        let bytes = serde_json::to_vec_pretty(self)
+            .map_err(|error| Error::Invalid(Message::literal(error.to_string())))?;
         store::write_durably(&path, &bytes).map_err(|source| Error::Store {
-            action: "Nie można zapisać ustawień",
+            action: Message::new("agent-write-settings"),
             path,
             source,
         })
@@ -184,13 +195,11 @@ impl Settings {
 
     pub fn validate(&self) -> Result<(), Error> {
         if self.api_url.trim().is_empty() {
-            return Err(Error::Invalid(Self::MISSING_API_URL.to_owned()));
+            return Err(Error::Invalid(Self::missing_api_url()));
         }
         self.validate_configuration()?;
         if self.token.as_str().is_empty() {
-            return Err(Error::Invalid(
-                "Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-pair-required")));
         }
         Ok(())
     }
@@ -202,19 +211,13 @@ impl Settings {
         }
         let token = self.token.as_str();
         if token.len() > MAX_TOKEN_LENGTH || !token.bytes().all(|byte| byte.is_ascii_graphic()) {
-            return Err(Error::Invalid(
-                "Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-pair-required")));
         }
         if self.port.chars().any(char::is_control) {
-            return Err(Error::Invalid(
-                "Nieprawidłowa nazwa portu drukarki.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-invalid-port")));
         }
         if !BAUD_RATES.contains(&self.baud_rate) {
-            return Err(Error::Invalid(
-                "Nieprawidłowa prędkość transmisji.".to_owned(),
-            ));
+            return Err(Error::Invalid(Message::new("agent-invalid-baud")));
         }
         Ok(())
     }
@@ -231,13 +234,7 @@ pub(crate) const fn is_loopback(host: &Host<&str>) -> bool {
 /// Preserves path prefixes and strips trailing slashes. HTTP is allowed only on loopback;
 /// credentials, queries and fragments are rejected.
 pub(crate) fn api_url(text: &str) -> Result<String, Error> {
-    let refused = || {
-        Error::Invalid(
-            "Adres API wymaga https (http tylko dla localhost), bez danych logowania, zapytania i \
-             fragmentu."
-                .to_owned(),
-        )
-    };
+    let refused = || Error::Invalid(Message::new("agent-invalid-api"));
     let url = Url::parse(text.trim()).map_err(|_unparsable| refused())?;
     let Some(host) = url.host() else {
         return Err(refused());

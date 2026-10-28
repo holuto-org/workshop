@@ -251,7 +251,7 @@ fn unsupported_elzab_model_is_reported_instead_of_a_later_silent_port() {
     .err()
     .unwrap();
     assert!(
-        matches!(&error, Error::Unsupported(message) if message ==
+        matches!(&error, Error::Unsupported(message) if message.to_string() ==
             "Nieobsługiwany model drukarki Elzab: ELZAB Zeta Online (oprogramowanie MD06.02). \
              Obsługiwane są Elzab Zeta, Mera i Cube ONLINE."),
         "{error:?}"
@@ -338,9 +338,11 @@ fn permission_denied_candidate_retains_the_operator_diagnostic() {
     let error = detect(Arc::new(Denied), connection("missing"), None, true)
         .err()
         .unwrap();
-    assert!(matches!(&error, Error::Invalid(message) if message ==
+    assert!(
+        matches!(&error, Error::Invalid(message) if message.to_string() ==
         "Brak uprawnień do portu denied. Na Linuksie dodaj użytkownika do grupy dialout i \
-         zaloguj się ponownie."));
+         zaloguj się ponownie.")
+    );
 }
 
 #[test]
@@ -435,9 +437,11 @@ fn the_first_unsupported_printer_diagnostic_is_not_replaced_by_another_unsupport
     )
     .err()
     .unwrap();
-    assert!(matches!(error,Error::Unsupported(message) if message ==
+    assert!(
+        matches!(error,Error::Unsupported(message) if message.to_string() ==
         "Nieobsługiwany model drukarki Elzab: ELZAB Zeta Online (oprogramowanie MD06.02). \
-         Obsługiwane są Elzab Zeta, Mera i Cube ONLINE."));
+         Obsługiwane są Elzab Zeta, Mera i Cube ONLINE.")
+    );
     assert_eq!(first.fiscal_frames(), Vec::<Vec<u8>>::new());
     assert_eq!(second.fiscal_frames(), Vec::<Vec<u8>>::new());
 }

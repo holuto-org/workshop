@@ -69,7 +69,7 @@ pub(super) fn now() -> Instant {
 fn event_debug_omits_operator_text_and_receipt_payloads() {
     let events = [
         Event::Problem(Some(
-            "private-customer private-line 98765.43 9876543".to_owned(),
+            "private-customer private-line 98765.43 9876543".into(),
         )),
         Event::Problem(None),
         Event::PortDetected {
@@ -86,7 +86,7 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
             printer_id: "printer-id".to_owned(),
         },
         Event::PairingFailed {
-            message: "private-customer private-line 98765.43 9876543".to_owned(),
+            message: "private-customer private-line 98765.43 9876543".into(),
             failure: super::PairingFailure::Communication,
         },
     ];
@@ -302,7 +302,7 @@ fn a_panicking_worker_reports_a_redacted_error_then_stopped() {
             Event::Problem(Some(text)),
             Event::Device { status: None, blocked: false, report_unresolved: false, .. },
             Event::Stopped
-        ] if text == "Wątek drukarki został przerwany. Sprawdź wydruk przed \
+        ] if text.to_string() == "Wątek drukarki został przerwany. Sprawdź wydruk przed \
                         ponownym uruchomieniem."
     ));
     assert_eq!(
@@ -424,7 +424,7 @@ fn startup_transient_http_failures_wait_for_retry_and_can_be_stopped() {
         );
         let _retrying = receive_until(
             &events,
-            |event| matches!(event, Event::Problem(Some(text)) if text == &expected),
+            |event| matches!(event, Event::Problem(Some(text)) if text.to_string() == expected),
         );
         let stopped = stop(worker, &events);
         assert!(matches!(stopped.last(), Some(Event::Stopped)));
@@ -485,7 +485,7 @@ fn startup_contract_failures_stop_without_retry_or_fiscal_effects() {
                 Event::Problem(Some(text)),
                 Event::Device { status: None, blocked: false, report_unresolved: false, .. },
                 Event::Stopped
-            ] if text == expected
+            ] if text.to_string() == expected
         ));
         assert_eq!(
             holuto
@@ -514,13 +514,13 @@ fn printer_unavailable_at_start_is_retried_until_it_answers() {
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let received = receive_until(&events, |event| {
         matches!(event,
-            Event::Problem(Some(text)) if text.contains("Ponowna próba za 15 sekund")
+            Event::Problem(Some(text)) if text.to_string().contains("Ponowna próba za 15 sekund")
         )
     });
     assert!(matches!(
         received.last(),
         Some(Event::Problem(Some(text)))
-            if text.starts_with("Drukarka niedostępna: ")
+            if text.to_string().starts_with("Drukarka niedostępna: ")
     ));
     assert!(
         holuto.requests().is_empty(),
@@ -595,7 +595,7 @@ fn slow_startup_detection_still_waits_the_full_retry_interval() {
     .unwrap();
     let _retrying = receive_until(&events, |event| {
         matches!(event,
-            Event::Problem(Some(text)) if text.contains("Ponowna próba za 15 sekund")
+            Event::Problem(Some(text)) if text.to_string().contains("Ponowna próba za 15 sekund")
         )
     });
     // Wakes the wait without moving the clock: the retry is still 15 s away.
@@ -633,7 +633,7 @@ fn a_lost_startup_reply_is_retryable_without_touching_the_printer_again() {
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let _received = receive_until(&events, |event| {
         matches!(event,
-            Event::Problem(Some(text)) if text.contains("Ponowna próba za 15 sekund")
+            Event::Problem(Some(text)) if text.to_string().contains("Ponowna próba za 15 sekund")
         )
     });
     let startup_frames = sim.frames();
@@ -682,7 +682,7 @@ fn startup_unauthorized_stops_instead_of_retrying() {
             Event::Problem(Some(text)),
             Event::Device { status: None, blocked: false, report_unresolved: false, .. },
             Event::Stopped
-        ] if text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
+        ] if text.to_string() == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
                         Sparuj drukarkę ponownie w Ustawieniach."
     ));
     assert_eq!(
@@ -797,7 +797,7 @@ fn a_refused_command_does_not_delay_the_following_report() {
         received
             .iter()
             .any(|event| matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Brak przerwanego raportu do wyjaśnienia."))
+        if text.to_string() == "Błąd: Brak przerwanego raportu do wyjaśnienia."))
     );
     assert_eq!(
         sim.reports(),
@@ -825,7 +825,7 @@ fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
     let statuses: Vec<_> = received
         .iter()
         .filter_map(|event| match event {
-            Event::Problem(Some(text)) => Some(text.as_str()),
+            Event::Problem(Some(text)) => Some(text.to_string()),
             Event::Problem(None)
             | Event::PortDetected { .. }
             | Event::Connected { .. }
@@ -870,7 +870,7 @@ fn command_unauthorized_releases_the_submission_guard_then_stops() {
         received
             .iter()
             .any(|event| matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
+        if text.to_string() == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
                     Sparuj drukarkę ponownie w Ustawieniach.")),
         "authorization failure reaches the operator"
     );
@@ -1023,7 +1023,7 @@ fn holuto_unauthorized_is_not_hidden_by_a_simultaneous_printer_error() {
         received
             .iter()
             .any(|event| matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
+        if text.to_string() == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
                     Sparuj drukarkę ponownie w Ustawieniach."))
     );
     assert_eq!(sim.receipts(), []);
@@ -1039,7 +1039,7 @@ fn print_with_unconfirmed_result(sim: &Simulator, holuto: &Holuto, dir: &Arc<Sta
     let (worker, events) = spawn(holuto, sim, dir);
     let _failed = receive_until(&events, |event| {
         matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
+        if text.to_string() == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
     });
     let _stopped = stop(worker, &events);
 }
@@ -1058,7 +1058,7 @@ fn settlement_reports_the_result_even_when_the_next_printer_probe_fails() {
     release.send(()).unwrap();
     let _failed_probe = receive_until(&events, |event| {
         matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Drukarka zwróciła błąd 2000 (getrealid).")
+        if text.to_string() == "Błąd: Drukarka zwróciła błąd 2000 (getrealid).")
     });
     let _stopped = stop(worker, &events);
     assert_eq!(holuto.job(JOB_ID)["state"], "done");
@@ -1265,7 +1265,7 @@ fn an_orphaned_print_publishes_its_evidence_with_the_block() {
             orphaned_receipt, ..
         } = event
         {
-            orphaned_receipt.clone()
+            orphaned_receipt.as_ref().map(ToString::to_string)
         } else {
             None
         }
@@ -1277,7 +1277,7 @@ fn an_orphaned_print_publishes_its_evidence_with_the_block() {
     );
     let latest = received.iter().rev().find_map(|event| {
         if let Event::Problem(Some(text)) = event {
-            Some(text.clone())
+            Some(text.to_string())
         } else {
             None
         }
@@ -1385,7 +1385,7 @@ fn a_corrupt_journal_stops_startup_before_any_printer_or_holuto_traffic() {
         received
             .iter()
             .any(|event| matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Uszkodzony rejestr operacji lub nieobsługiwany format. \
+        if text.to_string() == "Błąd: Uszkodzony rejestr operacji lub nieobsługiwany format. \
                     Drukowanie zablokowane; nie usuwaj pliku."))
     );
     assert!(
@@ -1954,7 +1954,7 @@ fn pairing_explains_missing_api_configuration_without_a_request() {
         received.as_slice(),
         [Event::PairingFailed {
             message, failure: super::PairingFailure::Invalid,
-        }, Event::Stopped] if message == expected
+        }, Event::Stopped] if message.to_string() == expected
     ));
 }
 
@@ -2014,7 +2014,7 @@ fn an_executed_report_with_a_lost_or_disconnected_reply_blocks_restart_until_res
         let refused = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
         assert!(refused.iter().any(|event| matches!(event,
             Event::Problem(Some(text))
-                if text == "Błąd: Najpierw wyjaśnij przerwany raport."
+                if text.to_string() == "Błąd: Najpierw wyjaśnij przerwany raport."
         )));
         assert_eq!(Journal::new(&dir).load().unwrap(), saved);
         assert_eq!(holuto.job(id)["state"], "queued");
@@ -2100,7 +2100,7 @@ fn refused_receipt_is_a_failed_server_job_with_the_reported_reason() {
     assert_eq!(holuto.job(JOB_ID)["state"], "failed");
     assert!(received.iter().any(|event| matches!(event,
         Event::Problem(Some(text))
-        if text == &format!("Nie wydrukowano paragonu (zlecenie 10): {reason}")
+        if text.to_string() == format!("Nie wydrukowano paragonu (zlecenie 10): {reason}")
     )));
     assert_eq!(sim.receipts(), []);
     assert!(!super::journal_block(&dir).blocked);
@@ -2129,4 +2129,105 @@ fn polling_a_printer_that_is_not_ready_never_claims_a_queued_job() {
     );
     assert_eq!(sim.receipts(), []);
     assert_eq!(Journal::new(&dir).load().unwrap(), None);
+}
+
+#[test]
+fn pairing_notice_keeps_semantics_when_the_ui_language_changes() {
+    use i18n::{Language, Message};
+    let error = crate::Error::Invalid(Message::new("agent-pair-code"));
+    let Event::PairingFailed { message, failure } = super::pairing_failed(&error) else {
+        panic!("pairing failure event required");
+    };
+    assert_eq!(failure, super::PairingFailure::Invalid);
+    for (language, expected) in [
+        (
+            Language::En,
+            "The Holuto pairing code has 8 characters, for example ABCD-1234.",
+        ),
+        (
+            Language::Pl,
+            "Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234.",
+        ),
+        (
+            Language::Es,
+            "El código de vinculación de Holuto tiene 8 caracteres, por ejemplo ABCD-1234.",
+        ),
+        (
+            Language::Ru,
+            "Код подключения Holuto содержит 8 символов, например ABCD-1234.",
+        ),
+    ] {
+        assert_eq!(message.render(language), expected);
+    }
+    assert_eq!(
+        message.to_string(),
+        "Kod parowania ma 8 znaków z Holuto, na przykład ABCD-1234."
+    );
+}
+
+#[test]
+fn failed_receipt_reasons_retranslate_without_changing_persisted_polish_evidence() {
+    use i18n::Language;
+    for refused_by_device in [false, true] {
+        let sim = Simulator::start();
+        let holuto = Holuto::new();
+        if refused_by_device {
+            sim.fault("trinit", PrinterFault::Error);
+        }
+        let job = if refused_by_device {
+            job_json()
+        } else {
+            with(job_json(), &json!({"total": "249.99"}))
+        };
+        let id = holuto.enqueue(job);
+        let (_temporary, dir) = state_dir();
+        let dir = Arc::new(dir);
+        let (worker, events) = spawn(&holuto, &sim, &dir);
+        let received = receive_until(&events, |event| matches!(event, Event::Device { .. }));
+        let _stopped = stop(worker, &events);
+        let notice = received
+            .iter()
+            .find_map(|event| {
+                let Event::Problem(Some(message)) = event else {
+                    return None;
+                };
+                message
+                    .to_string()
+                    .starts_with("Nie wydrukowano paragonu")
+                    .then_some(message)
+            })
+            .expect("failed job needs an operator notice");
+        let expected = if refused_by_device {
+            [
+                (Language::En, "Printer returned error"),
+                (Language::Pl, "Drukarka zwróciła błąd"),
+                (Language::Es, "La impresora devolvió el error"),
+                (Language::Ru, "Принтер вернул ошибку"),
+            ]
+        } else {
+            [
+                (Language::En, "The line totals do not match the job total."),
+                (Language::Pl, "Suma pozycji nie odpowiada wartości zadania."),
+                (
+                    Language::Es,
+                    "La suma de las líneas no coincide con el total de la tarea.",
+                ),
+                (Language::Ru, "Сумма позиций не совпадает с суммой задания."),
+            ]
+        };
+        for (language, detail) in expected {
+            let rendered = notice.render(language);
+            assert!(rendered.contains(detail), "{language:?}: {rendered}");
+        }
+        let remote = holuto.job(id);
+        assert_eq!(remote["state"], "failed");
+        let result = remote["result"].as_str().unwrap();
+        assert!(result.starts_with(expected[1].1));
+        let Operation::Receipt(operation) = Journal::new(&dir).load().unwrap().unwrap() else {
+            panic!("a failed receipt must retain its journal evidence");
+        };
+        assert_eq!(operation.result, Some(JobResult::failed(result)));
+        assert_eq!(sim.receipts(), []);
+        assert!(!super::journal_block(&dir).blocked);
+    }
 }

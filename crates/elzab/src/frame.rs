@@ -65,8 +65,8 @@ pub fn decode(raw: &[u8]) -> Result<(&str, &[u8]), Error> {
     Ok((header, content.get(separator + 1..).ok_or_else(corrupt)?))
 }
 
-pub(crate) fn corrupt() -> Error {
-    Error::Protocol("Nieprawidłowa ramka ElzabSTX.".to_owned())
+pub(crate) const fn corrupt() -> Error {
+    Error::Protocol(i18n::Message::new("drivers-corrupt-elzab"))
 }
 #[cfg(test)]
 mod tests;

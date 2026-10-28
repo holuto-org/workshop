@@ -26,17 +26,32 @@ use std::{
     time::Duration,
 };
 
+use agent::settings::Theme;
 use fiscal::device::{Device, Vendor};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use jiff::Timestamp;
 use posnet::{capabilities::capabilities, simulator::Simulator};
 use sentry::{Client, ClientOptions, Envelope, Hub, Level, Transport, protocol::EnvelopeItem};
-use slint::platform::{Key, WindowEvent};
+use slint::platform::{Key, PointerEventButton, WindowEvent};
 use tempfile::TempDir;
 
 use super::*;
 
 type UiFixture = (TempDir, Rc<RefCell<Application>>, AppWindow);
+
+// Compare what the operator reads; Fluent's bidi isolation is verified in i18n tests.
+fn visible_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| !matches!(character, '\u{2068}' | '\u{2069}'))
+        .collect()
+}
+
+fn polish_settings() -> Settings {
+    Settings {
+        language: i18n::LanguagePreference::Pl,
+        ..Settings::default()
+    }
+}
 
 fn fixture() -> Result<UiFixture, Box<dyn Error>> {
     i_slint_backend_testing::init_no_event_loop();
@@ -53,7 +68,7 @@ fn fixture_data() -> Result<UiFixture, Box<dyn Error>> {
     let simulator = Simulator::start();
     let app = make_app(
         Arc::new(StateDir::open(temp.path().to_owned())?),
-        Settings::default(),
+        polish_settings(),
         simulator.link(),
     )?;
     let window = app
@@ -214,7 +229,7 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
 }"#;
     fs::write(temp.path().join("operation.json"), interrupted)?;
     let simulator = Simulator::start();
-    let app = make_app(dir, Settings::default(), simulator.link())?;
+    let app = make_app(dir, polish_settings(), simulator.link())?;
     let published = app
         .borrow()
         .status_requested
@@ -243,7 +258,7 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
             "Uruchom obsługę drukarki, aby ją wyjaśnić."
         );
         assert_eq!(
-            app.borrow().model.message,
+            app.borrow().model.message.to_string(),
             explanation,
             "launch explains the block instead of the pairing prompt"
         );
@@ -251,7 +266,7 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
         app.borrow_mut()
             .settings_saved(Ok(preferences::Outcome::Saved(settings)));
         assert_eq!(
-            app.borrow().model.message,
+            app.borrow().model.message.to_string(),
             explanation,
             "a later save keeps the block explanation visible"
         );
@@ -306,7 +321,9 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
     struct Hotplug(Mutex<Vec<Candidate>>);
     impl Link for Hotplug {
         fn open(&self, port: &str, _baud_rate: u32) -> Result<Box<dyn Port>, LinkError> {
-            Err(LinkError::Invalid(format!("unexpected open of {port}")))
+            Err(LinkError::Invalid(
+                format!("unexpected open of {port}").into(),
+            ))
         }
 
         fn candidates(&self) -> Vec<Candidate> {
@@ -323,7 +340,7 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
         Arc::new(StateDir::open(temporary.path().to_owned())?),
         Settings {
             port: "/dev/ttyUNKNOWN".into(),
-            ..Settings::default()
+            ..polish_settings()
         },
         Arc::<Hotplug>::clone(&link),
     )?;
@@ -520,7 +537,7 @@ fn paired_fixture() -> Result<UiFixture, Box<dyn Error>> {
     let settings = Settings {
         api_url: "https://paired.example.test".into(),
         token: "already-paired-secret".into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     settings.save(&dir)?;
     let app = make_app(dir, settings, Simulator::start().link())?;
@@ -564,7 +581,7 @@ fn quit_completes_when_the_final_status_cannot_be_submitted() -> Result<(), Box<
     let simulator = Simulator::start();
     let app = Rc::new(RefCell::new(Application::new(
         Arc::new(StateDir::open(temp.path().to_owned())?),
-        Settings::default(),
+        polish_settings(),
         simulator.link(),
         || Date::constant(2025, 10, 24),
     )));
@@ -626,6 +643,7 @@ fn a_start_whose_settings_cannot_be_submitted_can_be_retried() -> Result<(), Box
         app.borrow()
             .model
             .message
+            .to_string()
             .starts_with("Nie można zapisać ustawień")
     );
     assert_eq!(
@@ -702,7 +720,7 @@ fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(
     drop(state);
     button(&window, "Wyjaśnij paragon")?.invoke_accessible_default_action();
     assert_eq!(
-        window.get_confirm_text(),
+        visible_text(window.get_confirm_text().as_str()),
         concat!(
             "Paragon 17 został wydrukowany dla zlecenia 42\n\n",
             "Sprawdź wydruk i uzgodnij dokument w Holuto. ",
@@ -737,7 +755,7 @@ fn close_without_a_tray_host_keeps_the_window_visible() -> Result<(), Box<dyn Er
         "closing without a tray must not strand the operator"
     );
     assert_eq!(
-        app.borrow().model.message,
+        app.borrow().model.message.to_string(),
         "Zasobnik systemowy jest niedostępny. Aby zakończyć aplikację, kliknij Zakończ.",
         "operator gets an explicit exit route"
     );
@@ -872,6 +890,36 @@ fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Err
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
+fn theme_defaults_to_system_and_a_chosen_theme_is_saved_before_pairing()
+-> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture_with_event_loop()?;
+    window.set_tab(2);
+    let theme = control(&window, "Motyw", AccessibleRole::Combobox)?;
+    assert_eq!(theme.accessible_value().as_deref(), Some("Systemowy"));
+    theme.invoke_accessible_expand_action();
+    let dark = ElementHandle::find_by_accessible_label(&window, "Ciemny")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing Ciemny choice")?;
+    dark.mock_single_click(PointerEventButton::Left);
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    let saved = Settings::load(&app.borrow().dir)?.ok_or("missing theme preference")?;
+    assert_eq!(saved.theme, Theme::Dark);
+    assert_eq!(
+        saved.api_url,
+        Settings::default().api_url,
+        "a look change must not invent connection settings"
+    );
+    assert_eq!(theme.accessible_value().as_deref(), Some("Ciemny"));
+    assert_eq!(window.get_status(), "");
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
 fn unticking_diagnostics_stops_reporting_from_the_running_app() -> Result<(), Box<dyn Error>> {
     #[derive(Default)]
     struct Capture(Mutex<Vec<Envelope>>);
@@ -954,7 +1002,7 @@ fn status_publication_does_not_disable_settings_or_republish_on_acknowledgement(
     let simulator = Simulator::start();
     let app = Rc::new(RefCell::new(Application::new(
         Arc::clone(&dir),
-        Settings::default(),
+        polish_settings(),
         simulator.link(),
         || Date::constant(2025, 10, 24),
     )));
@@ -1006,7 +1054,7 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
     let simulator = Simulator::start();
     let app = Rc::new(RefCell::new(Application::new(
         Arc::clone(&dir),
-        Settings::default(),
+        polish_settings(),
         simulator.link(),
         || Date::constant(2025, 10, 24),
     )));
@@ -1036,6 +1084,7 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
         state
             .model
             .message
+            .to_string()
             .starts_with("Nie można zapisać stanu aplikacji"),
         "the failure was shown: {}",
         state.model.message
@@ -1076,7 +1125,7 @@ fn report_confirmations_show_exact_kind_dates_and_summary_and_cancel_sends_nothi
             .set_accessible_value("24.10.2025");
         button(&window, label)?.invoke_accessible_default_action();
         assert!(window.get_confirming());
-        assert_eq!(window.get_confirm_text().as_str(), expected);
+        assert_eq!(visible_text(window.get_confirm_text().as_str()), expected);
         button(&window, "Anuluj")?.invoke_accessible_default_action();
         assert!(!window.get_confirming());
         assert_eq!(button(&window, label)?.accessible_enabled(), Some(true));
@@ -1084,7 +1133,7 @@ fn report_confirmations_show_exact_kind_dates_and_summary_and_cancel_sends_nothi
     control(&window, "Skrócony", AccessibleRole::Checkbox)?.invoke_accessible_default_action();
     button(&window, "Drukuj raport okresowy")?.invoke_accessible_default_action();
     assert_eq!(
-        window.get_confirm_text(),
+        visible_text(window.get_confirm_text().as_str()),
         "Wydrukować raport skrócony za okres 29.02.2024 – 24.10.2025?"
     );
     Ok(())
@@ -1157,7 +1206,7 @@ fn production_run_opens_the_window_and_publishes_stopped_state() -> Result<(), B
             app.stop(true)
         });
     })?;
-    run(Arc::clone(&dir), Settings::default(), simulator.link())?;
+    run(Arc::clone(&dir), polish_settings(), simulator.link())?;
     let status = Snapshot::load_at(dir.path())?.ok_or("missing stopped publication")?;
     assert!(!status.processing && !status.connected);
     assert!(
@@ -1191,7 +1240,7 @@ fn header_shows_holuto_and_printer_only_while_something_is_wrong() -> Result<(),
     let values = |label| {
         ElementHandle::find_by_accessible_label(&window, label)
             .filter(|element| element.accessible_role() == Some(AccessibleRole::Text))
-            .map(|element| element.accessible_value().unwrap_or_default().to_string())
+            .map(|element| visible_text(element.accessible_value().unwrap_or_default().as_str()))
             .collect::<Vec<_>>()
     };
     assert_eq!(values("Holuto"), ["Nie połączono", "Nie połączono"]);
@@ -1234,5 +1283,48 @@ fn header_shows_holuto_and_printer_only_while_something_is_wrong() -> Result<(),
             "Posnet · TST0000000042 · test"
         ]
     );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Language selection must persist without losing operator input"
+)]
+fn language_selection_translates_the_open_window_and_persists_before_pairing()
+-> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture_with_event_loop()?;
+    app.borrow_mut().event(Event::Problem(Some(
+        Message::new("fiscal-timeout").arg("command", "trinit"),
+    )));
+    app.borrow().sync();
+    window.set_tab(2);
+    control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-1234");
+    let language = control(&window, "Język", AccessibleRole::Combobox)?;
+    language.invoke_accessible_expand_action();
+    ElementHandle::find_by_accessible_label(&window, "Español")
+        .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+        .ok_or("missing Spanish language choice")?
+        .mock_single_click(PointerEventButton::Left);
+    assert_eq!(button(&window, "Iniciar")?.accessible_enabled(), Some(true));
+    assert!(window.get_status().starts_with("Sin respuesta a "));
+    assert!(window.get_status().contains("trinit"));
+    assert!(
+        window
+            .get_status()
+            .ends_with("No se ha reenviado el comando.")
+    );
+    assert_eq!(
+        control(&window, "Código de vinculación", AccessibleRole::TextInput)?
+            .accessible_value()
+            .as_deref(),
+        Some("ABCD-1234")
+    );
+    app.borrow_mut().stop(true)?;
+    slint::run_event_loop_until_quit()?;
+    let saved = fs::read_to_string(app.borrow().dir.path().join("settings.json"))?;
+    let saved: serde_json::Value = serde_json::from_str(&saved)?;
+    assert_eq!(saved["language"], "es");
+    assert!(!app.borrow().model.running);
     Ok(())
 }

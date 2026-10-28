@@ -13,18 +13,23 @@ is disabled; simulator builds never report either. A debug build with a DSN
 can report, using environment `development`. `SENTRY_AUTH_TOKEN` is an upload
 credential used only by CI, never an application setting or binary value.
 
-The **Ustawienia → Udostępniaj diagnostykę** toggle defaults on; an explicit off
-value survives restart. Turning it off immediately gates new structured signals
-and envelopes; already submitted requests cannot be recalled. Restart to disable
-the native crash reporter. Turning it on after a disabled startup also needs a
-restart to initialize the client. This affects diagnostics, not Holuto requests
-required to print. Tests use capturing transports, not production ingestion.
-Package smoke isolation follows the
-[package checks](testing/platforms.md#package-checks).
+The **Udostępniaj diagnostykę** settings toggle defaults on; a successfully saved
+off value survives restart. Missing settings use that default; unreadable or
+malformed settings disable diagnostics at normal startup. Turning the toggle
+off immediately gates new structured capture, envelopes and Holuto trace
+propagation. Queued envelopes are checked again on the HTTP thread; an HTTP
+request already started cannot be recalled. Restart to disable the native crash
+reporter. Turning it on after a disabled startup also needs a restart to
+initialize the client. Diagnostics consent does not disable Holuto requests
+required to print.
+To opt out before the first GUI launch, run
+`workshop config set --diagnostics off` while the application is stopped.
+Normal CLI commands do not initialize diagnostics. Package smoke isolation
+follows the [package checks](testing/platforms.md#package-checks).
 
-Normal CLI commands return before diagnostics initialization. A native reporter
-child bypasses CLI dispatch and enters initialization even if consent changed
-after its parent launched; this is another reason native opt-out needs restart.
+A native reporter child bypasses CLI dispatch and enters initialization even if
+consent changed after its parent launched. Its separate process does not receive
+the parent's live consent flag; this is why native opt-out needs restart.
 
 ## What is sent
 
@@ -43,13 +48,14 @@ Structured diagnostics use an allowlist:
   `device.receipt` / `device.report` and `http.client`. Transactions are named
   `fiscal.operation`; timings/status and span operations remain, but
   descriptions, span data/tags and transaction extras are cleared.
-- **HTTP trace propagation**: The API records method/route-template/status
-  locally; structured transport removes their span data. SDK-provided headers
-  still link requests to Holuto. SDK 0.49.3 emits `sentry-trace`, not `baggage`;
-  future SDK-provided baggage is forwarded, never fabricated.
-- **Release health**: Application-mode sessions: generated session identity,
-  release/environment, start/duration and healthy/error/crash/exit status
-  needed for crash-free-session accounting.
+- **HTTP trace propagation**: While diagnostics are on, SDK-provided headers
+  link requests to Holuto, including unsampled requests. The API records
+  method/route-template/status locally; structured transport removes their
+  span data. SDK 0.49.3 emits `sentry-trace`, not `baggage`; future SDK-provided
+  baggage is forwarded, never fabricated.
+- **Release health**: Application-mode sessions: a generated session identity,
+  release/environment, start/duration, error count and session status needed for
+  crash-free-session accounting. Workshop does not set a user identity.
 - **Device context**: Holuto printer ID and physical device serial as tags
   once connected, cleared when processing stops; these are device identifiers,
   not anonymous data.
@@ -89,11 +95,12 @@ scrubbed/allowlisted; `before_send` alone does not cover every signal
 
 Keep `send_default_pii` disabled; remove host/server identity rather than
 assuming the SDK default is safe. Do not log `Debug` of settings, jobs,
-receipts, requests or responses. Synthetic canaries and a capturing transport
-prove the policy across errors, logs, breadcrumbs and traces; see
-[security tests](testing/security.md). Network services still see connection
-metadata (for example source IP at ingestion); the application does not attach a
-user-IP field.
+receipts, requests or responses. Synthetic canaries and capturing transports
+check serialized outgoing errors/panics, logs, breadcrumbs and transactions;
+see [security tests](testing/security.md). These tests do not demonstrate
+server retention, native-dump scrubbing or delivery. Network services still see
+connection metadata (for example source IP at ingestion); the application does
+not attach a user-IP field.
 
 ## Native minidumps: important exception
 
@@ -103,10 +110,17 @@ customer/receipt data that happened to be in memory. Local structured-event
 hooks cannot promise that those bytes never leave the computer. Opt out if this
 risk is unacceptable.
 
-The reporter writes the dump to `crashes/` in the private state directory and
-deletes it after the upload attempt; an interrupted reporter can leave it there.
-The SDK default, a `Crashes` directory in the shared temporary directory, would
-let other local users read it.
+The reporter writes the dump to `crashes/` in the private state directory.
+Before starting it, Workshop creates or secures both directories without taking
+state locks; failure disables diagnostics initialization. On Unix both directories
+are **0700**. The SDK-created dump file itself follows the process umask; its
+privacy depends on those protected directories, not a promised **0600** file mode.
+The SDK's default shared temporary `Crashes` directory would not protect it.
+
+The [SDK dump writer][dump-writer] attempts deletion after its upload callback,
+whether delivery succeeds or not. Interrupted or failed capture, upload handling
+or deletion can leave a sensitive file there; there is no later-startup upload
+or cleanup scan.
 
 [Sentry's Rust native-crash documentation](https://docs.sentry.io/platforms/rust/native-crash-reporting.md)
 states that dumps are processed and immediately discarded by default, with
@@ -115,35 +129,46 @@ instead enable storage as attachments. Keep attachment retention disabled. This
 server-side handling is not a guarantee that no sensitive bytes were
 transmitted.
 
-The minidump reporter re-executes the same binary. Read the telemetry preference
-without acquiring the instance lock; initialize Sentry before taking that lock,
-touching the fiscal journal or starting worker threads. Otherwise the reporter
-can collide with the application or mutate fiscal state. Only allowlisted device
-context may be forwarded to the crash reporter; it does not automatically
-inherit later scope changes
+The minidump reporter re-executes the same binary. Normal application startup
+reads the preference without an instance lock, then initializes Sentry before
+taking that lock, touching the fiscal journal or starting worker threads.
+Only allowlisted printer tags are explicitly forwarded to the reporter;
+later scope changes are not automatically inherited
 ([reporter lifecycle](https://docs.sentry.io/platforms/rust/native-crash-reporting.md#how-it-works)).
 
 Client shutdown and native-reporter flushing use a **500 ms** timeout.
 The bounded best-effort transport keeps SDK HTTP ownership and disposal off the
 application thread; it may drop diagnostics rather than delay fiscal shutdown.
-It uses the environment proxy; the Holuto client bypasses proxies for loopback.
-Structured capture/transport tests do not verify native minidump delivery.
+Its HTTP requests have a separate three-second timeout, use OS trust roots,
+refuse redirects and follow the environment proxy. The Holuto client bypasses
+proxies for loopback.
+
+Structured envelopes are queued in memory, not persisted for later delivery.
+The client does not set a server retention period for events, logs, traces or
+sessions; administrators must verify project/service retention separately.
+Keeping native dump attachment storage disabled is a separate requirement, not
+a retention limit for those structured signals.
+
+The Linux native-crash regression uses a crashing child and a capturing
+transport to check first-launch dump placement and private Unix directories.
+It does not prove remote delivery, symbolication, server retention or
+Windows/macOS native-crash behavior.
 
 ## Release and debug files
 
 The [CI release identity and environment](ci.md#release-telemetry-artifacts)
 must match client events. Non-CI release builds use `SENTRY_ENVIRONMENT`,
 defaulting to `production` only when unset.
-CI separates matching symbols before distribution stripping and uploads them
-with source context to Sentry; it does not retain debug files as CI artifacts.
-Source uploads contain application source code, not runtime settings or fiscal
-documents. Release records/commits and client events must agree on identity;
-Linux ELF/DWARF, macOS dSYM and Windows PDB files must match their packaged
-binary. The shipped executable is uploaded too: it carries the unwind
-information that minidump stack walking needs and the debug companions lack.
+Matching Linux ELF/DWARF, macOS dSYM and Windows PDB files are needed for the
+packaged binary. The executable itself also carries unwind information needed
+for native stack walking. Source-context uploads contain application source
+code, not runtime settings or fiscal documents.
 
-See [CI configuration](ci.md#release-telemetry-artifacts) for variables/secrets
-and [release verification](workflows.md#sentry-release-check). Uploads enable
-readable frames, not automatic proof that symbolication works;
+[CI configuration](ci.md#release-telemetry-artifacts) owns upload mechanics,
+identity and credentials; [release verification](workflows.md#sentry-release-check)
+owns the operator check. Uploads enable readable frames, not automatic proof
+that symbolication works;
 [Sentry source-context documentation](https://docs.sentry.io/platforms/rust/source-context/)
 explains the artifacts.
+
+[dump-writer]: https://docs.rs/minidumper-child/0.5.0/src/minidumper_child/server.rs.html

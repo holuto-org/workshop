@@ -83,11 +83,44 @@ function Assert-HolutoNotRunning {
 function Assert-HolutoLegacyJournalResolved {
     param([string]$LocalAppData)
     # The previous HuggingCar Fiscal app (v0.1.x) journals fiscal intent in Qt's GenericStateLocation.
-    # The new app never reads it, so an unresolved or unreadable record must be resolved in that app first.
+    # The new app never reads it, so only a complete object with one scalar resolved state may unblock installation.
     $journal = Join-Path (Join-Path (Join-Path $LocalAppData 'State') 'huggingcar-fiscal') 'operation.json'
     if (-not (Test-Path -LiteralPath $journal)) { return }
-    try { $state = ([IO.File]::ReadAllText($journal) | ConvertFrom-Json -ErrorAction Stop).state } catch { $state = $null }
-    if ($state -cnotin @('completed', 'acknowledged')) {
+    try {
+        $text = [IO.File]::ReadAllText($journal)
+        $record = $text | ConvertFrom-Json -ErrorAction Stop
+        # ConvertFrom-Json can unwrap singleton arrays, including in Windows PowerShell 5.1.
+        # Inspect the root token as well as the parsed value; a type check alone accepts [object].
+        $state = $null
+        if ($text.TrimStart().StartsWith('{') -and $record -is [pscustomobject]) {
+            # The parser validates JSON but discards duplicate keys. Walk only validated text,
+            # decoding root property names with that parser; nested keys and string content do not count.
+            $depth = 0; $key = $false; $states = 0
+            for ($i = 0; $i -lt $text.Length; $i++) {
+                switch ($text[$i]) {
+                    '"' {
+                        $start = $i
+                        for ($i++; $i -lt $text.Length; $i++) {
+                            if ($text[$i] -eq '\') { $i++ }
+                            elseif ($text[$i] -eq '"') { break }
+                        }
+                        if ($depth -eq 1 -and $key) {
+                            $name = $text.Substring($start, $i - $start + 1) | ConvertFrom-Json -ErrorAction Stop
+                            if ($name -ceq 'state') { $states++ }
+                            $key = $false
+                        }
+                    }
+                    '{' { $depth++; if ($depth -eq 1) { $key = $true } }
+                    '[' { $depth++ }
+                    '}' { $depth-- }
+                    ']' { $depth-- }
+                    ',' { if ($depth -eq 1) { $key = $true } }
+                }
+            }
+            if ($states -eq 1) { $state = $record.state }
+        }
+    } catch { $state = $null }
+    if ($state -isnot [string] -or $state -cnotin @('completed', 'acknowledged')) {
         throw "The previous HuggingCar Fiscal app has an unresolved fiscal operation in $journal. Check the printer and its printout, resolve the operation in that app, then run this installer again; nothing was installed."
     }
 }

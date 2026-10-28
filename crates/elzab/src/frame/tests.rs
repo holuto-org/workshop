@@ -18,7 +18,7 @@ fn single_bit_damage_in_framing_header_or_data_is_rejected() {
             damaged[index] ^= 1 << bit;
             assert!(
                 matches!(decode(&damaged), Err(Error::Protocol(message))
-                if message == "Nieprawidłowa ramka ElzabSTX."),
+                if message.to_string() == "Nieprawidłowa ramka ElzabSTX."),
                 "byte {index}, bit {bit}"
             );
         }

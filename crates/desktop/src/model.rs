@@ -1,13 +1,17 @@
 use agent::{
-    settings::{BAUD_RATES, Settings},
+    settings::{BAUD_RATES, Settings, Theme},
     status::Snapshot,
     worker::Command,
 };
 use fiscal::device::{Device, Vendor};
+use i18n::{Language, LanguagePreference, Message};
 use jiff::{Timestamp, ToSpan, civil::Date};
-use slint::{ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle as _, ModelRc, SharedString, VecModel};
 
-use crate::ui::{Action, AppWindow};
+use crate::{
+    localization,
+    ui::{Action, AppWindow, Translations},
+};
 
 /// Must match `AppWindow`'s tab order.
 #[derive(Clone, Copy)]
@@ -36,11 +40,21 @@ impl Tab {
     }
 }
 
+/// Must match `AppWindow`'s theme choices.
+const THEMES: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
+
+pub(crate) fn theme_at(index: i32) -> Theme {
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| THEMES.get(index).copied())
+        .unwrap_or_default()
+}
+
 pub(crate) struct Confirmation {
     command: Command,
-    title: String,
-    text: String,
-    action: String,
+    title: Message,
+    text: Message,
+    action: Message,
 }
 
 #[expect(
@@ -49,6 +63,7 @@ pub(crate) struct Confirmation {
 )]
 pub(crate) struct Model {
     pub(crate) settings: Settings,
+    pub(crate) language: Language,
     pub(crate) pairing_code: String,
     pub(crate) pairing: bool,
     /// Start was requested and the worker is not spawned yet.
@@ -64,9 +79,9 @@ pub(crate) struct Model {
     pub(crate) blocked: bool,
     pub(crate) report_unresolved: bool,
     /// Evidence the acknowledgement quotes; never the transient status line.
-    pub(crate) orphaned_receipt: Option<String>,
+    pub(crate) orphaned_receipt: Option<Message>,
     pub(crate) tab: Tab,
-    pub(crate) message: String,
+    pub(crate) message: Message,
     /// Month starts, newest first.
     pub(crate) months: Vec<Date>,
     pub(crate) month_index: usize,
@@ -82,8 +97,10 @@ pub(crate) struct Model {
 impl Model {
     pub(crate) fn new(settings: Settings, today: Date) -> Self {
         let months = months_before(today);
+        let language = settings.language.resolve();
         Self {
             settings,
+            language,
             pairing_code: String::new(),
             pairing: false,
             starting: false,
@@ -99,7 +116,7 @@ impl Model {
             report_unresolved: false,
             orphaned_receipt: None,
             tab: Tab::Status,
-            message: String::new(),
+            message: Message::default(),
             months,
             month_index: 0,
             from: date_label(today.checked_sub(7.days()).unwrap_or(today)),
@@ -111,12 +128,17 @@ impl Model {
         }
     }
 
-    pub(crate) fn problem(&mut self, text: String) {
+    pub(crate) fn problem(&mut self, text: Message) {
         self.message = text;
     }
 
+    pub(crate) fn set_language(&mut self, preference: LanguagePreference) {
+        self.settings.language = preference;
+        self.language = preference.resolve();
+    }
+
     pub(crate) fn clear_problem(&mut self) {
-        self.message.clear();
+        self.message = Message::default();
     }
 
     pub(crate) fn stopped(&mut self) {
@@ -177,7 +199,12 @@ impl Model {
     pub(crate) fn initialize(&mut self, window: &AppWindow, today: Date) {
         let _rolled = self.roll_months(today);
         window.set_baud_rates(strings(BAUD_RATES.iter().map(u32::to_string)));
-        window.set_months(strings(self.months.iter().copied().map(month_label)));
+        window.set_months(strings(
+            self.months
+                .iter()
+                .copied()
+                .map(|month| month_label(month).render(self.language)),
+        ));
         self.sync(window);
     }
 
@@ -200,7 +227,12 @@ impl Model {
         self.month_index = usize::try_from(window.get_month_index()).unwrap_or_default();
         // Tray sessions can span months.
         if self.roll_months(today) {
-            window.set_months(strings(self.months.iter().copied().map(month_label)));
+            window.set_months(strings(
+                self.months
+                    .iter()
+                    .copied()
+                    .map(|month| month_label(month).render(self.language)),
+            ));
         }
         self.summary = window.get_summary();
         window.get_from_date().trim().clone_into(&mut self.from);
@@ -221,18 +253,23 @@ impl Model {
         window.set_daily_report_enabled(self.daily_report_enabled());
         window.set_report_unresolved(self.resolve_enabled());
         window.set_orphaned_receipt(self.acknowledge_enabled());
-        window.set_status(self.message.as_str().into());
+        localization::set_language(&window.global::<Translations<'_>>(), self.language);
+        window.set_language_index(localization::preference_index(self.settings.language));
+        window.set_status(self.message.render(self.language).into());
         // The header speaks only when something is wrong; a working setup shows nothing.
-        window.set_holuto_text(
-            if self.connected {
-                ""
-            } else {
-                self.holuto_text()
-            }
-            .into(),
-        );
+        window.set_holuto_text(if self.connected {
+            SharedString::default()
+        } else {
+            self.holuto_text().render(self.language).into()
+        });
         let printer_problem = self.printer_problem();
-        window.set_printer_text(printer_problem.as_deref().unwrap_or_default().into());
+        window.set_printer_text(
+            printer_problem
+                .as_ref()
+                .map(|problem| problem.render(self.language))
+                .unwrap_or_default()
+                .into(),
+        );
         window.set_printer_tone(
             if self.blocked || self.device.as_ref().is_some_and(|status| !status.ready()) {
                 2
@@ -240,14 +277,26 @@ impl Model {
                 0
             },
         );
-        window.set_processing_state(self.processing_text().into());
-        window.set_holuto_state(self.holuto_text().into());
+        window.set_processing_state(self.processing_text().render(self.language).into());
+        window.set_holuto_state(self.holuto_text().render(self.language).into());
         window.set_printer_identity(self.printer_identity().into());
-        window.set_printer_state(printer_problem.unwrap_or_else(|| "Gotowa".into()).into());
-        window.set_start_hint(self.start_hint().into());
+        window.set_printer_state(
+            printer_problem
+                .unwrap_or_else(|| Message::new("desktop-ready"))
+                .render(self.language)
+                .into(),
+        );
+        window.set_start_hint(self.start_hint().render(self.language).into());
         window.set_pairing_code(self.pairing_code.as_str().into());
         window.set_start_on_launch(self.settings.start_on_launch);
         window.set_telemetry_enabled(self.settings.telemetry_enabled);
+        window.set_theme_index(
+            THEMES
+                .iter()
+                .position(|theme| *theme == self.settings.theme)
+                .and_then(|i| i32::try_from(i).ok())
+                .unwrap_or_default(),
+        );
         window.set_port(self.settings.port.as_str().into());
         window.set_baud_index(
             BAUD_RATES
@@ -261,9 +310,9 @@ impl Model {
         window.set_to_date(self.to.as_str().into());
         window.set_summary(self.summary);
         if let Some(pending) = &self.pending {
-            window.set_confirm_title(pending.title.as_str().into());
-            window.set_confirm_text(pending.text.as_str().into());
-            window.set_confirm_action(pending.action.as_str().into());
+            window.set_confirm_title(pending.title.render(self.language).into());
+            window.set_confirm_text(pending.text.render(self.language).into());
+            window.set_confirm_action(pending.action.render(self.language).into());
         }
         window.invoke_show_confirmation(self.pending.is_some());
     }
@@ -302,26 +351,26 @@ impl Model {
     }
 
     /// Stan's "Obsługa drukarki"; a pairing worker is not processing, so it never stops one.
-    pub(crate) const fn processing_text(&self) -> &'static str {
+    pub(crate) const fn processing_text(&self) -> Message {
         if self.running && self.stopping {
-            "Zatrzymywanie…"
+            Message::new("desktop-stopping")
         } else if self.running {
-            "Uruchomiona"
+            Message::new("desktop-running")
         } else if self.starting {
-            "Uruchamianie…"
+            Message::new("desktop-starting")
         } else {
-            "Zatrzymana"
+            Message::new("desktop-stopped")
         }
     }
 
     /// Stan's "Holuto"; the header repeats it only while not connected.
-    pub(crate) const fn holuto_text(&self) -> &'static str {
+    pub(crate) const fn holuto_text(&self) -> Message {
         if self.connected {
-            "Połączono"
+            Message::new("desktop-connected")
         } else if self.running {
-            "Łączenie…"
+            Message::new("desktop-connecting")
         } else {
-            "Nie połączono"
+            Message::new("desktop-disconnected")
         }
     }
 
@@ -341,23 +390,23 @@ impl Model {
     }
 
     /// Why the printer cannot print now; `None` once it is connected, ready and unblocked.
-    pub(crate) fn printer_problem(&self) -> Option<String> {
+    pub(crate) fn printer_problem(&self) -> Option<Message> {
         if self.blocked {
-            Some("Zablokowana: wymaga rozstrzygnięcia".into())
+            Some(Message::new("desktop-blocked"))
         } else if let Some(status) = self.device.as_ref().filter(|status| !status.ready()) {
-            Some(format!("Niegotowa: {}", status.description()))
+            Some(Message::new("desktop-not-ready").arg("detail", status.message()))
         } else if self.connected && self.device.is_some() {
             None
         } else {
-            Some("Niegotowa: brak połączenia".into())
+            Some(Message::new("desktop-no-connection"))
         }
     }
 
-    pub(crate) const fn start_hint(&self) -> &'static str {
+    pub(crate) fn start_hint(&self) -> Message {
         if self.running || self.starting {
-            ""
+            Message::default()
         } else {
-            "Uruchom obsługę drukarki w Ustawieniach."
+            Message::new("desktop-start-hint")
         }
     }
 
@@ -369,13 +418,9 @@ impl Model {
         self.pending = match action {
             Action::DailyReport => self.daily_report_enabled().then(|| Confirmation {
                 command: Command::DailyReport,
-                title: "Raport dobowy".into(),
-                text: concat!(
-                    "Raport dobowy zamknie bieżącą sprzedaż dnia w pamięci fiskalnej. ",
-                    "Wydrukować raport?"
-                )
-                .into(),
-                action: "Drukuj".into(),
+                title: Message::new("desktop-daily-report"),
+                text: Message::new("desktop-confirm-daily"),
+                action: Message::new("desktop-print"),
             }),
             Action::MonthlyReport => self
                 .months
@@ -386,9 +431,9 @@ impl Model {
                         year: month.year(),
                         month: month.month(),
                     },
-                    title: "Raport miesięczny".into(),
-                    text: format!("Wydrukować raport miesięczny za {}?", month_label(month)),
-                    action: "Drukuj".into(),
+                    title: Message::new("desktop-monthly-report"),
+                    text: Message::new("desktop-confirm-monthly").arg("month", month_label(month)),
+                    action: Message::new("desktop-print"),
                 }),
             Action::PeriodicReport => {
                 if self.reports_enabled() {
@@ -399,28 +444,17 @@ impl Model {
             },
             Action::ResolveReport => self.resolve_enabled().then(|| Confirmation {
                 command: Command::ResolveReport,
-                title: "Wyjaśnij raport".into(),
-                text: concat!(
-                    "Sprawdź fizyczny wydruk i stan drukarki. Czy ustalono wynik raportu? ",
-                    "To potwierdzenie nie ponawia wydruku."
-                )
-                .into(),
-                action: "Usuń blokadę".into(),
+                title: Message::new("desktop-resolve-report"),
+                text: Message::new("desktop-confirm-resolve-report"),
+                action: Message::new("desktop-unblock"),
             }),
             Action::AcknowledgeOrphanedReceipt => {
-                let evidence = self.orphaned_receipt.as_deref().unwrap_or_default();
+                let evidence = self.orphaned_receipt.clone().unwrap_or_default();
                 self.acknowledge_enabled().then(|| Confirmation {
                     command: Command::AcknowledgeOrphanedReceipt,
-                    title: "Wyjaśnij paragon".into(),
-                    text: format!(
-                        concat!(
-                            "{}\n\nSprawdź wydruk i uzgodnij dokument w Holuto. ",
-                            "Potwierdzenie zapisze lokalne wyjaśnienie i usunie blokadę. ",
-                            "Nie wydrukuje paragonu ponownie ani nie zmieni wyniku w Holuto."
-                        ),
-                        evidence
-                    ),
-                    action: "Potwierdź wyjaśnienie".into(),
+                    title: Message::new("desktop-resolve-receipt"),
+                    text: Message::new("desktop-confirm-resolve-receipt").arg("evidence", evidence),
+                    action: Message::new("desktop-acknowledge"),
                 })
             },
             Action::Save | Action::Pair | Action::Start | Action::Stop | Action::Quit => None,
@@ -441,18 +475,15 @@ impl Model {
                 to,
                 summary: self.summary,
             },
-            title: "Raport okresowy".into(),
-            text: format!(
-                "Wydrukować raport {} za okres {} – {}?",
-                if self.summary {
-                    "skrócony"
-                } else {
-                    "szczegółowy"
-                },
-                date_label(from),
-                date_label(to)
-            ),
-            action: "Drukuj".into(),
+            title: Message::new("desktop-periodic-report"),
+            text: Message::new(if self.summary {
+                "desktop-confirm-summary"
+            } else {
+                "desktop-confirm-detailed"
+            })
+            .arg("from", date_label(from))
+            .arg("to", date_label(to)),
+            action: Message::new("desktop-print"),
         })
     }
 
@@ -469,7 +500,7 @@ impl Model {
         };
         if !allowed {
             // A closed dialog must not read as a printed report or a resolution.
-            self.problem("Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.".into());
+            self.problem(Message::new("desktop-not-sent"));
             return None;
         }
         self.in_flight = true;
@@ -486,8 +517,8 @@ const fn vendor_label(vendor: Vendor) -> &'static str {
     }
 }
 
-fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), String> {
-    let date = |which, text: &str| {
+fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), Message> {
+    let date = |start, text: &str| {
         let padded = text.len() == 10
             && text.bytes().enumerate().all(|(index, byte)| {
                 if index == 2 || index == 5 {
@@ -499,23 +530,33 @@ fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), Strin
         let date = Date::strptime("%d.%m.%Y", text)
             .ok()
             .filter(|_| padded)
-            .ok_or_else(|| format!("Data {which} musi mieć postać dd.mm.rrrr."))?;
+            .ok_or_else(|| {
+                Message::new(if start {
+                    "desktop-from-format"
+                } else {
+                    "desktop-to-format"
+                })
+            })?;
         if date < Date::constant(2000, 1, 1) {
-            return Err(format!(
-                "Data {which} nie może być wcześniejsza niż 01.01.2000."
-            ));
+            return Err(Message::new(if start {
+                "desktop-from-earliest"
+            } else {
+                "desktop-to-earliest"
+            }));
         }
         if date > today {
-            return Err(format!(
-                "Data {which} nie może być późniejsza niż dzisiejsza."
-            ));
+            return Err(Message::new(if start {
+                "desktop-from-future"
+            } else {
+                "desktop-to-future"
+            }));
         }
         Ok(date)
     };
-    let from = date("początkowa", from)?;
-    let to = date("końcowa", to)?;
+    let from = date(true, from)?;
+    let to = date(false, to)?;
     if from > to {
-        return Err("Data początkowa nie może być późniejsza niż końcowa.".to_owned());
+        return Err(Message::new("desktop-date-order"));
     }
     Ok((from, to))
 }
@@ -538,24 +579,25 @@ pub(crate) fn strings<I: IntoIterator<Item = String>>(values: I) -> ModelRc<Shar
             .collect::<VecModel<_>>(),
     )
 }
-fn month_label(month: Date) -> String {
-    format!("{} {}", month_name(month.month()), month.year())
+fn month_label(month: Date) -> Message {
+    Message::new("desktop-month-year")
+        .arg("month", Message::new(month_key(month.month())))
+        .arg("year", month.year().to_string())
 }
-const fn month_name(month: i8) -> &'static str {
+const fn month_key(month: i8) -> &'static str {
     match month {
-        1 => "styczeń",
-        2 => "luty",
-        3 => "marzec",
-        4 => "kwiecień",
-        5 => "maj",
-        6 => "czerwiec",
-        7 => "lipiec",
-        8 => "sierpień",
-        9 => "wrzesień",
-        10 => "październik",
-        11 => "listopad",
-        12 => "grudzień",
-        _ => "",
+        2 => "desktop-month-2",
+        3 => "desktop-month-3",
+        4 => "desktop-month-4",
+        5 => "desktop-month-5",
+        6 => "desktop-month-6",
+        7 => "desktop-month-7",
+        8 => "desktop-month-8",
+        9 => "desktop-month-9",
+        10 => "desktop-month-10",
+        11 => "desktop-month-11",
+        12 => "desktop-month-12",
+        _ => "desktop-month-1",
     }
 }
 

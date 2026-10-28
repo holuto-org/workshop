@@ -11,6 +11,8 @@ use std::{
 #[cfg(not(windows))]
 use atomicwrites::{AtomicFile, OverwriteBehavior};
 
+use i18n::Message;
+
 use crate::Error;
 
 const LOCK: &str = "instance.lock";
@@ -48,9 +50,8 @@ impl StateDir {
 
     /// Opens the default directory as the running application.
     pub fn open_default(simulator: bool) -> Result<Self, Error> {
-        let path = Self::default_path_for(simulator).ok_or_else(|| {
-            Error::Invalid("Nie można ustalić katalogu stanu użytkownika.".to_owned())
-        })?;
+        let path = Self::default_path_for(simulator)
+            .ok_or_else(|| Error::Invalid(Message::new("agent-state-directory")))?;
         Self::open_application(path)
     }
 
@@ -65,7 +66,7 @@ impl StateDir {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(source) => {
                 return Err(Error::Store {
-                    action: "Nie można odczytać blokady katalogu stanu",
+                    action: Message::new("agent-read-lock"),
                     path: lock_path,
                     source,
                 });
@@ -75,7 +76,7 @@ impl StateDir {
             Ok(()) => Ok(false),
             Err(TryLockError::WouldBlock) => Ok(true),
             Err(TryLockError::Error(source)) => Err(Error::Store {
-                action: "Nie można sprawdzić blokady katalogu stanu",
+                action: Message::new("agent-check-lock"),
                 path: lock_path,
                 source,
             }),
@@ -93,7 +94,7 @@ impl StateDir {
 
     fn lock(path: PathBuf, application: bool) -> Result<Self, Error> {
         create_private_dir(&path).map_err(|source| Error::Store {
-            action: "Nie można utworzyć katalogu stanu",
+            action: Message::new("agent-create-state"),
             path: path.clone(),
             source,
         })?;
@@ -130,13 +131,13 @@ fn exclusive(directory: &Path, name: &str) -> Result<File, Error> {
         let _options = options.mode(0o600);
     }
     let lock = options.open(&lock_path).map_err(|source| Error::Store {
-        action: "Nie można otworzyć blokady katalogu stanu",
+        action: Message::new("agent-open-lock"),
         path: lock_path.clone(),
         source,
     })?;
     #[cfg(unix)]
     make_private(&lock).map_err(|source| Error::Store {
-        action: "Nie można zabezpieczyć blokady katalogu stanu",
+        action: Message::new("agent-secure-lock"),
         path: lock_path.clone(),
         source,
     })?;
@@ -146,17 +147,15 @@ fn exclusive(directory: &Path, name: &str) -> Result<File, Error> {
         Ok(false)
             if name == LOCK && !StateDir::is_application_running(directory).unwrap_or(true) =>
         {
-            Err(Error::Busy(format!(
-                "Inne polecenie workshop używa katalogu {}. Spróbuj ponownie, gdy się zakończy.",
-                directory.display()
-            )))
+            Err(Error::Busy(
+                Message::new("agent-state-busy").arg("directory", directory.display().to_string()),
+            ))
         },
-        Ok(false) => Err(Error::Blocked(format!(
-            "Holuto Workshop już działa dla katalogu {}. Otwórz je z zasobnika systemowego.",
-            directory.display()
-        ))),
+        Ok(false) => Err(Error::Blocked(
+            Message::new("agent-already-running").arg("directory", directory.display().to_string()),
+        )),
         Err(source) => Err(Error::Store {
-            action: "Nie można zablokować katalogu stanu",
+            action: Message::new("agent-lock-state"),
             path: lock_path,
             source,
         }),
@@ -213,8 +212,9 @@ fn absolute(path: impl Into<PathBuf>) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
+/// Creates a directory without state locks; on Unix, tightens existing permissions too.
 #[cfg(unix)]
-fn create_private_dir(path: &Path) -> io::Result<()> {
+pub fn create_private_dir(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
     fs::DirBuilder::new()
         .recursive(true)
@@ -223,8 +223,9 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
 }
 
+/// Creates a directory without taking state locks.
 #[cfg(not(unix))]
-fn create_private_dir(path: &Path) -> io::Result<()> {
+pub fn create_private_dir(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)
 }
 
@@ -248,11 +249,11 @@ pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// Atomically replaces content through a synced sibling temporary file.
 ///
-/// `fs::rename` uses POSIX rename semantics on NTFS, so the replacement succeeds while
-/// another process (a status reader, an antivirus scan) has the target open; legacy
-/// `MoveFileExW` replacement fails with access denied then. Flushing the renamed handle
-/// commits the rename to the NTFS log. Crashes leave old or new content; a failed
-/// replacement removes its temporary file.
+/// Uses std's Windows rename, including its POSIX-replacement fallback for open
+/// readers where supported; sharing, access or filesystem errors still fail the write.
+/// Syncs the temporary file before replacement and its retained handle afterward.
+/// A failed replacement removes its own temporary file.
+/// Stale temporary names left by a crashed process are skipped without changing them.
 #[cfg(windows)]
 pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::{
@@ -261,17 +262,26 @@ pub(crate) fn write_durably(path: &Path, bytes: &[u8]) -> io::Result<()> {
     };
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let mut name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?
-        .to_owned();
-    name.push(format!(
-        ".{}.{}.tmp",
-        process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let temporary = path.with_file_name(name);
-    let mut file = private_new_file().open(&temporary)?;
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            Message::new("agent-no-file-name"),
+        )
+    })?;
+    let (temporary, mut file) = loop {
+        let mut name = name.to_owned();
+        name.push(format!(
+            ".{}.{}.tmp",
+            process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let temporary = path.with_file_name(name);
+        match private_new_file().open(&temporary) {
+            Ok(file) => break (temporary, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
+            Err(error) => return Err(error),
+        }
+    };
     let replaced = file
         .write_all(bytes)
         .and_then(|()| file.sync_all())

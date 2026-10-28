@@ -1,105 +1,78 @@
 ---
-description:
-  "Test placement, simulator/HTTP/UI/telemetry harnesses, fixtures and per-kind
-  conventions"
+description: "Meaningful regressions, shared test harnesses and isolated fixtures"
 condition: ".*"
 scope:
-  "tool:read(crates/**/tests.rs), tool:edit(crates/**/tests.rs),
-  tool:write(crates/**/tests.rs), tool:read(crates/**/tests/**),
-  tool:edit(crates/**/tests/**), tool:write(crates/**/tests/**),
-  tool:read(crates/*/src/testing.rs), tool:edit(crates/*/src/testing.rs),
-  tool:write(crates/*/src/testing.rs), tool:read(crates/*/src/testing/**),
-  tool:edit(crates/*/src/testing/**), tool:write(crates/*/src/testing/**),
-  tool:edit(crates/*/src/simulator*), tool:write(crates/*/src/simulator*),
-  tool:edit(crates/desktop/src/bin_tests/**),
-  tool:write(crates/desktop/src/bin_tests/**)"
+  "tool:edit(crates/**/*.rs), tool:write(crates/**/*.rs),
+  tool:edit(crates/**/*.slint), tool:write(crates/**/*.slint),
+  tool:edit(crates/**/Cargo.toml), tool:write(crates/**/Cargo.toml),
+  tool:edit(Cargo.toml), tool:write(Cargo.toml),
+  tool:edit(.config/nextest.toml), tool:write(.config/nextest.toml),
+  tool:edit(.github/workflows/**), tool:write(.github/workflows/**),
+  tool:edit(scripts/test-*), tool:write(scripts/test-*),
+  tool:edit(packaging/test-*), tool:write(packaging/test-*)"
 interruptMode: never
 ---
 
 # Writing tests
 
-Pick the guarantee from [the checklist](../../docs/testing/checklist.md) and the
-boundary from [the testing guide](../../docs/testing/README.md); this rule says
-how to build the test.
+Choose the guarantee from [the checklist](../../docs/testing/checklist.md) and
+the cheapest boundary that proves it from
+[the testing guide](../../docs/testing/README.md).
+Do not turn implementation details into requirements just to make them testable.
 
 ## Placement
 
-- Module unit tests: `foo/tests.rs`, declared from `foo.rs`. Scenarios spanning
-  modules of one crate: `src/tests.rs` and `src/tests/`. No top-level `tests/`
-  directories. The harness-free `src/bin_tests/macos_quit.rs` runs real AppKit
-  on the main thread as an explicit Cargo test target. Throwaway probes live
-  outside the repository ([shared checkout](../../AGENTS.md#shared-checkout)).
-- One module's fixture helpers stay with it; cross-module helpers live in the
-  crate's `src/testing.rs`. Cross-crate tests reuse the brand's simulator and
-  feature-gated `agent::testing`; never copy an HTTP fake into desktop tests.
-- A regression drives the boundary where its consumer sees the bug (driver,
-  session, worker, `Api`, UI), never a private helper or constant. Run it
-  against the unfixed code and see it fail for the stated reason; prove that
-  in a copy, never by editing the shared checkout.
+- Follow the existing layout: module tests in `foo/tests.rs`, crate-wide
+  scenarios in `src/tests.rs` / `src/tests/`, rather than a new top-level
+  `tests/` tree. Native main-thread tests may need a harness-free Cargo target,
+  as `desktop/src/bin_tests/macos_quit.rs` does.
+- Keep local fixtures with their tests; share cross-module fixtures through the
+  crate's `testing` module. Reuse the existing brand simulators and
+  `agent::testing` across crates instead of maintaining competing fakes.
+- A regression must fail for the reported behavior, not merely track a private
+  helper's implementation. Small parser/value unit tests are appropriate when
+  they prove the guarantee; worker/UI wiring needs the real consumer path.
+  Demonstrate failure without the fix in an isolated copy, never by undoing
+  changes in the [shared checkout](../../AGENTS.md#shared-checkout).
 
 ## Harnesses
 
-- Printers: the matching `posnet`, `novitus` or `elzab` simulator through the
-  real driver/`Link`. Unix serial tests use allocated ptys; Windows only the
-  configured com0com pair (`com_pair`). Never real hardware.
-- Holuto: `agent::testing::Holuto`, a stateful loopback fake reached through the
-  production `Api`/`ureq` client, plus a fresh state directory (`state_dir()`
-  inside `agent`; a `TempDir`-backed `StateDir` elsewhere). It models binding,
-  attempts and results and scripts faults. Do not mock our own code or add an
-  in-process API fake.
-- UI: the real application and callbacks on Slint's exact-version testing
-  backend (`init_integration_test_with_mock_time` when worker events flow).
-  Locate controls by accessible label; no replacement callbacks, coordinates or
-  sleeps after clicks. See [UI guide](../../docs/testing/ui.md).
-- Telemetry: a capturing Sentry transport/hub with synthetic canaries; inspect
-  errors, breadcrumbs, logs and transactions. Never a live DSN.
-- Data: reuse `job_json`/fixture helpers and create state through public
-  behavior. Raw file edits only for corruption and crash fixtures.
-  Helpers build data, never hidden assertions; keep setup, one action and
-  literal expected values visible. Assert exact variants/messages and stored
-  state, plus what did **not** change after a refusal.
+- Device behavior goes through the matching simulator and production
+  driver/`Link`; HTTP behavior through `agent::testing::Holuto` and the
+  production client. Do not replace the code whose behavior the test promises.
+  Low-level transport tests may fake the external serial API.
+- UI wiring tests keep production callbacks and event delivery; use the
+  existing Slint application fixture and semantic controls. Backend setup and
+  runner requirements belong in the [UI guide](../../docs/testing/ui.md).
+- Use fresh temporary state, synthetic credentials and local capturing
+  telemetry transports, never saved user settings, live services or printers.
+  See the [privacy tests](../../docs/testing/security.md).
+- Build ordinary state through its real transitions. Literal stored-format,
+  corruption and crash fixtures are exceptions: generating them with the same
+  serializer under test can hide a format regression. Helpers may assert shared
+  invariants, but keep the scenario's action and expected result visible.
 
 ## Per kind
 
-- **Fiscal faults:** execute-then-lose/corrupt/disconnect; inspect simulator
-  effects, wire frames and the persisted journal. A failed journal write must
-  prevent the send. Resolution never reissues.
-- **Properties:** `proptest` against an independent integer/reference oracle;
-  mix extremes and boundaries; never copy production arithmetic. Commit
-  `proptest-regressions/` seeds from real failures and never delete one: a
-  passing replay is still the record of a past failure.
-- **Models:** `proptest-state-machine` reference transitions independent of
-  production helpers; invariants after every step. Keep real restart/HTTP
-  scenarios too; sequential models do not prove races.
-- **Snapshots:** `insta` only for binding receipt/report output with fixed
-  clock/text/IDs. Review every diff against the protocol; never blanket-accept or
-  redact fiscal fields. Use the crate-scoped review procedure in
+- For fiscal faults, distinguish a refusal before execution from an answer lost
+  after execution. Inspect device effects and retained evidence, not just the
+  returned error. Use the [fiscal fault matrix](../../docs/testing/fiscal-safety.md).
+- Choose an independent oracle for the guarantee: published output vectors,
+  reference arithmetic, a state model or a documented relation. A round trip
+  alone cannot prove two mutually consistent implementations are correct.
+  Snapshot review and regression-seed procedures live in
   [workflows](../../docs/workflows.md#finishing-a-change).
-- **Concurrency:** order contenders with channels and the Posnet simulator's
-  `hold`/`reached` (Novitus and Elzab have no equivalent);
-  prove one effect and the final state; release holds and join threads on
-  failure. Stress worker/race tests before integration
-  ([workflows](../../docs/workflows.md#finishing-a-change)).
-- **Time:** fix the simulator printer clock; freeze the worker poll clock
-  (`ClockScope`) when exact event sequences are asserted; inject `today` into
-  pure date functions. No sleeps or wall-clock assertions. Bounded receives are
-  failure diagnostics only. Simulator links divide driver deadlines by
-  `Link::time_scale` (1000) with a 100 ms floor; to assert a production
-  deadline, wrap the link with a scale of 1 (see the `elzab` tests'
-  `Deadlines`). A simulator `Timeout` seen only under heavy parallel load:
-  rerun the test alone and under stress before reporting; never answer it with
-  sleeps or retries.
-- **Platform:** `#[cfg(...)]` on what the test proves; no silent skips.
-  `com_pair` requires `HOLUTO_TEST_COM_PAIR` and fails loudly without it. Linux
-  `session_bus` tests self-spawn `dbus-run-session`. For `cfg` code this host
-  cannot run, keep the test minimal, add no unsafe/FFI scaffolding, and report
-  it as not run.
-- **Processes:** environment overrides and locks re-run
-  `std::env::current_exe()` with a child marker and child-local environment;
-  never global `set_var`. Assert the child's exact outcome and stored state,
-  not runner text such as `1 passed`: a filter matching no test also passes.
-- **Files:** a temp directory per test; current-format literal fixtures for
-  settings/journal; inject portable failures (not chmod under root);
-  assert the previous durable record survives.
-
-Never claim a check ran unless its result was observed.
+- Control races with acknowledgements/holds, not sleeps. Keep failure cleanup
+  able to release holds and stop/join fixture threads. When proving deadline
+  values, record configured deadlines rather than elapsed wall time; simulator
+  acceleration is not evidence of a production deadline. Follow the
+  [concurrency guide](../../docs/testing/concurrency.md) for overlap scenarios.
+- Environment overrides and process locks use a child with child-local
+  environment, not process-global mutation. Assert an explicit child outcome
+  and durable state; exit success alone can mean the test filter matched
+  nothing.
+- Gate tests by the platform behavior they prove and obtain native evidence for
+  platform-specific changes. Do not weaken a test or silently skip it merely
+  because this host cannot run it; report that limitation. Serial pairs,
+  private buses and package isolation are documented in
+  [platform procedures](../../docs/testing/platforms.md).

@@ -156,7 +156,7 @@ fn demo_mode_keeps_every_other_readiness_gate() {
         let mut log = Log::default();
         assert!(matches!(
             driver.print_receipt(&receipt(vec![]), &expected, &mut log),
-            Err(Error::NotReady(message)) if message == expected.description()
+            Err(Error::NotReady(message)) if message.to_string() == expected.description()
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal_bodies(&sim), Vec::<String>::new());

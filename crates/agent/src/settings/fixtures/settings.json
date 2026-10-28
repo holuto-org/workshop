@@ -6,5 +6,6 @@
   "vendor": null,
   "telemetryEnabled": false,
   "startOnLaunch": false,
-  "theme": "dark"
+  "theme": "dark",
+  "language": "system"
 }

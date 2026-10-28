@@ -70,9 +70,9 @@ impl Driver for Printer {
             .device
             .require_unique_number(&expected.unique_number)?;
         if expected.vendor != Vendor::Elzab || checked.device.vat != expected.vat {
-            return Err(Error::Invalid(
-                "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-device-vat-changed",
+            )));
         }
         if receipt.sales().keys().any(|slot| {
             checked
@@ -81,9 +81,7 @@ impl Driver for Printer {
                 .get(usize::from(slot.get()))
                 .is_none_or(|rate| !rate.active())
         }) {
-            return Err(Error::Invalid(
-                "Wybrana stawka VAT jest nieaktywna.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new("drivers-inactive-vat")));
         }
         let footer = (!receipt.brand_in_header(&checked.header)).then_some(receipt.brand());
         let steps = receipt::steps(receipt, footer, &checked.device.capabilities)?;
@@ -91,9 +89,9 @@ impl Driver for Printer {
         let permission = query(&mut session, "LPC", "A1")?;
         let code = field(&permission, 'B')?;
         if !matches!(code, "" | "0") {
-            return Err(Error::NotReady(format!(
-                "Elzab nie pozwala otworzyć paragonu: {code}."
-            )));
+            return Err(Error::NotReady(
+                i18n::Message::new("drivers-elzab-receipt-refused").arg("code", code),
+            ));
         }
         // Read-only evidence; never use a changed counter as proof of our print.
         let _before = read_number(&mut session, "SER", 'J')?;
@@ -129,11 +127,12 @@ impl Driver for Printer {
                 Step::new("RRP", "I1\x1dJ1".to_owned(), ACCEPT_TIMEOUT)
             },
             Report::Monthly { year, month } => {
-                let from = Date::new(year, month, 1).map_err(|e| Error::Invalid(e.to_string()))?;
+                let from =
+                    Date::new(year, month, 1).map_err(|e| Error::Invalid(e.to_string().into()))?;
                 if from.last_of_month() >= checked.date {
-                    return Err(Error::Invalid(
-                        "Raport miesięczny wymaga zakończonego miesiąca.".to_owned(),
-                    ));
+                    return Err(Error::Invalid(i18n::Message::new(
+                        "drivers-month-not-ended",
+                    )));
                 }
                 let mut date = date_fields(from)?;
                 // YYMM of the YYMMDD date.
@@ -142,9 +141,9 @@ impl Driver for Printer {
             },
             Report::Periodic { from, to, summary } => {
                 if from > to || to > checked.date {
-                    return Err(Error::Invalid(
-                        "Nieprawidłowy zakres dat raportu.".to_owned(),
-                    ));
+                    return Err(Error::Invalid(i18n::Message::new(
+                        "drivers-invalid-report-range",
+                    )));
                 }
                 Step::new(
                     "RPP",
@@ -161,11 +160,9 @@ impl Driver for Printer {
         dispatch(&mut session, &[step], journal)?;
         if report == Report::Daily {
             // The protocol promises acceptance, not completion.
-            return Err(uncertain(Error::NotReady(
-                "Raport dobowy został przyjęty, ale zakończenie wydruku wymaga \
-                 sprawdzenia przez operatora."
-                    .to_owned(),
-            )));
+            return Err(uncertain(Error::NotReady(i18n::Message::new(
+                "drivers-elzab-daily-uncertain",
+            ))));
         }
         tracing::info!("Report printed");
         Ok(())
@@ -183,10 +180,11 @@ pub fn identify(link: &dyn Link, connection: &Connection) -> Result<Option<Devic
         {
             return Ok(None);
         }
-        return Err(Error::Unsupported(format!(
-            "Nieobsługiwany model drukarki Elzab: {model} (oprogramowanie {firmware}). \
-             Obsługiwane są Elzab Zeta, Mera i Cube ONLINE."
-        )));
+        return Err(Error::Unsupported(
+            i18n::Message::new("drivers-unsupported-elzab")
+                .arg("model", model)
+                .arg("firmware", firmware),
+        ));
     }
     Ok(Some(
         preflight_identity(&mut session, model, firmware)?.device,
@@ -230,7 +228,9 @@ fn preflight_identity(
         capabilities: capabilities.unwrap_or_default(),
     };
     if !known {
-        device.problems.push("Nieznany model Elzab ONLINE".into());
+        device
+            .problems
+            .push(i18n::Message::new("drivers-unknown-elzab").into());
     }
     let unique_number = query(session, "FNR", "")?;
     let unique_number = field(&unique_number, 'B')?;
@@ -244,7 +244,7 @@ fn preflight_identity(
     if field(&page, 'w')? != "ACP1250" {
         device
             .problems
-            .push("Ustaw stronę kodową drukarki na CP1250".into());
+            .push(i18n::Message::new("drivers-elzab-code-page").into());
         device.capabilities.allowed_characters.clear();
     }
     let status = query(session, "ySR", "")?;
@@ -270,7 +270,7 @@ fn preflight_identity(
     if header.trim().is_empty() || taxpayer.trim().is_empty() {
         device
             .problems
-            .push("Brak zaprogramowanego nagłówka lub NIP".into());
+            .push(i18n::Message::new("drivers-header-nip-missing").into());
     }
     let vat = query(session, "FTR", "")?;
     let table = field(&vat, 'A')?;
@@ -300,7 +300,9 @@ fn preflight_identity(
         device.vat.push(VatRate { slot, kind });
     }
     if !device.vat.iter().any(|r| r.active()) {
-        device.problems.push("Brak aktywnych stawek VAT".into());
+        device
+            .problems
+            .push(i18n::Message::new("drivers-no-active-vat").into());
     }
     let date = clock(session)?.date();
     Ok(Checked {
@@ -343,7 +345,7 @@ fn readiness(body: &str, problems: &mut Vec<Problem>) -> Result<(), Error> {
     };
     for cause in &CAUSES {
         if cause.set.iter().any(bit) || !cause.cleared.iter().all(bit) {
-            problems.push(cause.message.into());
+            problems.push(i18n::Message::new(cause.message).into());
         }
     }
     // Read-only still permits resolution, which sends no commands. Reports stay refused
@@ -368,8 +370,8 @@ struct Cause {
 /// fiscal printers; listed in the order operators see them.
 const CAUSES: [Cause; 9] = [
     Cause {
-        message: "Drukarka Elzab wymaga serwisu: pamięć, inicjalizacja lub blokada sprzedaży",
         // RAM cleared or forced clear; no fiscal memory, service jumper, limited operation,
+        message: "drivers-elzab-service",
         // sales blocked, pending currency change, no manufacturer; not server-initialized.
         set: &[
             (0, 123),
@@ -384,35 +386,34 @@ const CAUSES: [Cause; 9] = [
         cleared: &[(1, 98)],
     },
     Cause {
-        message: "Sprawdź zasilanie i akumulator drukarki Elzab",
         // Shutdown requested or running, external power lost, low batteries; battery not good.
+        message: "drivers-elzab-power",
         set: &[(0, 115), (0, 103), (0, 102), (1, 122), (1, 77)],
         cleared: &[(1, 102)],
     },
     Cause {
-        message: "Podłącz wyświetlacz klienta drukarki Elzab",
+        message: "drivers-elzab-display",
         set: &[(1, 101)],
         cleared: &[],
     },
     Cause {
-        message: "Drukarka Elzab jest w menu lub teście albo wydruk przerwano na drukarce",
+        message: "drivers-elzab-menu",
         set: &[(1, 82), (1, 67), (1, 64)],
         cleared: &[],
     },
     Cause {
-        message: "Drukarka Elzab jeszcze drukuje. Poczekaj na koniec wydruku",
-        // Print buffer busy; printing.
+        message: "drivers-elzab-printing", // Print buffer busy; printing.
         set: &[(1, 81), (2, 0)],
         cleared: &[],
     },
     Cause {
-        message: "Otwarty dokument na drukarce Elzab. Dokończ lub anuluj go na drukarce",
         // Invoice, receipt, name-database control printout, superformatka.
+        message: "drivers-elzab-open-document",
         set: &[(1, 70), (1, 68), (1, 66), (1, 65)],
         cleared: &[],
     },
     Cause {
-        message: "Drukarka Elzab jest w trybie szkoleniowym",
+        message: "drivers-elzab-training",
         set: if cfg!(workshop_acceptance) {
             &[]
         } else {
@@ -421,14 +422,13 @@ const CAUSES: [Cause; 9] = [
         cleared: &[],
     },
     Cause {
-        message: "Brak papieru lub podniesiona głowica drukarki Elzab",
         // Head raised, document interrupted by paper out, paper out.
+        message: "drivers-elzab-paper-head",
         set: &[(2, 4), (2, 3), (2, 1)],
         cleared: &[],
     },
     Cause {
-        message: "Awaria mechanizmu drukującego Elzab",
-        // Printer failure; "printer operational" missing.
+        message: "drivers-elzab-mechanism", // Printer failure; "printer operational" missing.
         set: &[(2, 2)],
         cleared: &[(2, 5)],
     },
@@ -467,15 +467,19 @@ fn timestamp(datetime: DateTime) -> Result<Timestamp, Error> {
     // No offset exists on the wire: fail on DST gaps/folds instead of guessing.
     let timestamp = TimeZone::get("Europe/Warsaw")
         .and_then(|zone| zone.to_ambiguous_timestamp(datetime).unambiguous())
-        .map_err(|error| Error::Protocol(format!("Nieprawidłowy zegar drukarki: {error}.")))?;
+        .map_err(|error| {
+            Error::Protocol(
+                i18n::Message::new("drivers-invalid-clock").arg("error", error.to_string()),
+            )
+        })?;
     Timestamp::from_second(timestamp.as_second().div_euclid(60) * 60)
         .map_err(|_timestamp| frame::corrupt())
 }
 fn date_fields(date: Date) -> Result<String, Error> {
     if !(2000..=2099).contains(&date.year()) {
-        return Err(Error::Invalid(
-            "Rok raportu musi należeć do zakresu 2000–2099.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-report-year-range",
+        )));
     }
     Ok(format!(
         "{:02}{:02}{:02}",

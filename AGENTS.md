@@ -29,7 +29,8 @@ gitignored paths (see `.gitignore`) other than build output.
 - **Review priorities**: [`.omp/WATCHDOG.md`](.omp/WATCHDOG.md).
 - **Procedures and evidence**: [testing](docs/testing/README.md),
   [workflows](docs/workflows.md), [CI](docs/ci.md),
-  [telemetry](docs/telemetry.md), [fiscal contract](docs/fiscal-contract.md).
+  [telemetry](docs/telemetry.md), [fiscal contract](docs/fiscal-contract.md),
+  [translations](docs/localization.md).
 - **End-user and LLM install material**: [README](README.md),
   [install guide](docs/install-with-ai.md) and [`llms.txt`](llms.txt).
 - **Facts plainly visible in code**: nowhere; search the code.
@@ -39,30 +40,30 @@ gitignored paths (see `.gitignore`) other than build output.
 omp injects a rule when you edit matching files (some rules also when you read
 them); other agents read the rule before changing that area.
 
-- **[worker-thread](.omp/rules/worker-thread.md)**: desktop printer/API access,
-  event bridge, blocking calls, stop/join/quit.
-- **[durable-state](.omp/rules/durable-state.md)**: journal, store, settings,
-  status and their stored formats.
+- **[worker-thread](.omp/rules/worker-thread.md)**: asynchronous desktop state,
+  operator edits, persistence-dependent actions and native shutdown.
 - **[holuto-api](.omp/rules/holuto-api.md)**: `/agent` client, OpenAPI
   contract, loopback Holuto fake.
-- **[posnet-wire-encoding](.omp/rules/posnet-wire-encoding.md)**,
-  **[novitus-wire-encoding](.omp/rules/novitus-wire-encoding.md)**: Windows-1250
-  wire text.
-- **[elzab-wire-encoding](.omp/rules/elzab-wire-encoding.md)**: ElzabSTX
-  framing, code page and fiscal completion.
+- **[fiscal-evidence](.omp/rules/fiscal-evidence.md)**: vendor evidence versus
+  host policy, hardware qualification and completion/refusal certainty.
 - **[writing-tests](.omp/rules/writing-tests.md)**: test placement, harnesses,
   simulators and per-kind conventions.
 - **[telemetry](.omp/rules/telemetry.md)**: logging/tracing, error capture,
   Sentry setup, transport and scrubbing.
-- **[installers-packaging](.omp/rules/installers-packaging.md)**: install
-  scripts, packaging and workflows: local checks and deliberate safety checks.
-- **[documentation](.omp/rules/documentation.md)**: any Markdown or `llms.txt`.
+- **[installers-packaging](.omp/rules/installers-packaging.md)**: installer trust,
+  fiscal boundaries and native package compatibility.
+- **[documentation](.omp/rules/documentation.md)**: evidence, end-user contracts
+  and incoming references.
+- **[localization](.omp/rules/localization.md)**: safety-critical translation
+  meaning and presentation-versus-fiscal boundaries.
 
 ## Crates and boundaries
 
 One Cargo workspace; dependency versions and lints live only in the root
 `Cargo.toml`; crates use `workspace = true`.
 
+- **`crates/i18n`**: embedded Fluent catalogs, deferred operator messages and
+  system-language negotiation; UI rendering takes an explicit language.
 - **`crates/fiscal`**: shared fiscal values, capability-driven receipt
   validation, `Driver` trait, `Device`/`Capabilities`, journal/report contracts,
   Windows-1250 codec and serial links.
@@ -75,8 +76,8 @@ One Cargo workspace; dependency versions and lints live only in the root
   uncertain until a person resolves them.
 - **`crates/agent`**: Holuto `/agent` client, durable journal and recovery,
   settings/status and the single `Worker`.
-- **`crates/desktop`** (binary `workshop`): Polish Slint UI/tray, CLI, pairing,
-  per-user autostart and Sentry lifecycle/privacy.
+- **`crates/desktop`** (binary `workshop`): multilingual Slint UI/tray, CLI,
+  pairing, per-user autostart and Sentry lifecycle/privacy.
 
 Each driver's `simulator` feature provides its offline peer. Agent `testing`
 enables those features and exposes the loopback Holuto fake; desktop `simulator`
@@ -105,15 +106,18 @@ replacement metadata. After it they are contracts.
 
 ## Code conventions
 
-- Errors callers match on are `thiserror` enums; their `Display` is the Polish,
-  operator-facing text.
+- Errors callers match on are `thiserror` enums. Catalog-backed `Display` stays
+  Polish for CLI and persisted diagnostics; the UI renders deferred
+  `i18n::Message` values in its selected language. Follow the
+  [translation procedure](docs/localization.md) for wording changes.
 - Comments and docs cite only public sources, such as the vendor spec pages
   listed in the [fiscal contract](docs/fiscal-contract.md); never private
   repositories, their file/line numbers or unpublished documents.
 - `posnet`, `novitus` and `elzab` share one shape (session, preflight, profile,
   simulator). A bug or simplification found in one driver: check the other
   two, and change all three or say why one differs.
-- Run scoped clippy after your first edit, not only at the end.
+- For inline Rust changes, run scoped clippy after the first coherent edit,
+  not only at the end. Parallel slices defer checks to their integrator.
 
 ### Simplifying and deleting
 
@@ -182,8 +186,15 @@ not attribute them to the user.
 
 ## Verify
 
-Subagents skip these unless their assignment asks for a check; the integrator
-runs them once after slices land, from the repository root:
+Select checks from the changed behavior and
+[finishing a change](docs/workflows.md#finishing-a-change). Documentation-only
+changes need Markdown/link checks, not a Rust rebuild or package launch.
+For Rust changes, cover affected crates and dependents with production and
+all-feature builds/tests. Slice agents defer checks until integration.
+
+The full workspace batch below is for a clean integrated tree or workspace-wide
+changes. In a shared checkout, use the scoped crate and changed-file formatting
+commands above instead:
 
 ```sh
 # Unstable rustfmt options; builds stay on the pinned stable toolchain

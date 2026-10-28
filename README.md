@@ -2,60 +2,73 @@
 
 Tray app for the workshop PC connected to a supported Posnet, Novitus or Elzab
 online fiscal printer. Prints **only Holuto sales and advances** queued in the
-Holuto web app, automatically. Receipts are queued and browsed only in the web
-app; the desktop has no receipt list, manual queuing or receipt editor, and
-needs no separate agent. Processing continues with the window closed.
+Holuto web app, while processing is running. Receipts are queued and browsed
+only in the web app; the desktop has no receipt list, manual queuing or receipt
+editor, and needs no separate agent. Closing the window does not stop processing.
 
 Contributors start with [AGENTS.md](AGENTS.md).
 
 ## Install
 
-Download from the
-[latest release](https://github.com/holuto-org/workshop/releases/latest):
+Use an official [release](https://github.com/holuto-org/workshop/releases)
+whose assets include the matching `install-with-ai.md`, `install.sh`,
+`install.ps1` and `SHA256SUMS.txt`. Older releases may predate this packaging;
+if the matching guide or required assets are missing, stop rather than use
+instructions from `master` or substitute a legacy binary.
+
+The current release workflow builds these packages:
 
 | Platform | File |
 | --- | --- |
-| Windows x64 | [`workshop-win-x64.exe`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-win-x64.exe) |
-| macOS Apple Silicon | [`workshop-mac-arm64.dmg`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-mac-arm64.dmg) |
-| macOS Intel | [`workshop-mac-x64.dmg`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-mac-x64.dmg) |
-| Ubuntu 24.04+ / Debian 13+ x64 | [`workshop-linux-x64.deb`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-linux-x64.deb) |
-| Ubuntu 24.04+ / Debian 13+ ARM64 | [`workshop-linux-arm64.deb`](https://github.com/holuto-org/workshop/releases/latest/download/workshop-linux-arm64.deb) |
+| Windows x64 | `workshop-win-x64.exe` |
+| macOS Apple Silicon | `workshop-mac-arm64.dmg` |
+| macOS Intel | `workshop-mac-x64.dmg` |
+| Ubuntu 24.04+ / Debian 13+ x64 | `workshop-linux-x64.deb` |
+| Ubuntu 24.04+ / Debian 13+ ARM64 | `workshop-linux-arm64.deb` |
 
-Filenames are stable; the release tag, `SHA256SUMS.txt` and app identify the
-version. Windows builds are unsigned; macOS bundles are ad-hoc signed, not
-Developer-ID signed or notarized. The Windows `.exe` links the C runtime
-statically. The `.deb` installs `/usr/bin/workshop` and a launcher; its `libc6`
-dependency records the build host's glibc version. Software rendering needs no
-GPU or OpenGL driver, including on remote desktops and VMs.
+Windows builds are unsigned; macOS bundles are ad-hoc signed, not Developer-ID
+signed or notarized. Software rendering needs no GPU or OpenGL driver, but a
+graphical desktop is required.
 
-The [installation guide](docs/install-with-ai.md) covers requirements, pinned
-downloads, checksums/attestations, OS security prompts, install paths, updates
-and uninstall; each release ships it with `install.sh`, `install.ps1` and
-`SHA256SUMS.txt`. Never pipe a download to a shell.
+The [installation guide](docs/install-with-ai.md) explains requirements and the
+release-matched download, checksum/attestation, installation, update and
+uninstall procedure. Never pipe a download to a shell.
 
 [![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
 
-[Slint](https://slint.dev) uses the Slint Royalty-free Desktop, Mobile, and Web
-Applications License 2.0; the badge is required attribution.
+[Slint](https://slint.dev) is used under the
+[Slint Royalty-free Desktop, Mobile, and Web Applications License 2.0](https://github.com/slint-ui/slint/blob/master/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md);
+this badge provides its required attribution.
 
 ## Sign in and connect
 
-Pair in **Ustawienia** with a one-time code generated for the printer in Holuto
-(valid 15 minutes; see the
-[guided configuration sequence](docs/install-with-ai.md#guided-configuration-sequence)).
-Pairing replaces the previous device token, which stays internal. Settings save
-as soon as a field is committed; **Uruchom** starts processing. Every launch
-needs an explicit start unless [autostart](#autostart) is on.
+Pair in **Settings** with a short-lived, one-time code generated for the
+printer in Holuto; see the
+[guided configuration sequence](docs/install-with-ai.md#guided-configuration-sequence).
+Pairing obtains a device token internally and never opens a printer.
+Settings save when committed; **Start** starts processing after they persist.
+Pairing and installation are not permission to print. Every launch needs an
+explicit start unless [autostart](#autostart) is on.
 
-Release packages carry the production Holuto API URL; there is no address
-field in the app. `workshop config set --api-url` overrides it (staging or
-local development). HTTPS is required except on loopback (`localhost`,
-`127.0.0.0/8`, `::1`); redirects are rejected. TLS uses the OS certificate
-store. Changing the API URL forgets the saved pairing. A 401 stops processing;
-generate a fresh pairing code in Holuto and pair again. There is no token
-refresh.
+Release packages carry the production Holuto API URL. Changing it through the
+CLI forgets the saved pairing. A 401 stops processing: generate a fresh pairing
+code in Holuto and pair again. There is no token refresh. Other configuration
+and HTTPS requirements live in the installation guide.
 
-State directory:
+### UI language
+
+In **Settings → Language**, choose **System**, **English**, **Polski**,
+**Español** or **Русский**. System is the default: the first supported OS
+language preference is used, with English when none match. Regional variants
+such as `es-MX` use the corresponding supported language.
+
+The choice saves immediately and updates the window, tray, confirmations and
+operator messages without restarting processing. It does not change receipts,
+fiscal commands or CLI output. CLI diagnostics remain Polish; original external
+device/server diagnostics are shown verbatim inside translated explanations.
+UI names in this guide use English and follow the selected language in the app.
+
+### State directory
 
 | OS      | Directory                                                      |
 | ------- | -------------------------------------------------------------- |
@@ -63,29 +76,13 @@ State directory:
 | macOS   | `~/Library/Application Support/workshop`                       |
 | Windows | `%LOCALAPPDATA%\workshop` (Local AppData Known Folder)         |
 
-- `settings.json`: API URL, internal token, port, speed, `vendor` (`"posnet"`,
-  `"novitus"`, `"elzab"` or `null` to detect), `telemetryEnabled`,
-  start-on-launch. Keep private and out of logs.
-- `operation.json`: fiscal journal; each receipt/report records its vendor and
-  fiscal memory unique number, both required for resolution. Malformed files
-  block.
-- `status.json`: processing/connection and fiscal-block flags, last device
-  vendor/unique number, update time. Display state; never credentials or
-  customer data.
-- `instance.lock`: one process per state directory: the app or a CLI command.
-- `application.lock`: held only by the running app; `workshop status` and
-  `workshop check` read it, so a CLI command is never reported as the app.
-- `crashes/`: native crash dumps awaiting upload; see
-  [native minidumps](docs/telemetry.md#native-minidumps-important-exception).
+This directory contains private settings (including the internal token),
+display-only status, process locks, the `operation.json` fiscal journal and
+possibly sensitive native crash dumps. Configure through the GUI or CLI, not
+by editing files; do not include the directory in diagnostic reports.
 
-On Unix, opening tightens the directory to **0700** and the locks to **0600**;
-every write replaces a data file with a **0600** copy. Settings, status and
-journal reads do not repair modes.
-On Windows, profile ACLs protect the directory.
-
-One background FIFO writer persists settings and status. Starting waits for
-settings to persist; quitting waits for pending writes and the worker.
-
+Only one app or configuration command can own a state directory. Starting
+waits for settings to persist; quitting waits for pending writes and the worker.
 Uninstalling keeps fiscal state. Never delete the journal to unblock printing;
 unresolved evidence needs human reconciliation.
 
@@ -104,7 +101,7 @@ Never put pairing codes or credentials in reports or logs.
 
 ## Autostart
 
-Opt-in: **Uruchamiaj przy logowaniu** registers a per-user login item and starts
+Opt-in: **Start at login** registers a per-user login item and starts
 processing at launch, so login can print queued fiscal jobs without a click;
 approve that separately. Preflight and unresolved-operation blocks still apply.
 See the [autostart command](docs/install-with-ai.md#4-configure-through-the-cli-not-files)
@@ -154,16 +151,8 @@ Typical ports: Linux `/dev/ttyACM0` (prefer `/dev/serial/by-id/...`), Windows
 `COM3`, macOS `/dev/cu.usbmodem…`. The user needs read/write access
 (`dialout` group on Linux); never run with sudo.
 
-The GUI, `workshop ports` and discovery share a passive candidate list: hinted
-USB devices (`1424:*` Posnet, `1A28:2512` Novitus, `0483:5740` Elzab), then
-FTDI/Prolific/WCH/Silicon Labs RS232 bridges, then native ports, sorted by name
-within each group. USB hints are not verified printer identities. Other USB
-devices and Bluetooth are excluded; macOS uses `/dev/cu.*` rather than duplicate
-`/dev/tty.*` nodes. Linux drops native UARTs whose sysfs `type` is zero, retaining
-ports with unreadable metadata. Windows retains non-USB COM ports, including
-PCI cards and virtual/Bluetooth ports, which Windows enumeration reports as
-`Unknown`; macOS retains non-USB, non-Bluetooth ports. An unlisted port can
-still be entered manually. Listing never opens a port.
+The GUI and `workshop ports` list candidates without opening a port; USB hints
+are not verified printer identities. An unlisted port can be entered manually.
 
 If the saved port fails, discovery identifies other serial candidates read-only
 and verifies the first supported device before using and saving its port/vendor.
@@ -171,63 +160,31 @@ It never scans with an unresolved operation: the device must not change.
 
 ## Desktop app
 
-- **Stan** — read-only status rows:
-  - **Obsługa drukarki**: **Uruchomiona**, **Uruchamianie…**,
-    **Zatrzymywanie…** or **Zatrzymana**.
-  - **Holuto**: **Połączono**, **Łączenie…** or **Nie połączono**.
-  - **Drukarka**: vendor · unique number · port, or **—** before the first
-    connection.
-  - **Stan drukarki**: **Gotowa**, **Niegotowa:** with the device reason (or
-    **brak połączenia**), or **Zablokowana: wymaga rozstrzygnięcia** while an
-    uncertain outcome blocks printing.
+- **Status** — read-only processing, Holuto, printer identity and readiness
+  status. This view does not replace fiscal memory.
+- **Reports** — daily, monthly and periodic fiscal reports, confirmed before
+  printing. These are real fiscal operations, not test pages. Periodic dates
+  use zero-padded `dd.mm.yyyy` (for example `01.01.2025`); report availability
+  also depends on the
+  [printer's date and brand-specific guards](docs/fiscal-contract.md#report-dates-and-printer-clock).
+- **Settings** — pairing, printer port/speed, language, theme, autostart,
+  [diagnostics](#diagnostics) and processing controls.
 
-  A hint reminds that receipts are issued and browsed in Holuto and that
-  queued jobs print here automatically; while processing is stopped it points
-  to **Ustawienia**. This view does not replace fiscal memory.
-- **Raporty** — daily, monthly and periodic fiscal reports, confirmed before
-  printing. Periodic dates require zero-padded `dd.mm.rrrr` (for example
-  `01.01.2025`), must be on or after `01.01.2000`, cannot be in the future, and
-  require start ≤ end. Reports and receipts share one worker thread; commands
-  cannot interleave.
-- **Ustawienia** — pairing code, printer port/speed, autostart,
-  **Udostępniaj diagnostykę** (see [Diagnostics](#diagnostics)) and processing
-  controls.
-
-The header shows **Holuto** and **Drukarka** only while something is wrong:
-not connected, connecting, printer not ready or blocked. The footer likewise
-shows only problems, in red; it disappears when the problem is cleared.
-Successful operations and normal progress show no footer messages.
-
-Polling runs every **3 seconds**, or **15 seconds** after errors or while
-blocked. If the printer does not answer, or Holuto is unreachable, times out
-(408), rate-limits (429), refuses an unavailable branch or company (403) or
-answers 5xx when processing starts, the app retries every 15 seconds and shows
-a notice; a 401 stops processing. A confirmed report stays disabled until the
-worker finishes that command, so a second click cannot queue it twice. Closing
-the window hides it in the tray and releases its memory without stopping
-processing; reopen from the tray. Without a tray icon, closing keeps the window
-visible; on Linux this includes an icon that could not register because the
-desktop's tray started after the app.
-**Zatrzymaj** stops processing; **Zakończ**, the tray's quit, the macOS Dock/⌘Q
+Reports and receipts share one worker and cannot interleave. A confirmed
+report stays disabled until its command finishes.
+Closing the window hides it in the tray without stopping processing; reopen
+from the tray. Without a working tray icon, closing keeps the window visible.
+**Stop** stops processing; **Quit**, the tray's quit, the macOS Dock/⌘Q
 quit, macOS logout, restart or shutdown (macOS waits instead of being cancelled)
 and, on Linux and macOS, SIGTERM, SIGHUP or SIGINT (Linux logout or shutdown,
 Ctrl+C) exit. All of them finish the current operation first. Windows logout
 or shutdown ends the app without that wait; an operation it interrupts may be
 left uncertain, which blocks printing until a person resolves it.
 
-Prices are gross; API quantities and amounts are decimal strings. The schema
-allows unit prices with up to eight decimal places, but this driver requires
-whole grosze (at most two fractional digits in the string). It does not round
-higher-precision prices; inconsistent line gross totals also fail before printing.
-The printer calculates VAT. Each line uses its assigned slot for `23`, `8`, `5`,
-`0` or `zw`; mixed rates are supported, with no highest-rate or whole-receipt
-fallback. Holuto omits zero-price lines; the agent rejects any it receives.
-Missing VAT-letter mappings reject queueing, never substitute a rate.
-Buyer NIP set in Holuto, advance deductions and payments reach the device
-unchanged.
-Line and company names must print in full as
-received; unsupported text fails before fiscal commands, never transliterated or
-truncated.
+Prices are gross and the printer calculates VAT. Text must print in full,
+without transliteration or truncation. Unsupported jobs fail before fiscal
+commands; capability, VAT and amount details live in the
+[fiscal contract](docs/fiscal-contract.md).
 
 ## Fiscal safety
 
@@ -255,13 +212,14 @@ truncated.
   reports `failed` without blocking. If Holuto already marked that job `unknown`
   (it expired while the app was down), the app keeps blocking and tells staff
   that nothing was printed, so they can resolve it as failed in the web app.
-- Only [documented certain refusals][certain-refusals] can be reported failed
-  after dispatch. Other failures remain **unknown**; no refusal permits
-  resending. A Posnet footer failure after a completed receipt does not undo
+- Only refusals classified as certain by the
+  [documented host policy][certain-refusals] can be reported failed after
+  dispatch. Other failures remain **unknown**; no refusal permits resending.
+  A Posnet footer failure after a completed receipt does not undo
   the print; the printer stays not ready until its open footer is cleared.
   An accepted Elzab daily report needs human resolution even if counters advance.
-- Interrupted reports also block. After inspecting the printout, use **Wyjaśnij
-  raport** with the same printer connected and ready; an overdue daily report
+- Interrupted reports also block. After inspecting the printout, use **Resolve
+  report** with the same printer connected and ready; an overdue daily report
   or read-only mode does not prevent resolution. Resolution prints nothing.
 - Persist the job, attempt and execution-start timestamp before dispatch;
   persist the result before sending it. A `done` result uses the printer clock,
@@ -273,7 +231,7 @@ truncated.
 - Terminal server resolutions are authoritative, except against completed-print
   evidence: if the receipt printed but Holuto already marked the job `failed` or
   `expired`, the app keeps the journal, blocks and names the job and receipt
-  number. Record the receipt in Holuto, then confirm with **Wyjaśnij paragon**
+  number. Record the receipt in Holuto, then confirm with **Resolve receipt**
   (same printer, connected and ready as for reports); it prints and reports
   nothing. Corrupt or unreadable journals fail closed; deleting the journal is
   not recovery.
@@ -287,21 +245,26 @@ sequences are specified in [docs/fiscal-contract.md](docs/fiscal-contract.md).
 
 ## Diagnostics
 
-Release-workflow packages require a build-time `SENTRY_DSN`; absent DSN and simulator
-builds never report. **Udostępniaj diagnostykę** defaults on. Live opt-out gates
-new structured telemetry; restart to disable native crash reporting.
+**Udostępniaj diagnostykę** defaults on in configured release builds. Live
+opt-out gates new structured telemetry; restart to disable native crash
+reporting. Simulator builds do not report.
 
-Structured diagnostics retain reviewed messages, sanitized errors/frames,
-timing/status, release-health sessions and printer ID/device unique number; payloads,
-arbitrary fields, hostnames and local paths are scrubbed. Native dumps contain
-process memory and may expose sensitive data despite those hooks. See
-[Diagnostics and privacy](docs/telemetry.md) for the exact allowlist, lifecycle,
-500 ms flush bound and native-dump warning, and
-[CI configuration](docs/ci.md#release-telemetry-artifacts).
+Structured diagnostics include reviewed messages, sanitized errors,
+timing/status and printer identifiers. **Native crash dumps contain process
+memory and may expose credentials or fiscal/customer data** despite structured
+scrubbing. Read [Diagnostics and privacy](docs/telemetry.md) for the exact data
+policy and opt-out behavior.
 
 ## Development and releases
 
-[AGENTS.md](AGENTS.md) holds the crate layout, conventions and commands; the
-[testing guide](docs/testing/README.md), [workflows](docs/workflows.md) and
-[CI](docs/ci.md) cover verification and releases. Printer behavior is exercised
-only through offline simulators, **never real fiscal commands**.
+[AGENTS.md](AGENTS.md) holds the crate layout, conventions and
+[build/test and simulator commands](AGENTS.md#verify). The debug-only desktop
+simulator uses a separate `workshop-simulator` state directory, all three
+offline printer peers and a loopback Holuto with sample queued jobs; it never
+contacts production Holuto or a real printer. It starts processing automatically
+on launch, printing those sample jobs in the selected simulator.
+
+The [testing guide](docs/testing/README.md), [workflows](docs/workflows.md) and
+[CI](docs/ci.md) cover verification and releases. Automated printer verification
+uses only simulators; physical qualification follows the separate
+[human-supervised acceptance procedure](docs/testing/hardware-acceptance.md).

@@ -27,6 +27,8 @@ use fiscal::{
 use jiff::civil::Date;
 use tracing::dispatcher;
 
+use i18n::Message;
+
 use crate::{
     Error,
     agent::{Agent, Blocked, RETRY},
@@ -58,7 +60,7 @@ pub enum PairingFailure {
 
 pub enum Event {
     /// An operator problem, or all clear when the previous problem ended.
-    Problem(Option<String>),
+    Problem(Option<Message>),
     /// The GUI persists detected settings and reports save failures.
     PortDetected { port: String, vendor: Vendor },
     /// The detected printer's identity; the GUI publishes it as one status.
@@ -71,7 +73,7 @@ pub enum Event {
     /// Credentials are durably saved and never included in the event.
     Paired { printer_id: String },
     PairingFailed {
-        message: String,
+        message: Message,
         failure: PairingFailure,
     },
     Device {
@@ -79,7 +81,7 @@ pub enum Event {
         blocked: bool,
         report_unresolved: bool,
         /// Receipt evidence the operator confirms before a local acknowledgement.
-        orphaned_receipt: Option<String>,
+        orphaned_receipt: Option<Message>,
     },
     /// Releases the GUI submission guard even when a command is refused.
     CommandCompleted,
@@ -128,14 +130,14 @@ impl fmt::Debug for Event {
     }
 }
 
-enum Message {
+enum Request {
     Command(Command),
     Stop,
 }
 
 #[derive(Debug)]
 pub struct Worker {
-    messages: Sender<Message>,
+    messages: Sender<Request>,
     thread: JoinHandle<()>,
 }
 
@@ -179,7 +181,7 @@ impl Worker {
     fn start<S, F>(dir: Arc<StateDir>, sink: S, pairing: bool, operation: F) -> Result<Self, Error>
     where
         S: Fn(Event) + Send + Sync + 'static,
-        F: FnOnce(&StateDir, &Receiver<Message>, &S) -> Result<(), Error> + Send + 'static,
+        F: FnOnce(&StateDir, &Receiver<Request>, &S) -> Result<(), Error> + Send + 'static,
     {
         let (messages, inbox) = mpsc::channel();
         let path = dir.path().to_owned();
@@ -199,14 +201,14 @@ impl Worker {
                             if pairing {
                                 sink(pairing_failed(&error));
                             } else {
-                                sink(Event::Problem(Some(format!("Błąd: {error}"))));
+                                sink(Event::Problem(Some(
+                                    Message::new("agent-error").arg("error", error.message()),
+                                )));
                             }
                         },
                         Err(_payload) => {
                             tracing::error!("Worker panicked");
-                            let text = "Wątek drukarki został przerwany. Sprawdź wydruk przed \
-                                   ponownym uruchomieniem."
-                                .to_owned();
+                            let text = Message::new("agent-worker-panic");
                             if pairing {
                                 sink(Event::PairingFailed {
                                     message: text,
@@ -230,7 +232,7 @@ impl Worker {
                 });
             })
             .map_err(|source| Error::Store {
-                action: "Nie można uruchomić wątku drukarki",
+                action: Message::new("agent-start-worker"),
                 path,
                 source,
             })?;
@@ -239,12 +241,12 @@ impl Worker {
 
     pub fn submit(&self, command: Command) {
         // A closed inbox means the worker has stopped.
-        let _sent = self.messages.send(Message::Command(command));
+        let _sent = self.messages.send(Request::Command(command));
     }
 
     /// Stops after the current operation; emits `Event::Stopped`.
     pub fn stop(&self) {
-        let _sent = self.messages.send(Message::Stop);
+        let _sent = self.messages.send(Request::Stop);
     }
 
     /// Call only after `Event::Stopped` to avoid blocking the GUI.
@@ -293,14 +295,12 @@ fn pairing_failed(error: &Error) -> Event {
                 | Error::Store { .. }
                 | Error::Printer(_)
                 | Error::Blocked(_)
-                | Error::Busy(_) => "Nieprawidłowy, wykorzystany lub wygasły kod parowania. \
-                     Wygeneruj nowy kod w Holuto."
-                    .to_owned(),
+                | Error::Busy(_) => Message::new("agent-pair-invalid"),
             },
-            PairingFailure::Throttled => "Zbyt wiele prób parowania. Spróbuj później.".to_owned(),
+            PairingFailure::Throttled => Message::new("agent-pair-throttled"),
             PairingFailure::Communication
             | PairingFailure::Unauthorized
-            | PairingFailure::Storage => error.to_string(),
+            | PairingFailure::Storage => error.message(),
         },
         failure,
     }
@@ -310,7 +310,7 @@ fn run(
     dir: &StateDir,
     settings: &Settings,
     link: &Arc<dyn Link>,
-    inbox: &Receiver<Message>,
+    inbox: &Receiver<Request>,
     sink: &(dyn Fn(Event) + Sync),
 ) -> Result<(), Error> {
     let mut queue = VecDeque::new();
@@ -330,12 +330,12 @@ fn run(
         settings.token.as_str(),
         &status.unique_number,
     )?;
-    let waiting = |problem: Option<&str>| {
+    let waiting = |problem: Option<&Message>| {
         if problem.is_some() {
             tracing::warn!("Printer requires operator intervention");
         }
         sink(Event::Problem(problem.map(|problem| {
-            format!("Drukarka czeka: {problem}. Usuń problem, a drukowanie będzie kontynuowane.")
+            Message::new("agent-waiting").arg("problem", problem.clone())
         })));
     };
     let mut agent = Agent::new(printer, api, dir, &waiting);
@@ -374,7 +374,7 @@ fn run(
 
 fn start_session(
     agent: &mut Agent<'_>,
-    inbox: &Receiver<Message>,
+    inbox: &Receiver<Request>,
     sink: &dyn Fn(Event),
     queue: &mut VecDeque<Command>,
 ) -> Result<bool, Error> {
@@ -390,9 +390,9 @@ fn start_session(
             },
             Err(error) if retry_start(&error) => {
                 tracing::warn!("Holuto session unavailable; retrying in 15 seconds");
-                sink(Event::Problem(Some(format!(
-                    "Nie można połączyć z Holuto: {error}. Ponowna próba za 15 sekund."
-                ))));
+                sink(Event::Problem(Some(
+                    Message::new("agent-holuto-retry").arg("error", error.message()),
+                )));
                 false
             },
             Err(error) => return Err(error),
@@ -407,7 +407,9 @@ fn start_session(
                         sink(Event::Problem(Some(text)));
                     }
                 },
-                Err(error) => sink(Event::Problem(Some(format!("Błąd: {error}")))),
+                Err(error) => sink(Event::Problem(Some(
+                    Message::new("agent-error").arg("error", error.message()),
+                ))),
             }
         }
     }
@@ -421,7 +423,7 @@ fn detect_printer(
     dir: &StateDir,
     settings: &Settings,
     link: &Arc<dyn Link>,
-    inbox: &Receiver<Message>,
+    inbox: &Receiver<Request>,
     sink: &dyn Fn(Event),
     queue: &mut VecDeque<Command>,
 ) -> Result<Option<Detected>, Error> {
@@ -447,9 +449,9 @@ fn detect_printer(
         // the interval.
         let due = now() + RETRY;
         tracing::warn!("Printer unavailable at start; retrying in 15 seconds");
-        sink(Event::Problem(Some(format!(
-            "Drukarka niedostępna: {error}. Ponowna próba za 15 sekund."
-        ))));
+        sink(Event::Problem(Some(
+            Message::new("agent-printer-retry").arg("error", error.message()),
+        )));
         if !wait(due, inbox, queue) {
             return Ok(None);
         }
@@ -457,11 +459,11 @@ fn detect_printer(
 }
 
 /// Queues commands until the retry is due; `false` means stop.
-fn wait(due: Instant, inbox: &Receiver<Message>, queue: &mut VecDeque<Command>) -> bool {
+fn wait(due: Instant, inbox: &Receiver<Request>, queue: &mut VecDeque<Command>) -> bool {
     loop {
         match inbox.recv_timeout(until(due)) {
-            Ok(Message::Command(command)) => queue.push_back(command),
-            Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => return false,
+            Ok(Request::Command(command)) => queue.push_back(command),
+            Ok(Request::Stop) | Err(RecvTimeoutError::Disconnected) => return false,
             Err(RecvTimeoutError::Timeout) => return true,
         }
     }
@@ -471,7 +473,7 @@ fn publish_device(agent: &Agent<'_>, sink: &dyn Fn(Event)) {
     let blocked = agent.blocked();
     let report_unresolved = matches!(blocked, Ok(Some(Blocked::Report)));
     let orphaned_receipt = matches!(blocked, Ok(Some(Blocked::OrphanedReceipt)))
-        .then(|| agent.orphan_evidence().map(str::to_owned))
+        .then(|| agent.orphan_evidence().cloned())
         .flatten();
     sink(Event::Device {
         status: agent.status().cloned(),
@@ -540,7 +542,7 @@ struct Session<'a> {
 }
 
 impl Session<'_> {
-    fn run(mut self, inbox: &Receiver<Message>) -> Result<(), Error> {
+    fn run(mut self, inbox: &Receiver<Request>) -> Result<(), Error> {
         // Inbox activity must not postpone background polling.
         let mut due = now();
         loop {
@@ -585,24 +587,24 @@ impl Session<'_> {
                 continue;
             }
             match inbox.recv_timeout(until(due)) {
-                Ok(Message::Command(command)) => self.queue.push_back(command),
-                Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                Ok(Request::Command(command)) => self.queue.push_back(command),
+                Ok(Request::Stop) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
                 Err(RecvTimeoutError::Timeout) => {},
             }
         }
     }
 
-    fn drain(&mut self, inbox: &Receiver<Message>) -> bool {
+    fn drain(&mut self, inbox: &Receiver<Request>) -> bool {
         loop {
             match inbox.try_recv() {
-                Ok(Message::Command(command)) => self.queue.push_back(command),
-                Ok(Message::Stop) | Err(TryRecvError::Disconnected) => return true,
+                Ok(Request::Command(command)) => self.queue.push_back(command),
+                Ok(Request::Stop) | Err(TryRecvError::Disconnected) => return true,
                 Err(TryRecvError::Empty) => return false,
             }
         }
     }
 
-    fn poll(&mut self, inbox: &Receiver<Message>) -> Result<Option<Duration>, Error> {
+    fn poll(&mut self, inbox: &Receiver<Request>) -> Result<Option<Duration>, Error> {
         if self.drain(inbox) {
             return Ok(None);
         }
@@ -651,7 +653,7 @@ impl Session<'_> {
 
     fn report_error(&mut self, error: &Error) {
         trace_failure(error);
-        self.problem(format!("Błąd: {error}"));
+        self.problem(Message::new("agent-error").arg("error", error.message()));
         self.error_shown = true;
         self.publish_device();
     }
@@ -662,7 +664,7 @@ impl Session<'_> {
         }
     }
 
-    fn problem(&mut self, text: String) {
+    fn problem(&mut self, text: Message) {
         self.error_shown = false;
         (self.sink)(Event::Problem(Some(text)));
     }

@@ -542,6 +542,88 @@ fn consent_changes_gate_outgoing_events_and_simulators_never_enable_capture() {
     });
 }
 
+#[cfg(not(feature = "simulator"))]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Actual loopback requests must honor the live desktop consent choice"
+)]
+fn live_opt_out_stops_holuto_trace_headers_without_stopping_requests() -> Result<(), Box<dyn Error>>
+{
+    use agent::{
+        api::{Api, model::Telemetry},
+        testing::Holuto,
+    };
+    use fiscal::device::Vendor;
+
+    let server = Holuto::new();
+    let mut api = Api::new(server.url(), server.token(), "DEM0000000001")?;
+    let mut session = Telemetry::new("DEM0000000001", Vendor::Posnet);
+    session.model = "POSNET TEMO ONLINE".into();
+    session.firmware = "32.01".into();
+    session.capabilities.allowed_characters = "A".into();
+    session.capabilities.max_company_name_length = 40;
+    session.capabilities.max_item_name_length = 80;
+    session.capabilities.max_lines_per_receipt = 500;
+    session.capabilities.max_quantity_decimals = 8;
+    let client = Arc::new(Client::from(
+        options()
+            .dsn("https://public@example.invalid/1")
+            .transport(Arc::new(Capture::default())),
+    ));
+    Hub::run(
+        Arc::new(Hub::new(Some(client), Arc::default())),
+        || -> Result<(), Box<dyn Error>> {
+            set_enabled(true);
+            let transaction = sentry::start_transaction(sentry::TransactionContext::new(
+                "fiscal.operation",
+                "fiscal.receipt",
+            ));
+            sentry::configure_scope(|scope| scope.set_span(Some(transaction.into())));
+            api.session(&session)?;
+            set_enabled(false);
+            api.session(&session)?;
+            server.pairing_code("ABCD1234");
+            let _paired = Api::pair(server.url(), "ABCD1234")?;
+            set_enabled(true);
+            server.pairing_code("ABCD1234");
+            let _paired = Api::pair(server.url(), "ABCD1234")?;
+            Ok(())
+        },
+    )?;
+    let requests = server.requests();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "/agent/session",
+            "/agent/session",
+            "/agent/pair",
+            "/agent/pair"
+        ],
+        "opting out must not prevent functional Holuto requests"
+    );
+    for (request, enabled) in requests.iter().zip([true, false, false, true]) {
+        if enabled {
+            assert!(
+                request
+                    .trace_headers
+                    .iter()
+                    .any(|(name, _)| name == "sentry-trace"),
+                "live opt-in must propagate the active trace"
+            );
+        } else {
+            assert!(
+                request.trace_headers.is_empty(),
+                "live opt-out must not send diagnostic correlation headers"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -588,6 +670,49 @@ fn native_reporter_marker_is_recognized_in_an_isolated_child() -> Result<(), Box
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Assertions prove native startup protects memory before state locking"
+)]
+fn minidump_secures_state_directory_before_reporter_startup() -> Result<(), Box<dyn Error>> {
+    use std::{fs, os::unix::fs::PermissionsExt as _};
+
+    let temporary = tempfile::tempdir()?;
+    for existing in [false, true] {
+        let state = temporary
+            .path()
+            .join(if existing { "existing" } else { "new" });
+        let crashes = state.join("crashes");
+        if existing {
+            fs::create_dir_all(&crashes)?;
+            for directory in [&state, &crashes] {
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
+            }
+        }
+        let _integration = minidump(&state)?;
+        for directory in [&state, &crashes] {
+            assert!(
+                directory.is_dir(),
+                "native startup must create its private directory before a crash"
+            );
+            assert_eq!(
+                fs::metadata(directory)?.permissions().mode() & 0o777,
+                0o700,
+                "native memory must be private even before StateDir opens"
+            );
+        }
+        for forbidden in ["instance.lock", "application.lock", "operation.json"] {
+            assert!(
+                !state.join(forbidden).exists(),
+                "reporter touched fiscal state"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Runs the real native reporter in a crashing child.
 ///
 /// The SDK re-executes the child as the reporter, which acknowledges the crash only after
@@ -601,6 +726,7 @@ fn native_reporter_marker_is_recognized_in_an_isolated_child() -> Result<(), Box
 fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(), Box<dyn Error>> {
     use std::{
         env, fs,
+        os::unix::fs::PermissionsExt as _,
         path::PathBuf,
         process::{self, Command},
     };
@@ -610,7 +736,7 @@ fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(
     if env::var_os(CHILD).is_some() {
         let state = PathBuf::from(env::var_os(STATE).ok_or("missing state path")?);
         let outcome = PathBuf::from(env::var_os(OUTCOME).ok_or("missing outcome path")?);
-        let integration = minidump(&state).before_capture(move |_scope, dump| {
+        let integration = minidump(&state)?.before_capture(move |_scope, dump| {
             let written = dump.is_file().then(|| dump.display().to_string());
             let _written = fs::write(&outcome, written.unwrap_or_default());
         });
@@ -624,7 +750,8 @@ fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(
         process::abort();
     }
     let temporary = tempfile::tempdir()?;
-    let state = StateDir::open(temporary.path().join("state"))?;
+    // A first-launch crash can happen before StateDir creates or locks this path.
+    let state = temporary.path().join("state");
     let shared = temporary.path().join("shared-tmp");
     fs::create_dir(&shared)?;
     let outcome = temporary.path().join("outcome");
@@ -640,7 +767,7 @@ fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(
             "--nocapture",
         ])
         .env(CHILD, "1")
-        .env(STATE, state.path())
+        .env(STATE, &state)
         .env(OUTCOME, &outcome)
         // The SDK default would put the dump in `$TMPDIR/Crashes`.
         .env("TMPDIR", &shared)
@@ -650,12 +777,25 @@ fn native_crash_dump_is_written_inside_the_private_state_directory() -> Result<(
     let dump = PathBuf::from(fs::read_to_string(&outcome)?);
     assert_eq!(
         dump.parent(),
-        Some(state.path().join("crashes").as_path()),
+        Some(state.join("crashes").as_path()),
         "dump written outside the state directory"
     );
     assert!(
         !shared.join("Crashes").exists(),
         "dump written to the shared temporary directory"
     );
+    for directory in [&state, &state.join("crashes")] {
+        assert_eq!(
+            fs::metadata(directory)?.permissions().mode() & 0o777,
+            0o700,
+            "first-launch native dump directory must be private"
+        );
+    }
+    for forbidden in ["instance.lock", "application.lock", "operation.json"] {
+        assert!(
+            !state.join(forbidden).exists(),
+            "reporter touched fiscal state"
+        );
+    }
     Ok(())
 }

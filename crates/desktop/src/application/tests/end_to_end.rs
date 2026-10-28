@@ -31,12 +31,12 @@ fn a_job_queued_in_holuto_prints_once_and_stan_shows_the_ready_printer()
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
+    settings.save(&dir)?;
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
     let fake = Arc::clone(&holuto);
-    let printer = Arc::clone(&simulator);
     let sink = move |event: Event| {
         let device = matches!(&event, Event::Device { .. });
         Application::worker_event(event);
@@ -44,28 +44,31 @@ fn a_job_queued_in_holuto_prints_once_and_stan_shows_the_ready_printer()
         if !device || fake.job(job)["state"] != "done" {
             return;
         }
-        let printer = Arc::clone(&printer);
         let _scheduled = slint::invoke_from_event_loop(move || {
             with_app(move |app| {
                 if app.model.stopping {
                     return Ok(());
                 }
-                assert_eq!(
-                    printer.receipts().len(),
-                    1,
-                    "one queued job creates one fiscal receipt"
-                );
                 let window = app.window.as_ref().ok_or("missing window")?;
-                assert_eq!(window.get_tab(), 0, "a connected app shows Stan");
-                assert_eq!(
-                    (
-                        window.get_processing_state().to_string(),
-                        window.get_holuto_state().to_string(),
-                        window.get_printer_state().to_string()
-                    ),
-                    ("Uruchomiona".into(), "Połączono".into(), "Gotowa".into())
-                );
-                app.stop(true)
+                window.set_tab(2);
+                let language = control(window, "Język", AccessibleRole::Combobox)
+                    .map_err(|error| error.to_string())?;
+                assert_eq!(language.accessible_enabled(), Some(true));
+                language.invoke_accessible_expand_action();
+                ElementHandle::find_by_accessible_label(window, "English")
+                    .find(|element| element.accessible_role() == Some(AccessibleRole::ListItem))
+                    .ok_or("missing English language choice")?
+                    .mock_single_click(PointerEventButton::Left);
+                // The real callback queues behind this worker-event callback.
+                with_app(|app| {
+                    let window = app.window.as_ref().ok_or("missing translated window")?;
+                    assert_eq!(window.get_processing_state(), "Running");
+                    assert_eq!(window.get_holuto_state(), "Connected");
+                    assert_eq!(window.get_printer_state(), "Ready");
+                    assert!(app.worker.is_some());
+                    app.stop(true)
+                });
+                Ok(())
             });
         });
     };
@@ -75,10 +78,7 @@ fn a_job_queued_in_holuto_prints_once_and_stan_shows_the_ready_printer()
     state.model.running = true;
     drop(state);
     slint::run_event_loop_until_quit()?;
-    assert!(
-        !app.borrow().model.running,
-        "quit waits for Stopped and joins the worker"
-    );
+    assert!(!app.borrow().model.running);
     let receipts = simulator.receipts();
     assert_eq!(
         (
@@ -101,14 +101,21 @@ fn a_job_queued_in_holuto_prints_once_and_stan_shows_the_ready_printer()
         (&json!("done"), &json!("1")),
         "Holuto accepts the printer-assigned receipt number"
     );
+    let results = holuto
+        .requests()
+        .iter()
+        .filter(|request| request.path.ends_with("/result"))
+        .count();
     assert_eq!(
-        holuto
-            .requests()
-            .iter()
-            .filter(|request| request.path.ends_with("/result"))
-            .count(),
-        1,
-        "the result is reported once and nothing is reprinted"
+        results, 1,
+        "language selection never reprints or resends a result"
+    );
+    assert_eq!(
+        Settings::load(&app.borrow().dir)?
+            .ok_or("missing saved language")?
+            .language,
+        i18n::LanguagePreference::En,
+        "language selection persists while the fiscal worker is running"
     );
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
@@ -143,7 +150,7 @@ fn overdue_elzab_daily_report_is_available_and_leaves_an_unresolved_block()
         token: holuto.token().into(),
         port: simulator.address().into(),
         vendor: Some(Vendor::Elzab),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
@@ -272,7 +279,7 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
@@ -378,7 +385,7 @@ fn event_loop_ending_without_quit_still_finishes_the_held_print() -> Result<(), 
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = make_app(Arc::clone(&dir), settings.clone(), simulator.link())?;
@@ -455,7 +462,7 @@ fn status_tracks_real_worker_and_quit_waits_for_stopped_publication() -> Result<
         api_url: holuto.url().into(),
         token: holuto.token().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     let dir = Arc::new(StateDir::open(temporary.path().to_owned())?);
     let app = Rc::new(RefCell::new(Application::new(

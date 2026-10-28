@@ -14,6 +14,7 @@ simulator = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "agent/
 agent.workspace = true
 uuid = { workspace = true, optional = true }
 fiscal.workspace = true
+i18n.workspace = true
 elzab = { workspace = true, optional = true }
 novitus = { workspace = true, optional = true }
 posnet = { workspace = true, optional = true }

@@ -24,11 +24,11 @@ impl Error for Failure {}
 
 /// A fresh state lacks the address only when the build carries none; release builds
 /// carry it, so pairing is the first thing missing there.
-fn first_missing_setting() -> &'static str {
+fn first_missing_setting() -> String {
     if Settings::default().api_url.is_empty() {
-        Settings::MISSING_API_URL
+        Settings::missing_api_url().to_string()
     } else {
-        "Sparuj drukarkę kodem z Holuto w Ustawieniach."
+        "Sparuj drukarkę kodem z Holuto w Ustawieniach.".into()
     }
 }
 

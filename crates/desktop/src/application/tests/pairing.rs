@@ -54,7 +54,7 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
             api_url: fake.url().into(),
             token: "previous-secret-never-rendered".into(),
             port: "invalid-port-that-must-not-be-opened".into(),
-            ..Settings::default()
+            ..polish_settings()
         },
         simulator.link(),
     )?;
@@ -134,7 +134,7 @@ fn invalid_pairing_code_keeps_credentials_and_allows_operator_correction()
     let settings = Settings {
         api_url: fake.url().into(),
         token: "existing-paired-token".into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     settings.save(&dir)?;
     let app = make_app(dir, settings.clone(), simulator.link())?;
@@ -178,7 +178,7 @@ fn malformed_pairing_code_is_rejected_locally_and_remains_editable() -> Result<(
     let settings = Settings {
         api_url: fake.url().into(),
         token: "existing-paired-token".into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     settings.save(&dir)?;
     let app = make_app(dir, settings.clone(), simulator.link())?;
@@ -247,7 +247,7 @@ fn restore_settings(file: &Path, aside: &Path) -> io::Result<()> {
 
 fn assert_reload_failed(app: &Application) {
     assert!(
-        app.model.message.starts_with(RELOAD_FAILED),
+        app.model.message.to_string().starts_with(RELOAD_FAILED),
         "{}",
         app.model.message
     );
@@ -266,7 +266,7 @@ fn save_after_a_failed_reload_keeps_the_credentials_pairing_saved() -> Result<()
     let dir = Arc::new(StateDir::open(temporary.path().join("state"))?);
     let unpaired = Settings {
         api_url: "https://paired.example.test".into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     unpaired.save(&dir)?;
     let app = make_app(
@@ -320,7 +320,7 @@ fn start_after_a_failed_reload_connects_with_the_credentials_pairing_saved()
     let unpaired = Settings {
         api_url: holuto.url().into(),
         port: simulator.address().into(),
-        ..Settings::default()
+        ..polish_settings()
     };
     unpaired.save(&dir)?;
     let app = make_app(Arc::clone(&dir), unpaired.clone(), simulator.link())?;

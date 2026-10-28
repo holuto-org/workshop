@@ -297,10 +297,8 @@ fn failed_preference_save_restores_registration_and_relative_xdg_uses_home() -> 
                 !previous,
             )
             .unwrap_err();
-            assert!(
-                matches!(error, AgentError::Store { action: "Nie można zapisać ustawień", path, .. }
-                if path == dir.path().join("settings.json"))
-            );
+            assert!(matches!(error, AgentError::Store { path, .. }
+                if path == dir.path().join("settings.json")));
             assert_eq!(
                 fs::read(&artifact).ok(),
                 before,
@@ -364,7 +362,7 @@ fn removing_a_registration_directory_reports_the_store_error_without_removing_it
     fs::create_dir(&artifact)?;
     let error = set_at(&artifact, Path::new("/unused"), false).unwrap_err();
     assert!(matches!(error, AgentError::Store {
-        action: "Nie można zmienić autostartu", path, ..
+        path, ..
     } if path == artifact));
     assert!(artifact.is_dir());
     Ok(())

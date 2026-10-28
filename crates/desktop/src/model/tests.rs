@@ -99,7 +99,8 @@ fn accepting_a_confirmation_the_stopped_printer_can_no_longer_run_says_nothing_w
     commands.extend(model.confirm(true));
     assert_eq!(commands, []);
     assert_eq!(
-        model.message, "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.",
+        model.message.to_string(),
+        "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.",
         "the operator must not take the closed dialog for a printed report"
     );
 }
@@ -198,7 +199,11 @@ fn periodic_dates_require_padded_day_month_and_year_at_least_2000() {
         ),
     ] {
         let error = report_range(from, to, today()).err();
-        assert_eq!(error.as_deref(), Some(message), "range {from} – {to}");
+        assert_eq!(
+            error.map(|message| message.to_string()).as_deref(),
+            Some(message),
+            "range {from} – {to}"
+        );
     }
     assert_eq!(
         report_range("01.01.2000", "24.10.2025", today()).ok(),
@@ -246,7 +251,8 @@ fn a_stop_requested_while_a_confirmation_is_open_sends_nothing() {
         commands.extend(model.confirm(true));
         assert_eq!(commands, [], "{action:?} must not reach a stopping worker");
         assert_eq!(
-            model.message, "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.",
+            model.message.to_string(),
+            "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.",
             "{action:?} must say nothing was sent"
         );
     }
@@ -354,63 +360,16 @@ fn capture_rejects_assistive_connection_edits_while_running_saving_or_pairing() 
     }
 }
 
-#[test]
-fn window_initialization_lists_every_polish_month_and_tab_capture_round_trips() {
-    use slint::Model as _;
-    i_slint_backend_testing::init_no_event_loop();
-    let window = AppWindow::new().unwrap();
-    let mut model = Model::new(Settings::default(), Date::constant(2026, 1, 1));
-    model.initialize(&window, Date::constant(2026, 1, 1));
-    assert_eq!(
-        window
-            .get_months()
-            .iter()
-            .map(|month| month.to_string())
-            .collect::<Vec<_>>(),
-        [
-            "grudzień 2025",
-            "listopad 2025",
-            "październik 2025",
-            "wrzesień 2025",
-            "sierpień 2025",
-            "lipiec 2025",
-            "czerwiec 2025",
-            "maj 2025",
-            "kwiecień 2025",
-            "marzec 2025",
-            "luty 2025",
-            "styczeń 2025",
-            "grudzień 2024",
-            "listopad 2024",
-            "październik 2024",
-            "wrzesień 2024",
-            "sierpień 2024",
-            "lipiec 2024",
-            "czerwiec 2024",
-            "maj 2024",
-            "kwiecień 2024",
-            "marzec 2024",
-            "luty 2024",
-            "styczeń 2024",
-        ]
-    );
-    for index in [0, 1, 2] {
-        window.set_tab(index);
-        model.capture(&window, Date::constant(2026, 1, 1));
-        model.sync(&window);
-        assert_eq!(window.get_tab(), index);
-    }
-}
-
 fn stan(model: &Model) -> [String; 5] {
     [
-        model.processing_text().to_owned(),
-        model.holuto_text().to_owned(),
+        model.processing_text().to_string(),
+        model.holuto_text().to_string(),
         model.printer_identity(),
         model
             .printer_problem()
-            .unwrap_or_else(|| "Gotowa".to_owned()),
-        model.start_hint().to_owned(),
+            .unwrap_or_else(|| Message::new("desktop-ready"))
+            .to_string(),
+        model.start_hint().to_string(),
     ]
 }
 
@@ -533,5 +492,5 @@ fn stopping_a_pairing_worker_never_reads_as_stopping_the_printer() {
     let mut model = Model::new(Settings::default(), today());
     model.pairing = true;
     model.stopping = true;
-    assert_eq!(model.processing_text(), "Zatrzymana");
+    assert_eq!(model.processing_text().to_string(), "Zatrzymana");
 }

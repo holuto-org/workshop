@@ -1,33 +1,31 @@
 ---
-description:
-  "Desktop never touches the printer or Holuto itself; it talks to the Worker"
-condition:
-  - 'Printer::new|Api::new|\.probe\(|thread::Builder|\.join\(\)|block_on|recv\(\)'
-scope: "tool:edit(crates/desktop/src/**), tool:write(crates/desktop/src/**)"
+description: "Preserve operator edits and safe shutdown across asynchronous desktop callbacks"
+condition: '.*'
+scope: "tool:edit(crates/desktop/src/**), tool:write(crates/desktop/src/**), tool:edit(crates/desktop/ui/**), tool:write(crates/desktop/ui/**), tool:edit(crates/agent/src/worker.rs), tool:write(crates/agent/src/worker.rs), tool:edit(crates/agent/src/worker/**), tool:write(crates/agent/src/worker/**)"
 interruptMode: never
 ---
 
 # Worker thread
 
-- All printer I/O and Holuto requests run on the single `agent::worker::Worker`
-  thread. The GUI submits `Command`s and renders `Event`s; events arrive on the
-  worker thread and reach Slint only through `slint::invoke_from_event_loop`.
-- Never call a driver, `Api` or a blocking wait on the GUI thread. Pairing and
-  settings/status persistence run in background work (`Worker::pair`,
-  `preferences::Writer`) and report completion through the event loop.
-- Every event-loop callback that later syncs the model into the window first
-  captures the window (`app.capture()`), so operator input is never overwritten.
-- Closing the window only hides it when a tray host shows this app's icon
-  (otherwise it stays visible) and never stops the worker. **Zatrzymaj** stops
-  processing; **Zakończ**, tray quit, macOS Dock/⌘Q quit, macOS logout,
-  restart and shutdown, and Unix SIGTERM/SIGHUP/SIGINT route through
-  `Worker::stop` and join only after the final `Event::Stopped`. Windows
-  session end has no cooperative path (winit does not handle
-  `WM_QUERYENDSESSION`); the journal blocks on an operation it interrupts.
-  macOS termination is held (`TerminateLater`), never
-  refused: a refusal would cancel the logout. On macOS no worker (including
-  pairing) starts unless `macos::install()` succeeds. A failed status write
-  never keeps quit waiting.
-- CLI commands never open a printer; mutations take the same instance lock and
-  the validated atomic settings store. Autostart is explicit per-user opt-in and
-  never bypasses preflight or an unresolved journal.
+The thread-ownership and cooperative-stop requirements live in
+[the hard requirements](../RULES.md).
+
+- A callback can overwrite input even without touching an input field:
+  `with_app` syncs the whole model afterward. Capture still-editable window
+  state **before** applying the callback's model changes, including worker,
+  preferences, tray and termination callbacks. A late completion must not
+  restore an older live preference.
+- Keep slow persistence and OS autostart registration off the GUI thread.
+  When adding background work, account for its completion in Start and quit:
+  Start must use durably saved settings; a failed or unsubmitted write must
+  not leave either action waiting for a completion that will never arrive.
+- Keep window close, stop-processing and quit distinct. Closing must not
+  strand the operator without a usable tray or stop processing implicitly.
+  Trace every quit entry point, not just the window button, and retain cleanup
+  for an event loop that ends before it can deliver `Event::Stopped`
+  (`Application::finish_after_event_loop`). Waiting there is not a GUI callback.
+- Native termination has platform-specific semantics; do not replace it with
+  a generic immediate exit or a refusal to quit. Read `application/macos.rs`
+  before changing its hook: holding AppKit termination requires an explicit
+  reply, not merely quitting Slint's event loop. Do not claim that cooperative
+  shutdown covers forced termination or an unhandled OS session-end path.

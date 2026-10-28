@@ -210,13 +210,21 @@ if ((EUID != 0)); then
   # The released HuggingCar Fiscal app journals fiscal intent here (Qt GenericStateLocation).
   legacy="$HOME/Library/Preferences/State/huggingcar-fiscal/operation.json"
   mkdir -p "${legacy%/*}"
-  # Pending, a nested-only state, a contradictory record and torn JSON (also after an
-  # accepted state line) all block.
-  for record in '{\n  "state": "pending",\n  "stage": "trend"\n}' \
-    '{\n  "items": [{\n    "state": "completed"\n  }]\n}' \
-    '{\n  "state": "completed",\n  "state": "pending"\n}' '{' \
-    '{\n  "state": "completed",\n' '{\n  "state": "completed"\n}x'; do
-    printf '%b\n' "$record" > "$legacy"
+  # Pending, non-object roots, non-string states, nested-only states,
+  # contradictory records and torn JSON (also after an accepted state) all block.
+  for record in $'{\n  "state": "pending",\n  "stage": "trend"\n}' \
+    '[{"state": "completed"}]' '"completed"' 'null' '[]' \
+    '{"state": ["completed"]}' '{"state": ["acknowledged"]}' \
+    '{"state": {"state": "completed"}}' \
+    $'{\n  "items": [{\n    "state": "completed"\n  }]\n}' \
+    '{"state":"completed","state":"pending"}' \
+    '{"state":"pending","state":"completed"}' \
+    '{"state":"completed","state":"completed"}' \
+    '{"st\u0061te":"pending","state":"acknowledged"}' \
+    '{"state":"acknowledged","st\u0061te":"pending"}' \
+    '{"st\u0061te":"completed","state":"completed"}' '{' \
+    $'{\n  "state": "completed",\n' $'{\n  "state": "completed"\n}x'; do
+    printf '%s\n' "$record" > "$legacy"
     run --release v1.2.3
     [[ $status != 0 ]] || fail "accepted an unresolved legacy journal: $record"
     contains 'unresolved fiscal operation'
@@ -227,6 +235,15 @@ if ((EUID != 0)); then
     run --release v1.2.3
     ! grep -F 'unresolved fiscal operation' "$work/output" >/dev/null ||
       fail "refused a resolved legacy journal: $state"
+  done
+  # Nested state keys, escaped names and quoted JSON-like text are not duplicate root keys.
+  for record in '{"state":"completed","nested":{"state":"pending"},"items":[{"state":"pending"}]}' \
+    '{"nested":{"state":"pending"},"st\u0061te":"acknowledged"}' \
+    '{"note":"}, \"state\": \"pending\", {","state":"completed"}'; do
+    printf '%s\n' "$record" > "$legacy"
+    run --release v1.2.3
+    ! grep -F 'unresolved fiscal operation' "$work/output" >/dev/null ||
+      fail "refused an unambiguous resolved legacy journal: $record"
   done
   rm -r "$HOME/Library/Preferences"
   mkdir -p "$HOME/.local/bin"

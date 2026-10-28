@@ -54,8 +54,8 @@ pub fn unframe(raw: &[u8]) -> Result<&[u8], Error> {
         .ok_or_else(corrupt)
 }
 
-pub(crate) fn corrupt() -> Error {
-    Error::Protocol("Uszkodzona ramka Novitus (suma kontrolna lub format).".to_owned())
+pub(crate) const fn corrupt() -> Error {
+    Error::Protocol(i18n::Message::new("drivers-corrupt-novitus"))
 }
 
 #[cfg(test)]

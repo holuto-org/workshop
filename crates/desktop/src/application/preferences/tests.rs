@@ -6,7 +6,11 @@ use std::{
     time::Duration,
 };
 
-use agent::{settings::Settings, status::Snapshot, store::StateDir};
+use agent::{
+    settings::{Settings, Theme},
+    status::Snapshot,
+    store::StateDir,
+};
 use fiscal::device::Vendor;
 use tempfile::TempDir;
 
@@ -23,6 +27,8 @@ fn settings() -> Settings {
         vendor: None,
         telemetry_enabled: true,
         start_on_launch: false,
+        theme: Theme::System,
+        language: i18n::LanguagePreference::System,
     }
 }
 
@@ -61,7 +67,9 @@ fn start_without_a_stored_pairing_is_refused_before_writing() -> Result<(), Box<
         start: true,
     })?;
     assert_eq!(
-        completions.recv_timeout(WAIT)?,
+        completions
+            .recv_timeout(WAIT)?
+            .map_err(|message| message.to_string()),
         Err("Sparuj drukarkę kodem z Holuto w Ustawieniach.".to_owned())
     );
     assert_eq!(
@@ -383,7 +391,9 @@ fn failed_start_preserves_connection_and_does_not_block_the_next_reload()
     })?;
     writer.submit(Request::Reload)?;
     assert_eq!(
-        completions.recv_timeout(WAIT)?,
+        completions
+            .recv_timeout(WAIT)?
+            .map_err(|message| message.to_string()),
         Err("Nieprawidłowa prędkość transmisji.".into())
     );
     assert_eq!(

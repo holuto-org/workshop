@@ -11,6 +11,7 @@ use windows_registry::{CURRENT_USER, HSTRING};
 use agent::{Error, settings::Settings, store::StateDir};
 #[cfg(not(windows))]
 use atomicwrites::{AtomicFile, OverwriteBehavior};
+use i18n::Message;
 
 pub(crate) fn configure(
     dir: &StateDir,
@@ -67,7 +68,7 @@ fn artifact_path() -> Result<PathBuf, Error> {
                 local_error(
                     Path::new("~"),
                     io::ErrorKind::NotFound,
-                    "Nie można ustalić katalogu domowego dla autostartu.",
+                    Message::new("desktop-no-home"),
                 )
             })
     };
@@ -88,14 +89,14 @@ fn artifact_path() -> Result<PathBuf, Error> {
 
 fn store_error(path: &Path, source: io::Error) -> Error {
     Error::Store {
-        action: "Nie można zmienić autostartu",
+        action: Message::new("desktop-autostart-error"),
         path: path.to_owned(),
         source,
     }
 }
 
 /// The environment, not the saved configuration, prevents registration.
-fn local_error(path: &Path, kind: io::ErrorKind, reason: &str) -> Error {
+fn local_error(path: &Path, kind: io::ErrorKind, reason: Message) -> Error {
     store_error(path, io::Error::new(kind, reason))
 }
 
@@ -116,7 +117,7 @@ fn set_at(artifact: &Path, executable: &Path, enabled: bool) -> Result<(), Error
             local_error(
                 executable,
                 io::ErrorKind::InvalidInput,
-                "Ścieżka aplikacji nie nadaje się do autostartu.",
+                Message::new("desktop-bad-executable"),
             )
         })?;
     // `/proc/self/exe` marks a binary a package upgrade renamed over the running one;
@@ -198,7 +199,7 @@ fn registry(key: &str, executable: &Path, enabled: bool) -> Result<(), Error> {
         return Err(local_error(
             executable,
             io::ErrorKind::InvalidInput,
-            "Ścieżka autostartu przekracza limit 260 znaków Windows.",
+            Message::new("desktop-long-executable"),
         ));
     }
     options

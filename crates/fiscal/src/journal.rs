@@ -2,6 +2,7 @@
 
 use std::io;
 
+use i18n::Message;
 use jiff::Timestamp;
 
 /// Caller-owned durable operation journal and operator-wait notifications.
@@ -10,7 +11,7 @@ pub trait Journal {
     fn dispatching(&mut self, command: &'static str) -> io::Result<()>;
 
     /// The executing command needs operator intervention; `None` means printing resumed.
-    fn waiting(&mut self, problem: Option<&str>);
+    fn waiting(&mut self, problem: Option<&Message>);
 }
 
 #[derive(Debug)]

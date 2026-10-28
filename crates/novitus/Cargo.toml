@@ -12,6 +12,7 @@ simulator = ["fiscal/simulator"]
 
 [dependencies]
 fiscal.workspace = true
+i18n.workspace = true
 jiff.workspace = true
 tracing.workspace = true
 

@@ -38,7 +38,7 @@ impl Journal for Log {
         Ok(())
     }
 
-    fn waiting(&mut self, _: Option<&str>) {}
+    fn waiting(&mut self, _: Option<&i18n::Message>) {}
 }
 fn connection(sim: &Simulator) -> Connection {
     Connection {
@@ -154,8 +154,8 @@ fn refused_daily_report_lists_the_overdue_report_with_other_blockers() {
         .print_report(Report::Daily, &expected.unique_number, &mut log)
         .unwrap_err();
     assert!(
-        matches!(&error, Error::NotReady(text) if *text == expected.description()
-            && text.contains("Wymagany zaległy raport dobowy")),
+        matches!(&error, Error::NotReady(text) if text.to_string() == expected.description()
+            && text.to_string().contains("Wymagany zaległy raport dobowy")),
         "{error:?}"
     );
     assert_eq!(log.commands, Vec::<&str>::new());
@@ -215,7 +215,7 @@ fn unqualified_advance_zero_total_and_footer_are_refused_before_any_fiscal_comma
         let mut log = Log::default();
         assert!(matches!(
             driver.print_receipt(&receipt(advance, footer), &expected, &mut log),
-            Err(Error::Invalid(text)) if text == message
+            Err(Error::Invalid(text)) if text.to_string() == message
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal(&sim), Vec::<String>::new());
@@ -250,7 +250,7 @@ fn identify_accepts_online_models_only() {
         sim.set_identity(model, "MD06.02");
         assert!(matches!(
             identify(sim.link().as_ref(), &connection(&sim)),
-            Err(Error::Unsupported(message)) if message == format!(
+            Err(Error::Unsupported(message)) if message.to_string() == format!(
                 "Nieobsługiwany model drukarki Elzab: {model} (oprogramowanie MD06.02). \
                  Obsługiwane są Elzab Zeta, Mera i Cube ONLINE."
             )
@@ -410,9 +410,9 @@ fn identity_header_and_code_page_are_rechecked_before_dispatch() {
         match change {
             0 => assert!(matches!(error, Error::NotReady(_))),
             1 => assert!(matches!(error, Error::NotReady(message)
-                if message == "Brak zaprogramowanego nagłówka lub NIP")),
+                if message.to_string() == "Brak zaprogramowanego nagłówka lub NIP")),
             _ => assert!(matches!(error, Error::NotReady(message)
-                if message == "Ustaw stronę kodową drukarki na CP1250")),
+                if message.to_string() == "Ustaw stronę kodową drukarki na CP1250")),
         }
         assert_eq!(log.commands, Vec::<&str>::new());
         assert_eq!(fiscal(&sim), Vec::<String>::new());
@@ -434,7 +434,7 @@ fn legal_vat_change_since_probe_never_opens() {
     assert!(matches!(
         driver.print_receipt(&receipt(0, false), &expected, &mut log),
         Err(Error::Invalid(message))
-            if message == "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie."
+            if message.to_string() == "Drukarka lub stawki VAT zmieniły się. Odśwież połączenie."
     ));
     assert_eq!(log.commands, Vec::<&str>::new());
     assert_eq!(fiscal(&sim), Vec::<String>::new());
@@ -482,7 +482,7 @@ fn wrong_vendor_or_inactive_vat_slot_never_opens() {
         expected.vendor = vendor;
         assert!(matches!(
             driver.print_receipt(&receipt, &expected, &mut Log::default()),
-            Err(Error::Invalid(actual)) if actual == message
+            Err(Error::Invalid(actual)) if actual.to_string() == message
         ));
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
@@ -495,9 +495,10 @@ fn nested_lpc_refusal_prevents_open_while_status_reports_ready() {
     sim.set_receipt_permission(1203);
     assert!(driver.probe().unwrap().ready());
     let mut log = Log::default();
+    let explanation = "Elzab nie pozwala otworzyć paragonu: 1203.";
     assert!(matches!(
         driver.print_receipt(&receipt(0, false), &expected, &mut log),
-        Err(Error::NotReady(message)) if message == "Elzab nie pozwala otworzyć paragonu: 1203."
+        Err(Error::NotReady(message)) if message.to_string() == explanation
     ));
     assert_eq!(log.commands, Vec::<&str>::new());
     assert_eq!(fiscal(&sim), Vec::<String>::new());
@@ -581,7 +582,7 @@ fn every_document_and_mechanism_blocker_prevents_dispatch_and_names_its_cause() 
         let mut log = Log::default();
         assert!(matches!(
             driver.print_receipt(&receipt(0, false), &expected, &mut log),
-            Err(Error::NotReady(actual)) if actual == message
+            Err(Error::NotReady(actual)) if actual.to_string() == message
         ));
         for report in [
             Report::Daily,
@@ -597,7 +598,7 @@ fn every_document_and_mechanism_blocker_prevents_dispatch_and_names_its_cause() 
         ] {
             assert!(matches!(
                 driver.print_report(report, &expected.unique_number, &mut log),
-                Err(Error::NotReady(actual)) if actual == message
+                Err(Error::NotReady(actual)) if actual.to_string() == message
             ));
         }
         assert_eq!(log.commands, Vec::<&str>::new());
@@ -674,9 +675,10 @@ fn periodic_report_past_printer_date_or_inverted_never_dispatches() {
         periodic(date(2026, 10, 20), date(2026, 10, 19)),
     ] {
         let mut log = Log::default();
+        let expected = "Nieprawidłowy zakres dat raportu.";
         assert!(matches!(
             driver.print_report(report, "ABC1234567890", &mut log),
-            Err(Error::Invalid(message)) if message == "Nieprawidłowy zakres dat raportu."
+            Err(Error::Invalid(message)) if message.to_string() == expected
         ));
         assert_eq!(log.commands, Vec::<&str>::new());
     }
@@ -703,7 +705,7 @@ fn monthly_report_of_the_printer_month_never_dispatches() {
             assert!(matches!(
                 driver.print_report(monthly(month), "ABC1234567890", &mut log),
                 Err(Error::Invalid(message))
-                    if message == "Raport miesięczny wymaga zakończonego miesiąca."
+                    if message.to_string() == "Raport miesięczny wymaga zakończonego miesiąca."
             ));
             assert_eq!(log.commands, Vec::<&str>::new());
         }
@@ -780,7 +782,7 @@ fn missing_number_never_replays_a_completed_receipt() {
             Ok(())
         }
 
-        fn waiting(&mut self, _: Option<&str>) {}
+        fn waiting(&mut self, _: Option<&i18n::Message>) {}
     }
     let sim = Simulator::start();
     let driver = printer(&sim);
@@ -876,7 +878,7 @@ fn brand_across_header_lines_needs_no_footer() {
             assert_eq!(sim.receipts(), 1);
         } else {
             assert!(
-                matches!(&result, Err(Error::Invalid(text)) if text == FOOTER_REFUSAL),
+                matches!(&result, Err(Error::Invalid(text)) if text.to_string() == FOOTER_REFUSAL),
                 "{header:?}: {result:?}"
             );
             assert_eq!(fiscal(&sim), Vec::<String>::new());
@@ -958,10 +960,10 @@ fn receipt_is_revalidated_against_actual_name_and_quantity_limits() {
             &permissive,
         )
         .unwrap();
+        let explanation = "Pozycja nie mieści się w profilu Elzab (64 znaki, 5 miejsc ilości).";
         assert!(matches!(
             driver.print_receipt(&receipt, &expected, &mut Log::default()),
-            Err(Error::Invalid(message))
-                if message == "Pozycja nie mieści się w profilu Elzab (64 znaki, 5 miejsc ilości)."
+            Err(Error::Invalid(message)) if message.to_string() == explanation
         ));
         assert_eq!(fiscal(&sim), Vec::<String>::new());
     }
@@ -1093,7 +1095,7 @@ fn inconsistent_multipart_close_is_uncertain_despite_the_completed_effect() {
             Ok(())
         }
 
-        fn waiting(&mut self, _: Option<&str>) {}
+        fn waiting(&mut self, _: Option<&i18n::Message>) {}
     }
     let sim = Simulator::start();
     let driver = printer(&sim);
@@ -1308,10 +1310,11 @@ fn malformed_preflight_fields_never_reach_a_fiscal_command() {
             Fault::Reply(frame::encode(id, body.as_bytes()).unwrap()),
         );
         let mut log = Log::default();
+        let explanation = "Nieprawidłowa ramka ElzabSTX.";
         assert!(
             matches!(
                 driver.print_receipt(&receipt(0, false), &expected, &mut log),
-                Err(Error::Protocol(message)) if message == "Nieprawidłowa ramka ElzabSTX."
+                Err(Error::Protocol(message)) if message.to_string() == explanation
             ),
             "{command}: {body:?}"
         );
@@ -1343,7 +1346,7 @@ fn reports_require_the_same_serial_and_a_successful_journal_before_dispatch() {
         let mut log = Log::default();
         assert!(matches!(
             driver.print_report(report, "OTHER", &mut log),
-            Err(Error::Invalid(message)) if message ==
+            Err(Error::Invalid(message)) if message.to_string() ==
                 "Podłączona drukarka ABC1234567890 nie jest drukarką OTHER, \
                  której dotyczy operacja."
         ));
@@ -1461,7 +1464,7 @@ fn receipt_line_limit_is_rechecked_before_lor() {
             assert_eq!(sim.receipts(), 1);
         } else {
             assert!(matches!(result, Err(Error::Invalid(message))
-                if message == "Dane paragonu przekraczają możliwości Elzab."));
+                if message.to_string() == "Dane paragonu przekraczają możliwości Elzab."));
             assert_eq!(log.commands, Vec::<&str>::new());
             assert_eq!(fiscal(&sim), Vec::<String>::new());
             assert_eq!(sim.receipts(), 0);
@@ -1518,7 +1521,7 @@ fn seven_nonzero_payments_are_allowed_but_an_eighth_prevents_lor() {
             assert_eq!(sim.receipts(), 1);
         } else {
             assert!(matches!(result, Err(Error::Invalid(message))
-                if message == "Elzab przyjmuje najwyżej 7 wpisów płatności."));
+                if message.to_string() == "Elzab przyjmuje najwyżej 7 wpisów płatności."));
             assert_eq!(log.commands, Vec::<&str>::new());
             assert_eq!(fiscal(&sim), Vec::<String>::new());
             assert_eq!(sim.receipts(), 0);
@@ -1698,7 +1701,7 @@ fn company_and_buyer_nip_widths_are_revalidated_without_truncation() {
             assert_eq!(sim.receipts(), 1);
         } else {
             assert!(matches!(result, Err(Error::Invalid(message))
-                if message == "Dane paragonu przekraczają możliwości Elzab."));
+                if message.to_string() == "Dane paragonu przekraczają możliwości Elzab."));
             assert_eq!(log.commands, Vec::<&str>::new());
             assert_eq!(fiscal(&sim), Vec::<String>::new());
             assert_eq!((sim.receipts(), sim.transaction_open()), (0, false));
@@ -1727,7 +1730,7 @@ fn twenty_digit_printer_counters_are_not_rejected_or_reformatted() {
             Ok(())
         }
 
-        fn waiting(&mut self, _: Option<&str>) {}
+        fn waiting(&mut self, _: Option<&i18n::Message>) {}
     }
     let sim = Simulator::start();
     let driver = printer(&sim);

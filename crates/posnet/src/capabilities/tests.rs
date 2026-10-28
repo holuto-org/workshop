@@ -87,7 +87,7 @@ fn temo_limits_reject_overlong_receipt_fields_instead_of_truncating() {
         );
         if let Some(expected) = expected_error {
             assert!(
-                matches!(&result, Err(Error::Invalid(message)) if message == expected),
+                matches!(&result, Err(Error::Invalid(message)) if message.to_string() == expected),
                 "{result:?}"
             );
         } else {

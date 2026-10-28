@@ -122,7 +122,7 @@ fn overdue_daily_report_does_not_allow_a_job_claim() {
 
 const OVERDUE: u128 = (1_u128 << 115) | (1_u128 << 102) | (1_u128 << 98) | 4;
 
-fn ignore_waits(_problem: Option<&str>) {}
+fn ignore_waits(_problem: Option<&i18n::Message>) {}
 
 fn elzab_agent<'dir>(sim: &ElzabPeer, holuto: &Holuto, dir: &'dir StateDir) -> Agent<'dir> {
     let (printer, status) = device::detect(
@@ -346,9 +346,10 @@ fn blocked_worker_never_enumerates_or_switches_to_an_available_printer() {
             move |event| sender.send(event).unwrap(),
         )
         .unwrap();
+        let retry = "Ponowna próba za 15 sekund";
         let _retrying = receive_until(&events, |event| {
             matches!(event,
-                Event::Problem(Some(text)) if text.contains("Ponowna próba za 15 sekund")
+                Event::Problem(Some(text)) if text.to_string().contains(retry)
             )
         });
         let _stopped = stop(worker, &events);
@@ -394,7 +395,7 @@ fn unsupported_model_reports_not_ready_without_rejected_telemetry_or_stop() {
         let (worker, events) = spawn(&sim, &holuto, &dir, Some(vendor));
         let mut received = receive_until(&events, |event| {
             matches!(
-                event, Event::Problem(Some(text)) if text == &expected_notice
+                event, Event::Problem(Some(text)) if text.to_string() == expected_notice
             )
         });
         assert!(received.iter().any(|event| matches!(
@@ -443,7 +444,7 @@ fn device_becoming_unsupported_mid_session_stops_heartbeats_and_takes_no_jobs() 
         )
         .unwrap();
         let api = Api::new(holuto.url(), holuto.token(), &status.unique_number).unwrap();
-        let waiting = |_problem: Option<&str>| {};
+        let waiting = |_problem: Option<&i18n::Message>| {};
         let mut agent = Agent::new(printer, api, &dir, &waiting);
         let _notices = agent.describe(status).unwrap();
         let _session = agent.session().unwrap();
@@ -454,7 +455,11 @@ fn device_becoming_unsupported_mid_session_stops_heartbeats_and_takes_no_jobs() 
             assert_eq!(agent.step().unwrap(), RETRY);
             assert!(!agent.status().unwrap().ready());
             assert_eq!(
-                agent.take_notices(),
+                agent
+                    .take_notices()
+                    .into_iter()
+                    .map(|message| message.to_string())
+                    .collect::<Vec<_>>(),
                 [format!("Drukarka niegotowa: {reason}")]
             );
         }
@@ -485,9 +490,10 @@ fn startup_reprobes_unavailable_capabilities_and_connects_when_the_profile_is_re
         let clock = Arc::new(Mutex::new(Instant::now()));
         let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
         let (worker, events) = spawn(&sim, &holuto, &dir, Some(vendor));
+        let prefix = "Drukarka niegotowa: ";
         let _unready = receive_until(&events, |event| {
             matches!(
-                event, Event::Problem(Some(text)) if text.starts_with("Drukarka niegotowa: ")
+                event, Event::Problem(Some(text)) if text.to_string().starts_with(prefix)
             )
         });
         assert_eq!(holuto.requests(), []);

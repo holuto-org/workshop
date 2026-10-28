@@ -536,7 +536,7 @@ fn failed_journal_replacement_retains_previous_evidence_across_restart() -> Test
     else {
         return Err("write failure must remain a storage error".into());
     };
-    assert_eq!(action, "Nie można zapisać rejestru operacji");
+    assert_eq!(action.to_string(), "Nie można zapisać rejestru operacji");
     assert_eq!(failed_path, dir.file("operation.json"));
     assert_eq!(source.kind(), ErrorKind::PermissionDenied);
     assert_eq!(fs::read(dir.file("operation.json"))?, bytes);
@@ -563,9 +563,9 @@ fn unreadable_journal_blocks_without_removing_its_contents() -> TestResult {
     assert!(matches!(
         Journal::new(&dir).load(),
         Err(crate::Error::Store {
-            action: "Nie można odczytać rejestru operacji. Drukowanie zablokowane",
+            action,
             ..
-        })
+        }) if action.to_string() == "Nie można odczytać rejestru operacji. Drukowanie zablokowane"
     ));
     assert_eq!(fs::read(path.join("evidence"))?, b"keep fiscal record");
     Ok(())

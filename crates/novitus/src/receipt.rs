@@ -34,22 +34,20 @@ impl Step {
 
 fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Result<(), Error> {
     if !receipt.advances().is_empty() && !caps.advance_deductions {
-        return Err(Error::Invalid(
-            "Drukarka nie obsługuje rozliczenia zaliczek.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-advances-unsupported",
+        )));
     }
     if receipt.fiscal_total() == Grosze::ZERO && !caps.zero_total_receipts {
-        return Err(Error::Invalid(
-            "Drukarka nie obsługuje paragonu opłaconego w całości zaliczkami.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-advance-only-unsupported",
+        )));
     }
     // The name stays out of the message: failure reasons are stored and sent onward.
     if footer.is_some() && !caps.company_footer {
-        return Err(Error::Invalid(
-            "Nagłówek drukarki nie zawiera nazwy firmy z Holuto, a ta drukarka nie drukuje jej \
-             w stopce. Wpisz w Holuto nazwę zgodną z nagłówkiem drukarki."
-                .to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-company-header-mismatch",
+        )));
     }
     if receipt.lines().len() > caps.max_lines
         || receipt.brand().chars().count() > caps.max_company_name
@@ -58,22 +56,22 @@ fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Res
             nip.len() > caps.max_buyer_nip || !nip.bytes().all(|byte| byte.is_ascii_alphanumeric())
         })
     {
-        return Err(Error::Invalid(
-            "Paragon przekracza limity tekstu lub liczby pozycji Novitus.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-novitus-receipt-limits",
+        )));
     }
     for line in receipt.lines() {
         if line.name().chars().count() > caps.max_item_name || !caps.allows(line.name()) {
-            return Err(Error::Invalid(
-                "Nazwa pozycji przekracza możliwości Novitus.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-novitus-item-name",
+            )));
         }
         let quantity = line.quantity().to_string();
         // Ten digits plus the optional decimal point already fit the 16-byte wire field.
         if quantity.bytes().filter(u8::is_ascii_digit).count() > 10 {
-            return Err(Error::Invalid(
-                "Ilość przekracza zakres protokołu Novitus.".to_owned(),
-            ));
+            return Err(Error::Invalid(i18n::Message::new(
+                "drivers-novitus-quantity-range",
+            )));
         }
     }
     if receipt
@@ -83,9 +81,9 @@ fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Res
         .count()
         > 16
     {
-        return Err(Error::Invalid(
-            "Novitus obsługuje najwyżej 16 form płatności.".to_owned(),
-        ));
+        return Err(Error::Invalid(i18n::Message::new(
+            "drivers-novitus-payment-limit",
+        )));
     }
     Ok(())
 }

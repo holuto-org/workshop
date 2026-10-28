@@ -51,9 +51,9 @@ impl Session {
         timeout: Duration,
     ) -> Result<String, Error> {
         if self.poisoned {
-            return Err(Error::NotReady(
-                "Poprzednia odpowiedź Elzab jest niepewna. Zamknij sesję.".to_owned(),
-            ));
+            return Err(Error::NotReady(i18n::Message::new(
+                "drivers-elzab-uncertain-session",
+            )));
         }
         if self.next_id > 999_999_999 {
             return Err(frame::corrupt());
@@ -96,10 +96,9 @@ impl Session {
                 return Err(Error::Device {
                     code: header.status.bytes().last().map_or(0, u32::from),
                     command: command.to_owned(),
-                    detail: format!(
-                        "Elzab odrzucił transmisję {command}: {}. Polecenie nie zostało ponowione.",
-                        header.status
-                    ),
+                    detail: i18n::Message::new("drivers-elzab-transmission-rejected")
+                        .arg("command", command)
+                        .arg("status", header.status),
                     rejected: true,
                 });
             }
@@ -137,7 +136,9 @@ impl Session {
             return Err(Error::Device {
                 code,
                 command: command.to_owned(),
-                detail: format!("Błąd drukarki Elzab {code} podczas {command}."),
+                detail: i18n::Message::new("drivers-elzab-error")
+                    .arg("code", code)
+                    .arg("command", command),
                 rejected: false,
             });
         }

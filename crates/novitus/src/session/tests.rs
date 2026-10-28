@@ -359,7 +359,7 @@ fn invalid_outgoing_text_and_oversized_commands_send_nothing_and_leave_session_u
         let mut session = open(&sim);
         assert!(matches!(
             session.command(&body, Duration::from_secs(3)),
-            Err(Error::Invalid(message)) if message == expected
+            Err(Error::Invalid(message)) if message.to_string() == expected
         ));
         assert_eq!(
             session
@@ -393,7 +393,7 @@ fn undefined_cp1250_bytes_and_controls_in_checked_replies_block_further_commands
         assert!(matches!(
             session.command("30#v", Duration::from_secs(3)),
             Err(Error::Protocol(message))
-                if message == "Sesja Novitus ma nierozstrzygnięte polecenie."
+                if message.to_string() == "Sesja Novitus ma nierozstrzygnięte polecenie."
         ));
         assert_eq!(
             sim.frames(),
@@ -443,7 +443,7 @@ fn excess_status_noise_and_oversized_incoming_frames_fail_closed() {
         assert!(matches!(
             session.command("30#v", Duration::from_secs(3)),
             Err(Error::Protocol(message))
-                if message == "Sesja Novitus ma nierozstrzygnięte polecenie."
+                if message.to_string() == "Sesja Novitus ma nierozstrzygnięte polecenie."
         ));
         assert_eq!(
             sim.frames(),
