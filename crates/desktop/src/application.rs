@@ -32,7 +32,7 @@ fn auto_port(language: i18n::Language) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn native_quit_error() -> Message {
+const fn native_quit_error() -> Message {
     Message::new("desktop-native-quit-error")
 }
 

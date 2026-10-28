@@ -22,6 +22,7 @@ impl fmt::Display for Failure {
 }
 impl Error for Failure {}
 
+#[cfg(target_os = "linux")]
 /// A fresh state lacks the address only when the build carries none; release builds
 /// carry it, so pairing is the first thing missing there.
 fn first_missing_setting() -> String {

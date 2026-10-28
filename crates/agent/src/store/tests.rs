@@ -132,6 +132,8 @@ fn atomic_replacement_keeps_an_open_reader_on_the_previous_complete_file() -> Te
     reason = "Stale temporary files must not block a new write or lose crash evidence."
 )]
 fn stale_windows_temporaries_do_not_prevent_durable_replacement() -> TestResult {
+    use std::process::id;
+
     const PATH: &str = "HOLUTO_TEST_STALE_TEMPORARY_PATH";
     if let Some(path) = env::var_os(PATH) {
         let path = PathBuf::from(path);
@@ -139,7 +141,7 @@ fn stale_windows_temporaries_do_not_prevent_durable_replacement() -> TestResult 
         let mut stale = Vec::new();
         for counter in 0..2 {
             let mut name = path.file_name().ok_or("missing filename")?.to_owned();
-            name.push(format!(".{}.{counter}.tmp", std::process::id()));
+            name.push(format!(".{}.{counter}.tmp", id()));
             let temporary = path.with_file_name(name);
             fs::write(&temporary, b"retained crash evidence")?;
             stale.push(temporary);
