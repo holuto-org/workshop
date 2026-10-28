@@ -31,7 +31,7 @@ use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use jiff::Timestamp;
 use posnet::{capabilities::capabilities, simulator::Simulator};
 use sentry::{Client, ClientOptions, Envelope, Hub, Level, Transport, protocol::EnvelopeItem};
-use slint::platform::WindowEvent;
+use slint::platform::{Key, WindowEvent};
 use tempfile::TempDir;
 
 use super::*;
@@ -806,6 +806,39 @@ fn controls_behind_an_open_confirmation_cannot_change_its_report() -> Result<(),
         ),
         "the open confirmation keeps the report the operator opened"
     );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn enter_in_an_open_confirmation_cancels_without_printing() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    window.set_tab(1);
+    let enter = || {
+        let key = SharedString::from(Key::Return);
+        window
+            .window()
+            .dispatch_event(WindowEvent::KeyPressed { text: key.clone() });
+        window
+            .window()
+            .dispatch_event(WindowEvent::KeyReleased { text: key });
+    };
+    // Reopening builds a new dialog, so the safe focus must be set every time.
+    for _ in 0..2 {
+        button(&window, "Drukuj raport dobowy")?.invoke_accessible_default_action();
+        assert!(window.get_confirming());
+        enter();
+        assert!(!window.get_confirming(), "Enter closes the dialog");
+        assert_eq!(
+            button(&window, "Drukuj raport dobowy")?.accessible_enabled(),
+            Some(true),
+            "nothing was submitted: an in-flight report disables it"
+        );
+    }
     Ok(())
 }
 

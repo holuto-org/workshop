@@ -260,12 +260,12 @@ impl Model {
         window.set_from_date(self.from.as_str().into());
         window.set_to_date(self.to.as_str().into());
         window.set_summary(self.summary);
-        window.set_confirming(self.pending.is_some());
         if let Some(pending) = &self.pending {
             window.set_confirm_title(pending.title.as_str().into());
             window.set_confirm_text(pending.text.as_str().into());
             window.set_confirm_action(pending.action.as_str().into());
         }
+        window.invoke_show_confirmation(self.pending.is_some());
     }
 
     const fn accepting(&self) -> bool {
