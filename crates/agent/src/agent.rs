@@ -37,14 +37,6 @@ pub(crate) const POLL: Duration = Duration::from_secs(3);
 pub(crate) const RETRY: Duration = Duration::from_secs(15);
 const INTERRUPTED: &str = "Przerwano w trakcie drukowania. Sprawdź drukarkę.";
 
-/// Retained until drained, even if settlement is followed by an error or report.
-#[derive(Default)]
-pub(crate) struct News {
-    pub(crate) notices: Vec<String>,
-    /// A session, claim or result changed the authoritative server list.
-    pub(crate) jobs_changed: bool,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Blocked {
     /// Unsettled receipt; staff resolve it in Holuto.
@@ -64,7 +56,9 @@ pub(crate) struct Agent<'dir> {
     status: Option<PrinterDevice>,
     /// Requests mid-operation intervention; `None` clears it.
     waiting: &'dir (dyn Fn(Option<&str>) + Sync),
-    news: News,
+    /// Operator notices retained until drained, even if settlement is followed by an error or
+    /// report.
+    notices: Vec<String>,
     /// Evidence of a printed receipt whose job Holuto failed or expired.
     orphaned_receipt: Option<String>,
     telemetry_changed: bool,
@@ -85,7 +79,7 @@ impl<'dir> Agent<'dir> {
             telemetry,
             status: None,
             waiting,
-            news: News::default(),
+            notices: Vec::new(),
             orphaned_receipt: None,
             telemetry_changed: true,
         }
@@ -99,8 +93,8 @@ impl<'dir> Agent<'dir> {
         self.status.as_ref()
     }
 
-    pub(crate) fn take_news(&mut self) -> News {
-        mem::take(&mut self.news)
+    pub(crate) fn take_notices(&mut self) -> Vec<String> {
+        mem::take(&mut self.notices)
     }
 
     /// Updates telemetry and, when the description changes, warns about active VAT rates
@@ -151,7 +145,6 @@ impl<'dir> Agent<'dir> {
         }
         self.api.session(&self.telemetry)?;
         self.telemetry_changed = false;
-        self.news.jobs_changed = true;
         Ok(true)
     }
 
@@ -195,11 +188,9 @@ impl<'dir> Agent<'dir> {
     /// Probe notices are kept at once: a later failure or block must not drop the one-time
     /// VAT warning.
     pub(crate) fn step(&mut self) -> Result<Duration, Error> {
-        let probe = self
-            .refresh()
-            .map(|notices| self.news.notices.extend(notices));
+        let probe = self.refresh().map(|notices| self.notices.extend(notices));
         if !self.describable() {
-            self.news.notices.push(self.not_ready_notice());
+            self.notices.push(self.not_ready_notice());
             return Ok(RETRY);
         }
         if self.telemetry_changed {
@@ -215,18 +206,17 @@ impl<'dir> Agent<'dir> {
                 // `settle` already reported the receipt evidence the acknowledgement quotes.
                 Blocked::OrphanedReceipt => return Ok(RETRY),
             };
-            self.news.notices.push(notice.to_owned());
+            self.notices.push(notice.to_owned());
             return Ok(RETRY);
         }
         probe?;
         if self.status.as_ref().is_some_and(|status| !status.ready()) {
-            self.news.notices.push(self.not_ready_notice());
+            self.notices.push(self.not_ready_notice());
             return Ok(RETRY);
         }
         let Some(job) = self.api.take()? else {
             return Ok(POLL);
         };
-        self.news.jobs_changed = true;
         self.execute(&job)?;
         Ok(Duration::ZERO)
     }
@@ -347,7 +337,7 @@ impl<'dir> Agent<'dir> {
                  oznaczyło zadanie jako {:?}. Sprawdź wydruk i użyj „Wyjaśnij paragon”.",
                 remote.order_number, remote.id, remote.state
             );
-            self.news.notices.push(evidence.clone());
+            self.notices.push(evidence.clone());
             self.orphaned_receipt = Some(evidence);
             tracing::error!(
                 job_id = %remote.id, state = ?remote.state,
@@ -360,7 +350,7 @@ impl<'dir> Agent<'dir> {
             return Ok(None);
         }
         if matches!(operation.device, Device::NotStarted) && remote.state == JobState::Unknown {
-            self.news.notices.push(format!(
+            self.notices.push(format!(
                 "Zlecenie {} (zadanie {}): rejestr drukarki potwierdza, że nie wysłano żadnego \
                  polecenia fiskalnego. Rozstrzygnij zadanie jako niewydrukowane w Holuto.",
                 remote.order_number, remote.id
@@ -456,7 +446,7 @@ impl<'dir> Agent<'dir> {
             .map_err(Error::from)
             .and_then(|status| {
                 let notices = self.describe(status.clone())?;
-                self.news.notices.extend(notices);
+                self.notices.extend(notices);
                 Ok(status)
             }) {
             Ok(status) => status,
@@ -602,14 +592,11 @@ impl<'dir> Agent<'dir> {
             return Ok(());
         };
         match self.api.report(operation.job_id, &form) {
-            Ok(()) => {
-                self.news.jobs_changed = true;
-                Ok(())
-            },
+            Ok(()) => Ok(()),
             Err(error @ ApiError::Status { status: 400, .. })
                 if matches!(operation.device, Device::Completed { .. }) =>
             {
-                self.news.notices.push(format!(
+                self.notices.push(format!(
                     "Holuto odrzuciło dane wydrukowanego paragonu (zadanie {}). Sprawdź zegar \
                      drukarki i rozstrzygnij zadanie w Holuto po wygaśnięciu próby; wydruk nie \
                      zostanie powtórzony.",
@@ -642,7 +629,7 @@ impl<'dir> Agent<'dir> {
                 })
                 .or(job.result.as_ref())
         {
-            self.news.notices.push(format!(
+            self.notices.push(format!(
                 "Nie wydrukowano paragonu (zlecenie {}): {reason}",
                 job.order_number
             ));
@@ -652,7 +639,6 @@ impl<'dir> Agent<'dir> {
             state,
         });
         self.journal.save(&Operation::Receipt(operation.clone()))?;
-        self.news.jobs_changed = true;
         Ok(())
     }
 

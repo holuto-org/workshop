@@ -25,13 +25,9 @@ use tracing::{
     subscriber,
 };
 use tracing_subscriber::{Layer, layer::Context, prelude::*};
-use uuid::Uuid;
 
 use super::{Command, Event, Worker};
 use crate::{
-    agent::{POLL, RETRY},
-    api::model::JobState,
-    documents::{BuyerNip, DocumentSearch},
     journal::{Device, JobResult, Journal, Operation, ReceiptOperation},
     settings::Settings,
     store::StateDir,
@@ -71,40 +67,11 @@ pub(super) fn now() -> Instant {
 
 #[test]
 fn event_debug_omits_operator_text_and_receipt_payloads() {
-    let document = serde_json::from_value(with(
-        document(1),
-        &json!({"customerName": "private-customer", "amount": "98765.43"}),
-    ))
-    .unwrap();
     let events = [
         Event::Problem(Some(
             "private-customer private-line 98765.43 9876543".to_owned(),
         )),
         Event::Problem(None),
-        Event::Documents {
-            items: vec![document],
-            page: 2,
-            has_previous: true,
-            has_next: true,
-        },
-        Event::Jobs {
-            items: vec![
-                serde_json::from_value(json!({
-                    "job": with(job_json(), &json!({
-                        "orderNumber": 9_876_543,
-                        "receiptNumber": "private-receipt",
-                        "total": "98765.43"
-                    })),
-                    "customerName": "private-customer",
-                    "vehiclePlate": "private-plate",
-                    "source": "staff"
-                }))
-                .unwrap(),
-            ],
-            page: 2,
-            has_previous: true,
-            has_next: true,
-        },
         Event::PortDetected {
             port: "private-port".to_owned(),
             vendor: Vendor::Posnet,
@@ -129,8 +96,6 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
         [
             "Problem(..)",
             "Problem(None)",
-            "Documents { count: 1, page: 2, has_previous: true, has_next: true }",
-            "Jobs { count: 1, page: 2, has_previous: true, has_next: true }",
             "PortDetected(..)",
             "Connected { printer_id: \"printer-id\", unique_number: \"device-unique_number\", .. }",
             "Paired { printer_id: \"printer-id\" }",
@@ -140,7 +105,6 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
     for secret in [
         "private-customer",
         "private-line",
-        "private-receipt",
         "private-port",
         "98765.43",
         "9876543",
@@ -261,7 +225,6 @@ fn a_panic_at_fiscal_dispatch_publishes_the_journal_block_before_stopping() {
         Arc::clone(&dir),
         settings(&holuto, &sim),
         Arc::new(PanicFiscalLink(sim.link())),
-        super::Searches::default(),
         move |event| send.send(event).unwrap(),
     )
     .unwrap();
@@ -327,7 +290,6 @@ fn a_panicking_worker_reports_a_redacted_error_then_stopped() {
                 ..Settings::default()
             },
             Arc::new(PanicLink),
-            super::Searches::default(),
             move |event| send.send(event).unwrap(),
         )
         .unwrap()
@@ -370,15 +332,9 @@ fn spawn_with_settings(
 ) -> (Worker, Receiver<Event>) {
     sim.set_clock("2026-10-16T10:34:00Z".parse().unwrap());
     let (send, events) = mpsc::channel();
-    let worker = Worker::spawn(
-        Arc::clone(dir),
-        settings,
-        sim.link(),
-        super::Searches::default(),
-        move |event| {
-            send.send(event).unwrap();
-        },
-    )
+    let worker = Worker::spawn(Arc::clone(dir), settings, sim.link(), move |event| {
+        send.send(event).unwrap();
+    })
     .unwrap();
     (worker, events)
 }
@@ -408,73 +364,27 @@ fn hold_http(holuto: &Holuto, method: &str, path: &str) -> (Receiver<()>, Sender
     (arrival, release)
 }
 
-fn document(number: u128) -> Value {
-    json!({
-        "kind": "sale",
-        "orderId": Uuid::from_u128(number),
-        "orderNumber": number,
-        "allocationId": null,
-        "amount": "10.00",
-        "customerName": null,
-        "occurredAt": "2026-10-16T10:00:00Z", "dueAt": "2026-10-16T10:00:00Z",
-        "latestAt": "2026-10-16T10:00:00Z", "isOverdue": false
-    })
-}
-
-fn pages(holuto: &Holuto) {
-    holuto.page(
-        None,
-        json!({"items": [document(1)], "nextCursor": "after 1/+", "previousCursor": null}),
-    );
-    holuto.page(
-        Some("first"),
-        json!({"items": [document(1)], "nextCursor": "after 1/+", "previousCursor": null}),
-    );
-    holuto.page(
-        Some("after 1/+"),
-        json!({"items": [document(2)], "nextCursor": "after-2", "previousCursor": "first"}),
-    );
-    holuto.page(
-        Some("after-2"),
-        json!({"items": [document(3)], "nextCursor": null, "previousCursor": "after 1/+"}),
-    );
-}
-
-fn shown(events: &[Event]) -> Vec<(Vec<i64>, usize, bool)> {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            Event::Documents {
-                items,
-                page,
-                has_next,
-                ..
-            } => Some((
-                items.iter().map(|item| item.order_number).collect(),
-                *page,
-                *has_next,
-            )),
-            Event::Problem(_)
-            | Event::PortDetected { .. }
-            | Event::Connected { .. }
-            | Event::Paired { .. }
-            | Event::PairingFailed { .. }
-            | Event::Device { .. }
-            | Event::Jobs { .. }
-            | Event::JobsUnavailable
-            | Event::DocumentsUnavailable
-            | Event::CommandCompleted
-            | Event::Stopped => None,
-        })
-        .collect()
-}
-
 fn problem(status: u16) -> Fault {
     Fault::Problem {
         status,
         code: "unavailable".to_owned(),
         detail: "backend unavailable".to_owned(),
     }
+}
+
+/// Wakes a worker waiting to retry. With nothing to resolve the command is refused without
+/// printer or Holuto traffic.
+fn wake(worker: &Worker) {
+    worker.submit(Command::ResolveReport);
+}
+
+/// Events through the first poll after the next completed command.
+fn receive_poll_after_command(events: &Receiver<Event>) -> Vec<Event> {
+    let mut completed = false;
+    receive_until(events, |event| {
+        completed |= matches!(event, Event::CommandCompleted);
+        completed && matches!(event, Event::Device { .. })
+    })
 }
 
 #[test]
@@ -484,7 +394,7 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    let received = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     assert!(received.iter().any(|event| matches!(event,
         Event::Connected { printer_id, unique_number, vendor, port }
         if printer_id == &PRINTER_ID.to_string()
@@ -495,7 +405,6 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
             .iter()
             .any(|event| matches!(event, Event::PortDetected { .. }))
     );
-    assert_eq!(shown(&received), [(vec![], 1, false)]);
     let _stopped = stop(worker, &events);
 }
 
@@ -619,21 +528,17 @@ fn printer_unavailable_at_start_is_retried_until_it_answers() {
     );
     drop(busy);
     *clock.lock().unwrap() += Duration::from_secs(15);
-    worker.submit(Command::NextPage);
-    let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    wake(&worker);
+    let received = receive_poll_after_command(&events);
     assert!(received.iter().any(
         |event| matches!(event, Event::Connected { unique_number, .. }
                 if unique_number == UNIQUE_NUMBER)
     ));
     assert!(
-        matches!(
-            received
-                .iter()
-                .rev()
-                .find(|event| matches!(event, Event::Problem(_))),
-            Some(Event::Problem(None))
-        ),
-        "a successful connection clears the unavailable-printer problem"
+        received
+            .windows(2)
+            .any(|pair| matches!(pair, [Event::Connected { .. }, Event::Problem(None)])),
+        "a successful connection clears the unavailable-printer problem: {received:?}"
     );
     let _stopped = stop(worker, &events);
 }
@@ -685,7 +590,6 @@ fn slow_startup_detection_still_waits_the_full_retry_interval() {
             ..Settings::default()
         },
         Arc::<SlowAbsentLink>::clone(&link),
-        super::Searches::default(),
         move |event| sender.send(event).unwrap(),
     )
     .unwrap();
@@ -695,7 +599,7 @@ fn slow_startup_detection_still_waits_the_full_retry_interval() {
         )
     });
     // Wakes the wait without moving the clock: the retry is still 15 s away.
-    worker.submit(Command::NextPage);
+    wake(&worker);
     let stopped = stop(worker, &events);
     assert!(
         matches!(
@@ -736,17 +640,12 @@ fn a_lost_startup_reply_is_retryable_without_touching_the_printer_again() {
     assert_eq!(holuto.job(id)["state"], "queued");
     assert_eq!(fiscal_frames(&sim), Vec::<Vec<u8>>::new());
     *clock.lock().unwrap() += Duration::from_secs(15);
-    worker.submit(Command::NextPage);
+    wake(&worker);
     arrival.recv_timeout(WAIT).unwrap();
     let retry_frames = sim.frames();
     let state_before_session = holuto.job(id)["state"].clone();
     release.send(()).unwrap();
-    let received = receive_until(&events, |event| {
-        matches!(
-            event,
-            Event::Jobs { items, .. } if items.iter().any(|item| item.job.state.terminal())
-        )
-    });
+    let received = receive_poll_after_command(&events);
     let _stopped = stop(worker, &events);
     assert_eq!(retry_frames, startup_frames);
     assert_eq!(state_before_session, "queued");
@@ -814,7 +713,7 @@ fn detecting_a_port_emits_an_event_without_creating_or_rewriting_settings() {
             fs::read(dir.file("settings.json")).unwrap()
         });
         let (worker, events) = spawn_with_settings(&sim, &dir, config);
-        let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+        let received = receive_until(&events, |event| matches!(event, Event::Device { .. }));
         let _stopped = stop(worker, &events);
         assert_eq!(
             received
@@ -829,11 +728,7 @@ fn detecting_a_port_emits_an_event_without_creating_or_rewriting_settings() {
                     | Event::Connected { .. }
                     | Event::Paired { .. }
                     | Event::PairingFailed { .. }
-                    | Event::Documents { .. }
                     | Event::Device { .. }
-                    | Event::Jobs { .. }
-                    | Event::JobsUnavailable
-                    | Event::DocumentsUnavailable
                     | Event::CommandCompleted
                     | Event::Stopped => None,
                 })
@@ -853,382 +748,41 @@ fn detecting_a_port_emits_an_event_without_creating_or_rewriting_settings() {
 }
 
 #[test]
-fn queued_next_clicks_fetch_each_page_instead_of_collapsing() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let (arrival, release) = hold_http(&holuto, "POST", "/agent/documents/search");
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    arrival.recv_timeout(WAIT).unwrap();
-    worker.submit(Command::NextPage);
-    worker.submit(Command::NextPage);
-    release.send(()).unwrap();
-    let received = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 3, .. })
-    });
-    let _stopped = stop(worker, &events);
-    assert_eq!(
-        shown(&received),
-        [(vec![1], 1, true), (vec![2], 2, true), (vec![3], 3, false)]
-    );
-    assert!(
-        !received
-            .iter()
-            .any(|event| matches!(event, Event::CommandCompleted))
-    );
-    let requests = holuto.requests();
-    let documents = requests
-        .iter()
-        .filter(|request| request.path == "/agent/documents/search")
-        .collect::<Vec<_>>();
-    assert!(documents.iter().all(|request| request.method == "POST"));
-    assert_eq!(
-        documents
-            .iter()
-            .map(|request| request.body["cursor"]["cursor"].clone())
-            .collect::<Vec<_>>(),
-        [Value::Null, json!("after 1/+"), json!("after-2")]
-    );
-}
-
-#[test]
-fn a_due_poll_runs_before_navigation_queued_behind_a_slow_page_request() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let clock = Arc::new(Mutex::new(Instant::now()));
-    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 1, .. })
-    });
-    let (arrival, release) = hold_http(&holuto, "POST", "/agent/documents/search");
-    worker.submit(Command::NextPage);
-    arrival.recv_timeout(WAIT).unwrap();
-    worker.submit(Command::NextPage);
-    let id = holuto.enqueue(job_json());
-    *clock.lock().unwrap() += POLL;
-    release.send(()).unwrap();
-    let received = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 3, .. })
-    });
-    let _stopped = stop(worker, &events);
-
-    let history = received.iter().position(|event| {
-        matches!(
-            event,
-            Event::Jobs { items, .. } if items.iter().any(|item| item.job.state.terminal())
-        )
-    });
-    let last_page = received
-        .iter()
-        .position(|event| matches!(event, Event::Documents { page: 3, .. }));
-    assert!(
-        matches!((history, last_page), (Some(history), Some(page)) if history < page),
-        "the queued receipt must finish before the remaining navigation: {received:?}"
-    );
-    assert_eq!(
-        shown(&received),
-        [(vec![2], 2, true), (vec![2], 2, true), (vec![3], 3, false)]
-    );
-    assert_eq!(holuto.job(id)["state"], "done");
-    assert_eq!(
-        sim.receipts()
-            .iter()
-            .map(|receipt| receipt.total)
-            .collect::<Vec<_>>(),
-        [25_000]
-    );
-    let requests = holuto.requests();
-    let scheduling = requests
-        .iter()
-        .filter(|request| {
-            matches!(
-                request.path.as_str(),
-                "/agent/heartbeat" | "/agent/jobs/take" | "/agent/documents/search"
-            )
-        })
-        .map(|request| {
-            (
-                request.method.as_str(),
-                request.path.as_str(),
-                request.body["cursor"]["cursor"].as_str(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let last_page = scheduling
-        .iter()
-        .position(|request| request.2 == Some("after-2"))
-        .unwrap();
-    assert_eq!(
-        &scheduling[..=last_page],
-        [
-            ("POST", "/agent/heartbeat", None),
-            ("POST", "/agent/jobs/take", None),
-            ("POST", "/agent/documents/search", None),
-            ("POST", "/agent/documents/search", Some("after 1/+")),
-            ("POST", "/agent/heartbeat", None),
-            ("POST", "/agent/jobs/take", None),
-            ("POST", "/agent/documents/search", Some("after 1/+")),
-            ("POST", "/agent/documents/search", Some("after-2")),
-        ]
-    );
-}
-
-#[test]
-fn queued_previous_clicks_reach_the_first_page_instead_of_collapsing() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 1, .. })
-    });
-    worker.submit(Command::NextPage);
-    let _second = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 2, .. })
-    });
-    let (arrival, release) = hold_http(&holuto, "POST", "/agent/documents/search");
-    worker.submit(Command::NextPage);
-    arrival.recv_timeout(WAIT).unwrap();
-    worker.submit(Command::PreviousPage);
-    worker.submit(Command::PreviousPage);
-    release.send(()).unwrap();
-    let received = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 1, .. })
-    });
-    let _stopped = stop(worker, &events);
-    assert_eq!(
-        shown(&received),
-        [(vec![3], 3, false), (vec![2], 2, true), (vec![1], 1, true)]
-    );
-}
-
-#[test]
-fn a_failed_page_fetch_retains_the_requested_navigation_for_refresh() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 1, .. })
-    });
-    holuto.fault("POST", "/agent/documents/search", problem(503));
-    worker.submit(Command::NextPage);
-    let failed = receive_until(&events, |event| {
-        matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
-    });
-    assert_eq!(shown(&failed), []);
-    worker.submit(Command::ResolveReport);
-    let recovered = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(shown(&recovered), [(vec![2], 2, true)]);
-}
-
-#[test]
-fn only_a_full_poll_clears_an_error_another_list_succeeding_does_not() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let clock = Arc::new(Mutex::new(Instant::now()));
-    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _listed = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    holuto.fault("POST", "/agent/documents/search", problem(503));
-    worker.submit(Command::NextPage);
-    let _failed = receive_until(&events, |event| {
-        matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
-    });
-    // The job list loads, but the requested documents page still has not.
-    worker.submit(Command::JobsFirstPage);
-    let _jobs = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    *clock.lock().unwrap() += Duration::from_secs(20);
-    worker.submit(Command::JobsFirstPage);
-    let cleared = receive_until(&events, |event| matches!(event, Event::Problem(None)));
-    let _stopped = stop(worker, &events);
-    assert!(
-        cleared
-            .iter()
-            .any(|event| matches!(event, Event::Documents { .. })),
-        "the error clears only after a poll reloaded the documents: {cleared:?}"
-    );
-}
-
-#[test]
-fn a_search_restarts_paging_at_its_first_page_and_later_refreshes_keep_it() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let mut named = document(1);
-    named["customerName"] = json!("Jan Kowalski");
-    holuto.documents(vec![named, document(2)]);
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    worker.submit(Command::NextPage);
-    let _second = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 2, .. })
-    });
-    let search = DocumentSearch::parse("kowal").unwrap();
-    worker.submit(Command::Search(search));
-    // With no next page, this refreshes the shown search page.
-    worker.submit(Command::NextPage);
-    worker.submit(Command::Search(None));
-    let mut received = Vec::new();
-    for _ in 0..3 {
-        received.extend(receive_until(&events, |event| {
-            matches!(event, Event::Documents { .. })
-        }));
-    }
-    let _stopped = stop(worker, &events);
-    assert_eq!(
-        shown(&received),
-        [(vec![1], 1, false), (vec![1], 1, false), (vec![1], 1, true)]
-    );
-    assert!(
-        !received
-            .iter()
-            .any(|event| matches!(event, Event::CommandCompleted)),
-        "a search is navigation, not a guarded operation"
-    );
-    let feed = holuto
-        .requests()
-        .into_iter()
-        .filter(|request| request.path == "/agent/documents/search")
-        .map(|request| (request.path, request.body))
-        .collect::<Vec<_>>();
-    let search = json!({"cursor": {"limit": 100}, "filter": {}, "search": {"q": "kowal"}});
-    let plain = json!({"cursor": {"limit": 100}, "filter": {}, "search": {}});
-    assert_eq!(
-        feed,
-        [
-            ("/agent/documents/search".to_owned(), plain.clone()),
-            (
-                "/agent/documents/search".to_owned(),
-                json!({
-                    "cursor": {"limit": 100, "cursor": "after 1/+"},
-                    "filter": {}, "search": {}
-                })
-            ),
-            ("/agent/documents/search".to_owned(), search.clone()),
-            ("/agent/documents/search".to_owned(), search),
-            ("/agent/documents/search".to_owned(), plain),
-        ]
-    );
-}
-
-#[test]
-fn an_empty_document_page_keeps_server_navigation_instead_of_restarting() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    holuto.page(
-        Some("after 1/+"),
-        json!({
-            "items": [], "nextCursor": "after-2", "previousCursor": "first"
-        }),
-    );
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    worker.submit(Command::NextPage);
-    let returned = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    worker.submit(Command::NextPage);
-    let following = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(shown(&returned), [(vec![], 2, true)]);
-    assert_eq!(shown(&following), [(vec![3], 3, false)]);
-}
-
-#[test]
-fn a_queued_buyer_nip_reaches_holuto_and_the_printed_receipt() {
+fn a_queued_buyer_nip_reaches_the_printed_receipt() {
     const NIP: &str = "5261040828";
     let sim = Simulator::start();
     let holuto = Holuto::new();
+    let id = holuto.enqueue(with(job_json(), &json!({"buyerNip": NIP})));
+    let hold = sim.hold("trinit");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let hold = sim.hold("trinit");
-    worker.submit(Command::Queue {
-        document: serde_json::from_value(document(1)).unwrap(),
-        buyer_nip: Some(BuyerNip::parse(NIP).unwrap()),
-    });
     assert!(hold.reached(WAIT), "the queued receipt reached the printer");
     let before_release = sim.receipts();
     hold.release();
     assert_eq!(before_release, []);
-    let printed = receive_until(&events, |event| {
-        matches!(event, Event::Jobs { items, .. }
-            if items.iter().any(|item| item.job.state == JobState::Done))
-    });
+    let _printed = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     let _stopped = stop(worker, &events);
-    let queued: Vec<_> = holuto
-        .requests()
-        .into_iter()
-        .filter(|request| request.method == "POST" && request.path == "/agent/jobs")
-        .collect();
-    assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].body["buyerNip"], NIP);
     let receipts = sim.receipts();
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].buyer_nip.as_deref(), Some(NIP));
-    let rows = printed
-        .iter()
-        .find_map(|event| {
-            if let Event::Jobs { items, .. } = event {
-                items
-                    .iter()
-                    .any(|item| item.job.state == JobState::Done)
-                    .then_some(items)
-            } else {
-                None
-            }
-        })
-        .unwrap();
-    let job = &rows[0].job;
-    assert_eq!(job.buyer_nip.as_deref(), Some(NIP));
-    assert_eq!(job.order_number, 10);
-    assert_eq!(job.lines[0].name, "Wymiana oleju");
-    assert_eq!(job.lines[0].quantity, "2");
-    assert_eq!(job.lines[0].total, "200.00");
-    assert_eq!(job.receipt_number.as_deref(), Some("1"));
+    let job = holuto.job(id);
+    assert_eq!(job["state"], "done");
+    assert_eq!(job["buyerNip"], NIP);
+    assert_eq!(job["receiptNumber"], "1");
 }
 
 #[test]
-fn a_failed_queue_command_does_not_delay_the_following_report() {
+fn a_refused_command_does_not_delay_the_following_report() {
     let sim = Simulator::start();
     let holuto = Holuto::new();
-    let (arrival, release) = hold_http(&holuto, "POST", "/agent/documents/search");
-    holuto.fault("POST", "/agent/jobs", problem(503));
+    let (arrival, release) = hold_http(&holuto, "POST", "/agent/heartbeat");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();
-    worker.submit(Command::Queue {
-        document: serde_json::from_value(document(1)).unwrap(),
-        buyer_nip: None,
-    });
+    worker.submit(Command::ResolveReport);
     worker.submit(Command::DailyReport);
     release.send(()).unwrap();
     let mut completed = 0;
@@ -1243,7 +797,7 @@ fn a_failed_queue_command_does_not_delay_the_following_report() {
         received
             .iter()
             .any(|event| matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable"))
+        if text == "Błąd: Brak przerwanego raportu do wyjaśnienia."))
     );
     assert_eq!(
         sim.reports(),
@@ -1260,21 +814,13 @@ fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
     let sim = Simulator::start();
     sim.set_vat(["23,00", "8,00", "5,00", "0,00", "100,00", "7,00", "101,00"]);
     let holuto = Holuto::new();
-    holuto.fault("POST", "/agent/jobs", problem(503));
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let mut received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    worker.submit(Command::Queue {
-        document: serde_json::from_value(document(1)).unwrap(),
-        buyer_nip: None,
-    });
-    let mut completed = false;
-    received.extend(receive_until(&events, |event| {
-        completed |= matches!(event, Event::CommandCompleted);
-        completed && matches!(event, Event::Documents { .. })
-    }));
+    let mut received = receive_until(&events, |event| matches!(event, Event::Device { .. }));
+    worker.submit(Command::ResolveReport);
+    received.extend(receive_poll_after_command(&events));
     let _stopped = stop(worker, &events);
     let statuses: Vec<_> = received
         .iter()
@@ -1285,11 +831,7 @@ fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
             | Event::Connected { .. }
             | Event::Paired { .. }
             | Event::PairingFailed { .. }
-            | Event::Documents { .. }
             | Event::Device { .. }
-            | Event::Jobs { .. }
-            | Event::JobsUnavailable
-            | Event::DocumentsUnavailable
             | Event::CommandCompleted
             | Event::Stopped => None,
         })
@@ -1298,7 +840,7 @@ fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
         statuses,
         [
             "Pomijam nieobsługiwaną stawkę VAT w slocie F · 7%",
-            "Błąd: Holuto odpowiedziało błędem 503: backend unavailable",
+            "Błąd: Brak przerwanego raportu do wyjaśnienia.",
         ],
         "an unchanged VAT table is not re-announced by each poll"
     );
@@ -1310,13 +852,18 @@ fn command_unauthorized_releases_the_submission_guard_then_stops() {
     let holuto = Holuto::new();
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
+    print_with_unconfirmed_result(&sim, &holuto, &dir);
+    let (arrival, release) = hold_http(&holuto, "POST", "/agent/session");
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    holuto.unauthorized(true);
-    worker.submit(Command::Queue {
-        document: serde_json::from_value(document(1)).unwrap(),
-        buyer_nip: None,
-    });
+    arrival.recv_timeout(WAIT).unwrap();
+    // The report first settles the pending receipt, and Holuto refuses that result.
+    worker.submit(Command::DailyReport);
+    holuto.fault(
+        "POST",
+        &format!("/agent/jobs/{JOB_ID}/result"),
+        problem(401),
+    );
+    release.send(()).unwrap();
     let received = receive_until(&events, |event| matches!(event, Event::Stopped));
     worker.join();
     assert!(
@@ -1338,7 +885,16 @@ fn command_unauthorized_releases_the_submission_guard_then_stops() {
         ),
         "submission guard is released before shutdown"
     );
-    assert_eq!(sim.receipts(), []);
+    assert_eq!(
+        sim.receipts().len(),
+        1,
+        "the pending receipt is never reprinted"
+    );
+    assert_eq!(
+        sim.reports(),
+        [],
+        "the refused settlement blocks the report"
+    );
 }
 
 #[test]
@@ -1425,20 +981,15 @@ fn a_report_submitted_during_a_receipt_waits_for_the_receipt_to_finish() {
     hold.release();
     let received = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
     let _stopped = stop(worker, &events);
-    let history_position = received
+    let receipt_position = received
         .iter()
-        .position(|event| {
-            matches!(
-                event,
-                Event::Jobs { items, .. } if items.iter().any(|item| item.job.state.terminal())
-            )
-        })
+        .position(|event| matches!(event, Event::Device { .. }))
         .unwrap();
     let report_position = received
         .iter()
         .rposition(|event| matches!(event, Event::Problem(None)))
         .unwrap();
-    assert!(history_position < report_position);
+    assert!(receipt_position < report_position);
     assert_eq!(
         sim.receipts()
             .iter()
@@ -1456,40 +1007,16 @@ fn a_report_submitted_during_a_receipt_waits_for_the_receipt_to_finish() {
 }
 
 #[test]
-fn documents_still_page_when_the_printer_probe_is_failing() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    sim.fault("getrealid", PrinterFault::Error);
-    worker.submit(Command::ResolveReport);
-    let _failed_probe = receive_until(&events, |event| {
-        matches!(event, Event::Problem(Some(text))
-        if text == "Błąd: Drukarka zwróciła błąd 2000 (getrealid).")
-    });
-    worker.submit(Command::NextPage);
-    let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(shown(&received), [(vec![2], 2, true)]);
-    assert_eq!(sim.receipts(), []);
-    assert_eq!(sim.reports(), []);
-}
-
-#[test]
-fn document_unauthorized_is_not_hidden_by_a_simultaneous_printer_error() {
+fn holuto_unauthorized_is_not_hidden_by_a_simultaneous_printer_error() {
     let sim = Simulator::start();
     let holuto = Holuto::new();
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     sim.fault("getrealid", PrinterFault::Error);
-    holuto.fault("POST", "/agent/documents/search", problem(401));
-    worker.submit(Command::ResolveReport);
+    holuto.fault("POST", "/agent/heartbeat", problem(401));
+    wake(&worker);
     let received = receive_until(&events, |event| matches!(event, Event::Stopped));
     worker.join();
     assert!(
@@ -1518,7 +1045,7 @@ fn print_with_unconfirmed_result(sim: &Simulator, holuto: &Holuto, dir: &Arc<Sta
 }
 
 #[test]
-fn settlement_publishes_history_even_when_the_next_printer_probe_fails() {
+fn settlement_reports_the_result_even_when_the_next_printer_probe_fails() {
     let sim = Simulator::start();
     let holuto = Holuto::new();
     let (_temporary, dir) = state_dir();
@@ -1529,18 +1056,13 @@ fn settlement_publishes_history_even_when_the_next_printer_probe_fails() {
     arrival.recv_timeout(WAIT).unwrap();
     sim.fault("getrealid", PrinterFault::Error);
     release.send(()).unwrap();
-    let received = receive_until(&events, |event| {
-        matches!(
-            event,
-            Event::Jobs { items, .. } if items.iter().any(|item| item.job.state.terminal())
-        )
+    let _failed_probe = receive_until(&events, |event| {
+        matches!(event, Event::Problem(Some(text))
+        if text == "Błąd: Drukarka zwróciła błąd 2000 (getrealid).")
     });
     let _stopped = stop(worker, &events);
-    assert_eq!(
-        history_rows(&received),
-        Some(vec![(JOB_ID, Some("1".to_owned()))])
-    );
     assert_eq!(holuto.job(JOB_ID)["state"], "done");
+    assert_eq!(holuto.job(JOB_ID)["receiptNumber"], "1");
     assert_eq!(
         sim.receipts()
             .iter()
@@ -1551,7 +1073,7 @@ fn settlement_publishes_history_even_when_the_next_printer_probe_fails() {
 }
 
 #[test]
-fn settlement_before_a_report_publishes_history_without_reprinting() {
+fn settlement_before_a_report_reports_the_result_without_reprinting() {
     let sim = Simulator::start();
     let holuto = Holuto::new();
     let (_temporary, dir) = state_dir();
@@ -1562,12 +1084,10 @@ fn settlement_before_a_report_publishes_history_without_reprinting() {
     arrival.recv_timeout(WAIT).unwrap();
     worker.submit(Command::DailyReport);
     release.send(()).unwrap();
-    let received = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
+    let _reported = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
     let _stopped = stop(worker, &events);
-    assert_eq!(
-        history_rows(&received),
-        Some(vec![(JOB_ID, Some("1".to_owned()))])
-    );
+    assert_eq!(holuto.job(JOB_ID)["state"], "done");
+    assert_eq!(holuto.job(JOB_ID)["receiptNumber"], "1");
     assert_eq!(
         sim.receipts()
             .iter()
@@ -1592,7 +1112,7 @@ fn stop_finishes_the_current_report_before_releasing_the_worker() {
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     worker.submit(Command::DailyReport);
     assert!(hold.reached(WAIT));
     worker.stop();
@@ -1645,7 +1165,7 @@ fn a_dropped_worker_handle_finishes_the_report_without_claiming_another_job() {
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     worker.submit(Command::DailyReport);
     assert!(hold.reached(WAIT));
     let id = holuto.enqueue(job_json());
@@ -1798,18 +1318,12 @@ fn http_receipts_reports_and_events_share_the_single_worker_thread() {
     let (send, events) = mpsc::channel();
     let (threads, event_threads) = mpsc::channel();
     let config = settings(&holuto, &sim);
-    let worker = Worker::spawn(
-        Arc::clone(&dir),
-        config,
-        sim.link(),
-        super::Searches::default(),
-        move |event| {
-            threads.send(thread::current().id()).unwrap();
-            send.send(event).unwrap();
-        },
-    )
+    let worker = Worker::spawn(Arc::clone(&dir), config, sim.link(), move |event| {
+        threads.send(thread::current().id()).unwrap();
+        send.send(event).unwrap();
+    })
     .unwrap();
-    let _printed = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    let _printed = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     worker.submit(Command::DailyReport);
     let _reported = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
     let _stopped = stop(worker, &events);
@@ -1854,57 +1368,6 @@ fn http_receipts_reports_and_events_share_the_single_worker_thread() {
             .map(|report| report.command.as_str())
             .collect::<Vec<_>>(),
         ["dailyrep"]
-    );
-}
-
-fn history_rows(events: &[Event]) -> Option<Vec<(Uuid, Option<String>)>> {
-    events
-        .iter()
-        .rev()
-        .find_map(|event| {
-            if let Event::Jobs { items: entries, .. } = event {
-                Some(entries)
-            } else {
-                None
-            }
-        })
-        .map(|entries| {
-            entries
-                .iter()
-                .map(|entry| (entry.job.id, entry.job.receipt_number.clone()))
-                .collect()
-        })
-}
-
-#[test]
-fn startup_fetches_server_history_without_reprinting() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    let _id = holuto.enqueue(job_json());
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _printed = receive_until(&events, |event| {
-        matches!(
-            event,
-            Event::Jobs { items, .. } if items.iter().any(|item| item.job.state.terminal())
-        )
-    });
-    let _stopped = stop(worker, &events);
-
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let received = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(
-        history_rows(&received),
-        Some(vec![(JOB_ID, Some("1".to_owned()))])
-    );
-    assert_eq!(
-        sim.receipts()
-            .iter()
-            .map(|receipt| receipt.total)
-            .collect::<Vec<_>>(),
-        [25_000]
     );
 }
 
@@ -2136,16 +1599,10 @@ fn losing_a_footer_reply_after_trend_settles_the_printed_receipt_once() {
         let (_temporary, dir) = state_dir();
         let dir = Arc::new(dir);
         let (worker, events) = spawn(&holuto, &sim, &dir);
-        let received = receive_until(&events, |event| {
-            matches!(event, Event::Jobs { items, .. }
-                if items.iter().any(|item| item.job.id == id && item.job.state == JobState::Done))
+        let _settled = receive_until(&events, |event| {
+            matches!(event, Event::Device { .. }) && holuto.job(id)["state"] == "done"
         });
         let _stopped = stop(worker, &events);
-        assert_eq!(
-            history_rows(&received),
-            Some(vec![(id, Some("1".to_owned()))]),
-            "{command}"
-        );
         assert_eq!(holuto.job(id)["state"], "done", "{command}");
         assert_eq!(holuto.job(id)["receiptNumber"], "1", "{command}");
         assert_eq!(sim.receipts().len(), 1, "{command}");
@@ -2292,134 +1749,6 @@ fn worker_recovery_uses_dispatch_evidence_without_ever_reissuing_a_fiscal_comman
         assert_eq!(sim.receipts(), []);
         assert_eq!(sim.reports(), []);
     }
-}
-
-#[test]
-fn a_second_next_after_a_failed_fetch_keeps_both_clicks_and_stops_at_the_known_end() {
-    for (next, expected, cursors) in [
-        (
-            Some("after-2"),
-            (vec![3], 3, false),
-            vec![
-                Value::Null,
-                json!("after 1/+"),
-                json!("after 1/+"),
-                json!("after-2"),
-            ],
-        ),
-        (
-            None,
-            (vec![2], 2, false),
-            vec![Value::Null, json!("after 1/+"), json!("after 1/+")],
-        ),
-    ] {
-        let sim = Simulator::start();
-        let holuto = Holuto::new();
-        pages(&holuto);
-        holuto.page(
-            Some("after 1/+"),
-            json!({"items": [document(2)], "nextCursor": next, "previousCursor": "first"}),
-        );
-        let (_temporary, dir) = state_dir();
-        let dir = Arc::new(dir);
-        let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-        let (worker, events) = spawn(&holuto, &sim, &dir);
-        let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-        holuto.fault("POST", "/agent/documents/search", problem(503));
-        worker.submit(Command::NextPage);
-        let _failed = receive_until(&events, |event| {
-            matches!(event, Event::Problem(Some(text))
-                if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
-        });
-        worker.submit(Command::NextPage);
-        let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-        let _stopped = stop(worker, &events);
-        assert_eq!(shown(&received), [expected]);
-        assert_eq!(
-            holuto
-                .requests()
-                .iter()
-                .filter(|request| request.path == "/agent/documents/search")
-                .map(|request| request.body["cursor"]["cursor"].clone())
-                .collect::<Vec<_>>(),
-            cursors,
-            "intermediate cursors come only from successful Holuto pages"
-        );
-    }
-}
-
-#[test]
-fn a_second_previous_after_a_failed_fetch_reaches_the_first_page() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let (arrival, release) = hold_http(&holuto, "POST", "/agent/documents/search");
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    arrival.recv_timeout(WAIT).unwrap();
-    worker.submit(Command::NextPage);
-    worker.submit(Command::NextPage);
-    release.send(()).unwrap();
-    let _third = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 3, .. })
-    });
-    holuto.fault("POST", "/agent/documents/search", problem(503));
-    worker.submit(Command::PreviousPage);
-    let _failed = receive_until(&events, |event| {
-        matches!(event, Event::Problem(Some(text))
-            if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
-    });
-    worker.submit(Command::PreviousPage);
-    let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(shown(&received), [(vec![1], 1, true)]);
-    assert_eq!(
-        holuto
-            .requests()
-            .iter()
-            .filter(|request| request.path == "/agent/documents/search")
-            .map(|request| request.body["cursor"]["cursor"].clone())
-            .collect::<Vec<_>>(),
-        [
-            Value::Null,
-            json!("after 1/+"),
-            json!("after-2"),
-            json!("after 1/+"),
-            json!("after 1/+"),
-            json!("first")
-        ]
-    );
-}
-
-#[test]
-fn next_cancels_a_failed_previous_even_when_the_shown_page_has_no_next_cursor() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    let (arrival, release) = hold_http(&holuto, "POST", "/agent/documents/search");
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    arrival.recv_timeout(WAIT).unwrap();
-    worker.submit(Command::NextPage);
-    worker.submit(Command::NextPage);
-    release.send(()).unwrap();
-    let _third = receive_until(&events, |event| {
-        matches!(event, Event::Documents { page: 3, .. })
-    });
-    holuto.fault("POST", "/agent/documents/search", problem(503));
-    worker.submit(Command::PreviousPage);
-    let _failed = receive_until(&events, |event| {
-        matches!(event, Event::Problem(Some(text))
-            if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
-    });
-    worker.submit(Command::NextPage);
-    let received = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(shown(&received), [(vec![3], 3, false)]);
 }
 
 #[test]
@@ -2638,7 +1967,7 @@ fn an_executed_report_with_a_lost_or_disconnected_reply_blocks_restart_until_res
         let dir = Arc::new(dir);
         let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
         let (worker, events) = spawn(&holuto, &sim, &dir);
-        let _started = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+        let _started = receive_until(&events, |event| matches!(event, Event::Device { .. }));
         sim.fault("dailyrep", fault);
         worker.submit(Command::DailyReport);
         let _completed = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
@@ -2718,17 +2047,11 @@ fn an_executed_report_with_a_lost_or_disconnected_reply_blocks_restart_until_res
             .collect::<Vec<_>>();
         assert_eq!(after, reports, "resolution never reissues a report");
         release.send(()).unwrap();
-        let printed = receive_until(&events, |event| {
-            matches!(event,
-                Event::Jobs { items, .. } if items.iter().any(|item|
-                    item.job.id == id && item.job.state == JobState::Done)
-            )
+        let _printed = receive_until(&events, |event| {
+            matches!(event, Event::Device { .. }) && holuto.job(id)["state"] == "done"
         });
         let _stopped = stop(worker, &events);
-        assert_eq!(
-            history_rows(&printed),
-            Some(vec![(id, Some("1".to_owned()))])
-        );
+        assert_eq!(holuto.job(id)["receiptNumber"], "1");
         assert_eq!(holuto.job(id)["state"], "done");
         assert_eq!(sim.receipts().len(), 1);
         assert_eq!(sim.reports().len(), 1);
@@ -2736,7 +2059,7 @@ fn an_executed_report_with_a_lost_or_disconnected_reply_blocks_restart_until_res
 }
 
 #[test]
-fn uncertain_print_remains_in_server_history_and_blocks_locally() {
+fn an_uncertain_print_stays_unknown_in_holuto_and_blocks_locally() {
     let sim = Simulator::start();
     sim.fault("trend", PrinterFault::LoseReply);
     let holuto = Holuto::new();
@@ -2744,56 +2067,36 @@ fn uncertain_print_remains_in_server_history_and_blocks_locally() {
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let received = receive_until(&events, |event| {
-        matches!(event, Event::Jobs { items, .. }
-            if items.iter().any(|item| item.job.state == JobState::Unknown))
+    let _blocked = receive_until(&events, |event| {
+        matches!(event, Event::Device { blocked: true, .. })
+            && holuto.job(JOB_ID)["state"] == "unknown"
     });
     let _stopped = stop(worker, &events);
     assert_eq!(holuto.job(JOB_ID)["state"], "unknown");
     assert_eq!(sim.receipts().len(), 1);
-    assert!(received.iter().any(|event| matches!(
-        event, Event::Jobs { items, .. }
-            if items.iter().any(|item| item.job.state == JobState::Queued)
-    )));
     assert!(super::journal_block(&dir).blocked);
 }
 
 #[test]
-fn a_job_another_instance_takes_stays_in_server_history_without_local_printing() {
+fn a_job_another_instance_takes_is_never_printed_locally() {
     let sim = Simulator::start();
     let holuto = Holuto::new();
+    let id = holuto.enqueue(job_json());
+    let (arrival, release) = hold_http(&holuto, "POST", "/agent/jobs/take");
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
-    let clock = Arc::new(Mutex::new(Instant::now()));
-    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let (arrival, release) = hold_http(&holuto, "POST", "/agent/jobs/take");
-    worker.submit(Command::Queue {
-        document: serde_json::from_value(document(1)).unwrap(),
-        buyer_nip: None,
-    });
     arrival.recv_timeout(WAIT).unwrap();
     // The token is not exclusive to one state directory: another instance claimed the job.
-    let id = Uuid::from_u128(100);
     holuto.set_job(
         id,
         &json!({"state": "taken", "attempt": ATTEMPT, "takenAt": "2026-10-16T10:00:00Z"}),
     );
     release.send(()).unwrap();
-    *clock.lock().unwrap() += POLL;
-    worker.submit(Command::JobsFirstPage);
-    let received = receive_until(&events, |event| {
-        matches!(
-            event,
-            Event::Jobs { items, .. } if items.iter().any(|item| item.job.state == JobState::Taken)
-        )
-    });
+    let _polled = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     let _stopped = stop(worker, &events);
-    assert!(received.iter().any(|event| matches!(
-        event, Event::Jobs { items, .. }
-            if items.iter().any(|item| item.job.id == id && item.job.state == JobState::Taken)
-    )));
+    assert_eq!(holuto.job(id)["state"], "taken");
+    assert_eq!(holuto.job(id)["attempt"], json!(ATTEMPT));
     assert_eq!(
         sim.receipts(),
         [],
@@ -2810,26 +2113,10 @@ fn refused_receipt_is_a_failed_server_job_with_the_reported_reason() {
     let (_temporary, dir) = state_dir();
     let dir = Arc::new(dir);
     let (worker, events) = spawn(&holuto, &sim, &dir);
-    let received = receive_until(&events, |event| {
-        matches!(
-            event,
-            Event::Jobs { items, .. } if items.iter().any(|item| item.job.state == JobState::Failed)
-        )
-    });
+    let received = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     let _stopped = stop(worker, &events);
-    let failure = received
-        .iter()
-        .find_map(|event| {
-            if let Event::Jobs { items, .. } = event {
-                items.iter().find(|item| item.job.state == JobState::Failed)
-            } else {
-                None
-            }
-        })
-        .unwrap();
-    let reason = failure.job.result.as_deref().unwrap();
+    let reason = holuto.job(JOB_ID)["result"].as_str().unwrap().to_owned();
     assert_eq!(holuto.job(JOB_ID)["state"], "failed");
-    assert_eq!(holuto.job(JOB_ID)["result"], reason);
     assert!(received.iter().any(|event| matches!(event,
         Event::Problem(Some(text))
         if text == &format!("Nie wydrukowano paragonu (zlecenie 10): {reason}")
@@ -2839,286 +2126,20 @@ fn refused_receipt_is_a_failed_server_job_with_the_reported_reason() {
 }
 
 #[test]
-fn jobs_unauthorized_stops_processing_without_claiming() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let before = holuto.requests().len();
-    holuto.fault(
-        "POST",
-        "/agent/jobs/search",
-        Fault::Problem {
-            status: 401,
-            code: "unauthorized".to_owned(),
-            detail: "Zaloguj się.".to_owned(),
-        },
-    );
-    worker.submit(Command::JobsFirstPage);
-    let received = receive_until(&events, |event| matches!(event, Event::Stopped));
-    worker.join();
-    assert!(received.iter().any(|event| matches!(event,
-        Event::Problem(Some(text))
-        if text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
-                    Sparuj drukarkę ponownie w Ustawieniach."
-    )));
-    assert!(
-        received
-            .iter()
-            .any(|event| matches!(event, Event::JobsUnavailable))
-    );
-    assert!(
-        holuto
-            .requests()
-            .iter()
-            .skip(before)
-            .all(|request| request.path != "/agent/jobs/take")
-    );
-    assert_eq!(sim.receipts(), []);
-}
-
-#[test]
-fn unavailable_jobs_clear_stale_data_and_first_page_retries() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    sim.set_paper(false);
-    let _id = holuto.enqueue(job_json());
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
-    holuto.fault("POST", "/agent/jobs/search", problem(503));
-    worker.submit(Command::JobsFirstPage);
-    let failed = receive_until(&events, |event| matches!(event, Event::JobsUnavailable));
-    worker.submit(Command::JobsFirstPage);
-    let recovered = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    let _stopped = stop(worker, &events);
-    assert!(matches!(failed.last(), Some(Event::JobsUnavailable)));
-    assert_eq!(
-        failed
-            .iter()
-            .chain(&recovered)
-            .filter(|event| matches!(event, Event::JobsUnavailable))
-            .count(),
-        1
-    );
-    assert!(
-        matches!(recovered.last(), Some(Event::Jobs { items, page: 1, .. }) if items.len() == 1)
-    );
-    assert_eq!(sim.receipts(), []);
-}
-
-#[test]
-fn a_failed_first_document_fetch_reports_the_list_unavailable_until_a_retry_lists_it() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    pages(&holuto);
-    holuto.fault("POST", "/agent/documents/search", problem(503));
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let failed = receive_until(&events, |event| {
-        matches!(event, Event::DocumentsUnavailable)
-    });
-    assert!(
-        !failed
-            .iter()
-            .any(|event| matches!(event, Event::Documents { .. })),
-        "a failed fetch never reads as an empty list"
-    );
-    worker.submit(Command::Search(None));
-    let recovered = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(shown(&recovered), [(vec![1], 1, true)]);
-}
-
-fn job_view(number: u128) -> Value {
-    json!({
-        "job": with(job_json(), &json!({
-            "id": Uuid::from_u128(number),
-            "orderNumber": number,
-            "state": "done",
-            "attempt": ATTEMPT,
-            "receiptNumber": format!("R{number}"),
-            "issuedAt": "2025-01-02T12:00:00Z"
-        })),
-        "customerName": null,
-        "vehiclePlate": null,
-        "source": "staff"
-    })
-}
-
-fn jobs_shown(events: &[Event]) -> Vec<(Vec<i64>, usize, bool)> {
-    events
-        .iter()
-        .filter_map(|event| {
-            if let Event::Jobs {
-                items,
-                page,
-                has_next,
-                ..
-            } = event
-            {
-                Some((
-                    items.iter().map(|item| item.job.order_number).collect(),
-                    *page,
-                    *has_next,
-                ))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-#[test]
-fn jobs_pager_preserves_clicks_and_search_resets_to_page_one() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    holuto.jobs_page(
-        None,
-        json!({
-            "items": [job_view(1)], "nextCursor": "jobs-after-1", "previousCursor": null
-        }),
-    );
-    holuto.jobs_page(
-        Some("jobs-after-1"),
-        json!({
-            "items": [job_view(2)], "nextCursor": "jobs-after-2", "previousCursor": "previous"
-        }),
-    );
-    holuto.jobs_page(
-        Some("jobs-after-2"),
-        json!({
-            "items": [job_view(3)], "nextCursor": null, "previousCursor": "previous"
-        }),
-    );
-    holuto.jobs_page(
-        Some("previous"),
-        json!({
-            "items": [job_view(4)], "nextCursor": "jobs-after-2", "previousCursor": "newer"
-        }),
-    );
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
-    let before = holuto.requests().len();
-    let (arrival, release) = hold_http(&holuto, "POST", "/agent/jobs/search");
-    worker.submit(Command::JobsNextPage);
-    arrival.recv_timeout(WAIT).unwrap();
-    worker.submit(Command::JobsNextPage);
-    release.send(()).unwrap();
-    let forward = receive_until(&events, |event| {
-        matches!(event, Event::Jobs { page: 3, .. })
-    });
-    worker.submit(Command::JobsPreviousPage);
-    let previous = receive_until(&events, |event| {
-        matches!(event, Event::Jobs { page: 2, .. })
-    });
-    worker.submit(Command::JobsSearch(
-        DocumentSearch::parse("private-plate").unwrap(),
-    ));
-    let searched = receive_until(&events, |event| {
-        matches!(event, Event::Jobs { page: 1, .. })
-    });
-    worker.submit(Command::JobsFirstPage);
-    let _retried = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(
-        jobs_shown(&forward),
-        [(vec![2], 2, true), (vec![3], 3, false)]
-    );
-    assert_eq!(jobs_shown(&previous), [(vec![4], 2, true)]);
-    assert_eq!(jobs_shown(&searched), [(vec![1], 1, true)]);
-    assert!(
-        !forward
-            .iter()
-            .chain(&previous)
-            .chain(&searched)
-            .any(|event| matches!(event, Event::CommandCompleted))
-    );
-    let requests = holuto.requests();
-    let navigation = &requests[before..];
-    assert!(
-        navigation
-            .iter()
-            .all(|request| request.method == "POST" && request.path == "/agent/jobs/search")
-    );
-    assert_eq!(
-        navigation
-            .iter()
-            .map(|request| request.body["cursor"]["cursor"].clone())
-            .collect::<Vec<_>>(),
-        [
-            json!("jobs-after-1"),
-            json!("jobs-after-2"),
-            json!("previous"),
-            Value::Null,
-            Value::Null
-        ]
-    );
-    assert!(
-        navigation[3..]
-            .iter()
-            .all(|request| request.body["search"]["q"] == "private-plate")
-    );
-    assert_eq!(sim.receipts(), []);
-}
-
-#[test]
-fn polling_exposes_web_queued_expired_and_backend_failed_jobs_without_claiming() {
+fn polling_a_printer_that_is_not_ready_never_claims_a_queued_job() {
     let sim = Simulator::start();
     sim.set_paper(false);
     let holuto = Holuto::new();
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let clock = Arc::new(Mutex::new(Instant::now()));
-    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
-    worker.submit(Command::JobsFirstPage);
-    let _barrier = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
     let id = holuto.enqueue(job_json());
-    let mut snapshots = Vec::new();
-    for state in [JobState::Queued, JobState::Expired, JobState::Failed] {
-        if state == JobState::Expired {
-            holuto.expire(id);
-        } else if state == JobState::Failed {
-            holuto.set_job(id, &json!({"state": "failed", "result": "backend refusal"}));
-        }
-        *clock.lock().unwrap() += RETRY;
-        worker.submit(Command::NextPage);
-        snapshots.extend(receive_until(&events, |event| {
-            matches!(
-                event,
-                Event::Jobs { items, .. } if items.iter().any(|item|
-                    item.job.id == id && item.job.state == state)
-            )
-        }));
-        let _device = receive_until(&events, |event| matches!(event, Event::Device { .. }));
-        worker.submit(Command::JobsFirstPage);
-        let _barrier = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    }
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
+    wake(&worker);
+    let _second = receive_poll_after_command(&events);
     let _stopped = stop(worker, &events);
-    assert_eq!(
-        snapshots
-            .iter()
-            .filter_map(|event| {
-                if let Event::Jobs { items, .. } = event {
-                    items.first().map(|item| item.job.state)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>(),
-        [JobState::Queued, JobState::Expired, JobState::Failed]
-    );
+    assert_eq!(holuto.job(id)["state"], "queued");
     assert!(
         holuto
             .requests()
@@ -3127,161 +2148,4 @@ fn polling_exposes_web_queued_expired_and_backend_failed_jobs_without_claiming()
     );
     assert_eq!(sim.receipts(), []);
     assert_eq!(Journal::new(&dir).load().unwrap(), None);
-}
-
-#[test]
-fn a_taken_and_reported_receipt_resets_history_to_page_one() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    holuto.jobs_page(
-        None,
-        json!({
-            "items": [job_view(1)], "nextCursor": "older", "previousCursor": null
-        }),
-    );
-    holuto.jobs_page(
-        Some("older"),
-        json!({
-            "items": [job_view(2)], "nextCursor": null, "previousCursor": "previous"
-        }),
-    );
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let clock = Arc::new(Mutex::new(Instant::now()));
-    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
-    worker.submit(Command::JobsNextPage);
-    let _older = receive_until(&events, |event| {
-        matches!(event, Event::Jobs { page: 2, .. })
-    });
-    let id = holuto.enqueue(job_json());
-    *clock.lock().unwrap() += POLL;
-    worker.submit(Command::NextPage);
-    let refreshed = receive_until(&events, |event| {
-        matches!(event, Event::Jobs { page: 1, .. })
-    });
-    let _stopped = stop(worker, &events);
-    assert_eq!(
-        jobs_shown(&refreshed),
-        [(vec![2], 2, false), (vec![1], 1, true)]
-    );
-    assert_eq!(holuto.job(id)["state"], "done");
-    assert_eq!(sim.receipts().len(), 1);
-}
-
-#[test]
-fn device_queueing_resets_history_but_reports_preserve_the_browsed_page() {
-    for command in [
-        Command::DailyReport,
-        Command::Queue {
-            document: serde_json::from_value(document(1)).unwrap(),
-            buyer_nip: None,
-        },
-    ] {
-        let sim = Simulator::start();
-        let holuto = Holuto::new();
-        holuto.jobs_page(
-            None,
-            json!({
-                "items": [job_view(1)], "nextCursor": "older", "previousCursor": null
-            }),
-        );
-        holuto.jobs_page(
-            Some("older"),
-            json!({
-                "items": [job_view(2)], "nextCursor": null, "previousCursor": "previous"
-            }),
-        );
-        let (_temporary, dir) = state_dir();
-        let dir = Arc::new(dir);
-        let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-        let (worker, events) = spawn(&holuto, &sim, &dir);
-        let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
-        worker.submit(Command::JobsNextPage);
-        let _older = receive_until(&events, |event| {
-            matches!(event, Event::Jobs { page: 2, .. })
-        });
-        worker.submit(command);
-        let completed = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
-        assert_eq!(jobs_shown(&completed), []);
-        let refreshed = receive_until(&events, |event| matches!(event, Event::Device { .. }));
-        let _stopped = stop(worker, &events);
-        let expected = if sim.reports().is_empty() {
-            vec![(vec![1], 1, true), (vec![1], 1, true)]
-        } else {
-            vec![(vec![2], 2, false)]
-        };
-        assert_eq!(jobs_shown(&refreshed), expected);
-        assert!(
-            completed
-                .iter()
-                .any(|event| matches!(event, Event::Problem(None)))
-        );
-    }
-}
-
-#[test]
-fn history_previous_keeps_following_server_tokens_at_local_page_one() {
-    let sim = Simulator::start();
-    let holuto = Holuto::new();
-    for (cursor, number, next, previous) in [
-        (None, 1, Some("older"), None),
-        (Some("older"), 2, None, Some("newer-1")),
-        (Some("newer-1"), 3, Some("older"), Some("newer-2")),
-        (Some("newer-2"), 4, Some("newer-1"), None),
-    ] {
-        holuto.jobs_page(
-            cursor,
-            json!({
-                "items": [job_view(number)], "nextCursor": next, "previousCursor": previous
-            }),
-        );
-    }
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _first = receive_until(&events, |event| matches!(event, Event::Device { .. }));
-    worker.submit(Command::JobsNextPage);
-    let _older = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    worker.submit(Command::JobsPreviousPage);
-    let newer = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    worker.submit(Command::JobsPreviousPage);
-    let newest = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
-    let _stopped = stop(worker, &events);
-    assert_eq!(jobs_shown(&newer), [(vec![3], 1, true)]);
-    assert!(matches!(
-        newer.last(),
-        Some(Event::Jobs {
-            page: 1,
-            has_previous: true,
-            ..
-        })
-    ));
-    assert_eq!(jobs_shown(&newest), [(vec![4], 1, true)]);
-    assert!(matches!(
-        newest.last(),
-        Some(Event::Jobs {
-            page: 1,
-            has_previous: false,
-            ..
-        })
-    ));
-    let cursors = holuto
-        .requests()
-        .iter()
-        .filter(|request| request.path == "/agent/jobs/search")
-        .map(|request| request.body["cursor"]["cursor"].clone())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        cursors,
-        [
-            Value::Null,
-            json!("older"),
-            json!("newer-1"),
-            json!("newer-2")
-        ]
-    );
-    assert_eq!(sim.receipts(), []);
 }

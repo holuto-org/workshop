@@ -2,8 +2,9 @@
 
 Tray app for the workshop PC connected to a supported Posnet, Novitus or Elzab
 online fiscal printer. Prints **only Holuto sales and advances** queued in the
-web app or selected in Holuto Workshop. No manual receipt editor or separate
-agent; processing continues with the window closed.
+Holuto web app, automatically. Receipts are queued and browsed only in the web
+app; the desktop has no receipt list, manual queuing or receipt editor, and
+needs no separate agent. Processing continues with the window closed.
 
 Contributors start with [AGENTS.md](AGENTS.md).
 
@@ -170,25 +171,19 @@ It never scans with an unresolved operation: the device must not change.
 
 ## Desktop app
 
-- **Paragony** — browse the paired printer's job history from Holuto, including
-  web-queued, expired, printed and failed jobs. Search Holuto by order number,
-  customer, receipt number, vehicle plate or item; changing the search starts
-  on page one. Select a row for receipt details and Holuto's failure result.
-  When Holuto is unreachable, the list is unavailable rather than stale;
-  use **Ponów pobieranie historii** to retry. This view does not replace fiscal
-  memory.
-  Ctrl+F focuses search; Escape clears it; arrows, Home/End and
-  PageUp/PageDown select receipts.
-  Most printing starts in Holuto. For occasional manual printing,
-  **+ Wystaw paragon** opens eligible advances and sales for the printer's
-  branch, with kind, amount and legal deadline; overdue documents are marked.
-  **Szukaj dokumentu** searches order numbers and customer names after a 400 ms
-  pause or Enter. **Następna strona** and **Poprzednia strona** navigate the
-  current feed; column headers sort without changing selected identity.
-  **Dalej** opens confirmation with an optional buyer NIP for this receipt only.
-  Holuto derives payments and advance deductions; unpaid final-sale balances
-  print as credit. Lines and totals are not locally editable. Documents above
-  the printer's amount limit remain listed but cannot execute.
+- **Stan** — read-only status rows:
+  - **Obsługa drukarki**: **Uruchomiona**, **Uruchamianie…**,
+    **Zatrzymywanie…** or **Zatrzymana**.
+  - **Holuto**: **Połączono**, **Łączenie…** or **Nie połączono**.
+  - **Drukarka**: vendor · unique number · port, or **—** before the first
+    connection.
+  - **Stan drukarki**: **Gotowa**, **Niegotowa:** with the device reason (or
+    **brak połączenia**), or **Zablokowana: wymaga rozstrzygnięcia** while an
+    uncertain outcome blocks printing.
+
+  A hint reminds that receipts are issued and browsed in Holuto and that
+  queued jobs print here automatically; while processing is stopped it points
+  to **Ustawienia**. This view does not replace fiscal memory.
 - **Raporty** — daily, monthly and periodic fiscal reports, confirmed before
   printing. Periodic dates require zero-padded `dd.mm.rrrr` (for example
   `01.01.2025`), must be on or after `01.01.2000`, cannot be in the future, and
@@ -202,14 +197,12 @@ The header shows **Holuto** and **Drukarka** only while something is wrong:
 not connected, connecting, printer not ready or blocked. The footer likewise
 shows only problems, in red; it disappears when the problem is cleared.
 Successful operations and normal progress show no footer messages.
-When no receipts exist, start processing in **Ustawienia**.
 
 Polling runs every **3 seconds**, or **15 seconds** after errors or while
 blocked. If the printer does not answer, or Holuto is unreachable, times out
 (408), rate-limits (429), refuses an unavailable branch or company (403) or
 answers 5xx when processing starts, the app retries every 15 seconds and shows
-a notice; a 401 stops processing. A confirmed receipt
-or report stays disabled until the
+a notice; a 401 stops processing. A confirmed report stays disabled until the
 worker finishes that command, so a second click cannot queue it twice. Closing
 the window hides it in the tray and releases its memory without stopping
 processing; reopen from the tray. Without a tray icon, closing keeps the window
@@ -230,7 +223,8 @@ The printer calculates VAT. Each line uses its assigned slot for `23`, `8`, `5`,
 `0` or `zw`; mixed rates are supported, with no highest-rate or whole-receipt
 fallback. Holuto omits zero-price lines; the agent rejects any it receives.
 Missing VAT-letter mappings reject queueing, never substitute a rate.
-Buyer NIP, advance deductions and payments reach the device unchanged.
+Buyer NIP set in Holuto, advance deductions and payments reach the device
+unchanged.
 Line and company names must print in full as
 received; unsupported text fails before fiscal commands, never transliterated or
 truncated.
@@ -283,8 +277,6 @@ truncated.
   (same printer, connected and ready as for reports); it prints and reports
   nothing. Corrupt or unreadable journals fail closed; deleting the journal is
   not recovery.
-- Job history is read-only Holuto data, not fiscal evidence or a heartbeat.
-  Its availability never replaces the journal's recovery and blocking rules.
 
 [certain-refusals]: docs/testing/fiscal-safety.md#recovery-classification
 

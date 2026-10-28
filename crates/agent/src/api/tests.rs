@@ -15,7 +15,7 @@ use serde_json::json;
 use tracing::{
     Subscriber,
     field::{Field, Visit},
-    span::{Attributes, Id, Record},
+    span::{Attributes, Id},
     subscriber,
 };
 use tracing_subscriber::{Layer, layer::Context, prelude::*};
@@ -23,15 +23,11 @@ use uuid::Uuid;
 
 use super::{
     Api, ApiError,
-    model::{JobsPage, Outcome, ResultForm},
+    model::{Outcome, ResultForm},
 };
 use crate::{
     Error,
-    documents::{BuyerNip, Document, DocumentSearch, ReceiptKind},
-    testing::{
-        ATTEMPT, Fault, Holuto, JOB_ID, ORDER_ID, PRINTER_ID, job_json, status_json, telemetry,
-        with,
-    },
+    testing::{ATTEMPT, Fault, Holuto, JOB_ID, PRINTER_ID, job_json, status_json, telemetry, with},
 };
 
 type TestResult = Result<(), Box<dyn StdError>>;
@@ -333,37 +329,10 @@ impl<S: Subscriber> Layer<S> for Routes {
     }
 }
 
-#[derive(Clone, Default)]
-struct TraceFields(Arc<Mutex<Vec<String>>>);
-
-impl Visit for TraceFields {
-    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        self.0.lock().unwrap().push(format!("{field}={value:?}"));
-    }
-}
-
-impl<S: Subscriber> Layer<S> for TraceFields {
-    fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _context: Context<'_, S>) {
-        attrs.record(&mut self.clone());
-    }
-
-    fn on_record(&self, _id: &Id, values: &Record<'_>, _context: Context<'_, S>) {
-        values.record(&mut self.clone());
-    }
-
-    fn on_event(&self, event: &tracing::Event<'_>, _context: Context<'_, S>) {
-        event.record(&mut self.clone());
-    }
-}
-
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "Exact request and telemetry tables cover every API route together."
 )]
 fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestResult {
     let server = Holuto::new();
@@ -375,16 +344,6 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
     profile.capabilities.allowed_characters = "AĄa 1".to_owned();
     api.session(&profile)?;
     api.heartbeat()?;
-    let _page = api.documents(None, None)?;
-    let search = DocumentSearch::parse(" Jan\t42 ")?.ok_or("blank search")?;
-    let _found = api.documents(None, Some(&search))?;
-    let _history = api.jobs(None, None)?;
-    api.queue(&super::model::QueueForm {
-        allocation_id: None,
-        buyer_nip: None,
-        kind: ReceiptKind::Sale,
-        order_id: Uuid::from_u128(1000),
-    })?;
     let job = api.take()?.ok_or("missing job")?;
     let _remote = api.job(job.id)?;
     api.report(
@@ -406,10 +365,6 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
         vec![
             "/agent/session",
             "/agent/heartbeat",
-            "/agent/documents/search",
-            "/agent/documents/search",
-            "/agent/jobs/search",
-            "/agent/jobs",
             "/agent/jobs/take",
             "/agent/jobs/00000000-0000-0000-0000-000000000007",
             "/agent/jobs/00000000-0000-0000-0000-000000000007/result"
@@ -420,9 +375,7 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
             .iter()
             .map(|request| request.method.as_str())
             .collect::<Vec<_>>(),
-        [
-            "POST", "POST", "POST", "POST", "POST", "POST", "POST", "GET", "POST"
-        ]
+        ["POST", "POST", "POST", "GET", "POST"]
     );
     assert_eq!(
         requests
@@ -442,12 +395,6 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
                 }
             }),
             serde_json::Value::Null,
-            json!({"cursor":{"limit":100},"filter":{},"search":{}}),
-            json!({"cursor":{"limit":100},"filter":{},
-                "search":{"q":"Jan 42"}}),
-            json!({"cursor":{"limit":50},"filter":{},"search":{}}),
-            json!({"kind":"sale","orderId":Uuid::from_u128(1000),
-                "allocationId":null,"buyerNip":null}),
             serde_json::Value::Null,
             serde_json::Value::Null,
             json!({"attempt":job.attempt,"state":"failed","receiptNumber":null,
@@ -481,10 +428,6 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
         [
             "/agent/session",
             "/agent/heartbeat",
-            "/agent/documents/search",
-            "/agent/documents/search",
-            "/agent/jobs/search",
-            "/agent/jobs",
             "/agent/jobs/take",
             "/agent/jobs/{id}",
             "/agent/jobs/{id}/result"
@@ -978,15 +921,6 @@ fn pairing_accepts_only_well_formed_credentials_and_never_echoes_rejected_ones()
     Ok(())
 }
 
-fn listed_document() -> serde_json::Value {
-    json!({
-        "kind":"sale", "orderId":Uuid::from_u128(10), "orderNumber":42,
-        "allocationId":null, "amount":"12.34", "customerName":null,
-        "occurredAt":"2026-10-24T10:00:00Z", "dueAt":"2026-10-24T10:00:00Z",
-        "latestAt":"2026-10-24T10:00:00Z", "isOverdue":false
-    })
-}
-
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -1043,92 +977,6 @@ fn response_body_limit_accepts_exact_bound_and_rejects_one_more_byte() -> TestRe
     clippy::panic_in_result_fn,
     reason = "HTTP boundary assertions use Result for setup."
 )]
-fn document_page_bounds_and_identity_are_checked_before_publication() -> TestResult {
-    let server = Holuto::new();
-    let mut api = api(&server)?;
-    api.session(&telemetry())?;
-    let document = listed_document();
-    server.page(
-        None,
-        json!({
-            "items":vec![document.clone();100],
-            "nextCursor":"opaque-next",
-            "previousCursor":null
-        }),
-    );
-    let page = api.documents(None, None)?;
-    assert_eq!(
-        serde_json::to_value(&page.items)?,
-        json!(vec![document.clone(); 100])
-    );
-    assert_eq!(page.next_cursor.as_deref(), Some("opaque-next"));
-    assert_eq!(page.previous_cursor, None);
-    assert_eq!(page.items.first().ok_or("missing item")?.amount, 1234);
-    for (items, cursor, expected) in [
-        (
-            vec![document.clone(); 101],
-            json!(null),
-            "strona przekracza limit",
-        ),
-        (
-            vec![document.clone()],
-            json!(""),
-            "pusty kursor następnej strony",
-        ),
-        (
-            vec![
-                document.clone(),
-                with(document.clone(), &json!({"orderNumber":0})),
-            ],
-            json!(null),
-            "numer zlecenia musi być dodatni",
-        ),
-        (
-            vec![with(document.clone(), &json!({"kind":"advance"}))],
-            json!(null),
-            "zaliczka bez identyfikatora alokacji",
-        ),
-        (
-            vec![with(document, &json!({"allocationId":Uuid::from_u128(12)}))],
-            json!(null),
-            "sprzedaż z identyfikatorem alokacji",
-        ),
-    ] {
-        server.fault(
-            "POST",
-            "/agent/documents/search",
-            Fault::Body {
-                status: 200,
-                body: serde_json::to_vec(
-                    &json!({"items":items,"nextCursor":cursor,"previousCursor":null}),
-                )?,
-            },
-        );
-        assert!(matches!(
-            api.documents(None, None),
-            Err(ApiError::Response(message)) if message == expected
-        ));
-    }
-    server.fault(
-        "POST",
-        "/agent/documents/search",
-        Fault::Body {
-            status: 200,
-            body: serde_json::to_vec(&json!({"items":[],"nextCursor":null,"previousCursor":""}))?,
-        },
-    );
-    assert!(matches!(
-        api.documents(None, None),
-        Err(ApiError::Response(message)) if message == "pusty kursor poprzedniej strony"
-    ));
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "HTTP boundary assertions use Result for setup."
-)]
 fn a_rejected_session_cannot_replace_the_previously_bound_printer() -> TestResult {
     let server = Holuto::new();
     let mut api = api(&server)?;
@@ -1158,7 +1006,7 @@ fn a_rejected_session_cannot_replace_the_previously_bound_printer() -> TestResul
     clippy::panic_in_result_fn,
     reason = "HTTP boundary assertions use Result for setup."
 )]
-fn api_path_prefix_and_advance_queue_fields_reach_the_peer_unchanged() -> TestResult {
+fn api_path_prefix_reaches_the_peer_unchanged() -> TestResult {
     let server = Holuto::new();
     server.fault(
         "POST",
@@ -1176,33 +1024,23 @@ fn api_path_prefix_and_advance_queue_fields_reach_the_peer_unchanged() -> TestRe
     api.session(&telemetry())?;
     server.fault(
         "POST",
-        "/prefix/agent/jobs",
+        "/prefix/agent/jobs/take",
         Fault::Body {
-            status: 201,
+            status: 200,
             body: serde_json::to_vec(&job_json())?,
         },
     );
-    let document: Document = serde_json::from_value(with(
-        listed_document(),
-        &json!({"kind":"advance","allocationId":Uuid::from_u128(12)}),
-    ))?;
-    let form = super::queue_form(&document, Some(BuyerNip::parse(" 5260250274 ")?))?;
-    api.queue(&form)?;
-    let requests = server.requests();
+    assert_eq!(api.take()?.map(|job| job.id), Some(JOB_ID));
     assert_eq!(
-        requests
+        server
+            .requests()
             .iter()
             .map(|request| (request.method.as_str(), request.path.as_str()))
             .collect::<Vec<_>>(),
         [
             ("POST", "/prefix/agent/session"),
-            ("POST", "/prefix/agent/jobs")
+            ("POST", "/prefix/agent/jobs/take")
         ]
-    );
-    assert_eq!(
-        requests.last().ok_or("missing queue")?.body,
-        json!({"kind":"advance","orderId":Uuid::from_u128(10),
-            "allocationId":Uuid::from_u128(12),"buyerNip":"5260250274"})
     );
     Ok(())
 }
@@ -1274,9 +1112,6 @@ fn every_authenticated_endpoint_propagates_http_failures_without_retry_or_mutati
     for (operation, method, path) in [
         ("session", "POST", "/agent/session"),
         ("heartbeat", "POST", "/agent/heartbeat"),
-        ("search", "POST", "/agent/documents/search"),
-        ("jobs", "POST", "/agent/jobs/search"),
-        ("queue", "POST", "/agent/jobs"),
         ("take", "POST", "/agent/jobs/take"),
         (
             "job",
@@ -1307,16 +1142,6 @@ fn every_authenticated_endpoint_propagates_http_failures_without_retry_or_mutati
             let response = match operation {
                 "session" => api.session(&telemetry()),
                 "heartbeat" => api.heartbeat(),
-                "search" => api
-                    .documents(None, DocumentSearch::parse("Jan")?.as_ref())
-                    .map(drop),
-                "jobs" => api.jobs(None, None).map(drop),
-                "queue" => api.queue(&super::model::QueueForm {
-                    allocation_id: None,
-                    buyer_nip: None,
-                    kind: ReceiptKind::Sale,
-                    order_id: ORDER_ID,
-                }),
                 "take" => api.take().map(drop),
                 "job" => api.job(JOB_ID).map(drop),
                 "report" => api.report(
@@ -1499,112 +1324,9 @@ fn session_uploads_all_seven_legal_vat_letters_and_refuses_an_eighth() -> TestRe
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
-    reason = "history responses and body-only private criteria are exact boundary assertions"
-)]
-fn jobs_search_keeps_private_criteria_in_the_body_and_continues_empty_pages() -> TestResult {
-    let server = Holuto::new();
-    let fields = TraceFields::default();
-    let _subscriber = subscriber::set_default(tracing_subscriber::registry().with(fields.clone()));
-    let mut api = api(&server)?;
-    api.session(&telemetry())?;
-    let search = DocumentSearch::parse(" PRIVATECUSTOMER\tWA123 ")?.ok_or("empty search")?;
-    server.jobs_page(
-        None,
-        json!({"items":[],"nextCursor":"opaque+/?=","previousCursor":null}),
-    );
-    let first = api.jobs(None, Some(&search))?;
-    assert_eq!(first.items.len(), 0);
-    assert_eq!(first.next_cursor.as_deref(), Some("opaque+/?="));
-    let page = json!({
-        "items":[{
-            "job":with(job_json(), &json!({
-                "state":"done", "receiptNumber":"123", "issuedAt":"2026-10-24T10:00:00Z"
-            })),
-            "customerName":"PRIVATECUSTOMER", "vehiclePlate":"WA123", "source":"staff"
-        }], "nextCursor":null, "previousCursor":"back"
-    });
-    server.jobs_page(Some("opaque+/?="), page.clone());
-    let next = api.jobs(first.next_cursor.as_deref(), Some(&search))?;
-    assert_eq!(next, serde_json::from_value::<JobsPage>(page)?);
-    assert_eq!(
-        server
-            .requests()
-            .iter()
-            .skip(1)
-            .map(|request| request.body.clone())
-            .collect::<Vec<_>>(),
-        [
-            json!({"cursor":{"limit":50},"filter":{},"search":{"q":"PRIVATECUSTOMER WA123"}}),
-            json!({"cursor":{"limit":50,"cursor":"opaque+/?="},"filter":{},
-                "search":{"q":"PRIVATECUSTOMER WA123"}}),
-        ]
-    );
-    let captured = fields
-        .0
-        .lock()
-        .map_err(|_poison| "poisoned fields")?
-        .join("\n");
-    assert!(captured.contains("/agent/jobs/search"));
-    for private in ["PRIVATECUSTOMER", "WA123", "opaque+/?=", server.token()] {
-        assert!(
-            !captured.contains(private),
-            "private value in request tracing"
-        );
-    }
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "history page validation assertions"
-)]
-fn jobs_history_rejects_oversized_pages_and_empty_cursors() -> TestResult {
-    let server = Holuto::new();
-    let mut api = api(&server)?;
-    api.session(&telemetry())?;
-    let row = json!({
-        "job":job_json(),
-        "customerName":null,
-        "vehiclePlate":null,
-        "source":"device"
-    });
-    for (body, expected) in [
-        (
-            json!({"items":vec![row;51],"nextCursor":null,"previousCursor":null}),
-            "strona przekracza limit",
-        ),
-        (
-            json!({"items":[],"nextCursor":"","previousCursor":null}),
-            "pusty kursor strony",
-        ),
-        (
-            json!({"items":[],"nextCursor":null,"previousCursor":""}),
-            "pusty kursor strony",
-        ),
-    ] {
-        server.fault(
-            "POST",
-            "/agent/jobs/search",
-            Fault::Body {
-                status: 200,
-                body: serde_json::to_vec(&body)?,
-            },
-        );
-        assert!(matches!(
-            api.jobs(None, None),
-            Err(ApiError::Response(message)) if message == expected
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
     reason = "transport deadline and no-retry assertions"
 )]
-fn jobs_search_transport_timeout_is_not_retried() -> TestResult {
+fn take_transport_timeout_is_not_retried() -> TestResult {
     let server = Holuto::new();
     let mut api = api(&server)?;
     api.session(&telemetry())?;
@@ -1619,13 +1341,13 @@ fn jobs_search_transport_timeout_is_not_retried() -> TestResult {
     let (release, held) = mpsc::channel();
     server.fault(
         "POST",
-        "/agent/jobs/search",
+        "/agent/jobs/take",
         Fault::Hold {
             reached,
             release: held,
         },
     );
-    let response = api.jobs(None, None);
+    let response = api.take();
     release.send(())?;
     arrived.recv_timeout(Duration::from_secs(5))?;
     assert!(matches!(

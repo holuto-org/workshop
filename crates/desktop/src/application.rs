@@ -206,29 +206,6 @@ impl Application {
                 app.action(action)
             });
         });
-        window.on_selected_document(|index| {
-            with_app(move |app| {
-                app.capture();
-                app.model.selected = usize::try_from(index)
-                    .ok()
-                    .filter(|index| *index < app.model.documents().len());
-                Ok(())
-            });
-        });
-        window.on_sort_documents(|column, descending| {
-            with_app(move |app| {
-                app.capture();
-                app.model.sort_documents(column, descending);
-                Ok(())
-            });
-        });
-        window.on_selected_receipt(|index| {
-            with_app(move |app| {
-                app.capture();
-                app.model.select_receipt(index);
-                Ok(())
-            });
-        });
         window.on_confirm(|accepted| {
             with_app(move |app| {
                 app.capture();
@@ -444,50 +421,7 @@ impl Application {
             Action::Start => self.start(),
             Action::Stop => return self.stop(false),
             Action::Quit => return self.stop(true),
-            // Pairing workers take no commands.
-            Action::Search | Action::JobsSearch => {
-                if self.model.running
-                    && let Some(command) = self
-                        .model
-                        .search_command(matches!(action, Action::JobsSearch))
-                {
-                    self.submit(command);
-                }
-            },
-            Action::OpenManual => self.model.manual = true,
-            Action::CloseManual => self.model.manual = false,
-            Action::RetryDocuments => {
-                if self.model.connected {
-                    self.submit(self.model.retry_documents_command());
-                }
-            },
-            Action::JobsFirstPage => {
-                if self.model.connected {
-                    self.submit(Command::JobsFirstPage);
-                }
-            },
-            Action::JobsPreviousPage => {
-                if self.model.jobs_previous_enabled() {
-                    self.submit(Command::JobsPreviousPage);
-                }
-            },
-            Action::JobsNextPage => {
-                if self.model.jobs_next_enabled() {
-                    self.submit(Command::JobsNextPage);
-                }
-            },
-            Action::PreviousPage => {
-                if self.model.connected && self.model.has_previous {
-                    self.submit(Command::PreviousPage);
-                }
-            },
-            Action::NextPage => {
-                if self.model.connected && self.model.has_next {
-                    self.submit(Command::NextPage);
-                }
-            },
-            Action::QueueReceipt
-            | Action::DailyReport
+            Action::DailyReport
             | Action::MonthlyReport
             | Action::PeriodicReport
             | Action::ResolveReport
@@ -542,7 +476,6 @@ impl Application {
             Arc::clone(&self.dir),
             self.model.settings.clone(),
             Arc::clone(&self.link),
-            self.model.initial_searches(),
             Self::worker_event,
         ) {
             Ok(worker) => {
@@ -640,16 +573,8 @@ impl Application {
                 self.model.vendor = Some(vendor);
                 self.model.printer_id = Some(printer_id);
                 self.model.settings.port = port;
-                self.model.tab = Tab::Receipts;
+                self.model.tab = Tab::Status;
             },
-            Event::Documents {
-                items,
-                page,
-                has_previous,
-                has_next,
-            } => self
-                .model
-                .set_documents(items, page, has_previous, has_next),
             Event::Device {
                 status,
                 blocked,
@@ -664,14 +589,6 @@ impl Application {
                 self.model.report_unresolved = report_unresolved;
                 self.model.orphaned_receipt = orphaned_receipt;
             },
-            Event::Jobs {
-                items,
-                page,
-                has_previous,
-                has_next,
-            } => self.model.set_jobs(items, page, has_previous, has_next),
-            Event::JobsUnavailable => self.model.jobs_unavailable(),
-            Event::DocumentsUnavailable => self.model.documents_unavailable(),
             Event::CommandCompleted => self.model.command_completed(),
             Event::Stopped => {
                 // Operation completion precedes Stopped; joining cannot interrupt printer I/O.

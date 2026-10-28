@@ -131,7 +131,6 @@ normalize away unsupported text. Freeze printer time, including Warsaw DST
 repeated/skipped times; never replace printer time with the host clock. Inject
 `today` only into pure UI/date functions.
 
-The Paragony list reads Holuto's job history; it is not fiscal evidence.
-History outages clear the displayed list without changing journal settlement
-or blocking. Unknown outcomes remain blocked until a person resolves them;
-display state must never turn uncertainty into permission to print.
+The **Stan** tab is display state, not fiscal evidence. Unknown outcomes remain
+blocked until a person resolves them; display state must never turn
+uncertainty into permission to print.

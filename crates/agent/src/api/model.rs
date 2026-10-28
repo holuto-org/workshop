@@ -8,21 +8,37 @@
 //! their values in `Debug`: they carry customer, receipt and device data.
 //! `contract::tests` checks these types against the schema.
 
-use std::{fmt, num::NonZeroU32};
+use std::fmt;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use super::{APP_VERSION, DOCUMENTS_LIMIT, JOBS_LIMIT};
-use crate::{
-    documents::{Document, ReceiptKind},
-    settings::Token,
-};
+use super::APP_VERSION;
+use crate::settings::Token;
 use fiscal::{
     device::{Device, VatKind, VatRate, Vendor},
     receipt::{PaymentForm, VAT_SLOTS},
 };
-use uuid::Uuid;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReceiptKind {
+    /// Payment allocation with one line per VAT rate.
+    Advance,
+    /// Posted order's final sale; unpaid balance prints as credit.
+    Sale,
+}
+
+impl ReceiptKind {
+    pub(crate) fn check_allocation(self, allocation_id: Option<Uuid>) -> Result<(), String> {
+        match (self, allocation_id) {
+            (Self::Advance, Some(_)) | (Self::Sale, None) => Ok(()),
+            (Self::Advance, None) => Err("zaliczka bez identyfikatora alokacji".to_owned()),
+            (Self::Sale, Some(_)) => Err("sprzedaż z identyfikatorem alokacji".to_owned()),
+        }
+    }
+}
 
 /// Polish VAT rates as `KSeF` codes them; `zw` marks an exempt supply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +143,6 @@ pub struct Job {
     pub id: Uuid,
     pub printer_id: Uuid,
     pub kind: ReceiptKind,
-    pub order_id: Uuid,
     pub order_number: i64,
     #[serde(deserialize_with = "Option::deserialize")]
     pub allocation_id: Option<Uuid>,
@@ -141,7 +156,6 @@ pub struct Job {
     pub state: JobState,
     #[serde(deserialize_with = "Option::deserialize")]
     pub attempt: Option<Uuid>,
-    pub created_at: Timestamp,
     /// The printer's issue time of the job's receipt.
     #[serde(deserialize_with = "Option::deserialize")]
     pub issued_at: Option<Timestamp>,
@@ -176,72 +190,6 @@ pub struct JobPayment {
     pub form: PaymentForm,
 }
 
-/// A job-history row; the order's current names live outside [`Job`].
-#[derive(PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JobView {
-    pub job: Job,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub customer_name: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub vehicle_plate: Option<String>,
-}
-
-/// A null cursor means its direction has nothing to continue.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Page {
-    pub items: Vec<Document>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub next_cursor: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub previous_cursor: Option<String>,
-}
-
-/// A null cursor means its direction has nothing to continue.
-#[derive(PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JobsPage {
-    pub items: Vec<JobView>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub next_cursor: Option<String>,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub previous_cursor: Option<String>,
-}
-
-/// `POST …/search` body for documents and job history.
-///
-/// Criteria may hold personal data, so they travel only in a body. No filter and no
-/// sort: the device feed is scoped to its printer and the service orders it.
-#[derive(Serialize)]
-pub struct TableSearch {
-    pub cursor: Cursor,
-    pub filter: NoFilter,
-    pub search: Search,
-}
-
-#[derive(Serialize)]
-pub struct Cursor {
-    /// Opaque: a page's `nextCursor` or `previousCursor` unchanged.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-    /// Always sent, so the service's default page size never applies.
-    pub limit: NonZeroU32,
-}
-
-#[expect(
-    clippy::empty_structs_with_brackets,
-    reason = "serde writes the required `{}` for braces, but `null` for a unit struct"
-)]
-#[derive(Debug, Default, Serialize)]
-pub struct NoFilter {}
-
-#[derive(Serialize)]
-pub struct Search {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub q: Option<String>,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultForm {
@@ -250,15 +198,6 @@ pub struct ResultForm {
     pub receipt_number: Option<String>,
     pub result: Option<String>,
     pub state: Outcome,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QueueForm {
-    pub allocation_id: Option<Uuid>,
-    pub buyer_nip: Option<String>,
-    pub kind: ReceiptKind,
-    pub order_id: Uuid,
 }
 
 #[derive(Serialize)]
@@ -293,14 +232,7 @@ redacted_debug!(
     JobLine,
     JobAdvance,
     JobPayment,
-    JobView,
-    Page,
-    JobsPage,
-    TableSearch,
-    Cursor,
-    Search,
     ResultForm,
-    QueueForm,
     PairForm,
     Pairing,
 );
@@ -478,35 +410,6 @@ impl From<Outcome> for JobState {
             Outcome::Failed => Self::Failed,
             Outcome::Unknown => Self::Unknown,
         }
-    }
-}
-impl Page {
-    pub(crate) fn check(&self) -> Result<(), String> {
-        if usize::try_from(DOCUMENTS_LIMIT.get()).is_ok_and(|limit| self.items.len() > limit) {
-            return Err("strona przekracza limit".to_owned());
-        }
-        if self.next_cursor.as_deref().is_some_and(str::is_empty) {
-            return Err("pusty kursor następnej strony".to_owned());
-        }
-        if self.previous_cursor.as_deref().is_some_and(str::is_empty) {
-            return Err("pusty kursor poprzedniej strony".to_owned());
-        }
-        self.items.iter().try_for_each(Document::check)
-    }
-}
-impl JobsPage {
-    pub(crate) fn check(&self) -> Result<(), String> {
-        if usize::try_from(JOBS_LIMIT.get()).is_ok_and(|limit| self.items.len() > limit) {
-            return Err("strona przekracza limit".to_owned());
-        }
-        if [self.next_cursor.as_deref(), self.previous_cursor.as_deref()]
-            .into_iter()
-            .flatten()
-            .any(str::is_empty)
-        {
-            return Err("pusty kursor strony".to_owned());
-        }
-        Ok(())
     }
 }
 pub(crate) fn printer_slots(rates: &[VatRate]) -> (Vec<VatRateMapping>, Vec<String>) {

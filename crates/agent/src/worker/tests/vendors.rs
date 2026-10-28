@@ -1,6 +1,6 @@
 use super::{
     ClockScope, Command, Device, Event, Holuto, Journal, Operation, Settings, Worker, job_json,
-    problem, receive_until, state_dir, stop,
+    problem, receive_poll_after_command, receive_until, state_dir, stop, wake,
 };
 use crate::{
     Error,
@@ -14,7 +14,6 @@ use crate::{
         printers::{RoutingLink, Simulator, VENDORS},
         with,
     },
-    worker::Searches,
 };
 use elzab::simulator::{Fault as ElzabFault, Simulator as ElzabPeer};
 use fiscal::{
@@ -48,7 +47,6 @@ fn spawn(
             ..Settings::default()
         },
         sim.link(),
-        Searches::default(),
         move |event| sender.send(event).unwrap(),
     )
     .unwrap();
@@ -73,10 +71,6 @@ fn each_vendor_prints_a_receipt_end_to_end() {
         assert_eq!(sim.reports(), 0);
         assert_eq!(holuto.job(id)["state"], "done", "{vendor:?}");
         assert_eq!(holuto.job(id)["receiptNumber"], "1");
-        assert!(received.iter().any(|event| matches!(
-            event, Event::Jobs { items, .. }
-                if items.iter().any(|item| item.job.id == id && item.job.state == JobState::Done)
-        )));
         assert!(
             received.iter().any(|event| matches!(
                 event,
@@ -349,7 +343,6 @@ fn blocked_worker_never_enumerates_or_switches_to_an_available_printer() {
                 ..Settings::default()
             },
             Arc::<RoutingLink>::clone(&link),
-            Searches::default(),
             move |event| sender.send(event).unwrap(),
         )
         .unwrap();
@@ -461,7 +454,7 @@ fn device_becoming_unsupported_mid_session_stops_heartbeats_and_takes_no_jobs() 
             assert_eq!(agent.step().unwrap(), RETRY);
             assert!(!agent.status().unwrap().ready());
             assert_eq!(
-                agent.take_news().notices,
+                agent.take_notices(),
                 [format!("Drukarka niegotowa: {reason}")]
             );
         }
@@ -500,12 +493,8 @@ fn startup_reprobes_unavailable_capabilities_and_connects_when_the_profile_is_re
         assert_eq!(holuto.requests(), []);
         unqualified(&sim, false);
         *clock.lock().unwrap() += RETRY;
-        worker.submit(Command::NextPage);
-        let _ready = receive_until(&events, |event| {
-            matches!(
-                event, Event::Device { status: Some(status), .. } if status.ready()
-            )
-        });
+        wake(&worker);
+        let _ready = receive_poll_after_command(&events);
         let _stopped = stop(worker, &events);
         assert_eq!(holuto.job(id)["state"], "done");
         assert_eq!(sim.receipts(), 1);

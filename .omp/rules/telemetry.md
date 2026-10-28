@@ -19,7 +19,7 @@ ownership in desktop.
   Never customer/company names, NIP, line text, amounts, token, full URL/path/query,
   hostname, local paths or raw request/response/problem bodies. Do not instrument
   arguments with automatic `Debug`; skip payloads/secrets. Route names are fixed
-  templates, not actual IDs/URLs/cursors.
+  templates, not actual IDs/URLs.
 - Follow the [signal policy](../../docs/telemetry.md#what-is-sent); do not add
   poll-specific root spans or INFO messages. Keep normal HTTP-call spans.
 - Agent owns the single fiscal-operation span with

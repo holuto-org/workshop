@@ -1,5 +1,7 @@
 //! Debug-only peers kept alive for the whole application lifetime: the three
-//! printer simulators and a loopback Holuto filled with sample data for UI work.
+//! printer simulators and a loopback Holuto with sample jobs in its queue.
+//!
+//! A simulator run starts processing on launch, so the samples visibly print.
 use agent::{
     settings::Settings,
     testing::{Holuto, job_json, with},
@@ -20,20 +22,24 @@ pub(super) struct Simulators {
 }
 impl Simulators {
     pub(super) fn start() -> Self {
+        // Brands that print no company footer need the company in their header.
         let novitus = NovitusSimulator::start();
         novitus.set_identity("NOVITUS HD II ONLINE", "3.50");
+        novitus.set_header(COMPANY);
+        let elzab = ElzabSimulator::start();
+        elzab.set_header(COMPANY);
         let holuto = Holuto::new();
-        sample_data(&holuto);
+        queue_samples(&holuto);
         Self {
             posnet: PosnetSimulator::start(),
             novitus,
-            elzab: ElzabSimulator::start(),
+            elzab,
             holuto,
         }
     }
 
     /// Points the settings at the chosen printer simulator and the sample Holuto,
-    /// and starts processing on launch so the sample data shows at once.
+    /// and starts processing on launch so the queued samples print at once.
     pub(super) fn connection(
         &self,
         mut settings: Settings,
@@ -59,86 +65,37 @@ impl Simulators {
     }
 }
 
-/// Jobs in every state Paragony shows, plus orders for "+ Wystaw paragon".
-fn sample_data(holuto: &Holuto) {
-    let jobs = [
-        (1041, "queued", "Anna Nowak", "KR98765", "Przegląd okresowy"),
-        (1040, "done", "Łukasz Kowalski", "WA12345", "Wymiana oleju"),
-        (
-            1039,
-            "failed",
-            "Firma Transbud Sp. z o.o.",
-            "PO44521",
-            "Wymiana rozrządu",
-        ),
-        (
-            1038,
-            "expired",
-            "Marek Wiśniewski",
-            "GD7731K",
-            "Geometria kół",
-        ),
-        (
-            1037,
-            "done",
-            "Katarzyna Zielińska",
-            "WW5521C",
-            "Klimatyzacja",
-        ),
-        (
-            1036,
-            "voided",
-            "Piotr Lewandowski",
-            "LU22018",
-            "Wymiana opon",
-        ),
-        (1035, "done", "Anna Nowak", "KR98765", "Wymiana oleju"),
-    ];
-    for (index, (number, state, customer, plate, service)) in (0_u8..).zip(jobs) {
-        let id = Uuid::from_u128(number);
-        let created = format!("2026-10-{:02}T{:02}:15:00Z", 27 - index / 3, 9 + index);
-        let done = state == "done";
-        let mut job = with(
-            job_json(),
-            &json!({
-                "id": id, "orderId": Uuid::from_u128(number + 5000), "orderNumber": number,
-                "state": state, "createdAt": created,
-                "receiptNumber": done.then(|| format!("{}", 2100 + u32::from(index))),
-                "issuedAt": done.then_some(&created),
-                "result": (state == "failed").then_some("Nieprawidłowa stawka VAT dla pozycji 2"),
-            }),
-        );
-        if let Some(name) = job.pointer_mut("/lines/0/name") {
-            *name = json!(service);
-        }
-        holuto.insert(job);
-        holuto.set_job_metadata(
-            id,
-            &json!({
-                "customerName": customer, "vehiclePlate": plate,
-                "issuedAt": done.then_some(&created), "source": "staff"
-            }),
-        );
-    }
-    // The fake queues every order as the `job_json` sale, so the amounts match it.
-    let amount = job_json().get("total").cloned();
-    holuto.documents(
-        [
-            (1042, "Tomasz Kamiński"),
-            (1043, "Auto-Serwis Nowak"),
-            (1044, "Joanna Wójcik"),
-        ]
-        .into_iter()
-        .map(|(number, customer)| {
-            json!({
-                "kind": "sale", "orderId": Uuid::from_u128(number + 5000), "orderNumber": number,
-                "allocationId": null, "amount": amount, "customerName": customer,
-                "occurredAt": "2026-10-27T08:00:00Z", "dueAt": "2026-10-27T08:00:00Z",
-                "latestAt": "2026-10-27T08:00:00Z", "isOverdue": false
-            })
-        })
-        .collect(),
+/// The sample jobs: a sale and an advance.
+const SAMPLE_JOBS: [Uuid; 2] = [Uuid::from_u128(1041), Uuid::from_u128(1042)];
+/// The workshop's Holuto company profile, as printed by every simulated brand.
+const COMPANY: &str = "Warsztat Kowalski";
+
+/// Queues the sample jobs as staff would queue them in Holuto.
+fn queue_samples(holuto: &Holuto) {
+    let [sale, advance] = SAMPLE_JOBS;
+    let sale = with(
+        job_json(),
+        &json!({
+            "id": sale, "orderId": Uuid::from_u128(6041), "orderNumber": 1041,
+            "companyName": COMPANY
+        }),
     );
+    // ASCII names print unchanged on every simulated brand.
+    let advance = with(
+        job_json(),
+        &json!({
+            "id": advance, "orderId": Uuid::from_u128(6042), "orderNumber": 1042,
+            "companyName": COMPANY, "kind": "advance", "allocationId": Uuid::from_u128(7042),
+            "total": "300.00", "payments": [{"form": "card", "amount": "300.00"}],
+            "lines": [
+                {"name": "Zaliczka 23%", "quantity": "1", "unitPrice": "300.00",
+                 "total": "300.00", "vatRate": "23", "vatLetter": "A"}
+            ]
+        }),
+    );
+    for job in [sale, advance] {
+        let _id = holuto.enqueue(job);
+    }
 }
 
 #[cfg(test)]

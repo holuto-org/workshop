@@ -1,170 +1,21 @@
-import { Button, LineEdit, ComboBox, CheckBox, ScrollView, TabWidget, Palette } from "std-widgets.slint";
+import { Button, LineEdit, ComboBox, CheckBox, TabWidget, Palette } from "std-widgets.slint";
 
-export enum Action { save, pair, start, stop, quit, queue-receipt, search, retry-documents, previous-page, next-page, jobs-search, jobs-first-page, jobs-previous-page, jobs-next-page, open-manual, close-manual, daily-report, monthly-report, periodic-report, resolve-report, acknowledge-orphaned-receipt }
-
-export struct ReceiptRow { group: string, order: string, status: string, customer: string, amount: string, receipt: string, note: string, tone: int }
-export struct DetailLine { name: string, quantity: string, price: string, total: string }
-export struct DetailTotal { label: string, amount: string }
-export struct ReceiptDetail { order: string, customer: string, buyer-nip: string, lines: [DetailLine], totals: [DetailTotal], warning: string }
-
-component ReceiptItem inherits Rectangle {
-    in property <ReceiptRow> receipt;
-    in property <bool> selected;
-    callback select();
-    callback reveal(length, length);
-    function reveal-selection() {
-        if root.selected { root.reveal(root.y, root.height); }
-    }
-    changed selected => { root.reveal-selection(); }
-    changed y => { root.reveal-selection(); }
-    changed height => { root.reveal-selection(); }
-    accessible-role: list-item;
-    accessible-label: receipt.order;
-    accessible-description: receipt.status + (receipt.customer != "" ? " · " + receipt.customer : "") + " · " + receipt.amount + (receipt.receipt != "" ? " · " + receipt.receipt : "") + (receipt.note != "" ? " · " + receipt.note : "");
-    accessible-item-selectable: true;
-    accessible-item-selected: root.selected;
-    accessible-action-default => { root.select(); }
-    VerticalLayout {
-        spacing: 0px;
-        if root.receipt.group != "": Text { height: 32px; text: root.receipt.group; color: #595959; font-size: 12px; vertical-alignment: center; }
-        Rectangle {
-            background: root.selected ? #e6f4ff : touch.has-hover ? #fafafa : white;
-            border-radius: 6px;
-            touch := TouchArea { clicked => { root.select(); } }
-            VerticalLayout {
-                padding: 12px; spacing: 4px;
-                HorizontalLayout {
-                    spacing: 8px;
-                    Text { text: root.receipt.order; font-weight: 600; color: #262626; horizontal-stretch: 1; vertical-alignment: center; accessible-role: none; }
-                    Rectangle {
-                        width: chip.preferred-width + 16px; height: 22px; border-radius: 11px;
-                        background: root.receipt.tone == 2 ? #fff1f0 : root.receipt.tone == 1 ? #f6ffed : root.receipt.tone == 3 ? #f5f5f5 : #e6f4ff;
-                        chip := Text { text: root.receipt.status; color: root.receipt.tone == 2 ? #cf1322 : root.receipt.tone == 1 ? #389e0d : root.receipt.tone == 3 ? #595959 : #0958d9; horizontal-alignment: center; vertical-alignment: center; font-size: 12px; accessible-role: none; }
-                    }
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    Text { text: root.receipt.customer; color: #595959; font-size: 12px; overflow: elide; horizontal-stretch: 1; accessible-role: none; }
-                    Text { text: root.receipt.amount; color: #262626; font-size: 12px; accessible-role: none; }
-                }
-                if root.receipt.receipt != "": Text { text: root.receipt.receipt; color: #8c8c8c; font-size: 12px; accessible-role: none; }
-                if root.receipt.note != "": Text { text: root.receipt.note; color: #cf1322; font-size: 12px; wrap: word-wrap; accessible-role: none; }
-            }
-        }
-    }
-}
+export enum Action { save, pair, start, stop, quit, daily-report, monthly-report, periodic-report, resolve-report, acknowledge-orphaned-receipt }
 
 component Hint inherits Text { color: #8c8c8c; font-size: 12px; wrap: word-wrap; }
 component Heading inherits Text { font-size: 18px; font-weight: 600; color: #262626; }
 component Card inherits Rectangle { background: white; border-width: 1px; border-color: #f0f0f0; border-radius: 8px; }
-component Table inherits Rectangle {
-    in property <[[StandardListViewItem]]> rows;
-    in-out property <[TableColumn]> columns;
-    in-out property <int> current-row: -1;
-    in property <string> empty-text;
-    callback current-row-changed(int);
-    callback sort(int, bool);
-    callback activate(int);
-    min-width: 400px;
-    min-height: 200px;
-    horizontal-stretch: 1;
-    vertical-stretch: 1;
-    accessible-role: table;
-    forward-focus: keys;
-    clip: true;
-    function select(index: int) {
-        if index >= 0 && index < root.rows.length {
-            root.current-row = index;
-            root.current-row-changed(index);
-            if index * 38px + scroll.content-y < 0px { scroll.content-y = -index * 38px; }
-            if (index + 1) * 38px + scroll.content-y > scroll.visible-height {
-                scroll.content-y = scroll.visible-height - (index + 1) * 38px;
-            }
-        }
-    }
-    Rectangle {
-        x: 0px; y: 0px; width: parent.width - 16px; height: 42px; clip: true;
-        header := HorizontalLayout {
-            x: scroll.content-x;
-            width: scroll.content-width;
-            spacing: 0px;
-            for column[index] in root.columns: Rectangle {
-                min-width: max(column.min-width, column.width);
-                horizontal-stretch: column.horizontal-stretch;
-                background: header-touch.pressed ? #eeeeee : header-touch.has-hover ? #f1f1f1 : #fafafa;
-                accessible-role: button;
-                accessible-label: column.title;
-                accessible-description: column.sort-order == SortOrder.ascending ? "Rosnąco" : column.sort-order == SortOrder.descending ? "Malejąco" : "Nieposortowane";
-                accessible-action-default => { header-keys.focus(); root.sort(index, column.sort-order == SortOrder.ascending); }
-                header-touch := TouchArea { width: parent.width - 10px; clicked => { header-keys.focus(); root.sort(index, column.sort-order == SortOrder.ascending); } }
-                header-keys := FocusScope {
-                    width: 0px;
-                    key-pressed(event) => {
-                        if event.text == Key.Return || event.text == " " { root.sort(index, column.sort-order == SortOrder.ascending); return accept; }
-                        reject
-                    }
-                }
-                Text { x: 12px; width: parent.width - 40px; height: 100%; text: column.title; color: #666666; vertical-alignment: center; overflow: elide; accessible-role: none; }
-                Text { x: parent.width - 28px; width: 16px; height: 100%; text: column.sort-order == SortOrder.ascending ? "↑" : column.sort-order == SortOrder.descending ? "↓" : ""; color: #666666; vertical-alignment: center; accessible-role: none; }
-                TouchArea {
-                    x: parent.width - 10px; width: 10px; mouse-cursor: ew-resize;
-                    moved => { if self.pressed { column.width = max(column.min-width, parent.width + self.mouse-x - self.pressed-x); } }
-                }
-                Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: #e5e5e5; }
-            }
-        }
-    }
-    scroll := ScrollView {
-        x: 0px; y: 42px; width: parent.width - 16px; height: parent.height - 42px;
-        vertical-scrollbar-policy: always-off;
-        content-width: max(self.visible-width, header.min-width);
-        content-height: root.rows.length * 38px;
-        for row[index] in root.rows: Rectangle {
-            y: index * 38px; height: 38px; width: scroll.content-width;
-            border-radius: 4px;
-            background: root.current-row == index ? #e9e9e9 : row-touch.has-hover ? #f4f4f4 : mod(index, 2) == 0 ? #fdfdfd : transparent;
-            accessible-role: list-item;
-            accessible-label: row[0].text;
-            accessible-description: row[0].text + " · " + row[1].text + " · " + row[2].text + " · " + row[3].text + " · " + row[4].text;
-            accessible-item-selectable: true;
-            accessible-item-selected: root.current-row == index;
-            accessible-action-default => { keys.focus(); root.select(index); }
-            row-touch := TouchArea { clicked => { keys.focus(); root.select(index); } }
-            if root.current-row == index: Rectangle { x: 0px; y: 11px; width: 3px; height: 16px; border-radius: 2px; background: #0078d4; }
-            HorizontalLayout {
-                spacing: 0px;
-                for cell[column-index] in row: Rectangle {
-                    min-width: max(root.columns[column-index].min-width, root.columns[column-index].width);
-                    horizontal-stretch: root.columns[column-index].horizontal-stretch;
-                    Text { x: 12px; width: parent.width - 24px; height: 100%; text: cell.text; color: #262626; vertical-alignment: center; overflow: elide; accessible-role: none; }
-                }
-            }
-        }
-    }
-    // A separate gutter keeps Fluent's overlay scrollbar off the cells.
-    ScrollView {
-        x: parent.width - 16px; y: 42px; width: 16px; min-width: 0px;
-        height: scroll.height;
-        horizontal-scrollbar-policy: always-off;
-        content-width: self.visible-width;
-        content-height: scroll.content-height;
-        content-y <=> scroll.content-y;
-    }
-    keys := FocusScope {
-        width: 0px;
-        key-pressed(event) => {
-            if event.text == Key.UpArrow { root.select(max(0, root.current-row - 1)); return accept; }
-            if event.text == Key.DownArrow { root.select(min(root.rows.length - 1, root.current-row + 1)); return accept; }
-            if event.text == Key.Home { root.select(0); return accept; }
-            if event.text == Key.End { root.select(root.rows.length - 1); return accept; }
-            if event.text == Key.PageUp { root.select(max(0, root.current-row - max(1, floor(scroll.visible-height / 38px)))); return accept; }
-            if event.text == Key.PageDown { root.select(min(root.rows.length - 1, root.current-row + max(1, floor(scroll.visible-height / 38px)))); return accept; }
-            if event.text == Key.Return && root.current-row >= 0 { root.activate(root.current-row); return accept; }
-            reject
-        }
-    }
-    if root.rows.length == 0: Text { y: 42px; width: 100%; height: parent.height - 42px; text: root.empty-text; color: #8c8c8c; horizontal-alignment: center; vertical-alignment: center; }
+
+/// A read-only fact; assistive technology reads the label with its value.
+component StatusRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> alert;
+    spacing: 24px;
+    Text { text: root.label; width: 180px; color: #595959; vertical-alignment: center; accessible-role: none; }
+    Text { accessible-label: root.label; accessible-value: root.value; text: root.value; color: root.alert ? #cf1322 : #262626; font-weight: 600; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
 }
+
 export component AppWindow inherits Window {
     title: "Holuto Workshop";
     icon: @image-url("../assets/icon.png");
@@ -176,47 +27,26 @@ export component AppWindow inherits Window {
     // Printers are plugged in while the app runs in the tray: re-enumerate on showing Ustawienia.
     changed tab => { if self.tab == 2 { root.refresh-ports(); } }
     in-out property <int> port-index;
-    in property <bool> connected;
     in property <bool> running;
     in property <bool> saving-settings;
     in property <bool> pairing;
     in property <bool> starting;
     private property <bool> settings-editable: !root.running && !root.saving-settings && !root.pairing;
     in property <bool> stopping;
-    in property <bool> queue-enabled;
     in property <bool> reports-enabled;
     in property <bool> daily-report-enabled;
-    in property <bool> previous-enabled;
-    in property <bool> next-enabled;
     in property <bool> report-unresolved;
     in property <bool> orphaned-receipt;
     in property <string> holuto-text;
     in property <string> printer-text;
     in property <int> printer-tone;
     in property <string> status;
-    in property <[[StandardListViewItem]]> documents;
-    in property <[ReceiptRow]> receipts;
-    in-out property <string> receipt-search;
-    in property <ReceiptDetail> receipt-detail;
-    in property <int> receipt-selected: -1;
-    in property <bool> jobs-unavailable;
-    in property <bool> jobs-previous-enabled;
-    in property <bool> jobs-next-enabled;
-    in property <string> jobs-page-label;
-    in property <bool> manual;
-    in-out property <[TableColumn]> document-columns: [
-        { title: "Zlecenie", min-width: 100px },
-        { title: "Rodzaj", min-width: 120px },
-        { title: "Klient", min-width: 180px, horizontal-stretch: 1 },
-        { title: "Kwota", min-width: 110px },
-        { title: "Termin paragonu", min-width: 300px, horizontal-stretch: 1 },
-    ];
-    in property <string> page-label;
-    in property <bool> documents-unavailable;
-    in-out property <int> selected: -1;
-    in-out property <string> nip;
-    in-out property <string> search;
-    in property <bool> searching;
+    // Stan: the model words every value; Slint only shows them.
+    in property <string> processing-state;
+    in property <string> holuto-state;
+    in property <string> printer-identity;
+    in property <string> printer-state;
+    in property <string> start-hint;
     in-out property <string> pairing-code;
     in-out property <string> port;
     in property <[string]> ports;
@@ -236,26 +66,9 @@ export component AppWindow inherits Window {
     in property <string> confirm-text;
     in property <string> confirm-action;
     in property <bool> confirming;
-    in property <bool> confirm-nip;
-    in property <bool> nip-invalid;
     callback action(Action);
-    callback selected-document(int);
-    callback sort-documents(int, bool);
-    callback selected-receipt(int);
     callback confirm(bool);
     init => { Palette.color-scheme = ColorScheme.light; }
-    // Searches once typing pauses; Enter searches at once.
-    search-timer := Timer { interval: 400ms; running: false; triggered => { self.running = false; root.action(Action.search); } }
-    receipt-search-timer := Timer { interval: 400ms; running: false; triggered => { self.running = false; root.action(Action.jobs-search); } }
-    forward-focus: shortcuts;
-    shortcuts := FocusScope {
-        key-pressed(event) => {
-            if !root.manual && !root.confirming && root.tab == 0 {
-                if event.modifiers.control && (event.text == "f" || event.text == "F") { receipt-search.focus(); return accept; }
-                if event.text == Key.Escape { root.receipt-search = ""; receipt-search-timer.running = false; root.action(Action.jobs-search); return accept; }
-            }
-            reject
-        }
     VerticalLayout {
         spacing: 0px;
         Rectangle {
@@ -274,113 +87,28 @@ export component AppWindow inherits Window {
             TabWidget {
                 current-index <=> root.tab;
                 Tab {
-                    title: "Paragony";
+                    title: "Stan";
                     VerticalLayout {
                         padding-top: 16px; spacing: 16px;
-                        HorizontalLayout {
-                            spacing: 16px;
-                            receipt-search := LineEdit {
-                                accessible-label: "Szukaj";
-                                placeholder-text: "Szukaj: nr zlecenia, klient, nr paragonu, rejestracja, pozycja";
-                                text <=> root.receipt-search;
-                                edited(text) => { receipt-search-timer.running = true; receipt-search-timer.restart(); }
-                                accepted(text) => { receipt-search-timer.running = false; root.action(Action.jobs-search); receipt-keys.focus(); }
-                            }
-                            Button { text: "+ Wystaw paragon"; accessible-label: "+ Wystaw paragon"; primary: true; clicked => { root.action(Action.open-manual); } }
-                        }
                         Card {
-                            horizontal-stretch: 1; vertical-stretch: 1;
-                            HorizontalLayout {
-                                padding: 16px; spacing: 24px;
-                                receipt-scroll := ScrollView {
-                                    width: 410px;
-                                    accessible-role: list;
-                                    accessible-label: "Paragony";
-                                    VerticalLayout {
-                                        padding-right: 14px; spacing: 0px;
-                                        for row[index] in root.receipts: ReceiptItem {
-                                            receipt: row; selected: root.receipt-selected == index;
-                                            select => { receipt-keys.focus(); root.selected-receipt(index); }
-                                            reveal(top, height) => {
-                                                if top + receipt-scroll.content-y < 0px { receipt-scroll.content-y = -top; }
-                                                if top + height + receipt-scroll.content-y > receipt-scroll.visible-height {
-                                                    receipt-scroll.content-y = receipt-scroll.visible-height - top - height;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Rectangle { width: 1px; background: #f0f0f0; }
-                                ScrollView {
-                                    horizontal-stretch: 1;
-                                    VerticalLayout {
-                                        spacing: 16px; alignment: start;
-                                        if root.receipt-detail.order != "": VerticalLayout {
-                                            spacing: 16px;
-                                            accessible-role: groupbox;
-                                            accessible-label: "Szczegóły paragonu";
-                                            VerticalLayout {
-                                                spacing: 4px;
-                                                Text { text: root.receipt-detail.order; font-size: 18px; font-weight: 600; color: #141414; }
-                                                if root.receipt-detail.customer != "": Text { text: root.receipt-detail.customer; color: #595959; }
-                                                if root.receipt-detail.buyer-nip != "": Text { text: root.receipt-detail.buyer-nip; color: #595959; }
-                                            }
-                                            if root.receipt-detail.warning != "": Text { text: root.receipt-detail.warning; color: #cf1322; wrap: word-wrap; }
-                                            VerticalLayout {
-                                                spacing: 6px;
-                                                HorizontalLayout {
-                                                    spacing: 16px;
-                                                    Text { text: "Pozycja"; color: #8c8c8c; font-size: 12px; horizontal-stretch: 1; }
-                                                    Text { text: "Ilość"; color: #8c8c8c; font-size: 12px; width: 56px; horizontal-alignment: right; }
-                                                    Text { text: "Cena"; color: #8c8c8c; font-size: 12px; width: 96px; horizontal-alignment: right; }
-                                                    Text { text: "Wartość"; color: #8c8c8c; font-size: 12px; width: 96px; horizontal-alignment: right; }
-                                                }
-                                                Rectangle { height: 1px; background: #f0f0f0; }
-                                                for line in root.receipt-detail.lines: HorizontalLayout {
-                                                    spacing: 16px;
-                                                    Text { text: line.name; color: #262626; wrap: word-wrap; horizontal-stretch: 1; }
-                                                    Text { text: line.quantity; color: #262626; width: 56px; horizontal-alignment: right; }
-                                                    Text { text: line.price; color: #262626; width: 96px; horizontal-alignment: right; }
-                                                    Text { text: line.total; color: #262626; width: 96px; horizontal-alignment: right; }
-                                                }
-                                                Rectangle { height: 1px; background: #f0f0f0; }
-                                                for total[index] in root.receipt-detail.totals: HorizontalLayout {
-                                                    spacing: 16px;
-                                                    Text { text: total.label; color: index == 0 ? #262626 : #595959; font-weight: index == 0 ? 600 : 400; horizontal-stretch: 1; horizontal-alignment: right; }
-                                                    Text { text: total.amount; color: index == 0 ? #262626 : #595959; font-weight: index == 0 ? 600 : 400; width: 96px; horizontal-alignment: right; }
-                                                }
-                                            }
-                                        }
-                                        if root.jobs-unavailable: Heading { text: "Historia paragonów jest niedostępna"; }
-                                        if root.jobs-unavailable: Hint { text: "Nie można pobrać historii z Holuto. Spróbuj ponownie."; }
-                                        if root.jobs-unavailable: Button { text: "Ponów pobieranie historii"; accessible-label: "Ponów pobieranie historii"; enabled: root.connected; clicked => { root.action(Action.jobs-first-page); } }
-                                        if root.receipts.length == 0 && !root.jobs-unavailable: Heading { text: root.receipt-search != "" ? "Brak pasujących paragonów" : "Nie ma jeszcze paragonów"; }
-                                        if root.receipts.length == 0 && !root.jobs-unavailable && root.receipt-search == "" && !root.running: Hint { text: "Połącz Holuto i uruchom obsługę drukarki w Ustawieniach. Zadania z Holuto drukują się automatycznie."; }
-                                    }
+                            vertical-stretch: 0;
+                            VerticalLayout {
+                                padding: 24px; spacing: 16px; alignment: start;
+                                StatusRow { label: "Obsługa drukarki"; value: root.processing-state; }
+                                Rectangle { height: 1px; background: #f0f0f0; }
+                                StatusRow { label: "Holuto"; value: root.holuto-state; }
+                                Rectangle { height: 1px; background: #f0f0f0; }
+                                StatusRow { label: "Drukarka"; value: root.printer-identity; }
+                                Rectangle { height: 1px; background: #f0f0f0; }
+                                StatusRow { label: "Stan drukarki"; value: root.printer-state; alert: root.printer-tone == 2; }
+                                VerticalLayout {
+                                    spacing: 4px;
+                                    Hint { text: "Paragony wystawiasz i przeglądasz w Holuto. Zadania z kolejki Holuto drukują się tutaj automatycznie."; }
+                                    if root.start-hint != "": Hint { text: root.start-hint; }
                                 }
                             }
                         }
-                        if root.jobs-previous-enabled || root.jobs-next-enabled: HorizontalLayout {
-                            spacing: 12px;
-                            if root.jobs-previous-enabled: Button { text: "Od początku"; accessible-label: "Historia od początku"; clicked => { root.action(Action.jobs-first-page); } }
-                            Rectangle { horizontal-stretch: 1; }
-                            Button { text: "Poprzednia"; accessible-label: "Poprzednia strona historii"; enabled: root.jobs-previous-enabled; clicked => { root.action(Action.jobs-previous-page); } }
-                            Text { text: root.jobs-page-label; vertical-alignment: center; }
-                            Button { text: "Następna"; accessible-label: "Następna strona historii"; enabled: root.jobs-next-enabled; clicked => { root.action(Action.jobs-next-page); } }
-                        }
-                        receipt-keys := FocusScope {
-                            width: 0px; height: 0px;
-                            private property <int> page-size: max(1, floor(receipt-scroll.visible-height * root.receipts.length / max(1px, receipt-scroll.content-height)));
-                            key-pressed(event) => {
-                                if event.text == Key.UpArrow { root.selected-receipt(max(0, root.receipt-selected - 1)); return accept; }
-                                if event.text == Key.DownArrow { root.selected-receipt(min(root.receipts.length - 1, root.receipt-selected + 1)); return accept; }
-                                if event.text == Key.Home { root.selected-receipt(0); return accept; }
-                                if event.text == Key.End { root.selected-receipt(root.receipts.length - 1); return accept; }
-                                if event.text == Key.PageUp { root.selected-receipt(max(0, root.receipt-selected - self.page-size)); return accept; }
-                                if event.text == Key.PageDown { root.selected-receipt(min(root.receipts.length - 1, root.receipt-selected + self.page-size)); return accept; }
-                                reject
-                            }
-                        }
+                        Rectangle { vertical-stretch: 1; }
                     }
                 }
                 Tab {
@@ -437,28 +165,6 @@ export component AppWindow inherits Window {
             }
         }
     }
-    if root.manual: Rectangle {
-        background: #00000055;
-        TouchArea {}
-        Card {
-            width: parent.width - 100px; height: parent.height - 130px;
-            x: 50px; y: 65px;
-            VerticalLayout {
-                padding: 24px; spacing: 18px;
-                Heading { text: "Wystaw paragon"; }
-                LineEdit { accessible-label: "Szukaj dokumentu"; placeholder-text: "Szukaj: nr zlecenia, klient"; text <=> root.search; edited(text) => { search-timer.running = true; search-timer.restart(); } accepted(text) => { search-timer.running = false; root.action(Action.search); } }
-                Table { rows: root.documents; columns <=> root.document-columns; empty-text: !root.connected ? "Uruchom obsługę drukarki w Ustawieniach, aby zobaczyć dokumenty." : root.documents-unavailable ? "Nie można pobrać dokumentów z Holuto." : root.searching ? "Brak dokumentów pasujących do wyszukiwania" : "Żaden dokument nie czeka na paragon."; current-row <=> root.selected; current-row-changed(row) => { root.selected-document(row); } sort(column, descending) => { root.sort-documents(column, descending); } activate(row) => { root.selected-document(row); if root.queue-enabled { root.action(Action.queue-receipt); } } }
-                if root.documents-unavailable && root.connected: HorizontalLayout { alignment: center; Button { text: "Ponów pobieranie dokumentów"; clicked => { root.action(Action.retry-documents); } } }
-                if root.previous-enabled || root.next-enabled: HorizontalLayout {
-                    spacing: 12px;
-                    Button { text: "Poprzednia strona"; enabled: root.previous-enabled; clicked => { root.action(Action.previous-page); } }
-                    Hint { text: root.page-label; vertical-alignment: center; }
-                    Button { text: "Następna strona"; enabled: root.next-enabled; clicked => { root.action(Action.next-page); } }
-                }
-                HorizontalLayout { alignment: end; spacing: 12px; Button { text: "Zamknij"; clicked => { root.action(Action.close-manual); } } Button { text: "Dalej"; primary: true; enabled: root.queue-enabled; clicked => { root.action(Action.queue-receipt); } } }
-            }
-        }
-    }
     if root.confirming: Rectangle {
         background: #00000055;
         TouchArea { }
@@ -469,12 +175,9 @@ export component AppWindow inherits Window {
                 padding: 28px; spacing: 24px;
                 Heading { text: root.confirm-title; }
                 Text { accessible-label: "Treść potwierdzenia"; accessible-value: root.confirm-text; text: root.confirm-text; wrap: word-wrap; color: #595959; }
-                if root.confirm-nip: HorizontalLayout { spacing: 16px; Text { text: "NIP nabywcy"; vertical-alignment: center; width: 110px; } LineEdit { accessible-label: "NIP nabywcy"; text <=> root.nip; placeholder-text: "Opcjonalnie"; } }
-                if root.confirm-nip && root.nip-invalid: Text { text: "NIP nabywcy musi zawierać 10 cyfr."; color: #cf1322; }
                 HorizontalLayout { alignment: end; spacing: 12px; Button { text: "Anuluj"; clicked => { root.confirm(false); } } Button { text: root.confirm-action; primary: true; clicked => { root.confirm(true); } } }
             }
         }
-    }
     }
 }
 

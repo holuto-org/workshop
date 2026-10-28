@@ -11,7 +11,6 @@ use super::{Agent, Blocked};
 use crate::{
     Error,
     api::{Api, ApiError, model::JobState},
-    documents::{BuyerNip, Document},
     journal::{
         Device, JobResult, Journal, Operation, ReceiptOperation, ReportOperation, Settlement,
         Summary,
@@ -196,7 +195,7 @@ fn not_started_expired_attempt_waits_for_staff_with_explicit_no_dispatch_notice(
     let mut agent = agent(&sim, &dir, &server)?;
     assert_eq!(agent.settle()?, Some(Blocked::Receipt));
     assert_eq!(
-        agent.take_news().notices,
+        agent.take_notices(),
         [format!(
             "Zlecenie 10 (zadanie {JOB_ID}): rejestr drukarki potwierdza, że nie wysłano żadnego \
              polecenia fiskalnego. Rozstrzygnij zadanie jako niewydrukowane w Holuto."
@@ -351,7 +350,7 @@ fn terminal_failed_or_expired_print_needs_same_device_local_acknowledgement() ->
             "Expired"
         };
         assert_eq!(
-            agent.take_news().notices,
+            agent.take_notices(),
             [format!(
                 "Paragon 41 został wydrukowany dla zlecenia 10 (zadanie {JOB_ID}), ale Holuto \
                  oznaczyło zadanie jako {state_label}. Sprawdź wydruk i użyj „Wyjaśnij paragon”."
@@ -1247,21 +1246,12 @@ mod reconciliation;
     clippy::panic_in_result_fn,
     reason = "test assertions intentionally panic while setup errors use Result"
 )]
-fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestResult {
+fn debug_diagnostics_do_not_disclose_receipt_or_error_text() -> TestResult {
     let summary = Summary {
         total: Grosze::new(987_654)?,
         payments: Vec::new(),
         items: vec!["PrivateReceiptLine".to_owned()],
     };
-    let document: Document = serde_json::from_value(json!({
-        "kind": "sale", "orderId": JOB_ID, "orderNumber": 10, "allocationId": null,
-        "amount": "9876.54", "customerName": "PrivateCustomer",
-        "occurredAt": "2025-01-02T12:00:00Z",
-        "dueAt": "2025-01-02T12:00:00Z",
-        "latestAt": "2025-01-02T12:00:00Z",
-        "isOverdue": false
-    }))?;
-    let nip = BuyerNip::parse("5261040828")?;
     let result = JobResult::failed("PrivateResultReason");
     let error = Error::Invalid("PrivateErrorText".to_owned());
     let api_error = ApiError::Response("PrivateApiText".to_owned());
@@ -1274,16 +1264,12 @@ fn debug_diagnostics_do_not_disclose_receipt_customer_or_error_text() -> TestRes
         }),
     )?;
     operation.summary = Some(summary.clone());
-    let debug = format!(
-        "{summary:?} {document:?} {nip:?} {result:?} {error:?} {api_error:?} {operation:?}"
-    );
+    let debug = format!("{summary:?} {result:?} {error:?} {api_error:?} {operation:?}");
     for forbidden in [
         "PrivateReceiptLine",
         "PrivateReceiptNumber",
         "987654",
         "9876.54",
-        "PrivateCustomer",
-        "5261040828",
         "PrivateResultReason",
         "PrivateErrorText",
         "PrivateApiText",
@@ -1932,7 +1918,7 @@ fn a_changed_vat_warning_survives_a_failed_poll() -> TestResult {
         Err(Error::Api(ApiError::Status { status: 503, .. }))
     ));
     let _delay = agent.step()?;
-    let mut notices = agent.take_news().notices;
+    let mut notices = agent.take_notices();
     notices.retain(|notice| notice.starts_with("Pomijam"));
     assert_eq!(
         notices,

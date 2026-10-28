@@ -48,34 +48,10 @@ Authenticated routes other than `/agent/session` carry
 `X-Device-Unique-Number`; the session carries `uniqueNumber` in its body.
 Device swaps are rejected before taking or printing jobs.
 
-- **`POST /agent/documents/search`**:
-  `{filter: {}, search: {}, cursor: {cursor: null, limit: 100}}`, with optional
-  `sort`. Response: `{items: [{kind, orderId, orderNumber, allocationId, amount,`
-  `customerName, occurredAt, dueAt, latestAt, isOverdue}], nextCursor,`
-  `previousCursor}`. Return opaque cursors unchanged in the same body, with the
-  same criteria. Only a null cursor ends that direction; an empty page can
-  still have a continuation. Kind is `advance` or `sale`. Advances identify
-  their allocation and payment time; sales use null allocation and posting
-  time. `search: {q}` matches every space- or comma-separated word of `q`
-  (1–128 characters, no control characters) against order number or customer
-  name. Search text is personal data and travels only in the body.
-- **`POST /agent/jobs`**: Queue `{kind, orderId, allocationId, buyerNip}`.
-  Advances require an allocation; sales use null. Buyer NIP is nullable.
-  Holuto derives payments.
-- **`POST /agent/jobs/search`**: Read-only paired-printer job history, not a
-  heartbeat. Body: `{filter: {state: null, orderId: null}, search: {},`
-  `sort: ["-createdAt", "-id"], cursor: {cursor: null, limit: 50}}`.
-  `sort` is optional; `cursor` is required and its limit is 1–100.
-  `filter.printerId` is refused. `search: {q}` searches order number, customer
-  name, receipt number, vehicle plate and line text. Blank or overlong
-  (more than 128 characters) queries fail at `/search/q`.
-  The response is `{items: [{job, customerName, vehiclePlate, source}],`
-  `nextCursor, previousCursor}`. `job` includes the same versioned fields and
-  `etag` as take, including `issuedAt`; `source` is `staff` or `device`.
-  Continue with either returned cursor and the same filter/search/sort;
-  changing them with a token fails at `/cursor/cursor`.
-  Authentication and identity refusals match other agent routes:
-  401, 400 `fiscal_invalid_input`, 403 `fiscal_unique_number_mismatch` and 404.
+Workshop calls only pair, session, heartbeat and the job routes below. The
+vendored schema also lists backend document-search, queueing and job-search
+operations; Workshop does not call them.
+
 - **`POST /agent/jobs/take`**: Claim a job; no body, 204 for an empty queue.
 - **`GET /agent/jobs/{id}`**: Reconcile job state without printing.
 - **`POST /agent/jobs/{id}/result`**:
@@ -99,7 +75,7 @@ Metadata: `orderId`, integer `orderNumber`, `printerId`, `kind`, nullable
 allocation and have one line per VAT rate, quantity 1. Outcome fields are
 always present and nullable: `receiptNumber`, `issuedAt` (the printer's issue
 time of the receipt, set exactly when the job has one: `done` or `voided`) and
-`result`. Every job response (take, get, result reply, history) carries them.
+`result`. Every job response (take, get, result reply) carries them.
 
 `total` sums gross line totals. `advances` contains `{vatLetter, vatRate, amount}`
 deductions, at most one per letter, each positive; duplicates and zero deductions
@@ -267,14 +243,8 @@ report outcomes follow
 These are host deadlines, not measured hardware guarantees. Unexplained silence
 or unreadable wait status leaves dispatch uncertain; no driver retries a command.
 
-## Advisory deadlines and voided receipts
+## Voided receipts
 
-Every listed document is due now (`dueAt`: sale completion or the advance's
-recorded payment); `latestAt` is the statutory hard limit, later only for card,
-transfer and BLIK advances. The table shows "Niezwłocznie · najpóźniej …" until
-that limit and "PO TERMINIE · …" after it (`isOverdue`). Column headers can sort
-the displayed page by the limit.
-Deadlines never queue or print anything; staff still choose every document.
 A `voided` job is a terminal, already-printed receipt cancelled in the
 obvious-mistake register. Recovery acknowledges
 its local journal without printing or reporting a replacement.

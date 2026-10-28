@@ -2,14 +2,11 @@
 //!
 //! Customer fixtures are synthetic; request captures never retain authorization values.
 //! Captured bodies are available for assertions, but `Debug` never prints their contents.
-//! Job history keeps current customer/vehicle metadata outside immutable fiscal snapshots.
 //! `tiny_http` rejects non-ASCII headers before routing; non-UTF-8 header errors are not modeled.
 //! Contract violations panic on the server thread and are propagated to its owner on drop.
 
 #[cfg(test)]
 pub(crate) mod printers;
-
-mod jobs;
 
 use crate::api::contract;
 #[cfg(test)]
@@ -31,7 +28,6 @@ use jiff::Timestamp;
 use posnet::capabilities::capabilities;
 use serde_json::{Value, json};
 use std::{
-    cmp::Ordering,
     collections::{HashMap, VecDeque},
     fmt,
     io::{self, Write},
@@ -128,29 +124,12 @@ struct State {
     paired_token: Option<String>,
     token_generation: u64,
     jobs: HashMap<Uuid, Value>,
-    jobs_metadata: HashMap<Uuid, Value>,
-    jobs_pages: HashMap<Option<String>, Value>,
-    jobs_cursors: HashMap<String, Cursor<jobs::Key>>,
-    queue_job: Option<Value>,
     queue: VecDeque<Uuid>,
     reported: HashMap<Uuid, Value>,
-    documents: Vec<Value>,
-    pages: HashMap<Option<String>, Value>,
-    document_cursors: HashMap<String, Cursor<DocumentKey>>,
     faults: VecDeque<(String, String, Fault)>,
     requests: Vec<RequestLog>,
     telemetry: Value,
     attempt: u128,
-}
-
-type DocumentKey = (Timestamp, Uuid, bool, Uuid);
-
-/// A search route's opaque cursor, bound to the criteria that issued it.
-struct Cursor<K> {
-    criteria: Value,
-    anchor: K,
-    previous: bool,
-    inclusive: bool,
 }
 
 #[expect(
@@ -267,44 +246,6 @@ impl Holuto {
         job.as_object_mut()
             .unwrap()
             .extend(changes.as_object().unwrap().clone());
-    }
-
-    /// Patches history-only fields without changing the fiscal job or its etag.
-    #[expect(
-        clippy::unwrap_used,
-        reason = "synthetic metadata patches must be JSON objects"
-    )]
-    pub fn set_job_metadata(&self, id: Uuid, changes: &Value) {
-        let mut state = locked(&self.state);
-        state
-            .jobs_metadata
-            .entry(id)
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .unwrap()
-            .extend(changes.as_object().unwrap().clone());
-    }
-
-    /// Scripts a history window; normal responses still undergo schema validation.
-    pub fn jobs_page(&self, cursor: Option<&str>, page: Value) {
-        let _old = locked(&self.state)
-            .jobs_pages
-            .insert(cursor.map(str::to_owned), page);
-    }
-
-    pub fn documents(&self, documents: Vec<Value>) {
-        locked(&self.state).documents = documents;
-    }
-
-    /// Backend snapshot to return when a client queues a document.
-    pub fn queue_job(&self, job: Value) {
-        locked(&self.state).queue_job = Some(job);
-    }
-
-    pub fn page(&self, cursor: Option<&str>, page: Value) {
-        let _old = locked(&self.state)
-            .pages
-            .insert(cursor.map(str::to_owned), page);
     }
 
     pub fn unauthorized(&self, unauthorized: bool) {
@@ -473,19 +414,8 @@ fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
         let _sent = request.respond(response);
         return;
     }
-    let invalid_search = if method == "POST" {
-        match route {
-            "/agent/jobs/search" => jobs::invalid_request(&log.body),
-            "/agent/documents/search" => invalid_limit(&log.body, invalid),
-            _ => None,
-        }
-    } else {
-        None
-    };
-    if invalid_search.is_none() {
-        contract::validate_request(&method, &path, &log.body).unwrap();
-    }
-    let (status, body) = route_request(&mut locked(shared), &log, invalid_search);
+    contract::validate_request(&method, &path, &log.body).unwrap();
+    let (status, body) = route_request(&mut locked(shared), &log);
     contract::validate_response(&method, &path, status, &body).unwrap();
     if matches!(fault, Some(Fault::DropAfterCommit)) {
         // Invalid HTTP framing makes ureq fail immediately instead of waiting for a body.
@@ -540,21 +470,6 @@ fn problem_detail(code: &str) -> &'static str {
         },
         "fiscal_unique_number_mismatch" => "Ten token jest sparowany z inną fizyczną drukarką.",
         "fiscal_vendor_mismatch" => "Połącz drukarkę marki zapisanej dla tego parowania.",
-        "fiscal_printer_limits_unknown" => {
-            "Połącz drukarkę i odśwież jej możliwości przed zleceniem wydruku paragonu."
-        },
-        "fiscal_printer_advances_unsupported" => {
-            "Wybierz drukarkę obsługującą odliczanie zafiskalizowanych zaliczek \
-             przed zleceniem paragonu końcowego."
-        },
-        "fiscal_printer_zero_total_unsupported" => {
-            "Wybierz drukarkę obsługującą zamknięcie w pełni opłaconego paragonu końcowego \
-             z kwotą zerową."
-        },
-        "fiscal_printer_quantity_precision" => {
-            "Zmniejsz liczbę cyfr po przecinku w ilościach pozycji do limitu tej drukarki \
-             przed zleceniem paragonu."
-        },
         "fiscal_printer_duplicate_vat_letter" => "Podaj każdą literę VAT drukarki tylko raz.",
         "fiscal_printer_vat_letter_illegal" => {
             "Podaj prawidłową stawkę VAT dla tej litery: A=23%, B=8%, C=5%, D=0%, E=zwolnienie."
@@ -562,10 +477,6 @@ fn problem_detail(code: &str) -> &'static str {
         "fiscal_unique_number_invalid" => {
             "Podaj numer unikatowy pamięci fiskalnej: 3 wielkie litery i 10 cyfr."
         },
-        "fiscal_receipt_allocation_kind" => {
-            "Wybierz przypisanie płatności tylko dla paragonu zaliczkowego."
-        },
-        "invalid_page_size" => "Rozmiar strony musi być liczbą całkowitą od 1 do 100.",
         _ => "Podaj prawidłową wartość.",
     }
 }
@@ -617,203 +528,6 @@ fn pair(state: &mut State, request: &RequestLog) -> (u16, Value) {
     (200, json!({"token":token, "printerId":PRINTER_ID}))
 }
 
-fn blocks_queue(existing: &Value, requested: &Value) -> bool {
-    let state = existing["state"].as_str();
-    let active = matches!(state, Some("queued" | "taken" | "done" | "unknown"));
-    (existing["printerId"] == requested["printerId"] && state == Some("unknown"))
-        || (existing["orderId"] == requested["orderId"]
-            && ((existing["kind"] == requested["kind"]
-                && existing["allocationId"] == requested["allocationId"]
-                && active)
-                || (requested["kind"] == "sale"
-                    && existing["kind"] == "advance"
-                    && matches!(state, Some("queued" | "taken" | "unknown")))
-                || (requested["kind"] == "advance" && existing["kind"] == "sale" && active)))
-}
-
-fn document_available(document: &Value, jobs: &HashMap<Uuid, Value>) -> bool {
-    !jobs.values().any(|job| {
-        job["orderId"] == document["orderId"]
-            && matches!(
-                job["state"].as_str(),
-                Some("queued" | "taken" | "done" | "unknown")
-            )
-            && if document["kind"] == "sale" {
-                job["kind"] == "sale" || (job["kind"] == "advance" && job["state"] != "done")
-            } else {
-                job["kind"] == "sale" || job["allocationId"] == document["allocationId"]
-            }
-    })
-}
-
-#[expect(
-    clippy::unwrap_used,
-    reason = "document fixtures must carry valid timestamps and UUID identities"
-)]
-fn document_key(document: &Value) -> DocumentKey {
-    let order: Uuid = document["orderId"].as_str().unwrap().parse().unwrap();
-    let allocation = document["allocationId"]
-        .as_str()
-        .map(|id| id.parse::<Uuid>().unwrap());
-    (
-        document["occurredAt"].as_str().unwrap().parse().unwrap(),
-        order,
-        document["kind"] == "sale",
-        allocation.unwrap_or(order),
-    )
-}
-
-/// `invalid` builds the route's own validation problem.
-fn invalid_limit(body: &Value, invalid: fn(&str, &str) -> (u16, Value)) -> Option<(u16, Value)> {
-    body.pointer("/cursor/limit")
-        .filter(|limit| {
-            !limit
-                .as_u64()
-                .is_some_and(|limit| (1..=100).contains(&limit))
-        })
-        .map(|_| invalid("/cursor/limit", "invalid_page_size"))
-}
-
-/// Every space- or comma-separated word must occur, ignoring case, in the order number or
-/// customer name. Scripted pages describe the unfiltered feed only.
-fn documents_search(state: &mut State, body: &Value) -> (u16, Value) {
-    let query = body
-        .pointer("/search/q")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_lowercase();
-    let words: Vec<_> = query
-        .split([' ', ','])
-        .filter(|word| !word.is_empty())
-        .collect();
-    let cursor = body.pointer("/cursor/cursor").and_then(Value::as_str);
-    if words.is_empty()
-        && let Some(page) = state.pages.get(&cursor.map(str::to_owned))
-    {
-        return (200, page.clone());
-    }
-    let matches = |document: &Value| {
-        let number = document["orderNumber"].to_string();
-        let customer = document["customerName"]
-            .as_str()
-            .unwrap_or_default()
-            .to_lowercase();
-        words
-            .iter()
-            .all(|word| number.contains(word) || customer.contains(word))
-    };
-    let descending = body["sort"]
-        .as_array()
-        .and_then(|sort| sort.first())
-        .and_then(Value::as_str)
-        == Some("-occurredAt");
-    let rows = state
-        .documents
-        .iter()
-        .filter(|document| document_available(document, &state.jobs) && matches(document))
-        .map(|document| (document_key(document), document.clone()))
-        .collect();
-    // Advances sort before sales for the same order, regardless of time direction.
-    let compare = |a: DocumentKey, b: DocumentKey| {
-        if descending {
-            b.0.cmp(&a.0)
-                .then_with(|| (a.1, a.2, a.3).cmp(&(b.1, b.2, b.3)))
-        } else {
-            a.cmp(&b)
-        }
-    };
-    cursor_page(
-        &mut state.document_cursors,
-        "documents",
-        body,
-        rows,
-        compare,
-        invalid,
-    )
-}
-
-/// One window of `rows` from the request's cursor; `invalid` reports a cursor these criteria did
-/// not issue. An empty window reverses its request boundary, including an excluded anchor.
-#[expect(
-    clippy::unwrap_used,
-    clippy::get_unwrap,
-    reason = "schema-validated limits fit usize; selected bounds come from eligible rows"
-)]
-fn cursor_page<K: Copy>(
-    cursors: &mut HashMap<String, Cursor<K>>,
-    prefix: &str,
-    body: &Value,
-    mut rows: Vec<(K, Value)>,
-    compare: impl Fn(K, K) -> Ordering,
-    invalid: fn(&str, &str) -> (u16, Value),
-) -> (u16, Value) {
-    let criteria =
-        json!({"filter": body["filter"], "search": body["search"], "sort": body["sort"]});
-    let cursor = match body.pointer("/cursor/cursor").and_then(Value::as_str) {
-        Some(token) => match cursors.get(token) {
-            Some(cursor) if cursor.criteria == criteria => Some(cursor),
-            _ => return invalid("/cursor/cursor", "invalid_cursor"),
-        },
-        None => None,
-    };
-    let limit = usize::try_from(
-        body.pointer("/cursor/limit")
-            .and_then(Value::as_u64)
-            .unwrap_or(50),
-    )
-    .unwrap();
-    rows.sort_unstable_by(|(a, _), (b, _)| compare(*a, *b));
-    let (start, end) = match cursor {
-        Some(cursor) if cursor.previous => {
-            let end = rows.partition_point(|(key, _)| {
-                let order = compare(*key, cursor.anchor);
-                order.is_lt() || (cursor.inclusive && order.is_eq())
-            });
-            (end.saturating_sub(limit), end)
-        },
-        Some(cursor) => {
-            let start = rows.partition_point(|(key, _)| {
-                let order = compare(*key, cursor.anchor);
-                order.is_lt() || (!cursor.inclusive && order.is_eq())
-            });
-            (start, start.saturating_add(limit).min(rows.len()))
-        },
-        None => (0, limit.min(rows.len())),
-    };
-    let selected = rows.get(start..end).unwrap();
-    let boundary = cursor.map(|cursor| (cursor.anchor, !cursor.inclusive));
-    let previous = selected
-        .first()
-        .map(|(key, _)| (*key, false))
-        .or(boundary)
-        .filter(|_| start > 0);
-    let next = selected
-        .last()
-        .map(|(key, _)| (*key, false))
-        .or(boundary)
-        .filter(|_| end < rows.len());
-    let items: Vec<_> = rows.drain(start..end).map(|(_, item)| item).collect();
-    let mut token = |anchor, previous, inclusive| {
-        let token = format!("{prefix}-{}", cursors.len() + 1);
-        let _old = cursors.insert(
-            token.clone(),
-            Cursor {
-                criteria: criteria.clone(),
-                anchor,
-                previous,
-                inclusive,
-            },
-        );
-        token
-    };
-    let previous = previous.map(|(anchor, inclusive)| token(anchor, true, inclusive));
-    let next = next.map(|(anchor, inclusive)| token(anchor, false, inclusive));
-    (
-        200,
-        json!({"items": items, "nextCursor": next, "previousCursor": previous}),
-    )
-}
-
 #[expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -823,11 +537,7 @@ fn cursor_page<K: Copy>(
     clippy::too_many_lines,
     reason = "one audited router keeps the fake's coupled job transitions together"
 )]
-fn route_request(
-    state: &mut State,
-    request: &RequestLog,
-    invalid_search: Option<(u16, Value)>,
-) -> (u16, Value) {
+fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
     if request.path == "/agent/pair" && request.method == "POST" {
         return pair(state, request);
     }
@@ -909,12 +619,6 @@ fn route_request(
     if path == "/agent/heartbeat" && request.method == "POST" {
         return (204, Value::Null);
     }
-    if path == "/agent/documents/search" && request.method == "POST" {
-        return invalid_search.unwrap_or_else(|| documents_search(state, &request.body));
-    }
-    if path == "/agent/jobs/search" && request.method == "POST" {
-        return invalid_search.unwrap_or_else(|| jobs::search(state, &request.body));
-    }
     if path == "/agent/jobs/take" && request.method == "POST" {
         let paired = |job: &Value| job["printerId"] == json!(PRINTER_ID);
         if state
@@ -937,71 +641,6 @@ fn route_request(
         job["takenAt"] = json!(Timestamp::now());
         job["state"] = json!("taken");
         return (200, job.clone());
-    }
-    if path == "/agent/jobs" && request.method == "POST" {
-        if (request.body["kind"] == "advance") == request.body["allocationId"].is_null() {
-            return invalid("/allocationId", "fiscal_receipt_allocation_kind");
-        }
-        if ["vendor", "capabilities"]
-            .iter()
-            .any(|field| state.telemetry[field].is_null())
-        {
-            return refused(409, "fiscal_printer_limits_unknown");
-        }
-        let mut job = state.queue_job.clone().unwrap_or_else(job_json);
-        let id = Uuid::from_u128(100 + u128::try_from(state.jobs.len()).unwrap());
-        job["id"] = json!(id);
-        for field in ["orderId", "kind", "allocationId", "buyerNip"] {
-            job[field] = request.body[field].clone();
-        }
-        if state
-            .jobs
-            .values()
-            .any(|existing| blocks_queue(existing, &job))
-        {
-            return refused(409, "fiscal_job_conflict");
-        }
-        if !job["advances"].as_array().unwrap().is_empty()
-            && state.telemetry["capabilities"]["advanceDeductions"] == false
-        {
-            return refused(409, "fiscal_printer_advances_unsupported");
-        }
-        if job["payments"].as_array().unwrap().is_empty()
-            && state.telemetry["capabilities"]["zeroTotalReceipts"] == false
-        {
-            return refused(409, "fiscal_printer_zero_total_unsupported");
-        }
-        let decimals = state.telemetry["capabilities"]["maxQuantityDecimals"]
-            .as_u64()
-            .unwrap();
-        if job["lines"].as_array().unwrap().iter().any(|line| {
-            line["quantity"]
-                .as_str()
-                .unwrap()
-                .split_once('.')
-                .is_some_and(|(_, fraction)| {
-                    u64::try_from(fraction.trim_end_matches('0').len()).unwrap() > decimals
-                })
-        }) {
-            return refused(409, "fiscal_printer_quantity_precision");
-        }
-        job["state"] = json!("queued");
-        job["attempt"] = Value::Null;
-        job["takenAt"] = Value::Null;
-        // Holuto snapshots the queued order: its number and customer come from the document.
-        let document = state.documents.iter().find(|document| {
-            document["orderId"] == job["orderId"] && document["allocationId"] == job["allocationId"]
-        });
-        let customer = document.map_or(Value::Null, |document| document["customerName"].clone());
-        if let Some(document) = document {
-            job["orderNumber"] = document["orderNumber"].clone();
-        }
-        let _old = state.jobs.insert(id, job.clone());
-        let _old = state
-            .jobs_metadata
-            .insert(id, json!({"source": "device", "customerName": customer}));
-        state.queue.push_back(id);
-        return (201, job);
     }
     let Some(tail) = path.strip_prefix("/agent/jobs/") else {
         return refused(404, "fiscal_not_found");

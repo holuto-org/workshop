@@ -25,8 +25,8 @@ must pass on each OS; Linux rename does not prove Windows replacement.
 
 The vendored OpenAPI is the production contract, not the fake. Compare session
 vendor + unique number binding, heartbeat identity headers, current per-driver
-limits/VAT/capabilities, document and job-history pagination/search, queue
-inputs, take attempts, terminal states and result idempotency/refusals.
+limits/VAT/capabilities, take attempts, job reads, terminal states and result
+idempotency/refusals for the routes Workshop calls.
 Update the `agent::testing` loopback fake in the same change, then prove
 requests through
 production `ureq` and the observable stored server state.
@@ -35,24 +35,17 @@ Follow the [sync procedure](../../AGENTS.md#api-contract).
 
 Full OpenAPI schema validation belongs to the feature-gated testing fake, not
 the runtime HTTP client. Fiscal amount/name/NIP scalars deliberately remain
-strings until domain validation; a malformed individual fiscal job must fail at
-the fiscal boundary rather than making an entire batch unreadable. Wire types
+strings until domain validation; a malformed claimed job must fail at the
+fiscal boundary, reported to Holuto as failed, rather than as an unreadable
+claim response that leaves the job taken. Wire types
 do not replace those domain checks.
 
-Assert required nullable fields, decimal strings, unchanged opaque cursor
-encoding, Polish problem details and exact result echo. Include commit-then-drop
+Assert required nullable fields, decimal strings, Polish problem details and
+exact result echo. Include commit-then-drop
 and refusal for a stale attempt. Do not invent staff resolution for
 failed/expired jobs: only unknown jobs have that backend resolution path. A
 completed print conflicting with failed/expired uses explicit local
 acknowledgement and no server write.
-
-Job-history requests are read-only, never heartbeats. Assert the job's required
-nullable `issuedAt` (absent from the history row), all lifecycle states and
-staff/device sources, empty pages and both cursor directions. Changed
-filter/search/sort with a token must fail at `/cursor/cursor`; blank/overlong
-queries fail at `/search/q`. Search fixtures cover customer, plate, receipt
-number, order number and line text without putting their values into logs or
-`Debug`.
 
 A fake alone cannot prove compatibility with a deployed server. Review backend
 contract changes together; use sanitized recorded contract examples and the

@@ -118,12 +118,6 @@ drivers, using that brand's simulator through the real driver.
     VAT/limits, quantity decimals and receipt capability flags; pairing conflict;
     identity-bound heartbeat when unready but describable; 401 stops without refresh
   - Test shape: Stateful HTTP fake + simulator + worker events
-- **Documents and queue**
-  - Required guarantee: Limit 100, opaque server cursors unchanged in the body,
-    next/back/current-page refresh, including empty pages with a continuation;
-    stable selected identity; failures preserve page and pending clicks; search
-    restarts at page 1 and its cursors continue it; valid NIP/document only
-  - Test shape: HTTP scenario + worker/UI boundary
 - **Claim and execution**
   - Required guarantee: Claim persisted before preflight; no effects for
     invalid/unowned/stale work; unchanged line/amount/payment semantics
@@ -175,12 +169,6 @@ drivers, using that brand's simulator through the real driver.
     evidence on failure
   - Test shape: Current-format golden fixtures + filesystem failure/restart
     tests on every OS
-- **Holuto job history**
-  - Required guarantee: Queued, taken, done, failed, unknown, expired and voided
-    jobs retain server details; bounded cursor pages; server-side search
-    restarts at page one; unavailable clears stale results and allows retry;
-    read-only paging is not liveness and never affects settlement
-  - Test shape: Production API + loopback fake + worker/Slint scenarios
 - **State directory/instance lock**
   - Required guarantee: OS `workshop` paths, Unix 0700/0600, safe replacement;
     one process per directory
@@ -214,19 +202,11 @@ drivers, using that brand's simulator through the real driver.
     preference starts worker only after full preflight; unresolved journal
     still blocks
   - Test shape: OS-gated temp HOME/registry artefact + worker scenario
-- **Document selection and sorting**
-  - Required guarantee: Raw-value numeric/date/Polish sorting, ties,
-    ascending/descending; refresh retains identity, not row index
-  - Test shape: Unit table + real UI selection/refresh
-- **Receipts master–detail**
-  - Required guarantee: All server states and selected job details; server
-    search by order/customer/number/plate/item; selection follows job identity;
-    cursor navigation, keyboard selection and day groups; unavailable/retry
-  - Test shape: Real application with accessible rows, search and detail panel
-- **Queue confirmation**
-  - Required guarantee: Exact document/kind/amount/NIP preview; cancel sends
-    nothing; double confirmation consumes action once; readiness/block rechecked
-  - Test shape: Real application + fake request log + simulator
+- **Stan status**
+  - Required guarantee: Read-only rows show processing, Holuto connection,
+    printer vendor/unique number/port and ready/not-ready/blocked state from
+    worker events; no control queues or prints a receipt
+  - Test shape: Real application with accessible labels + real worker
 - **Report confirmation**
   - Required guarantee: Daily/monthly/periodic wording and parameters; valid
     leap dates; ordered periodic dates and lower bound 2000-01-01; UI date
@@ -234,8 +214,8 @@ drivers, using that brand's simulator through the real driver.
     [brand-specific date guard](../fiscal-contract.md#report-dates-and-printer-clock)
   - Test shape: Injected-today table + accessible dialog scenario
 - **Worker event bridge**
-  - Required guarantee: `Connected`, `Device`, notices, `Jobs`,
-    `JobsUnavailable` and `Stopped` reach Slint; blocked/stopping disables fiscal
+  - Required guarantee: `Connected`, `Device`, `Problem`, `CommandCompleted`
+    and `Stopped` reach Slint; blocked/stopping disables fiscal
     actions
   - Test shape: Real worker + Slint event-loop backend
 - **GUI responsiveness**
@@ -245,7 +225,7 @@ drivers, using that brand's simulator through the real driver.
     assertion
 - **Close/reopen/tray**
   - Required guarantee: Close hides only while a host shows this app's icon;
-    otherwise remains visible; recreate preserves selection/sort; worker remains
+    otherwise remains visible; recreate restores displayed state; worker remains
     active
   - Test shape: Testing backend application scenario + Linux `session_bus`
 - **Stop/quit**

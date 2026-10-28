@@ -427,8 +427,7 @@ requires Windows 11 24H2 and does not solve Windows 10; see
 6. After launch consent, open the installed app (desktop/Start menu shortcut,
    Finder, or no-argument command). The person confirms the selected printer and
    chooses **Uruchom** when ready to process the branch's queue. The agent never
-   clicks a receipt/report command, prints a test or resolves fiscal
-   uncertainty.
+   clicks a report command, prints a test or resolves fiscal uncertainty.
 
 If the CLI flags/output differ from this release's guide, stop and report the
 exact mismatch; do not fall back to editing JSON or using undocumented commands.
@@ -465,11 +464,10 @@ journals, receipt screenshots, device tokens or native dumps as diagnostics.
 
 ## 6. Daily use, update and uninstall
 
-- **Paragony** shows the paired printer's job history from Holuto, including
-  queued and expired jobs. Search by order, customer, receipt number, plate or
-  item. If unavailable, retry the connection; no stale local list is shown.
-  It is not fiscal memory. **+ Wystaw paragon** opens eligible Holuto
-  sales/advances for occasional manual queuing. No manual receipt editor.
+- Receipts are queued and browsed in the Holuto web app; queued jobs print
+  automatically while processing runs. **Stan** shows read-only processing,
+  Holuto, printer and readiness status; it is not fiscal memory. No manual
+  queuing or receipt editor in the app.
   **Raporty** prints real fiscal reports, not test pages.
 - Closing the window keeps processing in the tray; without tray support it
   remains visible. **Zatrzymaj** stops processing; **Zakończ** exits after the

@@ -48,15 +48,10 @@ No sleep after clicking and no layout-coordinate search.
   safe errors.
 - Autostart toggles the per-user registration/preference, never bypasses fiscal
   preflight or an unresolved block.
-- In **Paragony**, verify all seven server job states, customer/plate, receipt
-  number, issue time, failure result and selected line/payment/advance details.
-  Search is debounced and sent to Holuto, including name, plate, receipt,
-  order and item matches. Changing it restarts page one. Exercise next/previous
-  pages, empty results and unavailable/retry without stale rows.
-  Ctrl+F, Escape and list navigation retain their keyboard behavior.
-- Open **+ Wystaw paragon**, then select/sort/refresh/page and confirm the same
-  document identity through **Dalej**. Assert kind, amount and optional NIP;
-  cancel has no external effect; repeated confirmation consumes the action once.
+- **Stan** is read-only: verify each row (**Obsługa drukarki**, **Holuto**,
+  **Drukarka**, **Stan drukarki**) follows worker events, including **Gotowa**,
+  **Niegotowa: …** and **Zablokowana: wymaga rozstrzygnięcia**. A job enqueued
+  in the loopback Holuto fake prints without any click.
 - Report confirmation shows exact dates/summary. With injected `today` in pure
   validation, test leap days, equal endpoints, today, future/reversed dates and
   periodic 1999-12-31 versus 2000-01-01.
@@ -70,11 +65,11 @@ No sleep after clicking and no layout-coordinate search.
 - Worker events show and hide the header's problem indicators and the red
   **Stan operacji** footer. An all-clear event removes the footer; successful
   operations and progress remain silent. Block explanations and orphaned-receipt
-  acknowledgement evidence stay available. Events update job-history pages,
-  availability and blocked state through the real Slint loop. While a simulator
+  acknowledgement evidence stay available. Events update the **Stan** rows and
+  blocked state through the real Slint loop. While a simulator
   command is held, an event-loop marker still executes.
 - Close with a tray hides/recreates the window without stopping work; no tray
-  keeps it visible. Reopening retains selected identity and sort. Linux watcher
+  keeps it visible. Reopening shows the same model state. Linux watcher
   availability uses separate private-bus tests.
 - Stop/quit during a held print completes it once, receives `Stopped`, joins,
   then exits. Do not test shutdown by killing the worker mid-operation.

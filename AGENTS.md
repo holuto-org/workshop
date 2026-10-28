@@ -2,8 +2,9 @@
 
 Rust/Slint tray application and `workshop` CLI for workshop PCs connected to a
 supported Posnet, Novitus or Elzab online fiscal printer. It prints only Holuto
-sales/advances and fiscal reports: no manual receipt editor and no separate
-agent service. Closing to the tray keeps processing; starting is explicit
+sales/advances queued in the Holuto web app, plus fiscal reports: no receipt
+list, manual queuing or receipt editor and no separate agent service. Closing
+to the tray keeps processing; starting is explicit
 unless the user opts into autostart. Hard requirements are in
 [`.omp/RULES.md`](.omp/RULES.md).
 
@@ -79,7 +80,8 @@ One Cargo workspace; dependency versions and lints live only in the root
 
 Each driver's `simulator` feature provides its offline peer. Agent `testing`
 enables those features and exposes the loopback Holuto fake; desktop `simulator`
-runs all three peers and a loopback Holuto with sample jobs and orders, with
+runs all three peers and a loopback Holuto with sample queued jobs that print
+once processing starts, with
 state in a separate `workshop-simulator` directory; it never reaches a real
 Holuto. Agent `testing` and desktop `simulator` fail to compile without debug
 assertions; the drivers' `simulator` features have no release guard of their

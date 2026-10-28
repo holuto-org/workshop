@@ -14,16 +14,12 @@ use serde_json::{Value, json};
 
 use super::{validate_request, validate_response};
 use crate::{
-    api::{
-        DOCUMENTS_LIMIT,
-        model::{
-            Cursor, Job, JobAdvance, JobLine, JobPayment, JobState, JobView, JobsPage, NoFilter,
-            Outcome, Page, Pairing, PrinterCapabilities, PrinterInfo, PrinterStatus, QueueForm,
-            ResultForm, Search, TableSearch, Telemetry, VatCode, VatLetter, VatRateMapping,
-        },
+    api::model::{
+        Job, JobAdvance, JobLine, JobPayment, JobState, Outcome, Pairing, PrinterCapabilities,
+        PrinterInfo, PrinterStatus, ReceiptKind, ResultForm, Telemetry, VatCode, VatLetter,
+        VatRateMapping,
     },
-    documents::{Document, ReceiptKind},
-    testing::{JOB_ID, ORDER_ID, job_json, status_json, with},
+    testing::{JOB_ID, ORDER_ID, job_json, status_json},
 };
 
 /// The field or variant names a derived `Deserialize` asks its deserializer for.
@@ -104,10 +100,6 @@ fn response_types_read_only_required_schema_fields_and_decode_every_enum_value()
         (names::<JobLine>(), "ReceiptLine"),
         (names::<JobAdvance>(), "AdvanceDeduction"),
         (names::<JobPayment>(), "ReceiptPayment"),
-        (names::<JobView>(), "JobView"),
-        (names::<JobsPage>(), "CursorPage_JobView"),
-        (names::<Page>(), "CursorPage_AgentDocument"),
-        (names::<Document>(), "AgentDocument"),
         (names::<PrinterStatus>(), "PrinterStatus"),
         (names::<PrinterInfo>(), "Printer"),
         (names::<PrinterCapabilities>(), "PrinterCapabilities"),
@@ -163,10 +155,6 @@ fn nullable_response_fields_require_presence_and_keep_per_job_amount_validation(
             .total,
         "not a decimal"
     );
-    assert!(
-        serde_json::from_value::<Page>(json!({"items":[]})).is_err(),
-        "missing nullable cursor"
-    );
 }
 
 #[test]
@@ -190,9 +178,11 @@ fn fake_validation_enforces_schema_patterns_enums_and_nullable_presence() {
             "invalid {field}"
         );
     }
+    let mut unresolved = valid.clone();
+    let _removed = unresolved.as_object_mut().unwrap().remove("result");
     assert!(
-        validate_response("POST", "/agent/documents/search", 200, &json!({"items":[]})).is_err(),
-        "required nullable cursor"
+        validate_response("POST", "/agent/jobs/take", 200, &unresolved).is_err(),
+        "required nullable result"
     );
     assert!(
         validate_request("POST", "/agent/session", &json!({})).is_err(),
@@ -228,12 +218,6 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
     telemetry.model = "PRIVATE-MODEL".into();
     let slot: VatRateMapping =
         serde_json::from_value(json!({"letter": "A","vatRate":"23"})).unwrap();
-    let queue = QueueForm {
-        allocation_id: None,
-        buyer_nip: Some("5260250274".into()),
-        kind: ReceiptKind::Sale,
-        order_id: ORDER_ID,
-    };
     let result = ResultForm {
         attempt: job.attempt.unwrap(),
         issued_at: Some("2026-10-24T10:00:00Z".parse().unwrap()),
@@ -241,36 +225,11 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
         result: Some("PRIVATE-NOTE".into()),
         state: Outcome::Done,
     };
-    let page: Page = serde_json::from_value(json!({
-        "items":[{
-            "kind":"sale","allocationId":null,"orderId":ORDER_ID,"orderNumber":42,
-            "amount":"987.65","customerName":"PRIVATE-CUSTOMER","occurredAt":"2026-10-24T10:00:00Z",
-        "dueAt": "2026-10-24T10:00:00Z",
-        "latestAt": "2026-10-24T10:00:00Z",
-        "isOverdue": false
-        }],"nextCursor":"PRIVATE-CURSOR","previousCursor":null
-    }))
-    .unwrap();
-    let view: JobView = serde_json::from_value(json!({
-        "job":with(job_json(), &json!({"result":"PRIVATE-NOTE"})),
-        "customerName":"PRIVATE-CUSTOMER", "vehiclePlate":"WA12345", "source":"device"
-    }))
-    .unwrap();
-    let search = TableSearch {
-        cursor: Cursor {
-            cursor: Some("PRIVATE-CURSOR".into()),
-            limit: DOCUMENTS_LIMIT,
-        },
-        filter: NoFilter::default(),
-        search: Search {
-            q: Some("PRIVATE-QUERY".into()),
-        },
-    };
     let pairing: Pairing = serde_json::from_value(json!({
         "printerId":ORDER_ID, "token":"PRIVATE-TOKEN"
     }))
     .unwrap();
-    let records: [(&dyn Debug, &str); 16] = [
+    let records: [(&dyn Debug, &str); 10] = [
         (&job, "Job"),
         (job.lines.first().unwrap(), "JobLine"),
         (job.advances.first().unwrap(), "JobAdvance"),
@@ -279,13 +238,7 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
         (&status.printer, "PrinterInfo"),
         (&telemetry, "Telemetry"),
         (&slot, "VatRateMapping"),
-        (&queue, "QueueForm"),
         (&result, "ResultForm"),
-        (&page, "Page"),
-        (&view, "JobView"),
-        (&search, "TableSearch"),
-        (&search.cursor, "Cursor"),
-        (&search.search, "Search"),
         (&pairing, "Pairing"),
     ];
     for (record, name) in records {
@@ -294,49 +247,4 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
     assert_eq!(format!("{:?}", job.state), "Taken");
     assert_eq!(format!("{:?}", slot.vat_rate), "Rate23");
     assert_eq!(format!("{:?}", result.state), "Done");
-}
-
-#[test]
-fn history_search_enforces_the_operation_body_and_required_nullable_view_fields() {
-    let path = "/agent/jobs/search";
-    let request = json!({
-        "cursor":{"limit":50}, "filter":{"orderId":ORDER_ID,"state":"done"},
-        "search":{"q":"Jan WA123"}, "sort":["-createdAt","-id"]
-    });
-    validate_request("POST", path, &request).unwrap();
-    for changes in [
-        json!({"sort":["customerName"]}),
-        json!({"filter":{"printerId":ORDER_ID}}),
-        json!({"search":{"q":"x".repeat(201)}}),
-    ] {
-        assert!(validate_request("POST", path, &with(request.clone(), &changes)).is_err());
-    }
-    assert!(validate_request("POST", path, &json!({})).is_err());
-    let view = json!({
-        "job":job_json(), "customerName":null, "vehiclePlate":null, "source":"staff"
-    });
-    let page = json!({"items":[view],"nextCursor":null,"previousCursor":null});
-    validate_response("POST", path, 200, &page).unwrap();
-    let parsed: JobsPage = serde_json::from_value(page).unwrap();
-    assert_eq!(parsed.items[0].job.id, JOB_ID);
-    assert!(parsed.items[0].job.issued_at.is_none());
-    for pointer in ["/customerName", "/vehiclePlate", "/job/issuedAt"] {
-        let (parent, field) = pointer.rsplit_once('/').unwrap();
-        let mut missing = view.clone();
-        let _removed = missing
-            .pointer_mut(parent)
-            .and_then(Value::as_object_mut)
-            .unwrap()
-            .remove(field);
-        let page = json!({"items":[missing],"nextCursor":null,"previousCursor":null});
-        assert!(
-            validate_response("POST", path, 200, &page).is_err(),
-            "{pointer}"
-        );
-        assert!(
-            serde_json::from_value::<JobView>(missing).is_err(),
-            "{pointer}"
-        );
-    }
-    assert!(serde_json::from_value::<JobsPage>(json!({"items":[],"nextCursor":null})).is_err());
 }

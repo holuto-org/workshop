@@ -76,7 +76,7 @@ impl fmt::Display for Grosze {
 }
 
 /// Formats as `1 234 567,89 zł`, including values above [`Grosze::MAX`].
-pub fn zloty(grosze: u64) -> String {
+fn zloty(grosze: u64) -> String {
     let whole = (grosze / 100).to_string();
     let mut grouped = String::with_capacity(whole.len() + whole.len() / 3);
     for (index, digit) in whole.chars().enumerate() {

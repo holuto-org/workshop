@@ -14,7 +14,6 @@ use std::{
     error::Error as StdError,
     fmt,
     io::{ErrorKind, Read as _},
-    num::NonZeroU32,
     time::Duration,
 };
 
@@ -27,20 +26,9 @@ use ureq::{
 };
 use uuid::Uuid;
 
-use crate::{
-    Error,
-    documents::{BuyerNip, Document, DocumentSearch},
-    settings,
-};
-use model::{
-    Cursor, Job, JobsPage, NoFilter, Page, Pairing, PrinterStatus, QueueForm, ResultForm, Search,
-    TableSearch, Telemetry,
-};
+use crate::{Error, settings};
+use model::{Job, Pairing, PrinterStatus, ResultForm, Telemetry};
 
-/// Backend page-size limit (100).
-pub const DOCUMENTS_LIMIT: NonZeroU32 = NonZeroU32::MIN.saturating_add(99);
-/// Job history window size.
-pub const JOBS_LIMIT: NonZeroU32 = NonZeroU32::MIN.saturating_add(49);
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RESPONSE: u64 = 4 * 1024 * 1024;
 /// Sent as `agent/<SemVer>` for the backend's `App-Version` gate.
@@ -369,44 +357,6 @@ impl Api {
         }
         Ok(())
     }
-
-    /// A search travels only in a request body: it may hold a customer name.
-    pub fn documents(
-        &self,
-        cursor: Option<&str>,
-        search: Option<&DocumentSearch>,
-    ) -> Result<Page, ApiError> {
-        let page: Page = self
-            .post(
-                "documents/search",
-                Some(&search_form(cursor, search, DOCUMENTS_LIMIT)),
-            )?
-            .ok_or_else(empty)?;
-        page.check().map_err(ApiError::Response)?;
-        Ok(page)
-    }
-
-    /// The search stays in the body; printer scoping is enforced by Holuto.
-    pub fn jobs(
-        &self,
-        cursor: Option<&str>,
-        search: Option<&DocumentSearch>,
-    ) -> Result<JobsPage, ApiError> {
-        let page: JobsPage = self
-            .post(
-                "jobs/search",
-                Some(&search_form(cursor, search, JOBS_LIMIT)),
-            )?
-            .ok_or_else(empty)?;
-        page.check().map_err(ApiError::Response)?;
-        Ok(page)
-    }
-
-    /// Parses the unused job to enforce the response contract.
-    pub fn queue(&self, form: &QueueForm) -> Result<(), ApiError> {
-        let _job: Job = self.post("jobs", Some(form))?.ok_or_else(empty)?;
-        Ok(())
-    }
 }
 
 /// Holuto uses 8 Crockford base32 characters, ignoring ASCII case and hyphens.
@@ -459,10 +409,7 @@ fn route(path: &str) -> &'static str {
     match path {
         "session" => "/agent/session",
         "heartbeat" => "/agent/heartbeat",
-        "documents/search" => "/agent/documents/search",
-        "jobs/search" => "/agent/jobs/search",
         "jobs/take" => "/agent/jobs/take",
-        "jobs" => "/agent/jobs",
         other if other.ends_with("/result") => "/agent/jobs/{id}/result",
         _ => "/agent/jobs/{id}",
     }
@@ -518,36 +465,6 @@ fn problem(detail: Option<&str>) -> String {
 
 fn empty() -> ApiError {
     ApiError::Response("pusta odpowiedź".to_owned())
-}
-
-fn search_form(
-    cursor: Option<&str>,
-    search: Option<&DocumentSearch>,
-    limit: NonZeroU32,
-) -> TableSearch {
-    TableSearch {
-        cursor: Cursor {
-            cursor: cursor.map(str::to_owned),
-            limit,
-        },
-        filter: NoFilter::default(),
-        search: Search {
-            q: search.map(|search| search.as_str().to_owned()),
-        },
-    }
-}
-
-/// Rejects inconsistent document identities before queueing.
-pub fn queue_form(document: &Document, buyer_nip: Option<BuyerNip>) -> Result<QueueForm, Error> {
-    document
-        .check()
-        .map_err(|problem| Error::Invalid(format!("Nieprawidłowy dokument: {problem}.")))?;
-    Ok(QueueForm {
-        allocation_id: document.allocation_id,
-        buyer_nip: buyer_nip.map(BuyerNip::into_string),
-        kind: document.kind,
-        order_id: document.order_id,
-    })
 }
 
 #[cfg(test)]
