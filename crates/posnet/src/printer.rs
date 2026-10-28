@@ -592,12 +592,12 @@ fn device_from(
     if !rates.iter().any(|rate| rate.active()) {
         problems.push("Brak aktywnych stawek VAT".into());
     }
-    if interfaces
-        .iter()
-        .map(foreign_code_page)
-        .collect::<Result<Vec<_>, Error>>()?
-        .contains(&true)
-    {
+    let mut foreign = false;
+    // Validate every interface even after finding a foreign code page.
+    for interface in interfaces {
+        foreign |= foreign_code_page(interface)?;
+    }
+    if foreign {
         problems.push("Drukarka nie używa strony kodowej Windows-1250".into());
     }
     let device = Device {

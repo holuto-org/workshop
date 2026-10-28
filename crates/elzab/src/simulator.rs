@@ -278,10 +278,10 @@ impl Port for SimPort {
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
     state.lock().unwrap_or_else(PoisonError::into_inner)
 }
-fn read(state: &State, body: &str) -> Option<String> {
+fn execute(state: &mut State, body: &str) -> String {
     let mut fields = body.split('\u{1d}');
     let command = fields.next().unwrap_or_default();
-    Some(match command {
+    match command {
         "XTR" => format!("\x1dB{}\x1dC172\x1dD{}", state.model, state.firmware),
         "FNR" => format!("\x1dB{}", state.unique_number),
         "XHR" if fields.next() == Some("w") => format!("\x1dwA{}", state.page),
@@ -293,7 +293,11 @@ fn read(state: &State, body: &str) -> Option<String> {
             if state.daily != Daily::Idle {
                 three |= 1;
             }
-            format!("\x1dSA1\x1eB{one:X}\x1dSA2\x1eB{two:X}\x1dSA3\x1eB{three:X}")
+            let reply = format!("\x1dSA1\x1eB{one:X}\x1dSA2\x1eB{two:X}\x1dSA3\x1eB{three:X}");
+            if body == "ySR" && state.daily == Daily::Accepted {
+                state.daily = Daily::Reported;
+            }
+            reply
         },
         "YYR" if fields.next() == Some("J") => {
             format!("\x1dJA{}\x1eB256", state.header.split('\n').count())
@@ -330,19 +334,6 @@ fn read(state: &State, body: &str) -> Option<String> {
                 state.permission
             }
         ),
-        _ => return None,
-    })
-}
-fn execute(state: &mut State, body: &str) -> String {
-    if let Some(reply) = read(state, body) {
-        if body == "ySR" && state.daily == Daily::Accepted {
-            state.daily = Daily::Reported;
-        }
-        return reply;
-    }
-    let mut fields = body.split('\u{1d}');
-    let command = fields.next().unwrap_or_default();
-    match command {
         "LOR" => {
             if state.transaction {
                 return "483".to_owned();

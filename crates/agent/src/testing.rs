@@ -128,7 +128,6 @@ struct State {
     reported: HashMap<Uuid, Value>,
     faults: VecDeque<(String, String, Fault)>,
     requests: Vec<RequestLog>,
-    telemetry: Value,
     attempt: u128,
 }
 
@@ -586,7 +585,6 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         }
         state.vendor = Some(vendor.to_owned());
         state.unique_number = Some(unique_number.to_owned());
-        state.telemetry = request.body.clone();
         let mut status = status_json();
         status["printer"]["uniqueNumber"] = json!(unique_number);
         for name in [

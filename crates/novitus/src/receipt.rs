@@ -69,8 +69,8 @@ fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Res
             ));
         }
         let quantity = line.quantity().to_string();
-        // Novitus's quantity range is narrower than Quantity's.
-        if quantity.bytes().filter(u8::is_ascii_digit).count() > 10 || quantity.len() > 16 {
+        // Ten digits plus the optional decimal point already fit the 16-byte wire field.
+        if quantity.bytes().filter(u8::is_ascii_digit).count() > 10 {
             return Err(Error::Invalid(
                 "Ilość przekracza zakres protokołu Novitus.".to_owned(),
             ));

@@ -38,18 +38,6 @@ pub enum PaymentForm {
     Credit,
 }
 
-impl PaymentForm {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Cash => "Gotówka",
-            Self::Card => "Karta płatnicza",
-            Self::Transfer => "Przelew",
-            Self::Mobile => "Płatność mobilna",
-            Self::Credit => "Kredyt",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Payment {
