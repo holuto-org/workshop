@@ -978,14 +978,15 @@ fn unticking_diagnostics_stops_reporting_from_the_running_app() -> Result<(), Bo
 )]
 fn missing_native_quit_hook_blocks_worker_start() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
-    assert_eq!(window.get_status().as_str(), NATIVE_QUIT_ERROR);
+    let warning = native_quit_error().render(app.borrow().model.language);
+    assert_eq!(window.get_status().as_str(), warning);
     app.borrow_mut().spawn_worker();
     app.borrow().sync();
     assert!(
         app.borrow().worker.is_none(),
         "no fiscal worker may start without safe native quit"
     );
-    assert_eq!(window.get_status().as_str(), NATIVE_QUIT_ERROR);
+    assert_eq!(window.get_status().as_str(), warning);
     Ok(())
 }
 

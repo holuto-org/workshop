@@ -48,6 +48,9 @@ mod application {
 #[path = "../autostart.rs"]
 mod autostart;
 #[cfg(target_os = "macos")]
+#[path = "../localization.rs"]
+mod localization;
+#[cfg(target_os = "macos")]
 #[expect(
     dead_code,
     unused_imports,
