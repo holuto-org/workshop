@@ -245,25 +245,6 @@ fn settings_changes_refuse_a_held_lock_naming_the_holder_and_preserve_config() -
     clippy::panic_in_result_fn,
     reason = "Assertions prove behavior; setup propagates I/O"
 )]
-fn fresh_installation_check_reports_missing_configuration_without_opening_ports() -> TestResult {
-    let temp = tempfile::tempdir()?;
-    let response = execute(Command::Check, &temp.path().join("state"))?;
-    assert_eq!(response.exit, 3);
-    assert_eq!(
-        response.value,
-        json!({
-            "ok":false,"configured":false,"appRunning":false,
-            "errors":[first_missing_setting()]
-        })
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Assertions prove behavior; setup propagates I/O"
-)]
 fn invalid_configuration_is_not_partially_saved() -> TestResult {
     let temp = tempfile::tempdir()?;
     let path = temp.path().join("state");

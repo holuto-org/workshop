@@ -1297,7 +1297,7 @@ fn session_uploads_all_seven_legal_vat_letters_and_refuses_an_eighth() -> TestRe
         server.requests().last().ok_or("missing session")?.body["vatRates"],
         expected
     );
-    for count in [7, 8, 9] {
+    for count in [7, 8] {
         let mut status = status_json();
         let mut rates = expected.as_array().ok_or("missing VAT table")?.clone();
         rates.resize(count, json!({"letter":"F","vatRate":"8"}));

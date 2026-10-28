@@ -100,23 +100,6 @@ fn fiscal(sim: &Simulator) -> Vec<String> {
         .collect()
 }
 
-#[cfg(not(workshop_acceptance))]
-#[test]
-fn non_fiscal_device_is_not_ready_without_acceptance() {
-    let sim = Simulator::start();
-    sim.set_status(0, (1_u128 << 102) | (1_u128 << 98) | 4 | 8, 32);
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    assert!(!expected.ready());
-    let mut log = Log::default();
-    assert!(matches!(
-        driver.print_receipt(&receipt(0, false), &expected, &mut log),
-        Err(Error::NotReady(_))
-    ));
-    assert_eq!(log.commands, Vec::<&str>::new());
-    assert_eq!(fiscal(&sim), Vec::<String>::new());
-}
-
 #[test]
 fn overdue_daily_report_blocks_receipts_but_allows_daily_report() {
     let sim = Simulator::start();

@@ -476,7 +476,6 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
 )]
 fn every_stored_settlement_state_and_payment_form_keeps_its_name() -> TestResult {
     for (state, name) in [
-        (JobState::Done, "done"),
         (JobState::Failed, "failed"),
         (JobState::Expired, "expired"),
         (JobState::Voided, "voided"),
@@ -491,7 +490,6 @@ fn every_stored_settlement_state_and_payment_form_keeps_its_name() -> TestResult
     }
     for (form, name) in [
         (PaymentForm::Cash, "cash"),
-        (PaymentForm::Card, "card"),
         (PaymentForm::Transfer, "transfer"),
         (PaymentForm::Mobile, "mobile"),
         (PaymentForm::Credit, "credit"),

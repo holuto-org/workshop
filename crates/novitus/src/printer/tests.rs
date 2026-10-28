@@ -1206,18 +1206,6 @@ fn printing_session_checks_cp1250_capability_again_before_begin() {
 }
 
 #[test]
-fn discovery_identifies_printer_in_power_on_error_mode() {
-    let sim = Simulator::start();
-    supported(&sim);
-    let device = identify(sim.link().as_ref(), &connection(&sim))
-        .unwrap()
-        .unwrap();
-    assert!(device.ready(), "{}", device.description());
-    assert_eq!(bodies(&sim).first().map(String::as_str), Some("30#v"));
-    assert!(!bodies(&sim).iter().any(|body| body == "3#e"));
-}
-
-#[test]
 fn discovery_tolerates_printer_already_in_mode_three() {
     let sim = Simulator::start();
     supported(&sim);
@@ -1237,6 +1225,9 @@ fn printing_session_selects_mode_three_on_a_power_on_printer() {
     let device = identify(sim.link().as_ref(), &connection(&sim))
         .unwrap()
         .unwrap();
+    assert!(device.ready(), "{}", device.description());
+    assert_eq!(bodies(&sim).first().map(String::as_str), Some("30#v"));
+    assert!(!bodies(&sim).iter().any(|body| body == "3#e"));
     let printed = printer(&sim)
         .print_receipt(&receipt(vec![]), &device, &mut Log::default())
         .unwrap();

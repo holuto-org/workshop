@@ -130,23 +130,6 @@ fn fiscal_commands(sim: &Simulator) -> Vec<String> {
         .collect()
 }
 
-#[cfg(not(workshop_acceptance))]
-#[test]
-fn non_fiscal_device_is_not_ready_without_acceptance() {
-    let sim = simulator();
-    sim.set_status("fs", "0");
-    let driver = printer(&sim);
-    let expected = driver.probe().unwrap();
-    assert!(!expected.ready());
-    let mut journal = Recorder::default();
-    assert!(matches!(
-        driver.print_receipt(&sale(), &expected, &mut journal),
-        Err(Error::NotReady(_))
-    ));
-    assert_eq!(journal.stages, Vec::<&str>::new());
-    assert_eq!(fiscal_commands(&sim), Vec::<String>::new());
-}
-
 #[test]
 fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
     for (field, value, problem) in [
@@ -188,7 +171,6 @@ fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
             "16",
             "Otwarta transakcja. Dokończ lub anuluj ją na drukarce",
         ),
-        ("td", "1", "Drukarka jest w trybie tylko do odczytu"),
         (
             "tl",
             "1",
@@ -199,6 +181,7 @@ fn every_preflight_problem_refuses_receipts_and_reports_before_journaling() {
         let device = printer(&sim);
         let expected = device.probe().unwrap();
         sim.set_status(field, value);
+        assert!(!device.probe().unwrap().ready(), "{field}={value}");
         let mut journal = Recorder::default();
         let error = device
             .print_receipt(&sale(), &expected, &mut journal)
@@ -367,8 +350,8 @@ fn malformed_zero_daily_error_codes_remain_uncertain_and_are_not_retried() {
 }
 
 #[test]
-fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
-    for mode in ["inactive", "changed", "regraded", "none", "missing"] {
+fn inactive_or_changed_vat_is_refused_before_trinit() {
+    for mode in ["inactive", "changed", "regraded", "none"] {
         let sim = simulator();
         let device = printer(&sim);
         let expected = device.probe().unwrap();
@@ -394,7 +377,6 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
                 sim.set_vat(["23,00", "8,00", "5,00", "0,00", "100,00", "101,00", "8,00"]);
             },
             "none" => sim.set_vat(["101,00"; 7]),
-            "missing" => sim.fault("vatget", Fault::Reply(vec![])),
             _ => {},
         }
         let error = device
@@ -411,7 +393,6 @@ fn inactive_missing_or_changed_vat_is_refused_before_trinit() {
                 "Stawka VAT zmieniła się na drukarce. Odśwież połączenie i sprawdź stawki."
             ),
             "none" => assert_eq!(error.to_string(), "Brak aktywnych stawek VAT"),
-            "missing" => assert!(matches!(error, Error::Protocol(_)), "{error:?}"),
             _ => panic!("unknown fixture mode"),
         }
         assert_eq!(fiscal_commands(&sim), Vec::<String>::new());

@@ -60,8 +60,10 @@ case $os in
     ;;
   linux)
     package="$build_dir/package"
+    # Icon theme spec: hicolor needs a 48x48 PNG; SVG support is optional, so 256x256 covers large sizes.
     install -d "$package/DEBIAN" "$package/usr/bin" "$package/usr/share/applications" \
-      "$package/usr/share/icons/hicolor/scalable/apps" "$package/usr/share/icons/hicolor/256x256/apps"
+      "$package/usr/share/icons/hicolor/scalable/apps" "$package/usr/share/icons/hicolor/48x48/apps" \
+      "$package/usr/share/icons/hicolor/256x256/apps"
     objcopy --only-keep-debug "$binary" "$symbols/workshop.debug"
     install -m 755 "$binary" "$package/usr/bin/workshop"
     strip --strip-all "$package/usr/bin/workshop"
@@ -70,6 +72,7 @@ case $os in
     cp -- "$package/usr/bin/workshop" "$symbols/"
     install -m 644 packaging/linux/workshop.desktop "$package/usr/share/applications/workshop.desktop"
     install -m 644 crates/desktop/assets/icon.svg "$package/usr/share/icons/hicolor/scalable/apps/workshop.svg"
+    install -m 644 packaging/linux/icon-48x48.png "$package/usr/share/icons/hicolor/48x48/apps/workshop.png"
     install -m 644 crates/desktop/assets/icon.png "$package/usr/share/icons/hicolor/256x256/apps/workshop.png"
 
     # Include dlopened display libraries, TLS roots and Warsaw timezone data too.

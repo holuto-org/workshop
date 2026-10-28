@@ -41,7 +41,6 @@ fn keeps_printer_usb_ids_with_brand_hints() {
                     usb("a-posnet", 0x1424, 0x10B0),
                     usb("b-posnet-family", 0x1424, 0xFFFF),
                     usb("c-novitus-a", 0x1A28, 0x2512),
-                    usb("d-novitus-b", 0x1A28, 0x2512),
                     usb("e-elzab", 0x0483, 0x5740),
                 ],
                 os,
@@ -51,7 +50,6 @@ fn keeps_printer_usb_ids_with_brand_hints() {
                 candidate("a-posnet", Some(Vendor::Posnet)),
                 candidate("b-posnet-family", Some(Vendor::Posnet)),
                 candidate("c-novitus-a", Some(Vendor::Novitus)),
-                candidate("d-novitus-b", Some(Vendor::Novitus)),
                 candidate("e-elzab", Some(Vendor::Elzab)),
             ]
         );

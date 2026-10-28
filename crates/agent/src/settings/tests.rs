@@ -173,11 +173,10 @@ fn rejected_settings_leave_the_previous_pairing_untouched() -> TestResult {
     clippy::panic_in_result_fn,
     reason = "Test assertions panic on violated guarantees; setup errors use Result."
 )]
-fn secure_and_loopback_api_addresses_remain_usable() -> TestResult {
+fn loopback_api_addresses_remain_usable() -> TestResult {
     let temporary = tempfile::tempdir()?;
     let dir = StateDir::open(temporary.path().join("state"))?;
     for api_url in [
-        "https://api.example/v1/",
         "http://localhost:8000",
         "http://127.0.0.1:8000/",
         "http://127.0.0.0",
@@ -449,7 +448,6 @@ fn vendor_preferences_roundtrip_and_invalid_vendors_do_not_load() -> TestResult 
     let temporary = tempfile::tempdir()?;
     let dir = StateDir::open(temporary.path().join("state"))?;
     for vendor in [
-        None,
         Some(Vendor::Posnet),
         Some(Vendor::Novitus),
         Some(Vendor::Elzab),

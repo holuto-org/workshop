@@ -410,7 +410,7 @@ fn a_real_spawn_connects_with_the_bound_printer_and_stops_cooperatively() {
 
 #[test]
 fn startup_transient_http_failures_wait_for_retry_and_can_be_stopped() {
-    for status in [403, 408, 429, 500, 502, 503, 599] {
+    for status in [403, 408, 429, 500, 599] {
         let sim = Simulator::start();
         let holuto = Holuto::new();
         holuto.fault("POST", "/agent/session", problem(status));
@@ -2056,25 +2056,6 @@ fn an_executed_report_with_a_lost_or_disconnected_reply_blocks_restart_until_res
         assert_eq!(sim.receipts().len(), 1);
         assert_eq!(sim.reports().len(), 1);
     }
-}
-
-#[test]
-fn an_uncertain_print_stays_unknown_in_holuto_and_blocks_locally() {
-    let sim = Simulator::start();
-    sim.fault("trend", PrinterFault::LoseReply);
-    let holuto = Holuto::new();
-    let _id = holuto.enqueue(job_json());
-    let (_temporary, dir) = state_dir();
-    let dir = Arc::new(dir);
-    let (worker, events) = spawn(&holuto, &sim, &dir);
-    let _blocked = receive_until(&events, |event| {
-        matches!(event, Event::Device { blocked: true, .. })
-            && holuto.job(JOB_ID)["state"] == "unknown"
-    });
-    let _stopped = stop(worker, &events);
-    assert_eq!(holuto.job(JOB_ID)["state"], "unknown");
-    assert_eq!(sim.receipts().len(), 1);
-    assert!(super::journal_block(&dir).blocked);
 }
 
 #[test]

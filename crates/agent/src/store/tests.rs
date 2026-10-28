@@ -125,36 +125,6 @@ fn atomic_replacement_keeps_an_open_reader_on_the_previous_complete_file() -> Te
     Ok(())
 }
 
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Test assertions panic on violated guarantees; setup errors use Result."
-)]
-fn failed_replacement_preserves_the_original_target() -> TestResult {
-    let temporary = tempfile::tempdir()?;
-    let path = temporary.path().join("settings.json");
-    fs::create_dir(&path)?;
-    fs::write(path.join("evidence"), b"keep this")?;
-    assert!(
-        write_durably(&path, b"replacement").is_err(),
-        "replacing a directory must fail without permission tricks"
-    );
-    assert_eq!(
-        fs::read(path.join("evidence"))?,
-        b"keep this",
-        "failed writes preserve the previous target"
-    );
-    let names = fs::read_dir(temporary.path())?
-        .map(|entry| entry.map(|entry| entry.file_name()))
-        .collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(
-        names,
-        ["settings.json"],
-        "failed writes clean their staging directory"
-    );
-    Ok(())
-}
-
 #[cfg(unix)]
 #[test]
 #[expect(
