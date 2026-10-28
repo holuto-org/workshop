@@ -5,5 +5,6 @@
   "baudRate": 38400,
   "vendor": null,
   "telemetryEnabled": false,
-  "startOnLaunch": false
+  "startOnLaunch": false,
+  "theme": "dark"
 }

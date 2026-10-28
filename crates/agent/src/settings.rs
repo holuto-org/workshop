@@ -49,6 +49,17 @@ impl fmt::Debug for Token {
     }
 }
 
+/// The window's color scheme; the GUI applies it, the worker ignores it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    /// Follows the operating system's light or dark setting.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Settings {
@@ -62,6 +73,7 @@ pub struct Settings {
     pub vendor: Option<Vendor>,
     pub telemetry_enabled: bool,
     pub start_on_launch: bool,
+    pub theme: Theme,
 }
 
 impl Default for Settings {
@@ -75,6 +87,7 @@ impl Default for Settings {
             vendor: None,
             telemetry_enabled: true,
             start_on_launch: false,
+            theme: Theme::System,
         }
     }
 }
@@ -136,6 +149,13 @@ impl Settings {
     pub fn save_telemetry_enabled(dir: &StateDir, enabled: bool) -> Result<(), Error> {
         let mut settings = Self::load(dir)?.unwrap_or_default();
         settings.telemetry_enabled = enabled;
+        settings.write(dir)
+    }
+
+    /// A look preference, also allowed before pairing or printer configuration.
+    pub fn save_theme(dir: &StateDir, theme: Theme) -> Result<(), Error> {
+        let mut settings = Self::load(dir)?.unwrap_or_default();
+        settings.theme = theme;
         settings.write(dir)
     }
 

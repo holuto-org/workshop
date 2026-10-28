@@ -8,16 +8,15 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-simulator = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "agent/testing"]
+simulator = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "agent/testing", "dep:uuid"]
 
 [dependencies]
 agent.workspace = true
-uuid.workspace = true
-atomicwrites.workspace = true
+uuid = { workspace = true, optional = true }
 fiscal.workspace = true
 elzab = { workspace = true, optional = true }
 novitus = { workspace = true, optional = true }
-posnet.workspace = true
+posnet = { workspace = true, optional = true }
 jiff.workspace = true
 slint = { workspace = true, features = ["unstable-winit-030"] }
 sentry.workspace = true
@@ -28,6 +27,9 @@ serde_json.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-registry.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+atomicwrites.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 async-signal.workspace = true
@@ -44,9 +46,11 @@ objc2-app-kit.workspace = true
 i-slint-backend-testing.workspace = true
 tempfile.workspace = true
 agent = { workspace = true, features = ["testing"] }
+posnet = { workspace = true, features = ["simulator"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 dispatch2.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

@@ -2,7 +2,7 @@
 use std::{env, process::Command};
 use std::{error::Error as StdError, fs, io::ErrorKind};
 
-use super::{Settings, Token};
+use super::{Settings, Theme, Token};
 use crate::{Error, store::StateDir};
 
 type TestResult = Result<(), Box<dyn StdError>>;
@@ -16,6 +16,7 @@ fn settings() -> Settings {
         vendor: None,
         telemetry_enabled: false,
         start_on_launch: false,
+        theme: Theme::Dark,
     }
 }
 
