@@ -67,7 +67,10 @@ No sleep after clicking and no layout-coordinate search.
   unknown receipts have no local bypass; the special
   completed-but-failed/expired conflict exposes only its explicit
   acknowledgement flow with job/order/receipt evidence.
-- Worker events update both header indicators, notices, job-history pages,
+- Worker events show and hide the header's problem indicators and the red
+  **Stan operacji** footer. An all-clear event removes the footer; successful
+  operations and progress remain silent. Block explanations and orphaned-receipt
+  acknowledgement evidence stay available. Events update job-history pages,
   availability and blocked state through the real Slint loop. While a simulator
   command is held, an event-loop marker still executes.
 - Close with a tray hides/recreates the window without stopping work; no tray

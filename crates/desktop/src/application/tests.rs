@@ -35,10 +35,7 @@ use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use jiff::Timestamp;
 use posnet::{capabilities::capabilities, simulator::Simulator};
 use sentry::{Client, ClientOptions, Envelope, Hub, Level, Transport, protocol::EnvelopeItem};
-use slint::{
-    Model as _,
-    platform::{Key, WindowEvent},
-};
+use slint::platform::{Key, WindowEvent};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -186,10 +183,10 @@ fn queue_confirmation_shows_amount_nip_and_local_pending_state() -> Result<(), B
     control(&window, "NIP nabywcy", AccessibleRole::TextInput)?.set_accessible_value("1234567890");
     assert_eq!(
         window.get_confirm_text().as_str(),
-        "Sprzedaż · zlecenie 42 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny.",
+        "Sprzedaż · zlecenie 42 · Jan Kowalski · 250,00 zł\nDrukarka wystawi paragon fiskalny.",
         "operator sees the binding amount"
     );
-    let confirm = ElementHandle::find_by_accessible_label(&window, "Dodaj do wydruku")
+    let confirm = ElementHandle::find_by_accessible_label(&window, "Wystaw paragon")
         .filter(|element| element.accessible_role() == Some(AccessibleRole::Button))
         .last()
         .ok_or("missing confirmation button")?;
@@ -234,7 +231,6 @@ fn paging_buttons_reflect_the_worker_page() -> Result<(), Box<dyn Error>> {
     for (event, feed, expected) in [
         (documents(1, false, true), "", (false, true)),
         (documents(1, true, false), "", (true, false)),
-        (documents(2, false, false), "", (false, false)),
         (documents(2, true, false), "", (true, false)),
         (
             Event::Jobs {
@@ -314,14 +310,12 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
     // On macOS the unavailable quit hook's error replaces this explanation in tests.
     if cfg!(not(target_os = "macos")) {
         // Save feedback stays hidden while blocked, so launch must explain the block itself.
-        let explanation = (
-            "Poprzednia operacja jest nierozstrzygnięta. Uruchom obsługę drukarki, aby ją \
-             wyjaśnić."
-                .to_owned(),
-            Tone::Error,
+        let explanation = concat!(
+            "Poprzednia operacja jest nierozstrzygnięta. ",
+            "Uruchom obsługę drukarki, aby ją wyjaśnić."
         );
         assert_eq!(
-            (app.borrow().model.message.clone(), app.borrow().model.tone),
+            app.borrow().model.message,
             explanation,
             "launch explains the block instead of the pairing prompt"
         );
@@ -329,7 +323,7 @@ fn launch_publishes_an_unresolved_journal_block_before_processing_starts()
         app.borrow_mut()
             .settings_saved(Ok(preferences::Outcome::Saved(settings)));
         assert_eq!(
-            (app.borrow().model.message.clone(), app.borrow().model.tone),
+            app.borrow().model.message,
             explanation,
             "a later save keeps the block explanation visible"
         );
@@ -371,10 +365,11 @@ fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<
     state.sync();
     drop(state);
     assert_eq!(window.get_page_label().as_str(), "Strona 1");
-    assert_eq!(
-        button(&window, "Poprzednia strona")?.accessible_enabled(),
-        Some(false),
-        "the new session has no previous page"
+    assert!(
+        ElementHandle::find_by_accessible_label(&window, "Poprzednia strona")
+            .next()
+            .is_none(),
+        "the new session has no other page, so no paging is offered"
     );
     assert!(
         app.borrow().model.documents().is_empty(),
@@ -388,12 +383,12 @@ fn a_restarted_worker_starts_without_the_previous_page_or_documents() -> Result<
     assert_eq!(
         (
             window.get_receipts().row_count(),
-            window.get_receipt_detail().as_str(),
+            window.get_receipt_detail().order.to_string(),
             window.get_receipt_selected(),
             window.get_jobs_previous_enabled(),
             window.get_jobs_next_enabled()
         ),
-        (0, "", -1, false, false),
+        (0, String::new(), -1, false, false),
         "stopped sessions never retain server receipt rows, details or paging"
     );
     Ok(())
@@ -455,12 +450,15 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
                 .clone()
         }
     }
-    i_slint_backend_testing::init_no_event_loop();
+    i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
     let link = Arc::new(Hotplug::default());
     let app = make_app(
         Arc::new(StateDir::open(temporary.path().to_owned())?),
-        Settings::default(),
+        Settings {
+            port: "/dev/ttyUNKNOWN".into(),
+            ..Settings::default()
+        },
         Arc::<Hotplug>::clone(&link),
     )?;
     let window = app
@@ -469,7 +467,6 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
         .as_ref()
         .ok_or("missing app window")?
         .clone_strong();
-    window.set_tab(2);
     link.0
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -477,12 +474,20 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
             port: "plugged-after-launch".into(),
             hint: Some(Vendor::Posnet),
         });
-    button(&window, "⌄")?.invoke_accessible_default_action();
+    window.set_tab(2);
+    i_slint_backend_testing::mock_elapsed_time(Duration::ZERO);
+    app.borrow().sync();
     assert_eq!(
         window.get_ports().iter().collect::<Vec<_>>(),
-        ["plugged-after-launch"],
-        "the list offers the printer connected while the app was running"
+        [
+            "Automatyczne wykrywanie",
+            "/dev/ttyUNKNOWN",
+            "plugged-after-launch"
+        ],
+        "showing Ustawienia lists a printer connected while the app was running, \
+         and the saved port stays offered even when enumeration skips it"
     );
+    assert_eq!(window.get_port_index(), 1, "the saved port stays selected");
     APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
@@ -492,35 +497,49 @@ fn opening_the_port_list_shows_a_printer_plugged_in_after_launch() -> Result<(),
     clippy::panic_in_result_fn,
     reason = "Tests assert behavior while propagating fallible fixture setup"
 )]
-fn stopped_worker_replaces_progress_text_but_keeps_errors() -> Result<(), Box<dyn Error>> {
+fn stopped_worker_keeps_errors() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture()?;
     ready(&app);
     let mut state = app.borrow_mut();
     state.model.running = true;
     state.model.stopping = true;
-    state.model.say(
-        "Zatrzymywanie po zakończeniu bieżącej operacji…".into(),
-        Tone::Info,
-    );
-    state.event(Event::Stopped);
-    state.sync();
-    assert_eq!(
-        window.get_status().as_str(),
-        "Zatrzymano.",
-        "a requested stop reports completion"
-    );
-    state.model.running = true;
-    state.model.stopping = true;
-    state.event(Event::Status {
-        text: "Błąd: brak połączenia".into(),
-        tone: Tone::Error,
-    });
+    state.event(Event::Problem(Some("Błąd: brak połączenia".into())));
     state.event(Event::Stopped);
     state.sync();
     assert_eq!(
         window.get_status().as_str(),
         "Błąd: brak połączenia",
         "a worker failure stays visible after it stops"
+    );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn all_clear_hides_the_problem_footer() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = fixture()?;
+    ready(&app);
+    app.borrow_mut()
+        .event(Event::Problem(Some("Błąd: brak połączenia".into())));
+    app.borrow().sync();
+    let footer = ElementHandle::find_by_accessible_label(&window, "Stan operacji")
+        .next()
+        .ok_or("missing problem footer")?;
+    assert_eq!(
+        footer.accessible_value().as_deref(),
+        Some("Błąd: brak połączenia")
+    );
+    app.borrow_mut().event(Event::Problem(None));
+    app.borrow().sync();
+    assert_eq!(window.get_status(), "");
+    assert!(
+        ElementHandle::find_by_accessible_label(&window, "Stan operacji")
+            .next()
+            .is_none(),
+        "all clear removes the footer from the accessible application"
     );
     Ok(())
 }
@@ -649,60 +668,6 @@ fn paired_fixture() -> Result<UiFixture, Box<dyn Error>> {
     Ok((temp, app, window))
 }
 
-fn save_and_quit(
-    app: &Rc<RefCell<Application>>,
-    window: &AppWindow,
-) -> Result<Settings, Box<dyn Error>> {
-    button(window, "Zapisz")?.invoke_accessible_default_action();
-    app.borrow_mut().stop(true)?;
-    slint::run_event_loop_until_quit()?;
-    Ok(Settings::load(&app.borrow().dir)?.ok_or("missing saved settings")?)
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
-)]
-fn save_persists_operator_connection_choices_before_quitting() -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = paired_fixture()?;
-    control(&window, "Adres API", AccessibleRole::TextInput)?
-        .set_accessible_value("https://api.example.test");
-    let saved = save_and_quit(&app, &window)?;
-    assert_eq!(
-        saved.api_url, "https://api.example.test",
-        "save captures API input"
-    );
-    assert_eq!(
-        saved.token.as_str(),
-        "",
-        "a token paired with another API address is never saved for the new one"
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "Tests assert behavior while propagating fallible fixture setup"
-)]
-fn a_reverted_api_address_edit_keeps_the_saved_pairing() -> Result<(), Box<dyn Error>> {
-    let (_temp, app, window) = paired_fixture()?;
-    let address = control(&window, "Adres API", AccessibleRole::TextInput)?;
-    address.set_accessible_value("https://paired.example.tes");
-    // Any UI callback captures the half-edited field.
-    window.invoke_sort_documents(0, false);
-    address.set_accessible_value("https://paired.example.test");
-    let saved = save_and_quit(&app, &window)?;
-    assert_eq!(saved.api_url, "https://paired.example.test");
-    assert_eq!(
-        saved.token.as_str(),
-        "already-paired-secret",
-        "the pairing belongs to the saved address the operator restored"
-    );
-    Ok(())
-}
-
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
@@ -711,17 +676,12 @@ fn a_reverted_api_address_edit_keeps_the_saved_pairing() -> Result<(), Box<dyn E
 fn a_status_write_acknowledgement_keeps_settings_typed_meanwhile() -> Result<(), Box<dyn Error>> {
     let (_temp, app, window) = fixture_with_event_loop()?;
     window.set_tab(2);
-    control(&window, "Adres API", AccessibleRole::TextInput)?
-        .set_accessible_value("https://typed.example.test");
     control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD-1234");
     app.borrow_mut().stop(true)?;
     slint::run_event_loop_until_quit()?;
     assert_eq!(
-        (
-            window.get_api_url().as_str(),
-            window.get_pairing_code().as_str()
-        ),
-        ("https://typed.example.test", "ABCD-1234"),
+        window.get_pairing_code().as_str(),
+        "ABCD-1234",
         "the launch status acknowledgement must not overwrite operator input"
     );
     Ok(())
@@ -787,6 +747,29 @@ fn an_older_status_acknowledgement_never_replaces_a_newer_unsubmitted_status()
     Ok(())
 }
 
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert behavior while propagating fallible fixture setup"
+)]
+fn a_start_whose_settings_cannot_be_submitted_can_be_retried() -> Result<(), Box<dyn Error>> {
+    let (_temp, app, window) = paired_fixture()?;
+    app.borrow_mut().settings_writer = Some(preferences::Writer::closed());
+    button(&window, "Uruchom")?.invoke_accessible_default_action();
+    assert!(
+        app.borrow()
+            .model
+            .message
+            .starts_with("Nie można zapisać ustawień")
+    );
+    assert_eq!(
+        button(&window, "Uruchom")?.accessible_enabled(),
+        Some(true),
+        "no completion will arrive, so Start must not stay pending"
+    );
+    Ok(())
+}
+
 /// Returns false if the deadline forced the event loop to quit.
 fn quit_before_deadline() -> Result<bool, Box<dyn Error>> {
     let (finished, quit) = mpsc::channel::<()>();
@@ -818,16 +801,15 @@ fn nested_ui_callback_is_drained_without_refcell_panic() -> Result<(), Box<dyn E
     let (_temp, _app, window) = fixture()?;
     with_app(|app| {
         with_app(|app| {
-            app.model
-                .say("Nested callback completed".into(), Tone::Success);
+            app.model.problem("Nested callback failed".into());
             Ok(())
         });
-        app.model.say("Outer callback completed".into(), Tone::Info);
+        app.model.problem("Outer callback failed".into());
         Ok(())
     });
     assert_eq!(
         window.get_status().as_str(),
-        "Nested callback completed",
+        "Nested callback failed",
         "reentrant action executes after outer mutation"
     );
     Ok(())
@@ -849,10 +831,7 @@ fn orphaned_receipt_acknowledgement_requires_explicit_confirmation() -> Result<(
         orphaned_receipt: Some("Paragon 17 został wydrukowany dla zlecenia 42".into()),
     });
     // A later error must not replace the evidence the acknowledgement quotes.
-    state.event(Event::Status {
-        text: "Błąd: Holuto niedostępne".into(),
-        tone: Tone::Error,
-    });
+    state.event(Event::Problem(Some("Błąd: Holuto niedostępne".into())));
     state.sync();
     drop(state);
     button(&window, "Wyjaśnij paragon")?.invoke_accessible_default_action();
@@ -924,7 +903,7 @@ fn accessible_headers_sort_visible_rows_without_changing_the_selected_document()
     button(&window, "Dalej")?.invoke_accessible_default_action();
     assert_eq!(
         window.get_confirm_text(),
-        "Sprzedaż · zlecenie 42 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny.",
+        "Sprzedaż · zlecenie 42 · Jan Kowalski · 250,00 zł\nDrukarka wystawi paragon fiskalny.",
         "sorting must never move selection to another document"
     );
     Ok(())
@@ -992,7 +971,7 @@ fn close_with_a_live_tray_hides_and_reopening_restores_the_window() -> Result<()
     button(&reopened, "Dalej")?.invoke_accessible_default_action();
     assert_eq!(
         reopened.get_confirm_text(),
-        "Sprzedaż · zlecenie 42 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny."
+        "Sprzedaż · zlecenie 42 · Jan Kowalski · 250,00 zł\nDrukarka wystawi paragon fiskalny."
     );
     Ok(())
 }
@@ -1050,7 +1029,7 @@ fn keyboard_navigation_selects_rows_and_enter_opens_the_selected_receipt_confirm
     });
     assert_eq!(
         window.get_confirm_text(),
-        "Sprzedaż · zlecenie 1 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny.",
+        "Sprzedaż · zlecenie 1 · Jan Kowalski · 250,00 zł\nDrukarka wystawi paragon fiskalny.",
         "Enter invokes the selected row's default action without printing yet"
     );
     Ok(())
@@ -1093,7 +1072,7 @@ fn keys_behind_an_open_confirmation_cannot_change_what_it_submits() -> Result<()
     assert!(window.get_confirming());
     assert_eq!(
         window.get_confirm_text(),
-        "Sprzedaż · zlecenie 1 · 250,00 zł\nZatwierdzenie wystawi paragon fiskalny.",
+        "Sprzedaż · zlecenie 1 · Jan Kowalski · 250,00 zł\nDrukarka wystawi paragon fiskalny.",
         "the open confirmation keeps the receipt the operator opened"
     );
     Ok(())
@@ -1117,10 +1096,10 @@ fn opt_out_is_persisted_before_the_printer_is_paired() -> Result<(), Box<dyn Err
         "opting out must not require an API URL or token"
     );
     assert!(
-        saved.api_url.is_empty(),
+        saved.api_url == Settings::default().api_url,
         "changing diagnostics must not invent connection settings"
     );
-    assert_eq!(window.get_status(), "Zapisano ustawienia diagnostyki.");
+    assert_eq!(window.get_status(), "");
     Ok(())
 }
 
@@ -1293,8 +1272,7 @@ fn quit_exits_after_a_failed_status_write_and_reports_it() -> Result<(), Box<dyn
         state
             .model
             .message
-            .starts_with("Nie można zapisać stanu aplikacji")
-            && state.model.tone == Tone::Error,
+            .starts_with("Nie można zapisać stanu aplikacji"),
         "the failure was shown: {}",
         state.model.message
     );
@@ -1396,7 +1374,7 @@ fn diagnostics_completion_preserves_the_unresolved_operation_notice() -> Result<
     });
     app.borrow_mut()
         .model
-        .say("Nierozstrzygnięty raport".into(), Tone::Error);
+        .problem("Nierozstrzygnięty raport".into());
     app.borrow().sync();
     window.set_tab(2);
     control(&window, "Udostępniaj diagnostykę", AccessibleRole::Checkbox)?
@@ -1404,7 +1382,6 @@ fn diagnostics_completion_preserves_the_unresolved_operation_notice() -> Result<
     app.borrow_mut().stop(true)?;
     slint::run_event_loop_until_quit()?;
     assert_eq!(window.get_status(), "Nierozstrzygnięty raport");
-    assert_eq!(window.get_status_tone(), 2);
     Ok(())
 }
 
@@ -1497,26 +1474,85 @@ fn receipts_show_server_fields_details_and_all_seven_states() -> Result<(), Box<
         app.borrow().sync();
         let row = control(&window, "Zlecenie 1042", AccessibleRole::ListItem)?;
         let description = row.accessible_description().ok_or("missing description")?;
-        for field in [status, "Łukasz Kowalski", "WA 12345", "2187"] {
+        for field in [
+            status,
+            "Łukasz Kowalski · WA 12345",
+            "250,00 zł",
+            "Nr 2187 · 24.10.2025",
+            "Nieprawidłowa stawka VAT",
+        ] {
             assert!(description.contains(field), "{description} lacks {field}");
         }
         row.invoke_accessible_default_action();
         let detail = window.get_receipt_detail();
-        for field in [
-            status,
-            "Paragon 2187 · 250,00 zł",
-            "Łukasz Kowalski",
-            "WA 12345",
-            "24.10.2025",
-            "Wymiana oleju · 2 · 200,00 zł",
-            "Karta płatnicza: 250,00 zł",
-            "Nieprawidłowa stawka VAT",
-            "Odliczone zaliczki:",
-            "VAT 23% · 50,00 zł",
-        ] {
-            assert!(detail.contains(field), "{detail} lacks {field}");
-        }
+        assert_eq!(
+            (detail.order.as_str(), detail.customer.as_str()),
+            ("Zlecenie 1042", "Łukasz Kowalski · WA 12345")
+        );
+        let line = detail.lines.row_data(0).ok_or("missing line")?;
+        assert_eq!(
+            [line.name, line.quantity, line.price, line.total].map(|text| text.to_string()),
+            ["Wymiana oleju", "2", "100,00 zł", "200,00 zł"]
+        );
+        assert_eq!(
+            detail
+                .totals
+                .iter()
+                .map(|total| format!("{} {}", total.label, total.amount))
+                .collect::<Vec<_>>(),
+            [
+                "Razem 250,00 zł",
+                "Odliczona zaliczka · VAT 23% 50,00 zł",
+                "Płatność: Karta płatnicza 250,00 zł"
+            ]
+        );
+        assert_eq!(detail.warning.is_empty(), state != "unknown");
         assert_eq!(window.get_receipt_selected(), 0);
+    }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "Tests assert the rendered receipt through accessible controls"
+)]
+fn a_receipt_shows_only_fields_with_values_and_a_single_page_hides_paging()
+-> Result<(), Box<dyn Error>> {
+    let (_temporary, app, window) = fixture()?;
+    let mut view = receipt_view(1042, "queued")?;
+    view.customer_name = None;
+    view.vehicle_plate = None;
+    view.job.issued_at = None;
+    app.borrow_mut().event(Event::Jobs {
+        items: vec![view],
+        page: 1,
+        has_previous: false,
+        has_next: false,
+    });
+    app.borrow().sync();
+    let row = window.get_receipts().row_data(0).ok_or("missing row")?;
+    assert_eq!(
+        [row.customer, row.amount, row.receipt, row.note].map(|text| text.to_string()),
+        ["", "250,00 zł", "", ""],
+        "nothing describes missing data"
+    );
+    let detail = window.get_receipt_detail();
+    assert_eq!(
+        [detail.customer, detail.buyer_nip, detail.warning].map(|text| text.to_string()),
+        ["", "", ""]
+    );
+    for label in [
+        "Historia od początku",
+        "Poprzednia strona historii",
+        "Następna strona historii",
+    ] {
+        assert!(
+            ElementHandle::find_by_accessible_label(&window, label)
+                .next()
+                .is_none(),
+            "{label} is hidden on the only page"
+        );
     }
     Ok(())
 }
@@ -1623,7 +1659,7 @@ fn receipt_refresh_preserves_server_order_and_selected_job_identity() -> Result<
     });
     app.borrow().sync();
     assert_eq!(window.get_receipt_selected(), 1);
-    assert!(window.get_receipt_detail().contains("Zlecenie 2"));
+    assert_eq!(window.get_receipt_detail().order, "Zlecenie 2");
     assert!(
         ElementHandle::find_by_accessible_label(&window, "Wyjaśnij paragon")
             .next()
@@ -1635,9 +1671,9 @@ fn receipt_refresh_preserves_server_order_and_selected_job_identity() -> Result<
 #[test]
 #[expect(
     clippy::panic_in_result_fn,
-    reason = "Connection and fiscal readiness are separate indicators"
+    reason = "The header shows connection and printer state only while something is wrong"
 )]
-fn header_separates_holuto_connection_from_printer_readiness() -> Result<(), Box<dyn Error>> {
+fn header_shows_holuto_and_printer_only_while_something_is_wrong() -> Result<(), Box<dyn Error>> {
     let (_temporary, app, window) = fixture()?;
     assert_eq!(
         control(&window, "Holuto", AccessibleRole::Text)?
@@ -1654,18 +1690,14 @@ fn header_separates_holuto_connection_from_printer_readiness() -> Result<(), Box
         Some("Łączenie…")
     );
     ready(&app);
-    assert_eq!(
-        control(&window, "Holuto", AccessibleRole::Text)?
-            .accessible_value()
-            .as_deref(),
-        Some("Połączono")
-    );
-    assert_eq!(
-        control(&window, "Drukarka", AccessibleRole::Text)?
-            .accessible_value()
-            .as_deref(),
-        Some("Gotowa · Posnet TST0000000042")
-    );
+    for label in ["Holuto", "Drukarka"] {
+        assert!(
+            ElementHandle::find_by_accessible_label(&window, label)
+                .next()
+                .is_none(),
+            "a working {label} is not announced"
+        );
+    }
     app.borrow_mut()
         .model
         .device
@@ -1687,11 +1719,10 @@ fn header_separates_holuto_connection_from_printer_readiness() -> Result<(), Box
         orphaned_receipt: None,
     });
     app.borrow().sync();
-    assert_eq!(
-        control(&window, "Holuto", AccessibleRole::Text)?
-            .accessible_value()
-            .as_deref(),
-        Some("Połączono")
+    assert!(
+        ElementHandle::find_by_accessible_label(&window, "Holuto")
+            .next()
+            .is_none()
     );
     assert_eq!(
         control(&window, "Drukarka", AccessibleRole::Text)?

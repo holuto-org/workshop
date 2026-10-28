@@ -988,8 +988,18 @@ fn route_request(
         job["state"] = json!("queued");
         job["attempt"] = Value::Null;
         job["takenAt"] = Value::Null;
+        // Holuto snapshots the queued order: its number and customer come from the document.
+        let document = state.documents.iter().find(|document| {
+            document["orderId"] == job["orderId"] && document["allocationId"] == job["allocationId"]
+        });
+        let customer = document.map_or(Value::Null, |document| document["customerName"].clone());
+        if let Some(document) = document {
+            job["orderNumber"] = document["orderNumber"].clone();
+        }
         let _old = state.jobs.insert(id, job.clone());
-        let _old = state.jobs_metadata.insert(id, json!({"source": "device"}));
+        let _old = state
+            .jobs_metadata
+            .insert(id, json!({"source": "device", "customerName": customer}));
         state.queue.push_back(id);
         return (201, job);
     }

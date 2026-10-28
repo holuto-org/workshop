@@ -8,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-simulator = ["posnet/simulator", "novitus/simulator", "elzab/simulator"]
+simulator = ["posnet/simulator", "novitus/simulator", "elzab/simulator", "agent/testing"]
 
 [dependencies]
 agent.workspace = true
@@ -27,7 +27,7 @@ ureq.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys.workspace = true
+windows-registry.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 async-signal.workspace = true
@@ -40,14 +40,14 @@ zbus.workspace = true
 objc2.workspace = true
 objc2-app-kit.workspace = true
 
-[build-dependencies]
-winresource.workspace = true
-
 [dev-dependencies]
 i-slint-backend-testing.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 agent = { workspace = true, features = ["testing"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+dispatch2.workspace = true
 
 [lints]
 workspace = true

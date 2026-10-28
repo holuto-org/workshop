@@ -6,9 +6,9 @@ mod table;
 use agent::{
     api::model::JobView,
     documents::{BuyerNip, Document, DocumentSearch},
-    settings::{BAUD_RATES, Settings, Token},
+    settings::{BAUD_RATES, Settings},
     status::Snapshot,
-    worker::{Command, Searches, Tone},
+    worker::{Command, Searches},
 };
 use fiscal::{
     device::{Device, Vendor},
@@ -60,12 +60,10 @@ pub(crate) struct Confirmation {
 )]
 pub(crate) struct Model {
     pub(crate) settings: Settings,
-    /// Persisted API address and pairing; address edits are judged against these,
-    /// not an earlier capture, so reverting an edit keeps the pairing.
-    saved_api_url: String,
-    saved_token: Token,
     pub(crate) pairing_code: String,
     pub(crate) pairing: bool,
+    /// Start was requested and the worker is not spawned yet.
+    pub(crate) starting: bool,
     documents: Table<Document>,
     receipts: receipts::Receipts,
     receipt_search: String,
@@ -94,8 +92,9 @@ pub(crate) struct Model {
     /// Typed search text; the worker lists `applied_search`.
     search: String,
     applied_search: Option<DocumentSearch>,
+    /// The last document fetch failed; the dialog offers a retry.
+    documents_unavailable: bool,
     pub(crate) message: String,
-    pub(crate) tone: Tone,
     /// Month starts, newest first.
     pub(crate) months: Vec<Date>,
     pub(crate) month_index: usize,
@@ -111,14 +110,11 @@ pub(crate) struct Model {
 impl Model {
     pub(crate) fn new(settings: Settings, today: Date) -> Self {
         let months = months_before(today);
-        let saved_api_url = settings.api_url.clone();
-        let saved_token = settings.token.clone();
         Self {
             settings,
-            saved_api_url,
-            saved_token,
             pairing_code: String::new(),
             pairing: false,
+            starting: false,
             documents: Table::new(),
             receipts: receipts::Receipts::new(),
             receipt_search: String::new(),
@@ -144,8 +140,8 @@ impl Model {
             nip_invalid: false,
             search: String::new(),
             applied_search: None,
+            documents_unavailable: false,
             message: String::new(),
-            tone: Tone::Info,
             months,
             month_index: 0,
             from: date_label(today.checked_sub(7.days()).unwrap_or(today)),
@@ -157,14 +153,12 @@ impl Model {
         }
     }
 
-    pub(crate) fn say(&mut self, text: String, tone: Tone) {
+    pub(crate) fn problem(&mut self, text: String) {
         self.message = text;
-        self.tone = tone;
     }
 
-    pub(crate) fn settings_persisted(&mut self) {
-        self.saved_api_url.clone_from(&self.settings.api_url);
-        self.saved_token.clone_from(&self.settings.token);
+    pub(crate) fn clear_problem(&mut self) {
+        self.message.clear();
     }
 
     pub(crate) fn documents(&self) -> &[Document] {
@@ -178,6 +172,7 @@ impl Model {
         has_previous: bool,
         has_next: bool,
     ) {
+        self.documents_unavailable = false;
         let previous = self.documents.set(documents);
         self.selected = self
             .selected
@@ -191,6 +186,17 @@ impl Model {
         self.page = page;
         self.has_previous = has_previous;
         self.has_next = has_next;
+    }
+
+    /// An empty table must then say the list failed, never that nothing waits for a receipt.
+    pub(crate) fn documents_unavailable(&mut self) {
+        self.set_documents(Vec::new(), 1, false, false);
+        self.documents_unavailable = true;
+    }
+
+    /// Retry lists the applied search again, which the unchanged-search guard would skip.
+    pub(crate) fn retry_documents_command(&self) -> Command {
+        Command::Search(self.applied_search.clone())
     }
 
     pub(crate) fn set_jobs(
@@ -260,7 +266,7 @@ impl Model {
                 })
             },
             Err(error) => {
-                self.say(error.to_string(), Tone::Error);
+                self.problem(error.to_string());
                 None
             },
         }
@@ -331,9 +337,6 @@ impl Model {
         self.today = today;
         // Slint 1.18 permits assistive edits on disabled controls; guard settings here too.
         if !self.running && !self.saving && !self.pairing {
-            self.settings.api_url.clone_from(&self.saved_api_url);
-            self.settings.token.clone_from(&self.saved_token);
-            self.settings.set_api_url(window.get_api_url().trim());
             window
                 .get_pairing_code()
                 .trim()
@@ -371,6 +374,7 @@ impl Model {
         window.set_stopping(self.stopping);
         window.set_saving_settings(self.saving);
         window.set_pairing(self.pairing);
+        window.set_starting(self.starting);
         window.set_connected(self.connected);
         window.set_queue_enabled(self.queue_enabled() && self.selected.is_some());
         window.set_reports_enabled(self.reports_enabled());
@@ -380,10 +384,10 @@ impl Model {
         window.set_report_unresolved(self.resolve_enabled());
         window.set_orphaned_receipt(self.acknowledge_enabled());
         window.set_status(self.message.as_str().into());
-        window.set_status_tone(tone_number(self.tone));
+        // The header speaks only when something is wrong; a working setup shows nothing.
         window.set_holuto_text(
             if self.connected {
-                "Połączono"
+                ""
             } else if self.running {
                 "Łączenie…"
             } else {
@@ -407,8 +411,7 @@ impl Model {
         window.set_manual(self.manual);
         window.set_receipts(self.receipts.rows());
         window.set_receipt_selected(self.receipts.index());
-        window.set_receipt_detail(self.receipts.detail.as_str().into());
-        window.set_api_url(self.settings.api_url.as_str().into());
+        window.set_receipt_detail(self.receipts.detail.clone());
         window.set_pairing_code(self.pairing_code.as_str().into());
         window.set_start_on_launch(self.settings.start_on_launch);
         window.set_telemetry_enabled(self.settings.telemetry_enabled);
@@ -424,6 +427,7 @@ impl Model {
         window.set_nip(self.nip.as_str().into());
         window.set_search(self.search.as_str().into());
         window.set_searching(self.running && self.applied_search.is_some());
+        window.set_documents_unavailable(self.documents_unavailable);
         window.set_selected(
             self.selected
                 .and_then(|index| i32::try_from(index).ok())
@@ -486,13 +490,7 @@ impl Model {
         } else if let Some(status) = self.device.as_ref().filter(|status| !status.ready()) {
             format!("Niegotowa: {}", status.description())
         } else if self.connected && self.device.is_some() {
-            let vendor = match self.vendor {
-                Some(Vendor::Posnet) => "Posnet",
-                Some(Vendor::Novitus) => "Novitus",
-                Some(Vendor::Elzab) => "Elzab",
-                None => "",
-            };
-            format!("Gotowa · {vendor} {}", self.unique_number)
+            String::new()
         } else {
             "Niegotowa: brak połączenia".into()
         }
@@ -580,7 +578,8 @@ impl Model {
             | Action::JobsPreviousPage
             | Action::OpenManual
             | Action::CloseManual
-            | Action::JobsNextPage => None,
+            | Action::JobsNextPage
+            | Action::RetryDocuments => None,
         };
     }
 
@@ -595,12 +594,17 @@ impl Model {
             },
             title: "Potwierdź paragon".into(),
             text: format!(
-                "{} · zlecenie {} · {}\nZatwierdzenie wystawi paragon fiskalny.",
+                "{} · zlecenie {}{} · {}\nDrukarka wystawi paragon fiskalny.",
                 document.kind.label(),
                 document.order_number,
+                document
+                    .customer_name
+                    .as_deref()
+                    .map(|customer| format!(" · {customer}"))
+                    .unwrap_or_default(),
                 zloty(document.amount)
             ),
-            action: "Dodaj do wydruku".into(),
+            action: "Wystaw paragon".into(),
         };
         // The buyer NIP belongs to this receipt only.
         self.nip.clear();
@@ -612,7 +616,7 @@ impl Model {
         let (from, to) = match report_range(&self.from, &self.to, self.today) {
             Ok(range) => range,
             Err(error) => {
-                self.say(error, Tone::Error);
+                self.problem(error);
                 return None;
             },
         };
@@ -659,10 +663,7 @@ impl Model {
                 .iter()
                 .any(|listed| listed.same_document(document))
         {
-            self.say(
-                "Nie wysłano: dokument nie czeka już na paragon.".into(),
-                Tone::Error,
-            );
+            self.problem("Nie wysłano: dokument nie czeka już na paragon.".into());
             return None;
         }
         // Readiness may have changed while the confirmation was open.
@@ -684,10 +685,7 @@ impl Model {
         };
         if !allowed {
             // A closed dialog must not read as a printed receipt or report.
-            self.say(
-                "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.".into(),
-                Tone::Error,
-            );
+            self.problem("Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.".into());
             return None;
         }
         if matches!(pending.command, Command::Queue { .. }) {
@@ -731,13 +729,6 @@ fn report_range(from: &str, to: &str, today: Date) -> Result<(Date, Date), Strin
         return Err("Data początkowa nie może być późniejsza niż końcowa.".to_owned());
     }
     Ok((from, to))
-}
-const fn tone_number(tone: Tone) -> i32 {
-    match tone {
-        Tone::Info => 0,
-        Tone::Success => 1,
-        Tone::Error => 2,
-    }
 }
 fn date_label(date: Date) -> String {
     date.strftime("%d.%m.%Y").to_string()

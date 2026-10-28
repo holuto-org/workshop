@@ -42,15 +42,17 @@ Applications License 2.0; the badge is required attribution.
 Pair in **Ustawienia** with a one-time code generated for the printer in Holuto
 (valid 15 minutes; see the
 [guided configuration sequence](docs/install-with-ai.md#guided-configuration-sequence)).
-Pairing replaces the previous device token, which stays internal. **Zapisz**
-saves; **Uruchom** starts processing. Every launch needs an explicit start
-unless [autostart](#autostart) is on.
+Pairing replaces the previous device token, which stays internal. Settings save
+as soon as a field is committed; **Uruchom** starts processing. Every launch
+needs an explicit start unless [autostart](#autostart) is on.
 
-Use the final API URL, including any path prefix. HTTPS is required except on
-loopback (`localhost`, `127.0.0.0/8`, `::1`); redirects are rejected. TLS uses
-the OS certificate store. Changing the API URL forgets the saved pairing. A 401
-stops processing; generate a fresh pairing code in Holuto and pair again. There
-is no token refresh.
+Release packages carry the production Holuto API URL; there is no address
+field in the app. `workshop config set --api-url` overrides it (staging or
+local development). HTTPS is required except on loopback (`localhost`,
+`127.0.0.0/8`, `::1`); redirects are rejected. TLS uses the OS certificate
+store. Changing the API URL forgets the saved pairing. A 401 stops processing;
+generate a fresh pairing code in Holuto and pair again. There is no token
+refresh.
 
 State directory:
 
@@ -192,12 +194,15 @@ It never scans with an unresolved operation: the device must not change.
   `01.01.2025`), must be on or after `01.01.2000`, cannot be in the future, and
   require start ≤ end. Reports and receipts share one worker thread; commands
   cannot interleave.
-- **Ustawienia** — API URL, pairing code, printer port/speed, autostart,
+- **Ustawienia** — pairing code, printer port/speed, autostart,
   **Udostępniaj diagnostykę** (see [Diagnostics](#diagnostics)) and processing
   controls.
 
-The header shows separate **Holuto** connection and **Drukarka** readiness
-indicators. When no receipts exist, start processing in **Ustawienia**.
+The header shows **Holuto** and **Drukarka** only while something is wrong:
+not connected, connecting, printer not ready or blocked. The footer likewise
+shows only problems, in red; it disappears when the problem is cleared.
+Successful operations and normal progress show no footer messages.
+When no receipts exist, start processing in **Ustawienia**.
 
 Polling runs every **3 seconds**, or **15 seconds** after errors or while
 blocked. If the printer does not answer, or Holuto is unreachable, times out

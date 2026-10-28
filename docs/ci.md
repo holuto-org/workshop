@@ -61,7 +61,8 @@ environment override; never smoke-launch against someone's saved state.
 
 ## Release telemetry artifacts
 
-Set repository variables `SENTRY_DSN`, `SENTRY_ORG=holuto`,
+Set repository variables `HOLUTO_API_URL` (the production Holuto API URL that
+release builds carry as their default), `SENTRY_DSN`, `SENTRY_ORG=holuto`,
 `SENTRY_PROJECT=workshop` and organization-token secret `SENTRY_AUTH_TOKEN`
 (it carries the Sentry URL). Release builds report as
 `workshop@<workspace version>` in environment `production`; Sentry creates the

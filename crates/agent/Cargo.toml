@@ -47,12 +47,5 @@ proptest.workspace = true
 proptest-state-machine.workspace = true
 tracing-subscriber.workspace = true
 
-[build-dependencies]
-serde_json.workspace = true
-typify.workspace = true
-schemars.workspace = true
-syn.workspace = true
-quote.workspace = true
-
 [lints]
 workspace = true

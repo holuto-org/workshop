@@ -31,14 +31,13 @@ Update the `agent::testing` loopback fake in the same change, then prove
 requests through
 production `ureq` and the observable stored server state.
 
-Follow the [sync procedure](../../AGENTS.md#api-contract). Typify generates wire
-types into `OUT_DIR/agent-wire.rs` during builds, not committed source.
+Follow the [sync procedure](../../AGENTS.md#api-contract).
 
 Full OpenAPI schema validation belongs to the feature-gated testing fake, not
 the runtime HTTP client. Fiscal amount/name/NIP scalars deliberately remain
 strings until domain validation; a malformed individual fiscal job must fail at
-the fiscal boundary rather than making an entire batch unreadable. Generated
-types do not replace those domain checks.
+the fiscal boundary rather than making an entire batch unreadable. Wire types
+do not replace those domain checks.
 
 Assert required nullable fields, decimal strings, unchanged opaque cursor
 encoding, Polish problem details and exact result echo. Include commit-then-drop

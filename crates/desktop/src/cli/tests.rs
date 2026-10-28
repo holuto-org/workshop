@@ -22,6 +22,16 @@ impl fmt::Display for Failure {
 }
 impl Error for Failure {}
 
+/// A fresh state lacks the address only when the build carries none; release builds
+/// carry it, so pairing is the first thing missing there.
+fn first_missing_setting() -> &'static str {
+    if Settings::default().api_url.is_empty() {
+        Settings::MISSING_API_URL
+    } else {
+        "Sparuj drukarkę kodem z Holuto w Ustawieniach."
+    }
+}
+
 #[test]
 fn ports_json_includes_brand_hints_while_human_output_keeps_names_only() {
     use fiscal::{device::Vendor, link::Candidate};
@@ -243,7 +253,7 @@ fn fresh_installation_check_reports_missing_configuration_without_opening_ports(
         response.value,
         json!({
             "ok":false,"configured":false,"appRunning":false,
-            "errors":["Wpisz adres API w Ustawieniach."]
+            "errors":[first_missing_setting()]
         })
     );
     Ok(())
@@ -633,13 +643,14 @@ fn json_dispatch_round_trips_configuration_and_reports_exact_errors() -> TestRes
             vec!["check"],
             3,
             json!({"ok":false,"configured":false,"appRunning":false,
-            "errors":["Wpisz adres API w Ustawieniach."]}),
+            "errors":[first_missing_setting()]}),
         ),
         (
             vec!["config", "show"],
             0,
             json!({"ok":true,"config":{
-                "apiUrl":"","paired":false,"port":"auto","baudRate":9600,"vendor":null,
+                "apiUrl":Settings::default().api_url,"paired":false,"port":"auto",
+                "baudRate":9600,"vendor":null,
                 "telemetryEnabled":true,"startOnLaunch":false
             }}),
         ),

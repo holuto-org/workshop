@@ -75,8 +75,8 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
                         assert_eq!(
                             window.get_confirm_text(),
                             concat!(
-                                "Sprzedaż · zlecenie 10 · 250,00 zł\n",
-                                "Zatwierdzenie wystawi paragon fiskalny."
+                                "Sprzedaż · zlecenie 10 · Klient testowy · 250,00 zł\n",
+                                "Drukarka wystawi paragon fiskalny."
                             )
                         );
                         // Type and click from a fresh event-loop task, as an operator does:
@@ -87,7 +87,7 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
                                 let window = window.upgrade().ok_or("missing window")?;
                                 let confirmation = ElementHandle::find_by_accessible_label(
                                     &window,
-                                    "Dodaj do wydruku",
+                                    "Wystaw paragon",
                                 )
                                 .filter(|element| {
                                     element.accessible_role() == Some(AccessibleRole::Button)
@@ -125,14 +125,13 @@ fn operator_queue_prints_and_shows_accepted_receipt_history() -> Result<(), Box<
                         "done",
                         "Holuto accepts the printed result"
                     );
-                    control(&window, "Zlecenie 10", AccessibleRole::ListItem)
+                    let listed = control(&window, "Zlecenie 10", AccessibleRole::ListItem)
                         .map_err(|error| error.to_string())?
-                        .invoke_accessible_default_action();
+                        .accessible_description()
+                        .unwrap_or_default();
                     assert!(
-                        window
-                            .get_receipt_detail()
-                            .contains("Paragon 1 · 250,00 zł"),
-                        "operator sees printer-assigned receipt number"
+                        listed.contains("Nr 1 · "),
+                        "operator sees printer-assigned receipt number: {listed}"
                     );
                     app.stop(true)?;
                 }
@@ -342,13 +341,13 @@ fn a_typing_pause_lists_only_the_matching_server_jobs() -> Result<(), Box<dyn Er
                 with_app(move |app| {
                     let window = app.window.as_ref().ok_or("missing window")?;
                     if typed.swap(true, Ordering::SeqCst) {
-                        let shown: Vec<_> =
-                            window.get_receipts().iter().map(|row| row.order).collect();
-                        assert_eq!(shown, ["Zlecenie 1042"], "only the matching job is listed");
-                        let detail = window.get_receipt_detail();
-                        for field in ["Łukasz Kowalski", "WA12345", "Paragon 2187", "24.10.2025"] {
-                            assert!(detail.contains(field), "{detail} lacks {field}");
-                        }
+                        let rows: Vec<_> = window.get_receipts().iter().collect();
+                        assert!(
+                            matches!(rows.as_slice(), [row] if row.order == "Zlecenie 1042"
+                                && row.customer == "Łukasz Kowalski · WA12345"
+                                && row.receipt.starts_with("Nr 2187 · 24.10.2025")),
+                            "only the matching job is listed: {rows:?}"
+                        );
                         return app.stop(true);
                     }
                     // Type from a fresh event-loop task, as an operator does: this callback's
@@ -485,7 +484,7 @@ fn history_pages_clear_on_failure_and_retry_restarts_at_first_page() -> Result<(
                             1 => {
                                 assert!(window.get_jobs_unavailable());
                                 assert_eq!(window.get_receipts().row_count(), 0);
-                                assert_eq!(window.get_receipt_detail(), "");
+                                assert_eq!(window.get_receipt_detail().order, "");
                                 assert!(
                                     !window.get_jobs_previous_enabled()
                                         && !window.get_jobs_next_enabled()

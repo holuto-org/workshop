@@ -27,7 +27,7 @@ use tracing::{
 use tracing_subscriber::{Layer, layer::Context, prelude::*};
 use uuid::Uuid;
 
-use super::{Command, Event, Tone, Worker};
+use super::{Command, Event, Worker};
 use crate::{
     agent::{POLL, RETRY},
     api::model::JobState,
@@ -77,10 +77,10 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
     ))
     .unwrap();
     let events = [
-        Event::Status {
-            text: "private-customer private-line 98765.43 9876543".to_owned(),
-            tone: Tone::Error,
-        },
+        Event::Problem(Some(
+            "private-customer private-line 98765.43 9876543".to_owned(),
+        )),
+        Event::Problem(None),
         Event::Documents {
             items: vec![document],
             page: 2,
@@ -127,7 +127,8 @@ fn event_debug_omits_operator_text_and_receipt_payloads() {
     assert_eq!(
         debug,
         [
-            "Status { tone: Error, .. }",
+            "Problem(..)",
+            "Problem(None)",
             "Documents { count: 1, page: 2, has_previous: true, has_next: true }",
             "Jobs { count: 1, page: 2, has_previous: true, has_next: true }",
             "PortDetected(..)",
@@ -336,8 +337,7 @@ fn a_panicking_worker_reports_a_redacted_error_then_stopped() {
     assert!(matches!(
         received.as_slice(),
         [
-            Event::Status { tone: Tone::Info, .. },
-            Event::Status { tone: Tone::Error, text },
+            Event::Problem(Some(text)),
             Event::Device { status: None, blocked: false, report_unresolved: false, .. },
             Event::Stopped
         ] if text == "Wątek drukarki został przerwany. Sprawdź wydruk przed \
@@ -454,7 +454,7 @@ fn shown(events: &[Event]) -> Vec<(Vec<i64>, usize, bool)> {
                 *page,
                 *has_next,
             )),
-            Event::Status { .. }
+            Event::Problem(_)
             | Event::PortDetected { .. }
             | Event::Connected { .. }
             | Event::Paired { .. }
@@ -462,6 +462,7 @@ fn shown(events: &[Event]) -> Vec<(Vec<i64>, usize, bool)> {
             | Event::Device { .. }
             | Event::Jobs { .. }
             | Event::JobsUnavailable
+            | Event::DocumentsUnavailable
             | Event::CommandCompleted
             | Event::Stopped => None,
         })
@@ -514,7 +515,7 @@ fn startup_transient_http_failures_wait_for_retry_and_can_be_stopped() {
         );
         let _retrying = receive_until(
             &events,
-            |event| matches!(event, Event::Status { text, tone: Tone::Error } if text == &expected),
+            |event| matches!(event, Event::Problem(Some(text)) if text == &expected),
         );
         let stopped = stop(worker, &events);
         assert!(matches!(stopped.last(), Some(Event::Stopped)));
@@ -572,8 +573,7 @@ fn startup_contract_failures_stop_without_retry_or_fiscal_effects() {
         assert!(matches!(
             received.as_slice(),
             [
-                Event::Status { tone: Tone::Info, .. },
-                Event::Status { tone: Tone::Error, text },
+                Event::Problem(Some(text)),
                 Event::Device { status: None, blocked: false, report_unresolved: false, .. },
                 Event::Stopped
             ] if text == expected
@@ -605,12 +605,12 @@ fn printer_unavailable_at_start_is_retried_until_it_answers() {
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let received = receive_until(&events, |event| {
         matches!(event,
-            Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
+            Event::Problem(Some(text)) if text.contains("Ponowna próba za 15 sekund")
         )
     });
     assert!(matches!(
         received.last(),
-        Some(Event::Status { tone: Tone::Error, text })
+        Some(Event::Problem(Some(text)))
             if text.starts_with("Drukarka niedostępna: ")
     ));
     assert!(
@@ -625,6 +625,16 @@ fn printer_unavailable_at_start_is_retried_until_it_answers() {
         |event| matches!(event, Event::Connected { unique_number, .. }
                 if unique_number == UNIQUE_NUMBER)
     ));
+    assert!(
+        matches!(
+            received
+                .iter()
+                .rev()
+                .find(|event| matches!(event, Event::Problem(_))),
+            Some(Event::Problem(None))
+        ),
+        "a successful connection clears the unavailable-printer problem"
+    );
     let _stopped = stop(worker, &events);
 }
 
@@ -681,7 +691,7 @@ fn slow_startup_detection_still_waits_the_full_retry_interval() {
     .unwrap();
     let _retrying = receive_until(&events, |event| {
         matches!(event,
-            Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
+            Event::Problem(Some(text)) if text.contains("Ponowna próba za 15 sekund")
         )
     });
     // Wakes the wait without moving the clock: the retry is still 15 s away.
@@ -719,7 +729,7 @@ fn a_lost_startup_reply_is_retryable_without_touching_the_printer_again() {
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let _received = receive_until(&events, |event| {
         matches!(event,
-            Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
+            Event::Problem(Some(text)) if text.contains("Ponowna próba za 15 sekund")
         )
     });
     let startup_frames = sim.frames();
@@ -770,8 +780,7 @@ fn startup_unauthorized_stops_instead_of_retrying() {
     assert!(matches!(
         received.as_slice(),
         [
-            Event::Status { tone: Tone::Info, .. },
-            Event::Status { tone: Tone::Error, text },
+            Event::Problem(Some(text)),
             Event::Device { status: None, blocked: false, report_unresolved: false, .. },
             Event::Stopped
         ] if text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
@@ -815,7 +824,7 @@ fn detecting_a_port_emits_an_event_without_creating_or_rewriting_settings() {
                         port,
                         vendor: Vendor::Posnet,
                     } => Some(port.as_str()),
-                    Event::Status { .. }
+                    Event::Problem(_)
                     | Event::PortDetected { .. }
                     | Event::Connected { .. }
                     | Event::Paired { .. }
@@ -824,6 +833,7 @@ fn detecting_a_port_emits_an_event_without_creating_or_rewriting_settings() {
                     | Event::Device { .. }
                     | Event::Jobs { .. }
                     | Event::JobsUnavailable
+                    | Event::DocumentsUnavailable
                     | Event::CommandCompleted
                     | Event::Stopped => None,
                 })
@@ -1017,7 +1027,7 @@ fn a_failed_page_fetch_retains_the_requested_navigation_for_refresh() {
     holuto.fault("POST", "/agent/documents/search", problem(503));
     worker.submit(Command::NextPage);
     let failed = receive_until(&events, |event| {
-        matches!(event, Event::Status { text, tone: Tone::Error }
+        matches!(event, Event::Problem(Some(text))
         if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
     });
     assert_eq!(shown(&failed), []);
@@ -1025,6 +1035,38 @@ fn a_failed_page_fetch_retains_the_requested_navigation_for_refresh() {
     let recovered = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
     let _stopped = stop(worker, &events);
     assert_eq!(shown(&recovered), [(vec![2], 2, true)]);
+}
+
+#[test]
+fn only_a_full_poll_clears_an_error_another_list_succeeding_does_not() {
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    pages(&holuto);
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let clock = Arc::new(Mutex::new(Instant::now()));
+    let _clock = ClockScope::enter(Some(Arc::clone(&clock)));
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let _listed = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
+    holuto.fault("POST", "/agent/documents/search", problem(503));
+    worker.submit(Command::NextPage);
+    let _failed = receive_until(&events, |event| {
+        matches!(event, Event::Problem(Some(text))
+        if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
+    });
+    // The job list loads, but the requested documents page still has not.
+    worker.submit(Command::JobsFirstPage);
+    let _jobs = receive_until(&events, |event| matches!(event, Event::Jobs { .. }));
+    *clock.lock().unwrap() += Duration::from_secs(20);
+    worker.submit(Command::JobsFirstPage);
+    let cleared = receive_until(&events, |event| matches!(event, Event::Problem(None)));
+    let _stopped = stop(worker, &events);
+    assert!(
+        cleared
+            .iter()
+            .any(|event| matches!(event, Event::Documents { .. })),
+        "the error clears only after a poll reloaded the documents: {cleared:?}"
+    );
 }
 
 #[test]
@@ -1197,10 +1239,12 @@ fn a_failed_queue_command_does_not_delay_the_following_report() {
         completed == 2
     });
     let _stopped = stop(worker, &events);
-    assert!(received.iter().any(
-        |event| matches!(event, Event::Status { text, tone: Tone::Error }
-        if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
-    ));
+    assert!(
+        received
+            .iter()
+            .any(|event| matches!(event, Event::Problem(Some(text))
+        if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable"))
+    );
     assert_eq!(
         sim.reports(),
         [SimReport {
@@ -1235,8 +1279,9 @@ fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
     let statuses: Vec<_> = received
         .iter()
         .filter_map(|event| match event {
-            Event::Status { text, .. } => Some(text.as_str()),
-            Event::PortDetected { .. }
+            Event::Problem(Some(text)) => Some(text.as_str()),
+            Event::Problem(None)
+            | Event::PortDetected { .. }
             | Event::Connected { .. }
             | Event::Paired { .. }
             | Event::PairingFailed { .. }
@@ -1244,6 +1289,7 @@ fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
             | Event::Device { .. }
             | Event::Jobs { .. }
             | Event::JobsUnavailable
+            | Event::DocumentsUnavailable
             | Event::CommandCompleted
             | Event::Stopped => None,
         })
@@ -1251,8 +1297,6 @@ fn an_unsupported_vat_warning_is_shown_once_and_never_hides_a_command_result() {
     assert_eq!(
         statuses,
         [
-            "Łączenie z drukarką i Holuto…",
-            "Połączono: DEM0000000001. Oczekiwanie na zlecenia.",
             "Pomijam nieobsługiwaną stawkę VAT w slocie F · 7%",
             "Błąd: Holuto odpowiedziało błędem 503: backend unavailable",
         ],
@@ -1276,11 +1320,11 @@ fn command_unauthorized_releases_the_submission_guard_then_stops() {
     let received = receive_until(&events, |event| matches!(event, Event::Stopped));
     worker.join();
     assert!(
-        received.iter().any(
-            |event| matches!(event, Event::Status { text, tone: Tone::Error }
+        received
+            .iter()
+            .any(|event| matches!(event, Event::Problem(Some(text))
         if text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
-                    Sparuj drukarkę ponownie w Ustawieniach.")
-        ),
+                    Sparuj drukarkę ponownie w Ustawieniach.")),
         "authorization failure reaches the operator"
     );
     assert!(
@@ -1392,10 +1436,7 @@ fn a_report_submitted_during_a_receipt_waits_for_the_receipt_to_finish() {
         .unwrap();
     let report_position = received
         .iter()
-        .position(|event| {
-            matches!(event, Event::Status { tone: Tone::Success, text }
-        if text == "Raport dobowy wydrukowany.")
-        })
+        .rposition(|event| matches!(event, Event::Problem(None)))
         .unwrap();
     assert!(history_position < report_position);
     assert_eq!(
@@ -1427,7 +1468,7 @@ fn documents_still_page_when_the_printer_probe_is_failing() {
     sim.fault("getrealid", PrinterFault::Error);
     worker.submit(Command::ResolveReport);
     let _failed_probe = receive_until(&events, |event| {
-        matches!(event, Event::Status { text, tone: Tone::Error }
+        matches!(event, Event::Problem(Some(text))
         if text == "Błąd: Drukarka zwróciła błąd 2000 (getrealid).")
     });
     worker.submit(Command::NextPage);
@@ -1451,11 +1492,13 @@ fn document_unauthorized_is_not_hidden_by_a_simultaneous_printer_error() {
     worker.submit(Command::ResolveReport);
     let received = receive_until(&events, |event| matches!(event, Event::Stopped));
     worker.join();
-    assert!(received.iter().any(
-        |event| matches!(event, Event::Status { text, tone: Tone::Error }
+    assert!(
+        received
+            .iter()
+            .any(|event| matches!(event, Event::Problem(Some(text))
         if text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
-                    Sparuj drukarkę ponownie w Ustawieniach.")
-    ));
+                    Sparuj drukarkę ponownie w Ustawieniach."))
+    );
     assert_eq!(sim.receipts(), []);
 }
 
@@ -1468,7 +1511,7 @@ fn print_with_unconfirmed_result(sim: &Simulator, holuto: &Holuto, dir: &Arc<Sta
     );
     let (worker, events) = spawn(holuto, sim, dir);
     let _failed = receive_until(&events, |event| {
-        matches!(event, Event::Status { text, tone: Tone::Error }
+        matches!(event, Event::Problem(Some(text))
         if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
     });
     let _stopped = stop(worker, &events);
@@ -1713,7 +1756,7 @@ fn an_orphaned_print_publishes_its_evidence_with_the_block() {
         "the block carries its evidence"
     );
     let latest = received.iter().rev().find_map(|event| {
-        if let Event::Status { text, .. } = event {
+        if let Event::Problem(Some(text)) = event {
             Some(text.clone())
         } else {
             None
@@ -1875,11 +1918,13 @@ fn a_corrupt_journal_stops_startup_before_any_printer_or_holuto_traffic() {
     let (worker, events) = spawn(&holuto, &sim, &dir);
     let received = receive_until(&events, |event| matches!(event, Event::Stopped));
     worker.join();
-    assert!(received.iter().any(
-        |event| matches!(event, Event::Status { text, tone: Tone::Error }
+    assert!(
+        received
+            .iter()
+            .any(|event| matches!(event, Event::Problem(Some(text))
         if text == "Błąd: Uszkodzony rejestr operacji lub nieobsługiwany format. \
-                    Drukowanie zablokowane; nie usuwaj pliku.")
-    ));
+                    Drukowanie zablokowane; nie usuwaj pliku."))
+    );
     assert!(
         !received
             .iter()
@@ -2283,7 +2328,7 @@ fn a_second_next_after_a_failed_fetch_keeps_both_clicks_and_stops_at_the_known_e
         holuto.fault("POST", "/agent/documents/search", problem(503));
         worker.submit(Command::NextPage);
         let _failed = receive_until(&events, |event| {
-            matches!(event, Event::Status { text, tone: Tone::Error }
+            matches!(event, Event::Problem(Some(text))
                 if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
         });
         worker.submit(Command::NextPage);
@@ -2323,7 +2368,7 @@ fn a_second_previous_after_a_failed_fetch_reaches_the_first_page() {
     holuto.fault("POST", "/agent/documents/search", problem(503));
     worker.submit(Command::PreviousPage);
     let _failed = receive_until(&events, |event| {
-        matches!(event, Event::Status { text, tone: Tone::Error }
+        matches!(event, Event::Problem(Some(text))
             if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
     });
     worker.submit(Command::PreviousPage);
@@ -2368,7 +2413,7 @@ fn next_cancels_a_failed_previous_even_when_the_shown_page_has_no_next_cursor() 
     holuto.fault("POST", "/agent/documents/search", problem(503));
     worker.submit(Command::PreviousPage);
     let _failed = receive_until(&events, |event| {
-        matches!(event, Event::Status { text, tone: Tone::Error }
+        matches!(event, Event::Problem(Some(text))
             if text == "Błąd: Holuto odpowiedziało błędem 503: backend unavailable")
     });
     worker.submit(Command::NextPage);
@@ -2562,7 +2607,10 @@ fn pairing_explains_missing_api_configuration_without_a_request() {
     let (send, events) = mpsc::channel();
     let worker = Worker::pair(
         Arc::new(dir),
-        Settings::default(),
+        Settings {
+            api_url: String::new(),
+            ..Settings::default()
+        },
         "ABCD1234".to_owned(),
         move |event| {
             send.send(event).unwrap();
@@ -2571,7 +2619,8 @@ fn pairing_explains_missing_api_configuration_without_a_request() {
     .unwrap();
     let received = receive_until(&events, |event| matches!(event, Event::Stopped));
     worker.join();
-    let expected = "Wpisz adres API w Ustawieniach.";
+    let expected =
+        "Brak adresu Holuto. Ustaw go poleceniem: workshop config set --api-url <adres>.";
     assert!(matches!(
         received.as_slice(),
         [Event::PairingFailed {
@@ -2635,7 +2684,7 @@ fn an_executed_report_with_a_lost_or_disconnected_reply_blocks_restart_until_res
         worker.submit(Command::DailyReport);
         let refused = receive_until(&events, |event| matches!(event, Event::CommandCompleted));
         assert!(refused.iter().any(|event| matches!(event,
-            Event::Status { text, tone: Tone::Error }
+            Event::Problem(Some(text))
                 if text == "Błąd: Najpierw wyjaśnij przerwany raport."
         )));
         assert_eq!(Journal::new(&dir).load().unwrap(), saved);
@@ -2782,7 +2831,7 @@ fn refused_receipt_is_a_failed_server_job_with_the_reported_reason() {
     assert_eq!(holuto.job(JOB_ID)["state"], "failed");
     assert_eq!(holuto.job(JOB_ID)["result"], reason);
     assert!(received.iter().any(|event| matches!(event,
-        Event::Status { text, tone: Tone::Error }
+        Event::Problem(Some(text))
         if text == &format!("Nie wydrukowano paragonu (zlecenie 10): {reason}")
     )));
     assert_eq!(sim.receipts(), []);
@@ -2811,7 +2860,7 @@ fn jobs_unauthorized_stops_processing_without_claiming() {
     let received = receive_until(&events, |event| matches!(event, Event::Stopped));
     worker.join();
     assert!(received.iter().any(|event| matches!(event,
-        Event::Status { text, tone: Tone::Error }
+        Event::Problem(Some(text))
         if text == "Błąd: Holuto odrzuciło parowanie drukarki (401). \
                     Sparuj drukarkę ponownie w Ustawieniach."
     )));
@@ -2860,6 +2909,31 @@ fn unavailable_jobs_clear_stale_data_and_first_page_retries() {
         matches!(recovered.last(), Some(Event::Jobs { items, page: 1, .. }) if items.len() == 1)
     );
     assert_eq!(sim.receipts(), []);
+}
+
+#[test]
+fn a_failed_first_document_fetch_reports_the_list_unavailable_until_a_retry_lists_it() {
+    let sim = Simulator::start();
+    let holuto = Holuto::new();
+    pages(&holuto);
+    holuto.fault("POST", "/agent/documents/search", problem(503));
+    let (_temporary, dir) = state_dir();
+    let dir = Arc::new(dir);
+    let _clock = ClockScope::enter(Some(Arc::new(Mutex::new(Instant::now()))));
+    let (worker, events) = spawn(&holuto, &sim, &dir);
+    let failed = receive_until(&events, |event| {
+        matches!(event, Event::DocumentsUnavailable)
+    });
+    assert!(
+        !failed
+            .iter()
+            .any(|event| matches!(event, Event::Documents { .. })),
+        "a failed fetch never reads as an empty list"
+    );
+    worker.submit(Command::Search(None));
+    let recovered = receive_until(&events, |event| matches!(event, Event::Documents { .. }));
+    let _stopped = stop(worker, &events);
+    assert_eq!(shown(&recovered), [(vec![1], 1, true)]);
 }
 
 fn job_view(number: u128) -> Value {
@@ -3139,13 +3213,11 @@ fn device_queueing_resets_history_but_reports_preserve_the_browsed_page() {
             vec![(vec![2], 2, false)]
         };
         assert_eq!(jobs_shown(&refreshed), expected);
-        assert!(completed.iter().any(|event| matches!(
-            event,
-            Event::Status {
-                tone: Tone::Success,
-                ..
-            }
-        )));
+        assert!(
+            completed
+                .iter()
+                .any(|event| matches!(event, Event::Problem(None)))
+        );
     }
 }
 

@@ -393,8 +393,13 @@ fn documents_exclude_only_the_jobs_that_make_each_document_ineligible() -> TestR
             let page = api(&server)?.documents(None, None)?;
             let expected = if hidden { json!([]) } else { json!([value]) };
             assert_eq!(
-                serde_json::to_value(page)?,
-                json!({"items": expected, "nextCursor": null, "previousCursor": null}),
+                serde_json::to_value(&page.items)?,
+                expected,
+                "{name}/{state}"
+            );
+            assert_eq!(
+                (page.next_cursor, page.previous_cursor),
+                (None, None),
                 "{name}/{state}"
             );
         }

@@ -413,13 +413,14 @@ fn pair(path: &Path, code: String) -> Result<Response, Failure> {
                 });
             },
             Event::Stopped => break,
-            Event::Status { .. }
+            Event::Problem(_)
             | Event::PortDetected { .. }
             | Event::Connected { .. }
             | Event::Documents { .. }
             | Event::Device { .. }
             | Event::Jobs { .. }
             | Event::JobsUnavailable
+            | Event::DocumentsUnavailable
             | Event::CommandCompleted => {},
         }
     }

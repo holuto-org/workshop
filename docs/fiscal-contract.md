@@ -8,9 +8,10 @@ behavior lives in the [README](../README.md); the invariants are in
 ## `/agent` API
 
 The contract is the backend's generated OpenAPI document, vendored as
-[`openapi/agent.json`](../openapi/agent.json); `crates/agent` generates its wire
-types from it at build time. The test fake validates normal requests/responses
-against it; scripted malformed-response faults deliberately bypass validation.
+[`openapi/agent.json`](../openapi/agent.json); `crates/agent` hand-writes its
+wire types and its contract tests check them against it. The test fake validates
+normal requests/responses against it; scripted malformed-response faults
+deliberately bypass validation.
 See [contract synchronization](testing/compatibility.md#agent-and-the-backend)
 for the update procedure. Nothing checks the live API against this copy: deploy
 backend changes first.

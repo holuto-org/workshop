@@ -4,7 +4,7 @@ use fiscal::device::Vendor;
 use std::io::ErrorKind;
 
 #[test]
-fn selection_replaces_both_stale_port_and_vendor_without_changing_credentials() {
+fn selection_points_at_the_chosen_printer_and_the_sample_holuto() {
     let peers = Simulators::start();
     for (choice, vendor, address) in [
         ("posnet", Vendor::Posnet, peers.posnet.address()),
@@ -23,6 +23,9 @@ fn selection_replaces_both_stale_port_and_vendor_without_changing_credentials() 
             Settings {
                 port: address.to_owned(),
                 vendor: Some(vendor),
+                api_url: peers.holuto.url().to_owned(),
+                token: peers.holuto.token().into(),
+                start_on_launch: true,
                 ..settings
             }
         );

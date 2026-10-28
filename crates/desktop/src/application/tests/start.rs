@@ -310,9 +310,8 @@ fn running_worker_refuses_save_start_and_pair_without_changing_its_configuration
         .ok_or("missing window")?
         .clone_strong();
     window.set_tab(2);
-    control(&window, "Adres API", AccessibleRole::TextInput)?
-        .set_accessible_value("https://unsaved.example.test");
-    for label in ["Zapisz", "Uruchom", "Sparuj"] {
+    control(&window, "Kod parowania", AccessibleRole::TextInput)?.set_accessible_value("ABCD1234");
+    for label in ["Uruchom", "Sparuj"] {
         button(&window, label)?.invoke_accessible_default_action();
         assert!(
             !app.borrow().model.saving,

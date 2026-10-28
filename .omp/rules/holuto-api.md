@@ -8,7 +8,6 @@ scope:
   tool:edit(crates/agent/src/api/**), tool:write(crates/agent/src/api/**),
   tool:read(crates/agent/src/testing.rs),
   tool:edit(crates/agent/src/testing.rs), tool:write(crates/agent/src/testing.rs),
-  tool:edit(crates/agent/build.rs), tool:write(crates/agent/build.rs),
   tool:edit(openapi/**), tool:write(openapi/**)"
 interruptMode: never
 ---
@@ -16,9 +15,9 @@ interruptMode: never
 # Holuto API
 
 - `openapi/agent.json` is vendored from the backend by
-  `scripts/openapi-sync.sh`; never hand-edit it. `build.rs` generates wire types
-  into `OUT_DIR`. Fiscal scalars stay strings until domain validation, so one
-  malformed job fails alone.
+  `scripts/openapi-sync.sh`; never hand-edit it. Wire types are hand-written in
+  `api/model.rs` (its module docs say how). Fiscal scalars stay strings until
+  domain validation, so one malformed job fails alone.
 - The client allows HTTPS only (HTTP for genuine loopback), refuses redirects,
   uses OS trust roots and bounds response bodies. 401 always stops; there is no
   token refresh. Retry policy belongs to the agent/worker, never `api`.

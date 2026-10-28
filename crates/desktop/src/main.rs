@@ -79,6 +79,9 @@ fn start() -> Result<(), Box<dyn Error>> {
             env::VarError::NotUnicode(value) => Err(env::VarError::NotUnicode(value)),
         })?,
     )?;
+    // Start keeps the stored token, so the sample Holuto's pairing is stored too.
+    #[cfg(feature = "simulator")]
+    settings.save(&dir)?;
     #[cfg(not(feature = "simulator"))]
     let link: Arc<dyn Link> = Arc::new(SerialLink);
     slint::BackendSelector::new()

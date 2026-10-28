@@ -33,8 +33,8 @@ use crate::{
     settings,
 };
 use model::{
-    AgentJobFilter, DocumentsCursor, DocumentsQuery, DocumentsSearch, Job, JobSearch, JobsPage,
-    JobsSearch, Page, Pairing, PrinterStatus, QueueForm, ResultForm, Telemetry,
+    Cursor, Job, JobsPage, NoFilter, Page, Pairing, PrinterStatus, QueueForm, ResultForm, Search,
+    TableSearch, Telemetry,
 };
 
 /// Backend page-size limit (100).
@@ -159,7 +159,9 @@ impl Api {
     /// Exchanges a single-use human code; never sends a token or printer identity.
     pub fn pair(api_url: &str, code: &str) -> Result<Pairing, Error> {
         if api_url.trim().is_empty() {
-            return Err(Error::Invalid("Wpisz adres API w Ustawieniach.".to_owned()));
+            return Err(Error::Invalid(
+                settings::Settings::MISSING_API_URL.to_owned(),
+            ));
         }
         // Typos must not consume the backend's per-address pairing attempts.
         let code = pairing_code(code).ok_or_else(|| {
@@ -374,19 +376,11 @@ impl Api {
         cursor: Option<&str>,
         search: Option<&DocumentSearch>,
     ) -> Result<Page, ApiError> {
-        let form = DocumentsSearch {
-            cursor: DocumentsCursor {
-                cursor: cursor.map(str::to_owned),
-                limit: DOCUMENTS_LIMIT,
-            },
-            filter: serde_json::Map::new(),
-            search: DocumentsQuery {
-                q: search.map(|search| search.as_str().to_owned()),
-            },
-            sort: Vec::new(),
-        };
         let page: Page = self
-            .post("documents/search", Some(&form))?
+            .post(
+                "documents/search",
+                Some(&search_form(cursor, search, DOCUMENTS_LIMIT)),
+            )?
             .ok_or_else(empty)?;
         page.check().map_err(ApiError::Response)?;
         Ok(page)
@@ -398,18 +392,12 @@ impl Api {
         cursor: Option<&str>,
         search: Option<&DocumentSearch>,
     ) -> Result<JobsPage, ApiError> {
-        let form = JobsSearch {
-            cursor: DocumentsCursor {
-                cursor: cursor.map(str::to_owned),
-                limit: JOBS_LIMIT,
-            },
-            filter: AgentJobFilter::default(),
-            search: JobSearch {
-                q: search.map(|search| search.as_str().to_owned()),
-            },
-            sort: Vec::new(),
-        };
-        let page: JobsPage = self.post("jobs/search", Some(&form))?.ok_or_else(empty)?;
+        let page: JobsPage = self
+            .post(
+                "jobs/search",
+                Some(&search_form(cursor, search, JOBS_LIMIT)),
+            )?
+            .ok_or_else(empty)?;
         page.check().map_err(ApiError::Response)?;
         Ok(page)
     }
@@ -530,6 +518,23 @@ fn problem(detail: Option<&str>) -> String {
 
 fn empty() -> ApiError {
     ApiError::Response("pusta odpowiedź".to_owned())
+}
+
+fn search_form(
+    cursor: Option<&str>,
+    search: Option<&DocumentSearch>,
+    limit: NonZeroU32,
+) -> TableSearch {
+    TableSearch {
+        cursor: Cursor {
+            cursor: cursor.map(str::to_owned),
+            limit,
+        },
+        filter: NoFilter::default(),
+        search: Search {
+            q: search.map(|search| search.as_str().to_owned()),
+        },
+    }
 }
 
 /// Rejects inconsistent document identities before queueing.

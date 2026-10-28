@@ -1,52 +1,309 @@
-//! `/agent` wire bodies generated from the vendored contract.
+//! `/agent` wire bodies, written against the vendored `openapi/agent.json`.
 //!
-//! Decimal strings are validated per job at the fiscal boundary.
+//! Response types read only the fields the client uses and ignore the rest, so a
+//! backend addition never breaks a paired printer. Every field they read is required
+//! by the contract, and a nullable one must still be present (`Option::deserialize`).
+//! Outbound nullable fields serialize explicit nulls. Decimal strings are validated per
+//! job at the fiscal boundary, so one malformed job fails alone. Structs never show
+//! their values in `Debug`: they carry customer, receipt and device data.
+//! `contract::tests` checks these types against the schema.
+
+use std::{fmt, num::NonZeroU32};
+
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 
 use super::{APP_VERSION, DOCUMENTS_LIMIT, JOBS_LIMIT};
-use crate::documents::{Document, ReceiptKind};
+use crate::{
+    documents::{Document, ReceiptKind},
+    settings::Token,
+};
 use fiscal::{
     device::{Device, VatKind, VatRate, Vendor},
-    receipt::VAT_SLOTS,
+    receipt::{PaymentForm, VAT_SLOTS},
 };
 use uuid::Uuid;
 
-type AppVersion = &'static str;
-#[expect(
-    unused_qualifications,
-    unreachable_pub,
-    unnameable_types,
-    clippy::absolute_paths,
-    clippy::renamed_function_params,
-    clippy::needless_raw_strings,
-    reason = "typify generated paths and helper visibility"
-)]
-mod wire {
-    include!(concat!(env!("OUT_DIR"), "/agent-wire.rs"));
+/// Polish VAT rates as `KSeF` codes them; `zw` marks an exempt supply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VatCode {
+    #[serde(rename = "23")]
+    Rate23,
+    #[serde(rename = "8")]
+    Rate8,
+    #[serde(rename = "5")]
+    Rate5,
+    #[serde(rename = "0")]
+    Rate0,
+    #[serde(rename = "zw")]
+    Exempt,
 }
-pub type VatCode = wire::VatCode;
-pub type VatLetter = wire::FiscalVatLetter;
-pub type VatRateMapping = wire::VatRateMapping;
-pub type Telemetry = wire::Telemetry;
-pub type PrinterCapabilities = wire::PrinterCapabilities;
-pub type PrinterStatus = wire::PrinterStatus;
-pub type PrinterInfo = wire::PrinterInfo;
-pub type JobState = wire::JobState;
-pub type Job = wire::Job;
-pub type JobView = wire::JobView;
-pub type JobSource = wire::JobSource;
-pub type AgentJobFilter = wire::AgentJobFilter;
-pub type JobSearch = wire::JobSearch;
-pub type JobsSearch = wire::JobsSearch;
-pub type JobsPage = wire::JobsPage;
-pub type Outcome = wire::Outcome;
-pub type ResultForm = wire::ResultForm;
-pub type QueueForm = wire::QueueForm;
-pub type Page = wire::Page;
-pub type DocumentsSearch = wire::DocumentsSearch;
-pub type DocumentsCursor = wire::DocumentsCursor;
-pub type DocumentsQuery = wire::DocumentsQuery;
-pub type Pairing = wire::Pairing;
-pub type PairForm = wire::PairForm;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VatLetter {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+}
+
+/// Also the journal's stored settlement state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobState {
+    Queued,
+    Taken,
+    Done,
+    Failed,
+    Expired,
+    Unknown,
+    Voided,
+}
+
+/// A reported attempt's result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    Done,
+    Failed,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VatRateMapping {
+    pub letter: VatLetter,
+    pub vat_rate: VatCode,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrinterCapabilities {
+    pub advance_deductions: bool,
+    pub allowed_characters: String,
+    pub max_company_name_length: usize,
+    pub max_item_name_length: usize,
+    pub max_lines_per_receipt: usize,
+    pub max_quantity_decimals: u8,
+    pub zero_total_receipts: bool,
+}
+
+/// `POST /agent/session` body: what the connected printer reports.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Telemetry {
+    pub app_version: &'static str,
+    pub capabilities: PrinterCapabilities,
+    pub firmware: String,
+    pub model: String,
+    pub unique_number: String,
+    pub vat_rates: Vec<VatRateMapping>,
+    pub vendor: Vendor,
+}
+
+#[derive(Deserialize)]
+pub struct PrinterStatus {
+    pub printer: PrinterInfo,
+}
+
+/// The paired printer as Holuto last recorded it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrinterInfo {
+    pub id: Uuid,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub unique_number: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub capabilities: Option<PrinterCapabilities>,
+    pub vat_rates: Vec<VatRateMapping>,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Job {
+    pub id: Uuid,
+    pub printer_id: Uuid,
+    pub kind: ReceiptKind,
+    pub order_id: Uuid,
+    pub order_number: i64,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub allocation_id: Option<Uuid>,
+    pub company_name: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub buyer_nip: Option<String>,
+    pub lines: Vec<JobLine>,
+    pub advances: Vec<JobAdvance>,
+    pub payments: Vec<JobPayment>,
+    pub total: String,
+    pub state: JobState,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub attempt: Option<Uuid>,
+    pub created_at: Timestamp,
+    /// The printer's issue time of the job's receipt.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub issued_at: Option<Timestamp>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub receipt_number: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub result: Option<String>,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobLine {
+    pub name: String,
+    pub quantity: String,
+    pub unit_price: String,
+    pub total: String,
+    pub vat_letter: VatLetter,
+    pub vat_rate: VatCode,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobAdvance {
+    pub amount: String,
+    pub vat_letter: VatLetter,
+    pub vat_rate: VatCode,
+}
+
+#[derive(PartialEq, Eq, Deserialize)]
+pub struct JobPayment {
+    pub amount: String,
+    pub form: PaymentForm,
+}
+
+/// A job-history row; the order's current names live outside [`Job`].
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobView {
+    pub job: Job,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub customer_name: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub vehicle_plate: Option<String>,
+}
+
+/// A null cursor means its direction has nothing to continue.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Page {
+    pub items: Vec<Document>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub next_cursor: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub previous_cursor: Option<String>,
+}
+
+/// A null cursor means its direction has nothing to continue.
+#[derive(PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobsPage {
+    pub items: Vec<JobView>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub next_cursor: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub previous_cursor: Option<String>,
+}
+
+/// `POST …/search` body for documents and job history.
+///
+/// Criteria may hold personal data, so they travel only in a body. No filter and no
+/// sort: the device feed is scoped to its printer and the service orders it.
+#[derive(Serialize)]
+pub struct TableSearch {
+    pub cursor: Cursor,
+    pub filter: NoFilter,
+    pub search: Search,
+}
+
+#[derive(Serialize)]
+pub struct Cursor {
+    /// Opaque: a page's `nextCursor` or `previousCursor` unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// Always sent, so the service's default page size never applies.
+    pub limit: NonZeroU32,
+}
+
+#[expect(
+    clippy::empty_structs_with_brackets,
+    reason = "serde writes the required `{}` for braces, but `null` for a unit struct"
+)]
+#[derive(Debug, Default, Serialize)]
+pub struct NoFilter {}
+
+#[derive(Serialize)]
+pub struct Search {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultForm {
+    pub attempt: Uuid,
+    pub issued_at: Option<Timestamp>,
+    pub receipt_number: Option<String>,
+    pub result: Option<String>,
+    pub state: Outcome,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueForm {
+    pub allocation_id: Option<Uuid>,
+    pub buyer_nip: Option<String>,
+    pub kind: ReceiptKind,
+    pub order_id: Uuid,
+}
+
+#[derive(Serialize)]
+pub struct PairForm {
+    pub code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pairing {
+    pub printer_id: Uuid,
+    pub token: Token,
+}
+
+macro_rules! redacted_debug {
+    ($($name:ident),+ $(,)?) => {$(
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct(stringify!($name)).finish_non_exhaustive()
+            }
+        }
+    )+};
+}
+
+redacted_debug!(
+    VatRateMapping,
+    PrinterCapabilities,
+    Telemetry,
+    PrinterStatus,
+    PrinterInfo,
+    Job,
+    JobLine,
+    JobAdvance,
+    JobPayment,
+    JobView,
+    Page,
+    JobsPage,
+    TableSearch,
+    Cursor,
+    Search,
+    ResultForm,
+    QueueForm,
+    PairForm,
+    Pairing,
+);
 
 impl VatLetter {
     pub const fn slot(self) -> u8 {
@@ -78,12 +335,12 @@ impl VatLetter {
 impl VatCode {
     pub const fn of(rate: VatRate) -> Option<Self> {
         match rate.kind {
-            VatKind::Exempt => Some(Self::Zw),
+            VatKind::Exempt => Some(Self::Exempt),
             VatKind::Rate { basis_points } => match basis_points {
-                2300 => Some(Self::X23),
-                800 => Some(Self::X8),
-                500 => Some(Self::X5),
-                0 => Some(Self::X0),
+                2300 => Some(Self::Rate23),
+                800 => Some(Self::Rate8),
+                500 => Some(Self::Rate5),
+                0 => Some(Self::Rate0),
                 _ => None,
             },
             VatKind::Inactive => None,
@@ -92,11 +349,11 @@ impl VatCode {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::X23 => "23%",
-            Self::X8 => "8%",
-            Self::X5 => "5%",
-            Self::X0 => "0%",
-            Self::Zw => "zw",
+            Self::Rate23 => "23%",
+            Self::Rate8 => "8%",
+            Self::Rate5 => "5%",
+            Self::Rate0 => "0%",
+            Self::Exempt => "zw",
         }
     }
 }

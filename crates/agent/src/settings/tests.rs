@@ -526,7 +526,10 @@ fn settings_reads_create_nothing_and_unpaired_preferences_cannot_start() -> Test
     assert!(!path.exists());
     let dir = StateDir::open(path)?;
     for (url, expected) in [
-        ("", "Wpisz adres API w Ustawieniach."),
+        (
+            "",
+            "Brak adresu Holuto. Ustaw go poleceniem: workshop config set --api-url <adres>.",
+        ),
         (
             "https://api.example",
             "Sparuj drukarkę kodem z Holuto w Ustawieniach.",

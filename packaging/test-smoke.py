@@ -78,7 +78,10 @@ sys.exit(1)
         )
         result = self.launch()
         self.assertNotEqual(result["home"], self.env["HOME"])
-        self.assertEqual(result["settings"]["apiUrl"], "")
+        # Fresh state uses the compiled release default, never the saved override.
+        self.assertEqual(
+            result["settings"]["apiUrl"], os.environ.get("HOLUTO_API_URL", "")
+        )
         self.assertFalse(result["settings"]["startOnLaunch"])
         saved = json.loads(subprocess.check_output(
             [str(BINARY), "config", "show", "--json"], env=self.env,

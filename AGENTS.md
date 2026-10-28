@@ -79,10 +79,11 @@ One Cargo workspace; dependency versions and lints live only in the root
 
 Each driver's `simulator` feature provides its offline peer. Agent `testing`
 enables those features and exposes the loopback Holuto fake; desktop `simulator`
-runs all three peers with state in a separate `workshop-simulator` directory. Agent
-`testing` and desktop `simulator` fail to compile without debug assertions; the
-drivers' `simulator` features have no release guard of their own. The
-debug-only `cfg(workshop_acceptance)` is not a Cargo feature; see
+runs all three peers and a loopback Holuto with sample jobs and orders, with
+state in a separate `workshop-simulator` directory; it never reaches a real
+Holuto. Agent `testing` and desktop `simulator` fail to compile without debug
+assertions; the drivers' `simulator` features have no release guard of their
+own. The debug-only `cfg(workshop_acceptance)` is not a Cargo feature; see
 [hardware acceptance](docs/testing/hardware-acceptance.md).
 
 ### External surfaces
@@ -136,7 +137,8 @@ diff. `BACKEND_DIR` selects the backend checkout (default `../backend`).
 The script copies that checkout's exported schema without regenerating it:
 confirm it is on the branch that will be deployed. A feature needing a new
 `/agent` field starts in the backend and cannot be finished here alone.
-Wire types are generated into `OUT_DIR` at build time.
+After a sync, the `api::contract` tests check the hand-written wire types in
+`agent::api::model` against it.
 Nothing compares the live API with the schema: deploy the backend first. See
 [fiscal contract](docs/fiscal-contract.md) and
 [compatibility](docs/testing/compatibility.md).
@@ -209,8 +211,8 @@ not run and rely on CI's native matrix.
 
 User-level evidence an agent can produce comes from the end-to-end scenarios in
 `crates/desktop/src/application/tests/end_to_end.rs` (real application, worker,
-simulator and loopback Holuto). The GUI smoke run needs a display and a paired
-Holuto environment, so it is a human check, against simulators, never a
+simulator and loopback Holuto). The GUI smoke run needs a display, so it is a
+human check, against simulators and the built-in sample Holuto, never a
 printer:
 
 ```sh

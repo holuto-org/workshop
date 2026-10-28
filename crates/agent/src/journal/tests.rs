@@ -468,7 +468,7 @@ fn malformed_or_unsupported_journals_are_never_repaired() -> TestResult {
 }
 
 /// The golden files hold one settlement state and payment form; the journal may hold the
-/// others, whose names come from generated or shared types.
+/// others, whose names come from the wire and receipt types.
 #[test]
 #[expect(
     clippy::panic_in_result_fn,

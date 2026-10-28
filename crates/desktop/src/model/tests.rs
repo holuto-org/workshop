@@ -124,8 +124,7 @@ fn accepting_a_confirmation_the_stopped_printer_can_no_longer_run_says_nothing_w
     commands.extend(model.confirm(true));
     assert_eq!(commands, []);
     assert_eq!(
-        model.tone,
-        Tone::Error,
+        model.message, "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.",
         "the operator must not take the closed dialog for a printed report"
     );
 }
@@ -260,11 +259,8 @@ fn a_receipt_that_left_the_pending_list_while_confirming_is_not_queued() {
     model.set_documents(vec![], 1, false, false);
     assert_eq!(model.confirm(true), None);
     assert_eq!(
-        (model.message.as_str(), model.tone),
-        (
-            "Nie wysłano: dokument nie czeka już na paragon.",
-            Tone::Error
-        )
+        model.message,
+        "Nie wysłano: dokument nie czeka już na paragon."
     );
     assert!(!model.in_flight);
 }
@@ -323,11 +319,8 @@ fn searches_are_validated_deduplicated_and_start_with_the_last_valid_criteria() 
         );
         assert_eq!(search(&mut model, "x".repeat(129)), None);
         assert_eq!(
-            (model.message.as_str(), model.tone),
-            (
-                "Wyszukiwana fraza może mieć najwyżej 128 znaków.",
-                Tone::Error
-            )
+            model.message,
+            "Wyszukiwana fraza może mieć najwyżej 128 znaków."
         );
         model.stopped();
         let initial = model.initial_searches();
@@ -367,8 +360,7 @@ fn a_stop_requested_while_a_confirmation_is_open_sends_nothing() {
         commands.extend(model.confirm(true));
         assert_eq!(commands, [], "{action:?} must not reach a stopping worker");
         assert_eq!(
-            model.tone,
-            Tone::Error,
+            model.message, "Nie wysłano: stan drukarki zmienił się przed potwierdzeniem.",
             "{action:?} must say nothing was sent"
         );
     }
@@ -496,14 +488,12 @@ fn capture_rejects_assistive_connection_edits_while_running_saving_or_pairing() 
         model.running = locked == 0;
         model.saving = locked == 1;
         model.pairing = locked == 2;
-        window.set_api_url("https://untrusted.example.test".into());
         window.set_port("unsaved-port".into());
         window.set_baud_index(0);
         window.set_pairing_code("ABCD1234".into());
         model.capture(&window, today());
         model.sync(&window);
         assert_eq!(model.settings, settings);
-        assert_eq!(window.get_api_url(), "https://paired.example.test");
         assert_eq!(window.get_port(), "saved-port");
         assert_eq!(window.get_pairing_code(), "");
     }

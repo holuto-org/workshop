@@ -1,20 +1,27 @@
 //! Server-paged receipt history; presentation never filters or merges local fiscal evidence.
-use std::{fmt::Write as _, rc::Rc};
+//! Cards and details show a field only when it has a value, and each fact only once.
+use std::rc::Rc;
 
-use agent::api::model::{JobSource, JobState, JobView};
+use agent::{
+    api::model::{JobState, JobView},
+    documents::ReceiptKind,
+};
 use fiscal::money::Grosze;
-use jiff::{civil::Date, tz::TimeZone};
-use slint::{Model as _, ModelRc, VecModel};
+use jiff::{
+    Timestamp,
+    civil::{Date, Weekday},
+    tz::TimeZone,
+};
+use slint::{Model as _, ModelRc, SharedString, VecModel};
 use uuid::Uuid;
 
-use super::table::timestamp_label;
-use crate::ui::ReceiptRow;
+use crate::ui::{DetailLine, DetailTotal, ReceiptDetail, ReceiptRow};
 
 pub(super) struct Receipts {
     items: Vec<JobView>,
     selected: Option<Uuid>,
     rows: Rc<VecModel<ReceiptRow>>,
-    pub(super) detail: String,
+    pub(super) detail: ReceiptDetail,
     pub(super) page: usize,
     pub(super) has_previous: bool,
     pub(super) has_next: bool,
@@ -26,7 +33,7 @@ impl Receipts {
             items: Vec::new(),
             selected: None,
             rows: Rc::new(VecModel::default()),
-            detail: String::new(),
+            detail: ReceiptDetail::default(),
             page: 1,
             has_previous: false,
             has_next: false,
@@ -86,33 +93,31 @@ impl Receipts {
                 day_label(day, today)
             };
             previous_day = Some(day);
-            let mut summary = format!(
-                "{} · {}\n{} · {}\n{} · {}",
-                job.kind.label(),
-                amount(&job.total),
-                view.customer_name.as_deref().unwrap_or("Bez klienta"),
-                view.vehicle_plate.as_deref().unwrap_or("Bez rejestracji"),
-                job.receipt_number.as_deref().map_or_else(
-                    || "Brak numeru paragonu".into(),
-                    |number| format!("Nr {number}")
-                ),
-                job.issued_at
-                    .map_or_else(|| "Brak daty wystawienia".into(), timestamp_label)
-            );
-            if let Some(result) = &job.result {
-                summary.push('\n');
-                summary.push_str(result);
-            }
             let row = ReceiptRow {
                 group: group.into(),
                 order: format!("Zlecenie {}", job.order_number).into(),
                 status: status(job.state).into(),
-                summary: summary.into(),
+                customer: joined([view.customer_name.as_deref(), view.vehicle_plate.as_deref()]),
+                amount: match job.kind {
+                    ReceiptKind::Advance => format!("Zaliczka · {}", amount(&job.total)),
+                    ReceiptKind::Sale => amount(&job.total),
+                }
+                .into(),
+                receipt: joined([
+                    job.receipt_number
+                        .as_deref()
+                        .map(|number| format!("Nr {number}"))
+                        .as_deref(),
+                    job.issued_at
+                        .map(|issued| issue_label(issued, day))
+                        .as_deref(),
+                ]),
+                note: job.result.as_deref().unwrap_or_default().into(),
+                // Red only where the operator must act; finished outcomes stay neutral.
                 tone: match job.state {
                     JobState::Done => 1,
-                    JobState::Failed | JobState::Expired | JobState::Unknown | JobState::Voided => {
-                        2
-                    },
+                    JobState::Failed | JobState::Unknown => 2,
+                    JobState::Expired | JobState::Voided => 3,
                     JobState::Queued | JobState::Taken => 0,
                 },
             };
@@ -134,69 +139,61 @@ impl Receipts {
         self.detail = self
             .selected
             .and_then(|id| self.items.iter().find(|view| view.job.id == id))
-            .map_or_else(String::new, detail);
+            .map_or_else(ReceiptDetail::default, detail);
     }
 }
 
-fn detail(view: &JobView) -> String {
+/// The selected card already shows the state, amount, receipt number and failure reason.
+fn detail(view: &JobView) -> ReceiptDetail {
     let job = &view.job;
-    let title = job
-        .receipt_number
-        .as_deref()
-        .map_or_else(|| "Paragon".into(), |number| format!("Paragon {number}"));
-    let mut text = format!(
-        concat!(
-            "{}\n{} · {}\n\nZlecenie {}\nKlient: {}\nRejestracja: {}\n",
-            "Rodzaj: {}\nWystawiono: {}\nŹródło: {}\nNIP nabywcy: {}\nPłatność: {}\n\n{}"
-        ),
-        status(job.state),
-        title,
-        amount(&job.total),
-        job.order_number,
-        view.customer_name.as_deref().unwrap_or("Bez klienta"),
-        view.vehicle_plate.as_deref().unwrap_or("Bez rejestracji"),
-        job.kind.label(),
-        job.issued_at.map_or_else(|| "—".into(), timestamp_label),
-        match view.source {
-            JobSource::Staff => "Holuto",
-            JobSource::Device => "Urządzenie",
+    let lines: Vec<DetailLine> = job
+        .lines
+        .iter()
+        .map(|line| DetailLine {
+            name: line.name.as_str().into(),
+            quantity: line.quantity.as_str().into(),
+            price: amount(&line.unit_price).into(),
+            total: amount(&line.total).into(),
+        })
+        .collect();
+    let mut totals = vec![DetailTotal {
+        label: "Razem".into(),
+        amount: amount(&job.total).into(),
+    }];
+    totals.extend(job.advances.iter().map(|advance| DetailTotal {
+        label: format!("Odliczona zaliczka · VAT {}", advance.vat_rate.label()).into(),
+        amount: amount(&advance.amount).into(),
+    }));
+    totals.extend(job.payments.iter().map(|payment| DetailTotal {
+        label: format!("Płatność: {}", payment.form.label()).into(),
+        amount: amount(&payment.amount).into(),
+    }));
+    ReceiptDetail {
+        order: format!("Zlecenie {}", job.order_number).into(),
+        customer: joined([view.customer_name.as_deref(), view.vehicle_plate.as_deref()]),
+        buyer_nip: job
+            .buyer_nip
+            .as_deref()
+            .map(|nip| format!("NIP nabywcy {nip}"))
+            .unwrap_or_default()
+            .into(),
+        lines: Rc::new(VecModel::from(lines)).into(),
+        totals: Rc::new(VecModel::from(totals)).into(),
+        warning: if job.state == JobState::Unknown {
+            "Wynik niepewny — sprawdź wydruk i rozstrzygnij zadanie w Holuto.".into()
+        } else {
+            SharedString::new()
         },
-        job.buyer_nip.as_deref().unwrap_or("Bez NIP"),
-        job.payments
-            .iter()
-            .map(|payment| format!("{}: {}", payment.form.label(), amount(&payment.amount)))
-            .collect::<Vec<_>>()
-            .join(", "),
-        job.lines
-            .iter()
-            .map(|line| format!(
-                "{} · {} · {}",
-                line.name,
-                line.quantity,
-                amount(&line.total)
-            ))
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
-    if !job.advances.is_empty() {
-        text.push_str("\n\nOdliczone zaliczki:");
-        for advance in &job.advances {
-            let _written = write!(
-                text,
-                "\nVAT {} · {}",
-                advance.vat_rate.label(),
-                amount(&advance.amount)
-            );
-        }
     }
-    if let Some(result) = &job.result {
-        text.push_str("\n\nWynik: ");
-        text.push_str(result);
-    }
-    if job.state == JobState::Unknown {
-        text.push_str("\n\nWynik niepewny — sprawdź wydruk i rozstrzygnij zadanie w Holuto.");
-    }
-    text
+}
+/// The present values joined with " · "; empty when none has a value.
+fn joined<const N: usize>(parts: [Option<&str>; N]) -> SharedString {
+    parts
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+        .into()
 }
 fn amount(total: &str) -> String {
     Grosze::parse(total).map_or_else(|_| total.to_owned(), |amount| amount.to_string())
@@ -212,12 +209,40 @@ const fn status(state: JobState) -> &'static str {
         JobState::Voided => "Anulowano",
     }
 }
+/// One shape for every day; the year appears only when it is not the current one.
 fn day_label(day: Date, today: Date) -> String {
     if day == today {
         format!("Dziś · {}", day.strftime("%d.%m"))
     } else if day == today.yesterday().unwrap_or(today) {
         format!("Wczoraj · {}", day.strftime("%d.%m"))
+    } else if day.year() == today.year() {
+        format!("{} · {}", weekday(day.weekday()), day.strftime("%d.%m"))
     } else {
         day.strftime("%d.%m.%Y").to_string()
     }
 }
+const fn weekday(weekday: Weekday) -> &'static str {
+    match weekday {
+        Weekday::Monday => "Poniedziałek",
+        Weekday::Tuesday => "Wtorek",
+        Weekday::Wednesday => "Środa",
+        Weekday::Thursday => "Czwartek",
+        Weekday::Friday => "Piątek",
+        Weekday::Saturday => "Sobota",
+        Weekday::Sunday => "Niedziela",
+    }
+}
+/// The time alone under its own day heading; the full date when the receipt was
+/// issued on another day than the job was created (its fiscal date differs).
+fn issue_label(issued: Timestamp, group: Date) -> String {
+    let issued = issued.to_zoned(TimeZone::system());
+    if issued.date() == group {
+        issued.strftime("%H:%M").to_string()
+    } else {
+        issued.strftime("%d.%m.%Y %H:%M").to_string()
+    }
+}
+
+#[cfg(test)]
+#[path = "receipts/tests.rs"]
+mod tests;

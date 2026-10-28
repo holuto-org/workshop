@@ -65,7 +65,10 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
         .ok_or("missing window")?
         .clone_strong();
     window.set_tab(2);
-    assert!(rendered(&window, fake.url()), "the scan sees field values");
+    assert!(
+        rendered(&window, "invalid-port-that-must-not-be-opened"),
+        "the scan sees field values"
+    );
     assert!(
         !rendered(&window, "previous-secret-never-rendered"),
         "a stored token is never shown"
@@ -102,10 +105,7 @@ fn pairing_saves_credentials_without_opening_a_printer_and_quit_waits_for_comple
     assert_eq!(app.borrow().model.settings.token, saved.token);
     assert_eq!(saved.port, "invalid-port-that-must-not-be-opened");
     assert_eq!(window.get_pairing_code().as_str(), "");
-    assert_eq!(
-        window.get_status().as_str(),
-        "Sparowano z Holuto. Możesz uruchomić obsługę drukarki."
-    );
+    assert_eq!(window.get_status(), "");
     assert!(!app.borrow().model.connected);
     assert!(app.borrow().worker.is_none());
     assert_eq!(
@@ -153,7 +153,6 @@ fn invalid_pairing_code_keeps_credentials_and_allows_operator_correction()
     assert_eq!(window.get_pairing_code().as_str(), "ZZZZ-ZZZZ");
     assert_eq!(button(&window, "Sparuj")?.accessible_enabled(), Some(true));
     assert!(!app.borrow().model.pairing);
-    assert_eq!(window.get_status_tone(), 2);
     assert_eq!(
         window.get_status().as_str(),
         concat!(
@@ -247,7 +246,6 @@ fn restore_settings(file: &Path, aside: &Path) -> io::Result<()> {
 }
 
 fn assert_reload_failed(app: &Application) {
-    assert_eq!(app.model.tone, Tone::Error, "{}", app.model.message);
     assert!(
         app.model.message.starts_with(RELOAD_FAILED),
         "{}",

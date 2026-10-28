@@ -67,7 +67,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            api_url: String::new(),
+            // Release builds carry the production address; `config set --api-url` overrides it.
+            api_url: option_env!("HOLUTO_API_URL").unwrap_or_default().to_owned(),
             token: Token::default(),
             port: String::new(),
             baud_rate: DEFAULT_BAUD_RATE,
@@ -79,6 +80,11 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Release builds carry the address, so only a development build or a cleared
+    /// override can lack it; the app has no address field.
+    pub const MISSING_API_URL: &str =
+        "Brak adresu Holuto. Ustaw go poleceniem: workshop config set --api-url <adres>.";
+
     /// Safe before telemetry initialization, including crash-reporter subprocesses.
     /// Missing settings opt in; unreadable settings fail closed.
     pub fn telemetry_enabled_at_default_path() -> bool {
@@ -158,7 +164,7 @@ impl Settings {
 
     pub fn validate(&self) -> Result<(), Error> {
         if self.api_url.trim().is_empty() {
-            return Err(Error::Invalid("Wpisz adres API w Ustawieniach.".to_owned()));
+            return Err(Error::Invalid(Self::MISSING_API_URL.to_owned()));
         }
         self.validate_configuration()?;
         if self.token.as_str().is_empty() {

@@ -1,8 +1,11 @@
 import { Button, LineEdit, ComboBox, CheckBox, ScrollView, TabWidget, Palette } from "std-widgets.slint";
 
-export enum Action { save, pair, start, stop, quit, queue-receipt, search, previous-page, next-page, jobs-search, jobs-first-page, jobs-previous-page, jobs-next-page, open-manual, close-manual, daily-report, monthly-report, periodic-report, resolve-report, acknowledge-orphaned-receipt }
+export enum Action { save, pair, start, stop, quit, queue-receipt, search, retry-documents, previous-page, next-page, jobs-search, jobs-first-page, jobs-previous-page, jobs-next-page, open-manual, close-manual, daily-report, monthly-report, periodic-report, resolve-report, acknowledge-orphaned-receipt }
 
-export struct ReceiptRow { group: string, order: string, status: string, summary: string, tone: int }
+export struct ReceiptRow { group: string, order: string, status: string, customer: string, amount: string, receipt: string, note: string, tone: int }
+export struct DetailLine { name: string, quantity: string, price: string, total: string }
+export struct DetailTotal { label: string, amount: string }
+export struct ReceiptDetail { order: string, customer: string, buyer-nip: string, lines: [DetailLine], totals: [DetailTotal], warning: string }
 
 component ReceiptItem inherits Rectangle {
     in property <ReceiptRow> receipt;
@@ -15,10 +18,9 @@ component ReceiptItem inherits Rectangle {
     changed selected => { root.reveal-selection(); }
     changed y => { root.reveal-selection(); }
     changed height => { root.reveal-selection(); }
-    height: receipt.group == "" ? 156px : 188px;
     accessible-role: list-item;
     accessible-label: receipt.order;
-    accessible-description: receipt.order + " · " + receipt.status + " · " + receipt.summary;
+    accessible-description: receipt.status + (receipt.customer != "" ? " · " + receipt.customer : "") + " · " + receipt.amount + (receipt.receipt != "" ? " · " + receipt.receipt : "") + (receipt.note != "" ? " · " + receipt.note : "");
     accessible-item-selectable: true;
     accessible-item-selected: root.selected;
     accessible-action-default => { root.select(); }
@@ -30,16 +32,23 @@ component ReceiptItem inherits Rectangle {
             border-radius: 6px;
             touch := TouchArea { clicked => { root.select(); } }
             VerticalLayout {
-                padding: 12px; spacing: 8px;
+                padding: 12px; spacing: 4px;
                 HorizontalLayout {
-                    Text { text: root.receipt.order; font-weight: 600; color: #262626; horizontal-stretch: 1; accessible-role: none; }
+                    spacing: 8px;
+                    Text { text: root.receipt.order; font-weight: 600; color: #262626; horizontal-stretch: 1; vertical-alignment: center; accessible-role: none; }
                     Rectangle {
-                        width: chip.preferred-width + 16px; height: 24px; border-radius: 12px;
-                        background: root.receipt.tone == 2 ? #fff1f0 : root.receipt.tone == 1 ? #f6ffed : #e6f4ff;
-                        chip := Text { text: root.receipt.status; color: root.receipt.tone == 2 ? #cf1322 : root.receipt.tone == 1 ? #389e0d : #0958d9; horizontal-alignment: center; vertical-alignment: center; font-size: 12px; }
+                        width: chip.preferred-width + 16px; height: 22px; border-radius: 11px;
+                        background: root.receipt.tone == 2 ? #fff1f0 : root.receipt.tone == 1 ? #f6ffed : root.receipt.tone == 3 ? #f5f5f5 : #e6f4ff;
+                        chip := Text { text: root.receipt.status; color: root.receipt.tone == 2 ? #cf1322 : root.receipt.tone == 1 ? #389e0d : root.receipt.tone == 3 ? #595959 : #0958d9; horizontal-alignment: center; vertical-alignment: center; font-size: 12px; accessible-role: none; }
                     }
                 }
-                Text { text: root.receipt.summary; color: #595959; font-size: 12px; wrap: word-wrap; overflow: elide; accessible-role: none; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: root.receipt.customer; color: #595959; font-size: 12px; overflow: elide; horizontal-stretch: 1; accessible-role: none; }
+                    Text { text: root.receipt.amount; color: #262626; font-size: 12px; accessible-role: none; }
+                }
+                if root.receipt.receipt != "": Text { text: root.receipt.receipt; color: #8c8c8c; font-size: 12px; accessible-role: none; }
+                if root.receipt.note != "": Text { text: root.receipt.note; color: #cf1322; font-size: 12px; wrap: word-wrap; accessible-role: none; }
             }
         }
     }
@@ -156,45 +165,6 @@ component Table inherits Rectangle {
     }
     if root.rows.length == 0: Text { y: 42px; width: 100%; height: parent.height - 42px; text: root.empty-text; color: #8c8c8c; horizontal-alignment: center; vertical-alignment: center; }
 }
-component PortInput inherits Rectangle {
-    in-out property <string> text;
-    in property <[string]> model;
-    in property <bool> enabled;
-    // Re-enumerate on every open: printers are plugged in while the app runs in the tray.
-    callback opening();
-    function show-list() { root.opening(); popup.show(); }
-    height: 34px;
-    horizontal-stretch: 1;
-    accessible-role: combobox;
-    accessible-label: "Port drukarki";
-    accessible-value <=> root.text;
-    accessible-expandable: true;
-    accessible-action-expand => { if root.enabled { root.show-list(); } }
-    HorizontalLayout {
-        spacing: 6px;
-        LineEdit { text <=> root.text; enabled: root.enabled; placeholder-text: "Automatyczne wykrywanie"; }
-        Button { text: "⌄"; width: 34px; enabled: root.enabled; clicked => { root.show-list(); } }
-    }
-    popup := PopupWindow {
-        x: 0px; y: root.height + 4px;
-        width: root.width; height: min(8, max(1, root.model.length)) * 36px + 8px;
-        close-policy: close-on-click-outside;
-        Rectangle {
-            background: white; border-width: 1px; border-color: #d9d9d9;
-            ScrollView {
-                VerticalLayout {
-                    padding: 4px; spacing: 2px; alignment: start;
-                    for value in root.model: Button {
-                        text: value;
-                        clicked => { root.text = value; popup.close(); }
-                    }
-                    if root.model.length == 0: Hint { text: "Nie znaleziono portów. Wpisz adres drukarki."; }
-                }
-            }
-        }
-    }
-}
-
 export component AppWindow inherits Window {
     title: "Holuto Workshop";
     icon: @image-url("../assets/icon.png");
@@ -203,10 +173,14 @@ export component AppWindow inherits Window {
     background: #f5f5f5;
     default-font-size: 14px;
     in-out property <int> tab;
+    // Printers are plugged in while the app runs in the tray: re-enumerate on showing Ustawienia.
+    changed tab => { if self.tab == 2 { root.refresh-ports(); } }
+    in-out property <int> port-index;
     in property <bool> connected;
     in property <bool> running;
     in property <bool> saving-settings;
     in property <bool> pairing;
+    in property <bool> starting;
     private property <bool> settings-editable: !root.running && !root.saving-settings && !root.pairing;
     in property <bool> stopping;
     in property <bool> queue-enabled;
@@ -220,11 +194,10 @@ export component AppWindow inherits Window {
     in property <string> printer-text;
     in property <int> printer-tone;
     in property <string> status;
-    in property <int> status-tone;
     in property <[[StandardListViewItem]]> documents;
     in property <[ReceiptRow]> receipts;
     in-out property <string> receipt-search;
-    in property <string> receipt-detail;
+    in property <ReceiptDetail> receipt-detail;
     in property <int> receipt-selected: -1;
     in property <bool> jobs-unavailable;
     in property <bool> jobs-previous-enabled;
@@ -232,18 +205,18 @@ export component AppWindow inherits Window {
     in property <string> jobs-page-label;
     in property <bool> manual;
     in-out property <[TableColumn]> document-columns: [
-        { title: "Zlecenie", min-width: 100px, horizontal-stretch: 1 },
-        { title: "Rodzaj", min-width: 140px },
-        { title: "Klient", min-width: 155px },
+        { title: "Zlecenie", min-width: 100px },
+        { title: "Rodzaj", min-width: 120px },
+        { title: "Klient", min-width: 180px, horizontal-stretch: 1 },
         { title: "Kwota", min-width: 110px },
-        { title: "Termin paragonu", min-width: 220px },
+        { title: "Termin paragonu", min-width: 300px, horizontal-stretch: 1 },
     ];
     in property <string> page-label;
+    in property <bool> documents-unavailable;
     in-out property <int> selected: -1;
     in-out property <string> nip;
     in-out property <string> search;
     in property <bool> searching;
-    in-out property <string> api-url;
     in-out property <string> pairing-code;
     in-out property <string> port;
     in property <[string]> ports;
@@ -286,14 +259,14 @@ export component AppWindow inherits Window {
     VerticalLayout {
         spacing: 0px;
         Rectangle {
-            height: 88px; background: white;
+            height: 60px; background: white;
             HorizontalLayout {
-                padding-left: 28px; padding-right: 28px; padding-top: 22px; padding-bottom: 22px; spacing: 14px;
-                Image { source: @image-url("../assets/icon.png"); width: 44px; height: 44px; vertical-stretch: 0; }
-                VerticalLayout { alignment: center; Text { text: "Holuto Workshop"; font-size: 23px; font-weight: 700; color: #141414; } }
+                padding-left: 28px; padding-right: 28px; padding-top: 14px; padding-bottom: 14px; spacing: 12px;
+                Image { source: @image-url("../assets/icon.png"); width: 32px; height: 32px; vertical-stretch: 0; }
+                VerticalLayout { alignment: center; Text { text: "Holuto Workshop"; font-size: 18px; font-weight: 700; color: #141414; } }
                 Rectangle { horizontal-stretch: 1; }
-                VerticalLayout { spacing: 4px; Text { text: "Holuto"; color: #595959; font-size: 12px; accessible-role: none; } Text { accessible-label: "Holuto"; accessible-value: root.holuto-text; text: root.holuto-text; color: root.connected ? #389e0d : #595959; } }
-                VerticalLayout { spacing: 4px; Text { text: "Drukarka"; color: #595959; font-size: 12px; accessible-role: none; } Text { accessible-label: "Drukarka"; accessible-value: root.printer-text; text: root.printer-text; color: root.printer-tone == 2 ? #cf1322 : #595959; } }
+                if root.holuto-text != "": VerticalLayout { spacing: 4px; Text { text: "Holuto"; color: #595959; font-size: 12px; accessible-role: none; } Text { accessible-label: "Holuto"; accessible-value: root.holuto-text; text: root.holuto-text; color: #595959; } }
+                if root.printer-text != "": VerticalLayout { spacing: 4px; Text { text: "Drukarka"; color: #595959; font-size: 12px; accessible-role: none; } Text { accessible-label: "Drukarka"; accessible-value: root.printer-text; text: root.printer-text; color: root.printer-tone == 2 ? #cf1322 : #595959; } }
             }
         }
         VerticalLayout {
@@ -308,7 +281,7 @@ export component AppWindow inherits Window {
                             spacing: 16px;
                             receipt-search := LineEdit {
                                 accessible-label: "Szukaj";
-                                placeholder-text: "nr zlecenia, klient, nr paragonu, rejestracja, pozycja";
+                                placeholder-text: "Szukaj: nr zlecenia, klient, nr paragonu, rejestracja, pozycja";
                                 text <=> root.receipt-search;
                                 edited(text) => { receipt-search-timer.running = true; receipt-search-timer.restart(); }
                                 accepted(text) => { receipt-search-timer.running = false; root.action(Action.jobs-search); receipt-keys.focus(); }
@@ -324,7 +297,7 @@ export component AppWindow inherits Window {
                                     accessible-role: list;
                                     accessible-label: "Paragony";
                                     VerticalLayout {
-                                        spacing: 0px;
+                                        padding-right: 14px; spacing: 0px;
                                         for row[index] in root.receipts: ReceiptItem {
                                             receipt: row; selected: root.receipt-selected == index;
                                             select => { receipt-keys.focus(); root.selected-receipt(index); }
@@ -342,8 +315,42 @@ export component AppWindow inherits Window {
                                     horizontal-stretch: 1;
                                     VerticalLayout {
                                         spacing: 16px; alignment: start;
-                                        Text { accessible-label: "Szczegóły paragonu"; accessible-value: root.receipt-detail; text: root.receipt-detail; wrap: word-wrap; color: #262626; }
-                                        if root.receipts.length > 0: Hint { text: "Historia zadań z Holuto. Pamięć fiskalna drukarki jest źródłem prawdy."; }
+                                        if root.receipt-detail.order != "": VerticalLayout {
+                                            spacing: 16px;
+                                            accessible-role: groupbox;
+                                            accessible-label: "Szczegóły paragonu";
+                                            VerticalLayout {
+                                                spacing: 4px;
+                                                Text { text: root.receipt-detail.order; font-size: 18px; font-weight: 600; color: #141414; }
+                                                if root.receipt-detail.customer != "": Text { text: root.receipt-detail.customer; color: #595959; }
+                                                if root.receipt-detail.buyer-nip != "": Text { text: root.receipt-detail.buyer-nip; color: #595959; }
+                                            }
+                                            if root.receipt-detail.warning != "": Text { text: root.receipt-detail.warning; color: #cf1322; wrap: word-wrap; }
+                                            VerticalLayout {
+                                                spacing: 6px;
+                                                HorizontalLayout {
+                                                    spacing: 16px;
+                                                    Text { text: "Pozycja"; color: #8c8c8c; font-size: 12px; horizontal-stretch: 1; }
+                                                    Text { text: "Ilość"; color: #8c8c8c; font-size: 12px; width: 56px; horizontal-alignment: right; }
+                                                    Text { text: "Cena"; color: #8c8c8c; font-size: 12px; width: 96px; horizontal-alignment: right; }
+                                                    Text { text: "Wartość"; color: #8c8c8c; font-size: 12px; width: 96px; horizontal-alignment: right; }
+                                                }
+                                                Rectangle { height: 1px; background: #f0f0f0; }
+                                                for line in root.receipt-detail.lines: HorizontalLayout {
+                                                    spacing: 16px;
+                                                    Text { text: line.name; color: #262626; wrap: word-wrap; horizontal-stretch: 1; }
+                                                    Text { text: line.quantity; color: #262626; width: 56px; horizontal-alignment: right; }
+                                                    Text { text: line.price; color: #262626; width: 96px; horizontal-alignment: right; }
+                                                    Text { text: line.total; color: #262626; width: 96px; horizontal-alignment: right; }
+                                                }
+                                                Rectangle { height: 1px; background: #f0f0f0; }
+                                                for total[index] in root.receipt-detail.totals: HorizontalLayout {
+                                                    spacing: 16px;
+                                                    Text { text: total.label; color: index == 0 ? #262626 : #595959; font-weight: index == 0 ? 600 : 400; horizontal-stretch: 1; horizontal-alignment: right; }
+                                                    Text { text: total.amount; color: index == 0 ? #262626 : #595959; font-weight: index == 0 ? 600 : 400; width: 96px; horizontal-alignment: right; }
+                                                }
+                                            }
+                                        }
                                         if root.jobs-unavailable: Heading { text: "Historia paragonów jest niedostępna"; }
                                         if root.jobs-unavailable: Hint { text: "Nie można pobrać historii z Holuto. Spróbuj ponownie."; }
                                         if root.jobs-unavailable: Button { text: "Ponów pobieranie historii"; accessible-label: "Ponów pobieranie historii"; enabled: root.connected; clicked => { root.action(Action.jobs-first-page); } }
@@ -353,9 +360,9 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        HorizontalLayout {
+                        if root.jobs-previous-enabled || root.jobs-next-enabled: HorizontalLayout {
                             spacing: 12px;
-                            Button { text: "Od początku"; accessible-label: "Historia od początku"; enabled: root.connected; clicked => { root.action(Action.jobs-first-page); } }
+                            if root.jobs-previous-enabled: Button { text: "Od początku"; accessible-label: "Historia od początku"; clicked => { root.action(Action.jobs-first-page); } }
                             Rectangle { horizontal-stretch: 1; }
                             Button { text: "Poprzednia"; accessible-label: "Poprzednia strona historii"; enabled: root.jobs-previous-enabled; clicked => { root.action(Action.jobs-previous-page); } }
                             Text { text: root.jobs-page-label; vertical-alignment: center; }
@@ -380,15 +387,15 @@ export component AppWindow inherits Window {
                     title: "Raporty";
                     VerticalLayout {
                         padding-top: 16px; spacing: 16px;
-                        Card { height: 104px; VerticalLayout { padding: 24px; spacing: 9px; Heading { text: "Raporty fiskalne"; } Hint { text: "Wydruki z pamięci fiskalnej drukarki. Każda operacja wymaga Twojego potwierdzenia."; } } }
                         Card {
+                            vertical-stretch: 0;
                             VerticalLayout {
                                 padding: 24px; spacing: 20px; alignment: start;
-                                HorizontalLayout { spacing: 24px; VerticalLayout { spacing: 8px; Heading { text: "Raport dobowy"; font-size: 16px; } Hint { text: "Zamyka sprzedaż bieżącego dnia w pamięci fiskalnej. Wykonuj po zakończeniu sprzedaży."; } } Button { text: "Drukuj raport dobowy"; enabled: root.daily-report-enabled; clicked => { root.action(Action.daily-report); } } }
+                                HorizontalLayout { spacing: 24px; VerticalLayout { horizontal-stretch: 1; spacing: 8px; Heading { text: "Raport dobowy"; font-size: 16px; } Hint { text: "Po zakończeniu sprzedaży, najpóźniej przed pierwszą sprzedażą następnego dnia."; } } VerticalLayout { alignment: center; Button { width: 240px; text: "Drukuj raport dobowy"; enabled: root.daily-report-enabled; clicked => { root.action(Action.daily-report); } } } }
                                 Rectangle { height: 1px; background: #f0f0f0; }
-                                HorizontalLayout { spacing: 24px; VerticalLayout { spacing: 8px; Heading { text: "Raport miesięczny"; font-size: 16px; } Hint { text: "Łączny raport fiskalny za wybrany miesiąc."; } } ComboBox { model: root.months; current-index <=> root.month-index; width: 190px; } Button { text: "Drukuj raport miesięczny"; enabled: root.reports-enabled; clicked => { root.action(Action.monthly-report); } } }
+                                HorizontalLayout { spacing: 24px; VerticalLayout { horizontal-stretch: 1; spacing: 8px; Heading { text: "Raport miesięczny"; font-size: 16px; } Hint { text: "Po zakończeniu miesiąca, najpóźniej do 25. dnia następnego miesiąca."; } } VerticalLayout { alignment: center; ComboBox { model: root.months; current-index <=> root.month-index; width: 190px; } } VerticalLayout { alignment: center; Button { width: 240px; text: "Drukuj raport miesięczny"; enabled: root.reports-enabled; clicked => { root.action(Action.monthly-report); } } } }
                                 Rectangle { height: 1px; background: #f0f0f0; }
-                                VerticalLayout { spacing: 16px; Heading { text: "Raport okresowy"; font-size: 16px; } Hint { text: "Daty od 01.01.2000, w formacie dd.mm.rrrr (np. 01.01.2025). Raport szczegółowy lub skrócony."; } HorizontalLayout { spacing: 12px; Text { text: "Od"; vertical-alignment: center; } LineEdit { text <=> root.from-date; placeholder-text: "dd.mm.rrrr"; width: 130px; accessible-label: "Data początkowa"; } Text { text: "do"; vertical-alignment: center; } LineEdit { text <=> root.to-date; placeholder-text: "dd.mm.rrrr"; width: 130px; accessible-label: "Data końcowa"; } CheckBox { text: "Skrócony"; checked <=> root.summary; } Rectangle { horizontal-stretch: 1; } Button { text: "Drukuj raport okresowy"; enabled: root.reports-enabled; clicked => { root.action(Action.periodic-report); } } } }
+                                VerticalLayout { spacing: 16px; Heading { text: "Raport okresowy"; font-size: 16px; } HorizontalLayout { spacing: 12px; Text { text: "Od"; vertical-alignment: center; } LineEdit { text <=> root.from-date; placeholder-text: "dd.mm.rrrr"; width: 130px; accessible-label: "Data początkowa"; } Text { text: "do"; vertical-alignment: center; } LineEdit { text <=> root.to-date; placeholder-text: "dd.mm.rrrr"; width: 130px; accessible-label: "Data końcowa"; } CheckBox { text: "Skrócony"; checked <=> root.summary; } Rectangle { horizontal-stretch: 1; } Button { width: 240px; text: "Drukuj raport okresowy"; enabled: root.reports-enabled; clicked => { root.action(Action.periodic-report); } } } }
                             }
                         }
                         Rectangle { vertical-stretch: 1; }
@@ -396,38 +403,35 @@ export component AppWindow inherits Window {
                 }
                 Tab {
                     title: "Ustawienia";
-                    HorizontalLayout {
-                        padding-top: 16px; spacing: 20px;
+                    VerticalLayout {
+                        padding-top: 16px;
                         Card {
-                            horizontal-stretch: 1;
+                            vertical-stretch: 0;
                             VerticalLayout {
                                 padding: 24px; spacing: 14px; alignment: start;
-                                Heading { text: "Połączenie z Holuto"; }
-                                Hint { text: "Wprowadź dane parowania i wybierz drukarkę, aby rozpocząć obsługę zleceń."; }
                                 VerticalLayout {
                                     spacing: 12px;
-                                    HorizontalLayout { spacing: 12px; Text { text: "Adres API"; width: 140px; vertical-alignment: center; } LineEdit { accessible-label: "Adres API"; text <=> root.api-url; placeholder-text: "https://api.example.com"; enabled: root.settings-editable; } }
                                     HorizontalLayout { spacing: 12px; Text { text: "Kod parowania"; width: 140px; vertical-alignment: center; } LineEdit { accessible-label: "Kod parowania"; text <=> root.pairing-code; placeholder-text: "XXXX-XXXX"; enabled: root.settings-editable; } Button { text: "Sparuj"; accessible-label: "Sparuj"; enabled: root.settings-editable; clicked => { root.action(Action.pair); } } }
-                                    HorizontalLayout { spacing: 12px; Text { text: "Port drukarki"; width: 140px; vertical-alignment: center; } PortInput { text <=> root.port; model: root.ports; enabled: root.settings-editable; opening => { root.refresh-ports(); } } }
-                                    HorizontalLayout { spacing: 12px; Text { text: "Prędkość transmisji"; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: "Prędkość transmisji"; model: root.baud-rates; current-index <=> root.baud-index; enabled: root.settings-editable; } }
+                                    HorizontalLayout { spacing: 12px; Text { text: "Port drukarki"; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: "Port drukarki"; model: root.ports; current-index <=> root.port-index; enabled: root.settings-editable; selected(value) => { root.port = self.current-index == 0 ? "" : value; root.action(Action.save); } } }
+                                    HorizontalLayout { spacing: 12px; Text { text: "Prędkość transmisji"; width: 140px; vertical-alignment: center; } ComboBox { accessible-label: "Prędkość transmisji"; model: root.baud-rates; current-index <=> root.baud-index; enabled: root.settings-editable; selected => { root.action(Action.save); } } }
                                 }
-                                CheckBox { text: "Udostępniaj diagnostykę"; accessible-label: "Udostępniaj diagnostykę"; enabled: !root.pairing; checked <=> root.telemetry-enabled; toggled => { root.telemetry-changed(self.checked); } }
+                                VerticalLayout {
+                                    spacing: 4px;
+                                    CheckBox { text: "Udostępniaj diagnostykę"; accessible-label: "Udostępniaj diagnostykę"; enabled: !root.pairing; checked <=> root.telemetry-enabled; toggled => { root.telemetry-changed(self.checked); } }
+                                    Hint { text: "Wysyła błędy i logi, aby ułatwić naprawę aplikacji. Zrzuty awarii mogą zawierać dane wrażliwe. Wyłączenie działa od razu, a dla zrzutów awarii i przy włączaniu — po restarcie."; }
+                                }
                                 CheckBox { text: "Uruchamiaj przy logowaniu"; accessible-label: "Uruchamiaj przy logowaniu"; enabled: !root.pairing && !root.saving-settings; checked <=> root.start-on-launch; toggled => { root.autostart-changed(self.checked); } }
-                                Hint { text: "Błędy i logi pomagają naprawiać aplikację. Wyłączenie zatrzymuje ich wysyłanie od razu. Zrzuty awarii mogą zawierać dane wrażliwe; reporter awarii wyłączy się po restarcie. Włączenie diagnostyki wymaga restartu."; }
-                                HorizontalLayout { spacing: 10px; Button { text: "Zapisz"; enabled: root.settings-editable; clicked => { root.action(Action.save); } } Button { text: "Uruchom"; primary: true; enabled: root.settings-editable; clicked => { root.action(Action.start); } } Button { text: "Zatrzymaj"; enabled: (root.running || root.pairing) && !root.stopping; clicked => { root.action(Action.stop); } } Button { text: "Zakończ"; clicked => { root.action(Action.quit); } } }
-                                Hint { text: "Zamknięcie okna ukrywa aplikację w zasobniku. Aby zmienić ustawienia, najpierw zatrzymaj obsługę drukarki."; }
+                                HorizontalLayout { spacing: 10px; Button { text: "Uruchom"; primary: true; enabled: !root.running && !root.pairing && !root.starting; clicked => { root.action(Action.start); } } Button { text: "Zatrzymaj"; enabled: (root.running || root.pairing) && !root.stopping; clicked => { root.action(Action.stop); } } Rectangle { horizontal-stretch: 1; } Button { text: "Zakończ"; clicked => { root.action(Action.quit); } } }
+                                if root.running: Hint { text: "Aby zmienić ustawienia, najpierw zatrzymaj obsługę drukarki."; }
                             }
                         }
-                        Card {
-                            width: 260px;
-                            VerticalLayout { padding: 24px; spacing: 18px; alignment: start; Hint { text: "Zadania z Holuto drukują się automatycznie po zalogowaniu.\n\nNiepotwierdzone wyniki rozstrzyga personel w Holuto."; } }
-                        }
+                        Rectangle { vertical-stretch: 1; }
                     }
                 }
             }
-            if root.status != "" || root.report-unresolved || root.orphaned-receipt: HorizontalLayout {
+            if root.status != "": HorizontalLayout {
                 height: 36px; spacing: 16px;
-                Text { accessible-label: "Stan operacji"; accessible-value: root.status; text: root.status; color: root.status-tone == 2 ? #cf1322 : root.status-tone == 1 ? #389e0d : #595959; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                Text { accessible-label: "Stan operacji"; accessible-value: root.status; text: root.status; color: #cf1322; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                 if root.report-unresolved: Button { text: "Wyjaśnij raport"; clicked => { root.action(Action.resolve-report); } }
                 if root.orphaned-receipt: Button { text: "Wyjaśnij paragon"; accessible-label: "Wyjaśnij paragon"; clicked => { root.action(Action.acknowledge-orphaned-receipt); } }
             }
@@ -441,15 +445,17 @@ export component AppWindow inherits Window {
             x: 50px; y: 65px;
             VerticalLayout {
                 padding: 24px; spacing: 18px;
-                HorizontalLayout { Heading { text: "Wystaw paragon"; } Rectangle { horizontal-stretch: 1; } Button { text: "Zamknij"; clicked => { root.action(Action.close-manual); } } }
-                LineEdit { accessible-label: "Szukaj dokumentu"; placeholder-text: "Szukaj po numerze zlecenia lub kliencie"; text <=> root.search; edited(text) => { search-timer.running = true; search-timer.restart(); } accepted(text) => { search-timer.running = false; root.action(Action.search); } }
-                Table { rows: root.documents; columns <=> root.document-columns; empty-text: root.searching ? "Brak dokumentów pasujących do wyszukiwania" : "Brak dokumentów do wyświetlenia"; current-row <=> root.selected; current-row-changed(row) => { root.selected-document(row); } sort(column, descending) => { root.sort-documents(column, descending); } activate(row) => { root.selected-document(row); if root.queue-enabled { root.action(Action.queue-receipt); } } }
-                HorizontalLayout {
+                Heading { text: "Wystaw paragon"; }
+                LineEdit { accessible-label: "Szukaj dokumentu"; placeholder-text: "Szukaj: nr zlecenia, klient"; text <=> root.search; edited(text) => { search-timer.running = true; search-timer.restart(); } accepted(text) => { search-timer.running = false; root.action(Action.search); } }
+                Table { rows: root.documents; columns <=> root.document-columns; empty-text: !root.connected ? "Uruchom obsługę drukarki w Ustawieniach, aby zobaczyć dokumenty." : root.documents-unavailable ? "Nie można pobrać dokumentów z Holuto." : root.searching ? "Brak dokumentów pasujących do wyszukiwania" : "Żaden dokument nie czeka na paragon."; current-row <=> root.selected; current-row-changed(row) => { root.selected-document(row); } sort(column, descending) => { root.sort-documents(column, descending); } activate(row) => { root.selected-document(row); if root.queue-enabled { root.action(Action.queue-receipt); } } }
+                if root.documents-unavailable && root.connected: HorizontalLayout { alignment: center; Button { text: "Ponów pobieranie dokumentów"; clicked => { root.action(Action.retry-documents); } } }
+                if root.previous-enabled || root.next-enabled: HorizontalLayout {
+                    spacing: 12px;
                     Button { text: "Poprzednia strona"; enabled: root.previous-enabled; clicked => { root.action(Action.previous-page); } }
-                    Rectangle { horizontal-stretch: 1; } Hint { text: root.page-label; } Rectangle { horizontal-stretch: 1; }
+                    Hint { text: root.page-label; vertical-alignment: center; }
                     Button { text: "Następna strona"; enabled: root.next-enabled; clicked => { root.action(Action.next-page); } }
                 }
-                Button { text: "Dalej"; primary: true; enabled: root.queue-enabled; clicked => { root.action(Action.queue-receipt); } }
+                HorizontalLayout { alignment: end; spacing: 12px; Button { text: "Zamknij"; clicked => { root.action(Action.close-manual); } } Button { text: "Dalej"; primary: true; enabled: root.queue-enabled; clicked => { root.action(Action.queue-receipt); } } }
             }
         }
     }

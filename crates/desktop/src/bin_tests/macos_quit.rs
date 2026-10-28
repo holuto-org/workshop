@@ -8,6 +8,7 @@
 use std::{
     env,
     error::Error,
+    fs,
     io::{self, Write},
     path::Path,
     process::Command,
@@ -130,13 +131,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let dir = StateDir::open(state.path().to_owned())?;
     let accepted: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(state.path().join("accepted-job.json"))?)?;
-    assert_eq!(accepted["id"], json!(JOB_ID));
+        serde_json::from_slice(&fs::read(state.path().join("accepted-job.json"))?)?;
     assert_eq!(
-        accepted["state"], "done",
+        accepted.get("id"),
+        Some(&json!(JOB_ID)),
+        "the evidence describes the queued job"
+    );
+    assert_eq!(
+        accepted.get("state"),
+        Some(&json!("done")),
         "Holuto accepted the result before native exit"
     );
-    assert_eq!(accepted["receiptNumber"], "1");
+    assert_eq!(
+        accepted.get("receiptNumber"),
+        Some(&json!("1")),
+        "Holuto recorded the printed receipt number"
+    );
     assert!(
         !worker::journal_block(&dir).blocked,
         "AppKit exited before the fiscal outcome was settled"

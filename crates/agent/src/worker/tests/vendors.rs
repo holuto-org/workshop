@@ -355,7 +355,7 @@ fn blocked_worker_never_enumerates_or_switches_to_an_available_printer() {
         .unwrap();
         let _retrying = receive_until(&events, |event| {
             matches!(event,
-                Event::Status { text, .. } if text.contains("Ponowna próba za 15 sekund")
+                Event::Problem(Some(text)) if text.contains("Ponowna próba za 15 sekund")
             )
         });
         let _stopped = stop(worker, &events);
@@ -401,7 +401,7 @@ fn unsupported_model_reports_not_ready_without_rejected_telemetry_or_stop() {
         let (worker, events) = spawn(&sim, &holuto, &dir, Some(vendor));
         let mut received = receive_until(&events, |event| {
             matches!(
-                event, Event::Status { text, .. } if text == &expected_notice
+                event, Event::Problem(Some(text)) if text == &expected_notice
             )
         });
         assert!(received.iter().any(|event| matches!(
@@ -494,7 +494,7 @@ fn startup_reprobes_unavailable_capabilities_and_connects_when_the_profile_is_re
         let (worker, events) = spawn(&sim, &holuto, &dir, Some(vendor));
         let _unready = receive_until(&events, |event| {
             matches!(
-                event, Event::Status { text, .. } if text.starts_with("Drukarka niegotowa: ")
+                event, Event::Problem(Some(text)) if text.starts_with("Drukarka niegotowa: ")
             )
         });
         assert_eq!(holuto.requests(), []);

@@ -399,8 +399,10 @@ requires Windows 11 24H2 and does not solve Windows 10; see
    macOS `/dev/cu.usbmodem…` or Windows `COM3`. `auto` selects later.
    Do not open a device to identify it. Unqualified capabilities stay disabled;
    this install flow never builds or runs hardware acceptance mode.
-2. Obtain the correct final **HTTPS API URL**, preserving any path prefix.
-   Redirects are rejected; plain HTTP is only for loopback development. Ask the
+2. Release packages already carry the production Holuto API URL. Only for a
+   staging or other server, obtain its final **HTTPS API URL**, preserving any
+   path prefix. Redirects are rejected; plain HTTP is only for loopback
+   development. Ask the
    person for the diagnostics choice. Diagnostics default on. Structured
    diagnostics exclude token/fiscal payloads, but native crash dumps can include
    sensitive process memory. See the release-tag

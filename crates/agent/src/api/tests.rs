@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use super::{
     Api, ApiError,
-    model::{Outcome, ResultForm},
+    model::{JobsPage, Outcome, ResultForm},
 };
 use crate::{
     Error,
@@ -1058,11 +1058,11 @@ fn document_page_bounds_and_identity_are_checked_before_publication() -> TestRes
     );
     let page = api.documents(None, None)?;
     assert_eq!(
-        serde_json::to_value(&page)?,
-        json!({
-            "items":vec![document.clone();100], "nextCursor":"opaque-next", "previousCursor":null
-        })
+        serde_json::to_value(&page.items)?,
+        json!(vec![document.clone(); 100])
     );
+    assert_eq!(page.next_cursor.as_deref(), Some("opaque-next"));
+    assert_eq!(page.previous_cursor, None);
     assert_eq!(page.items.first().ok_or("missing item")?.amount, 1234);
     for (items, cursor, expected) in [
         (
@@ -1515,7 +1515,7 @@ fn jobs_search_keeps_private_criteria_in_the_body_and_continues_empty_pages() ->
     let first = api.jobs(None, Some(&search))?;
     assert_eq!(first.items.len(), 0);
     assert_eq!(first.next_cursor.as_deref(), Some("opaque+/?="));
-    let mut page = json!({
+    let page = json!({
         "items":[{
             "job":with(job_json(), &json!({
                 "state":"done", "receiptNumber":"123", "issuedAt":"2026-10-24T10:00:00Z"
@@ -1525,11 +1525,7 @@ fn jobs_search_keeps_private_criteria_in_the_body_and_continues_empty_pages() ->
     });
     server.jobs_page(Some("opaque+/?="), page.clone());
     let next = api.jobs(first.next_cursor.as_deref(), Some(&search))?;
-    let _etag = page["items"][0]["job"]
-        .as_object_mut()
-        .ok_or("job")?
-        .remove("etag");
-    assert_eq!(serde_json::to_value(&next)?, page);
+    assert_eq!(next, serde_json::from_value::<JobsPage>(page)?);
     assert_eq!(
         server
             .requests()
