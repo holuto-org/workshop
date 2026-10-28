@@ -86,7 +86,6 @@ function Assert-HolutoLegacyJournalResolved {
     # The new app never reads it, so an unresolved or unreadable record must be resolved in that app first.
     $journal = Join-Path (Join-Path (Join-Path $LocalAppData 'State') 'huggingcar-fiscal') 'operation.json'
     if (-not (Test-Path -LiteralPath $journal)) { return }
-    $state = $null
     try { $state = ([IO.File]::ReadAllText($journal) | ConvertFrom-Json -ErrorAction Stop).state } catch { $state = $null }
     if ($state -cnotin @('completed', 'acknowledged')) {
         throw "The previous HuggingCar Fiscal app has an unresolved fiscal operation in $journal. Check the printer and its printout, resolve the operation in that app, then run this installer again; nothing was installed."

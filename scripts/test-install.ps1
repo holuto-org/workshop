@@ -184,7 +184,6 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
 # A real install stops before writing the target when the checksum does not
 # match or attestation fails, and otherwise installs exactly the verified bytes.
 # Only external effects are faked.
-$script:gh = @{ Attestation = 0; Calls = @() }
 $fakeGh = [pscustomobject]@{ Source = {
     $script:gh.Calls += ($args -join ' ')
     $global:LASTEXITCODE = $script:gh.Attestation
@@ -194,8 +193,6 @@ function Get-Command {
     if ($Name -eq 'gh') { return $fakeGh }
     Microsoft.PowerShell.Core\Get-Command $Name
 }
-$script:downloads = 0
-$script:manifestDigest = ''
 function Invoke-WebRequest {
     param([switch]$UseBasicParsing, [int]$TimeoutSec, [string]$Uri, [string]$OutFile)
     $script:downloads++
@@ -223,14 +220,14 @@ try {
     $env:TMP = $installTemp; $env:TEMP = $installTemp; $env:TMPDIR = $installTemp
     $script:userPath = @(); $script:shortcuts = @(); $script:zones = @()
     foreach ($case in @(
-        @{ Attestation = 0; Digest = '0' * 64; Error = 'does not match SHA256SUMS'; Downloads = 2 },
-        @{ Attestation = 1; Digest = $exeDigest; Error = 'attestation verification failed.*2\.68\.0'; Downloads = 2 }
+        @{ Attestation = 0; Digest = '0' * 64; Error = 'does not match SHA256SUMS' },
+        @{ Attestation = 1; Digest = $exeDigest; Error = 'attestation verification failed.*2\.68\.0' }
     )) {
         $script:gh = @{ Attestation = $case.Attestation; Calls = @() }
         $script:downloads = 0
         $script:manifestDigest = $case.Digest
         Assert-Throws { Invoke-HolutoInstall -Release 'v1.2.3' | Out-Null } $case.Error
-        Assert-True ($script:downloads -eq $case.Downloads) "Unexpected downloads before: $($case.Error)"
+        Assert-True ($script:downloads -eq 2) "Unexpected downloads before: $($case.Error)"
         Assert-True (-not (Test-Path -LiteralPath $installedExe)) "Installed despite: $($case.Error)"
         Assert-True (@(Get-ChildItem -LiteralPath $installTemp -Force).Count -eq 0) "Left downloads behind after: $($case.Error)"
     }
@@ -262,7 +259,6 @@ try {
 }
 
 # Both the renamed binary and the previous app must be shut down, never killed.
-$script:processes = @()
 function Get-Process { return $script:processes }
 foreach ($name in @('workshop', 'workshop-win-x64')) {
     $script:processes = @([pscustomobject]@{ ProcessName = $name })

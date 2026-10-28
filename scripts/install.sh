@@ -9,8 +9,6 @@ work=
 staging=
 mounted=0
 backup=
-target=
-launcher=
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 usage() { printf 'Usage: bash install.sh [--release vX.Y.Z] [--dry-run]\n'; }

@@ -70,8 +70,7 @@ cargo llvm-cov nextest --workspace --all-features --html
 
 The HTML report is under `target/llvm-cov/html`. Use it to find unexecuted error
 branches, not to claim correctness or meet a percentage. Install project tools
-with
-`cargo binstall cargo-nextest cargo-llvm-cov cargo-insta lychee` if
+with `cargo binstall cargo-nextest cargo-llvm-cov cargo-insta lychee` if
 cargo-binstall is available, otherwise use their documented installation
 procedure. No weekly coverage workflow is required.
 

@@ -6,7 +6,6 @@ use fiscal::error::Error;
 pub const START: [u8; 2] = [0x1B, b'P'];
 pub const END: [u8; 2] = [0x1B, b'\\'];
 pub const MAX_FRAME: usize = 16_384;
-const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
 pub fn encode(body: &[u8]) -> Vec<u8> {
     let control = body.iter().fold(0xFF, |control, byte| control ^ byte);
@@ -33,16 +32,8 @@ pub fn decode(raw: &[u8]) -> Result<&[u8], Error> {
     if body.is_empty() {
         return Err(corrupt());
     }
-    let expected = checksum
-        .iter()
-        .try_fold(0_u8, |value, byte| {
-            HEX.iter()
-                .position(|digit| digit == byte)
-                .and_then(|digit| u8::try_from(digit).ok())
-                .map(|digit| (value << 4) | digit)
-        })
-        .ok_or_else(corrupt)?;
-    if body.iter().fold(0xFF, |control, byte| control ^ byte) != expected {
+    let control = body.iter().fold(0xFF, |control, byte| control ^ byte);
+    if checksum != [hex_digit(control >> 4), hex_digit(control & 15)] {
         return Err(corrupt());
     }
     Ok(body)
