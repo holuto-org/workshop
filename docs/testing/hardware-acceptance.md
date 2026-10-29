@@ -141,8 +141,7 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
    Expected: exclusive serial open, no unsolicited fiscal action or reset,
    stable by-id path where available. Elzab RS232 must be STX (documented
    factory baud 9600); USB baud/parity behavior must be measured, not assumed.
-   **Fills:** `Connection.baud_rate`, transport/OS qualification evidence;
-   there is no profile field for modem-line behavior.
+   **Fills:** `Connection.baud_rate`, transport/OS qualification evidence.
 3. **Identity.** Save literal original replies: Posnet `getrealid`; Novitus
    `30#v` and unique number from `23#s`; Elzab `XTR` fields B/D and `FNR` B.
    Expected: exact brand/model/firmware and a stable matching fiscal unique number.

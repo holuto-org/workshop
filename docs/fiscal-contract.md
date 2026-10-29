@@ -35,7 +35,8 @@ Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
 `sentry-trace` propagation. `POST /agent/pair` exchanges `{code}` for
 `{token, printerId}` without bearer or device-identity headers.
 `POST /agent/session` sends `Telemetry` at startup and when the profile changes;
-its exact fields are defined in the linked schema.
+its exact fields are defined in the linked schema. It answers
+`{printer: {id, uniqueNumber, capabilities, vatRates}}` as Holuto recorded them.
 
 `vendor` is `"posnet"`, `"novitus"` or `"elzab"` and binds alongside the physical
 unique number. `vatRates` contains supported active entries from the device
@@ -47,12 +48,12 @@ Illegal A–E assignments remain not ready and are not uploaded.
 The `capabilities` object carries `maxItemNameLength`, `maxLinesPerReceipt`,
 `maxCompanyNameLength`, `allowedCharacters` (printable characters, NFC),
 `maxQuantityDecimals` (0–8), `advanceDeductions` and `zeroTotalReceipts`.
-The schema documents 409 `fiscal_printer_limits_unknown` when queueing without
-telemetry. It does not encode every backend business-validation rule.
-Workshop does not call the queueing route: it independently checks the fresh
-device profile before fiscal commands and reports unprintable claimed jobs as
-failed. Neither a queued job nor an accepted session authorizes bypassing local
-validation.
+Holuto refuses to queue a job for a printer without telemetry
+(`fiscal_printer_limits_unknown`); queueing happens in the web app, outside
+`/agent`. The schema does not encode every backend business-validation rule.
+Workshop independently checks the fresh device profile before fiscal commands
+and reports unprintable claimed jobs as failed. Neither a queued job nor an
+accepted session authorizes bypassing local validation.
 
 Sessions bind the fiscal memory unique number (`^[A-Z]{3}[0-9]{10}$`) and vendor;
 a mismatch fails with 403 `fiscal_unique_number_mismatch` or
@@ -61,9 +62,7 @@ Authenticated routes other than `/agent/session` carry
 `X-Device-Unique-Number`; the session carries `uniqueNumber` in its body.
 Device swaps are rejected before taking or printing jobs.
 
-Workshop calls only pair, session, heartbeat and the job routes below. The
-vendored schema also lists backend document-search, queueing and job-search
-operations; Workshop does not call them.
+The vendored schema has only pair, session, heartbeat and the job routes below.
 
 - **`POST /agent/jobs/take`**: Claim a job; no body, 204 for an empty queue.
 - **`GET /agent/jobs/{id}`**: Reconcile job state without printing.
@@ -88,13 +87,14 @@ evidence and local acknowledgement follow
 [recovery classification](testing/fiscal-safety.md#recovery-classification).
 
 Job lines: `name`, `quantity`, `unitPrice`, `total`, `vatRate`, `vatLetter`.
-Metadata: `orderId`, integer `orderNumber`, `printerId`, `kind`, nullable
-`allocationId`, `etag`, `buyerNip`, `companyName`, `total`, `advances`,
-`payments`, immutable attempt and lifecycle timestamps. Advances identify their
+Metadata: integer `orderNumber`, `printerId`, `kind`, nullable `allocationId`
+(advances only), nullable `buyerNip`, `companyName`, `total`, `advances`,
+`payments`, `state` and the immutable nullable `attempt`. Advances identify their
 allocation and have one line per VAT rate, quantity 1. Outcome fields are
 always present and nullable: `receiptNumber`, `issuedAt` (the printer's issue
 time of the receipt, set exactly when the job has one: `done` or `voided`) and
-`result`. Every job response (take, get, result reply) carries them.
+`result`. Every job response (take, get, result reply) carries them, without an
+`ETag`: the attempt, not a revision, identifies what the device reports.
 
 `total` sums gross line totals. `advances` contains `{vatLetter, vatRate, amount}`
 deductions, at most one per letter, each positive; duplicates and zero deductions

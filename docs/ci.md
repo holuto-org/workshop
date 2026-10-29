@@ -24,10 +24,8 @@ dependencies:
   runs when a pull request closes. It deletes the head branch only for a merged
   PR from this repository, excluding the repository's default branch.
 
-There is no GitHub deployment environment, promotion step, manual approval gate
-or weekly workflow. `production` is the packaged app's Sentry environment, not
-a second release path. Required branch checks/protection are repository settings,
-not configured by these workflows.
+`production` is the packaged app's Sentry environment, not a second release
+path. Required branch checks/protection are repository settings.
 
 CI does not run the local Markdown/link checks, rustdoc build, coverage report,
 stress repetitions or manual symbolication check described in
@@ -104,8 +102,9 @@ smoke does not prove those public downloads or attestations can be retrieved.
 
 ## Release telemetry artifacts
 
-Set repository variables `HOLUTO_API_URL` (the production Holuto API default
-embedded in release builds), `SENTRY_DSN`, `SENTRY_ORG=holuto` and
+Release builds embed `https://app.<APP_NAME lowercased>.<TLD_PRODUCTION>/api` as the
+production Holuto API default, from organization variables `APP_NAME` and
+`TLD_PRODUCTION`. Set repository variables `SENTRY_DSN`, `SENTRY_ORG=holuto` and
 `SENTRY_PROJECT=workshop`, plus organization-token secret `SENTRY_AUTH_TOKEN`
 for Sentry uploads. Package jobs require nonempty API URL and DSN; that check
 does not validate either service's availability or configuration.

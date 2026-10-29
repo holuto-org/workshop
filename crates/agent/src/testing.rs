@@ -47,7 +47,6 @@ use uuid::Uuid;
 pub const JOB_ID: Uuid = Uuid::from_u128(7);
 pub const ATTEMPT: Uuid = Uuid::from_u128(8);
 pub const PRINTER_ID: Uuid = Uuid::from_u128(9);
-pub const ORDER_ID: Uuid = Uuid::from_u128(10);
 pub const ALLOCATION_ID: Uuid = Uuid::from_u128(12);
 const TOKEN: &str = "synthetic-device-token";
 
@@ -209,7 +208,6 @@ impl Holuto {
         let id: Uuid = serde_json::from_value(job["id"].clone()).unwrap();
         job["state"] = json!("queued");
         job["attempt"] = Value::Null;
-        job["takenAt"] = Value::Null;
         let mut state = locked(&self.state);
         let _old = state.jobs.insert(id, job);
         state.queue.push_back(id);
@@ -293,14 +291,12 @@ impl Holuto {
             "failed"
         });
         job["receiptNumber"] = json!(receipt_number);
-        let now = json!(Timestamp::now());
         job["issuedAt"] = if receipt_number.is_some() {
-            now.clone()
+            json!(Timestamp::now())
         } else {
             Value::Null
         };
         job["result"] = json!("Sprawdzono wydruk");
-        job["resolvedAt"] = now;
         Ok(())
     }
 
@@ -587,14 +583,7 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         state.unique_number = Some(unique_number.to_owned());
         let mut status = status_json();
         status["printer"]["uniqueNumber"] = json!(unique_number);
-        for name in [
-            "vendor",
-            "capabilities",
-            "model",
-            "firmware",
-            "appVersion",
-            "vatRates",
-        ] {
+        for name in ["capabilities", "vatRates"] {
             status["printer"][name] = request.body[name].clone();
         }
         return (200, status);
@@ -636,7 +625,6 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
         state.attempt += 1;
         let job = state.jobs.get_mut(&id).unwrap();
         job["attempt"] = json!(Uuid::from_u128(8 + state.attempt));
-        job["takenAt"] = json!(Timestamp::now());
         job["state"] = json!("taken");
         return (200, job.clone());
     }
@@ -664,7 +652,8 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
             if let Some(at) = form["issuedAt"].as_str() {
                 let at = at.parse::<Timestamp>().unwrap();
                 let at = Timestamp::from_microsecond(at.as_microsecond()).unwrap();
-                if at > Timestamp::now() {
+                // Holuto tolerates a printer clock up to five minutes ahead of its own.
+                if at > Timestamp::now() + jiff::SignedDuration::from_mins(5) {
                     return invalid("/issuedAt", "event_time_in_future");
                 }
                 form["issuedAt"] = json!(at);
@@ -757,7 +746,7 @@ fn backend_text(value: &str, note: bool) -> Result<String, &'static str> {
 
 pub fn job_json() -> Value {
     json!({
-        "id": JOB_ID, "orderId": ORDER_ID, "orderNumber": 10, "printerId": PRINTER_ID,
+        "id": JOB_ID, "orderNumber": 10, "printerId": PRINTER_ID,
         "state": "taken", "kind": "sale", "allocationId": null, "advances": [],
         "payments": [{"form": "card", "amount": "250.00"}],
         "companyName": "Warsztat Kowalski", "buyerNip": null, "total": "250.00",
@@ -767,9 +756,7 @@ pub fn job_json() -> Value {
             {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
              "total": "50.00", "vatRate": "8", "vatLetter": "B"}
         ],
-        "attempt": ATTEMPT, "receiptNumber": null, "issuedAt": null, "result": null,
-        "createdAt": "2026-10-16T10:00:00Z", "takenAt": "2026-10-16T10:01:00Z",
-        "resolvedAt": null, "etag": "0123456789abcdef0123456789abcdef"
+        "attempt": ATTEMPT, "receiptNumber": null, "issuedAt": null, "result": null
     })
 }
 #[expect(clippy::unwrap_used, reason = "fixture overlays require JSON objects")]
@@ -782,25 +769,14 @@ pub fn with(mut value: Value, changes: &Value) -> Value {
 }
 pub fn printer_json() -> Value {
     json!({
-        "id":PRINTER_ID,"branchId":Uuid::from_u128(11),"name":"Workshop",
-        "vendor":"posnet","uniqueNumber":"DEM0000000001","model":"POSNET TEMO ONLINE",
-        "firmware":"32.01","appVersion":"0.2.0","vatRates":[],
+        "id":PRINTER_ID,"uniqueNumber":"DEM0000000001","vatRates":[],
         "capabilities":{"advanceDeductions":true,"zeroTotalReceipts":true,
             "maxQuantityDecimals":8,"maxItemNameLength":80,"maxLinesPerReceipt":500,
             "maxCompanyNameLength":40,"allowedCharacters":"ABCabc 0123456789.,-ĄąĘęŁłŃńÓóŚśŹźŻżĆć"}
     })
 }
 pub fn status_json() -> Value {
-    json!({
-        "printer": printer_json(),
-        "configuration": {
-            "id": PRINTER_ID, "branchId": Uuid::from_u128(11), "name": "Workshop",
-            "credentialRevision": 1, "deletedAt": null,
-            "etag": "0123456789abcdef0123456789abcdef"
-        },
-        "isOnline": true, "deletedAt": null,
-        "lastSeenAt": "2026-10-16T10:00:00Z", "updatedAt": "2026-10-16T09:00:00Z"
-    })
+    json!({"printer": printer_json()})
 }
 #[cfg(test)]
 pub(crate) fn state_dir() -> (TempDir, StateDir) {

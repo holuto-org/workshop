@@ -138,7 +138,7 @@ or OS logout test.
   needs an explicit reply, not merely a Slint event-loop quit. This is not an
   actual logout/restart/shutdown test.
 - **Windows:** Slint lifecycle tests cover application close/stop/quit, not
-  Windows session-end handling. There is no desktop session-end hook to test.
+  Windows session-end handling.
   On Windows and macOS the tray availability function assumes a host; Linux's
   registration evidence does not apply.
 

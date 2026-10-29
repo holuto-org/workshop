@@ -2069,10 +2069,7 @@ fn a_job_another_instance_takes_is_never_printed_locally() {
     let (worker, events) = spawn(&holuto, &sim, &dir);
     arrival.recv_timeout(WAIT).unwrap();
     // The token is not exclusive to one state directory: another instance claimed the job.
-    holuto.set_job(
-        id,
-        &json!({"state": "taken", "attempt": ATTEMPT, "takenAt": "2026-10-16T10:00:00Z"}),
-    );
+    holuto.set_job(id, &json!({"state": "taken", "attempt": ATTEMPT}));
     release.send(()).unwrap();
     let _polled = receive_until(&events, |event| matches!(event, Event::Device { .. }));
     let _stopped = stop(worker, &events);
