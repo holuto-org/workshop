@@ -75,16 +75,13 @@ fn queue_samples(holuto: &Holuto) {
     let [sale, advance] = SAMPLE_JOBS;
     let sale = with(
         job_json(),
-        &json!({
-            "id": sale, "orderId": Uuid::from_u128(6041), "orderNumber": 1041,
-            "companyName": COMPANY
-        }),
+        &json!({"id": sale, "orderNumber": 1041, "companyName": COMPANY}),
     );
     // ASCII names print unchanged on every simulated brand.
     let advance = with(
         job_json(),
         &json!({
-            "id": advance, "orderId": Uuid::from_u128(6042), "orderNumber": 1042,
+            "id": advance, "orderNumber": 1042,
             "companyName": COMPANY, "kind": "advance", "allocationId": Uuid::from_u128(7042),
             "total": "300.00", "payments": [{"form": "card", "amount": "300.00"}],
             "lines": [

@@ -40,8 +40,8 @@ fn fake_request_contract_violations_fail_the_owning_test() {
 fn fake_response_contract_violations_fail_the_owning_test() {
     let outcome = catch_unwind(|| {
         let server = Holuto::new();
-        let mut job = job_json();
-        let _etag = job.as_object_mut().unwrap().remove("etag");
+        // A field the contract no longer has; the client would ignore it, the fake must not.
+        let job = with(job_json(), &json!({"orderId": Uuid::from_u128(10)}));
         server.insert(job);
         let api = api(&server).unwrap();
         let _response = api.job(JOB_ID);
@@ -353,6 +353,48 @@ fn backend_result_normalizes_code_and_compares_replays_at_microsecond_precision(
         .0,
         409
     );
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "HTTP boundary assertions use Result for setup"
+)]
+fn backend_result_tolerates_a_printer_clock_up_to_five_minutes_ahead() -> TestResult {
+    let server = Holuto::new();
+    server.insert(job_json());
+    let _api = api(&server)?;
+    let path = format!("/agent/jobs/{JOB_ID}/result");
+    let ahead = |minutes| jiff::Timestamp::now() + jiff::SignedDuration::from_mins(minutes);
+    let mut form = json!({
+        "attempt":super::ATTEMPT, "state":"done", "receiptNumber":"SKEW",
+        "issuedAt":ahead(6), "result":null
+    });
+    let (status, _, body) = raw(
+        &server,
+        "POST",
+        &path,
+        Some(b"DEM0000000001"),
+        Some(server.token()),
+        &form,
+    )?;
+    assert_eq!(
+        (status, &body["errors"][0]["pointer"]),
+        (400, &json!("/issuedAt"))
+    );
+    assert_eq!(server.job(JOB_ID)["state"], "taken");
+    form["issuedAt"] = json!(ahead(4));
+    let (status, ..) = raw(
+        &server,
+        "POST",
+        &path,
+        Some(b"DEM0000000001"),
+        Some(server.token()),
+        &form,
+    )?;
+    assert_eq!(status, 200);
+    assert_eq!(server.job(JOB_ID)["state"], "done");
     Ok(())
 }
 

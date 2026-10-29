@@ -15,78 +15,6 @@
     }
   ],
   "paths": {
-    "/agent/documents/search": {
-      "post": {
-        "operationId": "agent_document_search",
-        "parameters": [
-          {
-            "name": "X-Device-Unique-Number",
-            "in": "header",
-            "description": "Fiscal memory unique number pinned by the printer's first session.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TableSearch_AgentDocumentFilter_DocumentSearch_DocumentSort"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CursorPage_AgentDocument"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "408": {
-            "$ref": "#/components/responses/RequestTimeout"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "415": {
-            "$ref": "#/components/responses/UnsupportedMediaType"
-          },
-          "426": {
-            "$ref": "#/components/responses/UpgradeRequired"
-          },
-          "429": {
-            "$ref": "#/components/responses/TooManyRequests"
-          },
-          "default": {
-            "$ref": "#/components/responses/UnexpectedError"
-          }
-        },
-        "security": [
-          {
-            "bearerToken": []
-          }
-        ]
-      }
-    },
     "/agent/heartbeat": {
       "post": {
         "operationId": "agent_printer_heartbeat",
@@ -132,161 +60,6 @@
         ]
       }
     },
-    "/agent/jobs": {
-      "post": {
-        "summary": "Missing telemetry answers 409 `fiscal_printer_limits_unknown`. Names are never truncated.",
-        "operationId": "agent_job_create",
-        "parameters": [
-          {
-            "name": "X-Device-Unique-Number",
-            "in": "header",
-            "description": "Fiscal memory unique number pinned by the printer's first session.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeviceQueueForm"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Versioned_Job"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "408": {
-            "$ref": "#/components/responses/RequestTimeout"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "415": {
-            "$ref": "#/components/responses/UnsupportedMediaType"
-          },
-          "426": {
-            "$ref": "#/components/responses/UpgradeRequired"
-          },
-          "429": {
-            "$ref": "#/components/responses/TooManyRequests"
-          },
-          "default": {
-            "$ref": "#/components/responses/UnexpectedError"
-          }
-        },
-        "security": [
-          {
-            "bearerToken": []
-          }
-        ]
-      }
-    },
-    "/agent/jobs/search": {
-      "post": {
-        "operationId": "agent_job_search",
-        "parameters": [
-          {
-            "name": "X-Device-Unique-Number",
-            "in": "header",
-            "description": "Fiscal memory unique number pinned by the printer's first session.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TableSearch_AgentJobFilter_JobSearch_JobSort"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CursorPage_JobView"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "408": {
-            "$ref": "#/components/responses/RequestTimeout"
-          },
-          "413": {
-            "$ref": "#/components/responses/PayloadTooLarge"
-          },
-          "415": {
-            "$ref": "#/components/responses/UnsupportedMediaType"
-          },
-          "426": {
-            "$ref": "#/components/responses/UpgradeRequired"
-          },
-          "429": {
-            "$ref": "#/components/responses/TooManyRequests"
-          },
-          "default": {
-            "$ref": "#/components/responses/UnexpectedError"
-          }
-        },
-        "security": [
-          {
-            "bearerToken": []
-          }
-        ]
-      }
-    },
     "/agent/jobs/take": {
       "post": {
         "operationId": "agent_job_take",
@@ -303,17 +76,10 @@
         ],
         "responses": {
           "200": {
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Versioned_Job"
+                  "$ref": "#/components/schemas/AgentJob"
                 }
               }
             }
@@ -376,17 +142,10 @@
         ],
         "responses": {
           "200": {
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Versioned_Job"
+                  "$ref": "#/components/schemas/AgentJob"
                 }
               }
             }
@@ -458,17 +217,10 @@
         },
         "responses": {
           "200": {
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Versioned_Job"
+                  "$ref": "#/components/schemas/AgentJob"
                 }
               }
             }
@@ -593,7 +345,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrinterStatus"
+                  "$ref": "#/components/schemas/AgentSession"
                 }
               }
             }
@@ -749,21 +501,33 @@
         },
         "additionalProperties": false
       },
-      "AgentDocument": {
+      "AgentJob": {
         "type": "object",
         "required": [
+          "id",
+          "printerId",
           "kind",
-          "allocationId",
-          "orderId",
           "orderNumber",
-          "amount",
-          "customerName",
-          "occurredAt",
-          "dueAt",
-          "latestAt",
-          "isOverdue"
+          "allocationId",
+          "companyName",
+          "buyerNip",
+          "lines",
+          "advances",
+          "payments",
+          "total",
+          "state",
+          "attempt",
+          "issuedAt",
+          "receiptNumber",
+          "result"
         ],
         "properties": {
+          "advances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdvanceDeduction"
+            }
+          },
           "allocationId": {
             "oneOf": [
               {
@@ -774,63 +538,76 @@
               }
             ]
           },
-          "amount": {
-            "$ref": "#/components/schemas/Amount"
-          },
-          "customerName": {
+          "attempt": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Name"
+                "$ref": "#/components/schemas/Attempt"
               },
               {
                 "type": "null"
               }
             ]
           },
-          "dueAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the receipt becomes due and should be printed without delay: sale completion or\nthe payment's recorded (credited) time."
+          "buyerNip": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Nip"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
-          "isOverdue": {
-            "type": "boolean",
-            "description": "Past `latest_at`."
+          "companyName": {
+            "$ref": "#/components/schemas/Name"
+          },
+          "id": {
+            "$ref": "#/components/schemas/FiscalJobId"
+          },
+          "issuedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "The printer's issue time of the job's receipt."
           },
           "kind": {
             "$ref": "#/components/schemas/FiscalReceiptKind"
           },
-          "latestAt": {
-            "type": "string",
-            "format": "date-time",
-            "description": "The statutory hard limit: equal to `due_at`, except that a card, transfer or BLIK\nadvance, still due promptly, breaches the law only after the earlier of its local\nmonth's end and sale completion."
-          },
-          "occurredAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "orderId": {
-            "$ref": "#/components/schemas/ServiceOrderId"
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReceiptLine"
+            }
           },
           "orderNumber": {
             "type": "integer",
             "format": "int64"
-          }
-        },
-        "additionalProperties": false
-      },
-      "AgentDocumentFilter": {
-        "type": "object",
-        "description": "The device feed's `filter` member is empty. Send the `TableSearch` envelope with a required\n`cursor` object, not an empty body.",
-        "additionalProperties": false
-      },
-      "AgentJobFilter": {
-        "type": "object",
-        "description": "The device feed is always its own printer's; it filters no other printer.",
-        "properties": {
-          "orderId": {
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReceiptPayment"
+            }
+          },
+          "printerId": {
+            "$ref": "#/components/schemas/FiscalPrinterId"
+          },
+          "receiptNumber": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ServiceOrderId_ServiceOrderId"
+                "$ref": "#/components/schemas/Code"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Note"
               },
               {
                 "type": "null"
@@ -838,14 +615,10 @@
             ]
           },
           "state": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/FiscalJobState"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/FiscalJobState"
+          },
+          "total": {
+            "$ref": "#/components/schemas/PositiveAmount_Amount"
           }
         },
         "additionalProperties": false
@@ -866,6 +639,60 @@
         },
         "additionalProperties": false
       },
+      "AgentPrinter": {
+        "type": "object",
+        "required": [
+          "id",
+          "uniqueNumber",
+          "capabilities",
+          "vatRates"
+        ],
+        "properties": {
+          "capabilities": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PrinterCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/FiscalPrinterId"
+          },
+          "uniqueNumber": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UniqueNumber"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vatRates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VatRateMapping"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentSession": {
+        "type": "object",
+        "description": "What `POST /agent/session` answers: the identity, limits and VAT letters Holuto recorded.",
+        "required": [
+          "printer"
+        ],
+        "properties": {
+          "printer": {
+            "$ref": "#/components/schemas/AgentPrinter"
+          }
+        },
+        "additionalProperties": false
+      },
       "AllowedCharacters": {
         "type": "string",
         "description": "Every character the printer can print, including spaces, in Unicode NFC. No control characters.",
@@ -875,27 +702,11 @@
         "minLength": 1,
         "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
       },
-      "Amount": {
-        "type": "string",
-        "format": "decimal",
-        "description": "Money with at most two decimals.",
-        "examples": [
-          "1234.50"
-        ],
-        "pattern": "^-?[0-9]{1,16}(\\.[0-9]{1,2})?$"
-      },
       "Attempt": {
         "type": "string",
         "format": "uuid",
         "examples": [
           "01925d4f-a342-7a33-91fe-000000000001"
-        ]
-      },
-      "BranchId": {
-        "type": "string",
-        "format": "uuid",
-        "examples": [
-          "0199aabc-1234-7000-8000-000000000001"
         ]
       },
       "ClientLimits": {
@@ -992,170 +803,6 @@
         "minLength": 1,
         "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
       },
-      "CursorPage_AgentDocument": {
-        "type": "object",
-        "description": "One window of a collection. A null cursor means its direction has nothing to continue;\na present one continues there even if those rows have since been deleted.",
-        "required": [
-          "items",
-          "nextCursor",
-          "previousCursor"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "kind",
-                "allocationId",
-                "orderId",
-                "orderNumber",
-                "amount",
-                "customerName",
-                "occurredAt",
-                "dueAt",
-                "latestAt",
-                "isOverdue"
-              ],
-              "properties": {
-                "allocationId": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/PaymentAllocationId"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "amount": {
-                  "$ref": "#/components/schemas/Amount"
-                },
-                "customerName": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Name"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "dueAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "description": "When the receipt becomes due and should be printed without delay: sale completion or\nthe payment's recorded (credited) time."
-                },
-                "isOverdue": {
-                  "type": "boolean",
-                  "description": "Past `latest_at`."
-                },
-                "kind": {
-                  "$ref": "#/components/schemas/FiscalReceiptKind"
-                },
-                "latestAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "description": "The statutory hard limit: equal to `due_at`, except that a card, transfer or BLIK\nadvance, still due promptly, breaches the law only after the earlier of its local\nmonth's end and sale completion."
-                },
-                "occurredAt": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "orderId": {
-                  "$ref": "#/components/schemas/ServiceOrderId"
-                },
-                "orderNumber": {
-                  "type": "integer",
-                  "format": "int64"
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "nextCursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "previousCursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "CursorPage_JobView": {
-        "type": "object",
-        "description": "One window of a collection. A null cursor means its direction has nothing to continue;\na present one continues there even if those rows have since been deleted.",
-        "required": [
-          "items",
-          "nextCursor",
-          "previousCursor"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "description": "A job-history row. The order's current names live outside [`Job`], so renaming a customer\nnever changes a job's representation or its `etag`.",
-              "required": [
-                "job",
-                "customerName",
-                "vehiclePlate",
-                "source"
-              ],
-              "properties": {
-                "customerName": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Name",
-                      "description": "The order's customer, or the contact name of an order without one."
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "job": {
-                  "$ref": "#/components/schemas/Versioned_Job"
-                },
-                "source": {
-                  "$ref": "#/components/schemas/JobSource"
-                },
-                "vehiclePlate": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/LicensePlate",
-                      "description": "The order vehicle's current plate."
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "nextCursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "previousCursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
       "CursorQuery": {
         "type": "object",
         "properties": {
@@ -1175,84 +822,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "DeviceQueueForm": {
-        "type": "object",
-        "required": [
-          "orderId",
-          "kind"
-        ],
-        "properties": {
-          "allocationId": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PaymentAllocationId"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "buyerNip": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Nip"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "kind": {
-            "$ref": "#/components/schemas/FiscalReceiptKind"
-          },
-          "orderId": {
-            "$ref": "#/components/schemas/ServiceOrderId"
-          }
-        },
-        "additionalProperties": false
-      },
-      "DocumentSearch": {
-        "type": "object",
-        "description": "Documents-feed criteria; customer names are personal data, so they travel only in a body.",
-        "properties": {
-          "q": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/SearchText",
-                "description": "Literal space/comma-separated words; each must occur in the order number or customer name."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "DocumentSearch_DocumentSearch": {
-        "type": "object",
-        "description": "Documents-feed criteria; customer names are personal data, so they travel only in a body.",
-        "properties": {
-          "q": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/SearchText",
-                "description": "Literal space/comma-separated words; each must occur in the order number or customer name."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "DocumentSort": {
-        "type": "string",
-        "enum": [
-          "OccurredAt"
-        ]
       },
       "Etag": {
         "type": "string",
@@ -1355,254 +924,6 @@
         },
         "additionalProperties": false
       },
-      "Job": {
-        "type": "object",
-        "required": [
-          "id",
-          "orderId",
-          "orderNumber",
-          "printerId",
-          "state",
-          "kind",
-          "allocationId",
-          "buyerNip",
-          "companyName",
-          "total",
-          "lines",
-          "advances",
-          "payments",
-          "attempt",
-          "receiptNumber",
-          "issuedAt",
-          "result",
-          "createdAt",
-          "takenAt",
-          "resolvedAt"
-        ],
-        "properties": {
-          "advances": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AdvanceDeduction"
-            }
-          },
-          "allocationId": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PaymentAllocationId"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "attempt": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Attempt"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "buyerNip": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Nip"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "companyName": {
-            "$ref": "#/components/schemas/Name"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "id": {
-            "$ref": "#/components/schemas/FiscalJobId"
-          },
-          "issuedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "The printer's issue time of the job's receipt."
-          },
-          "kind": {
-            "$ref": "#/components/schemas/FiscalReceiptKind"
-          },
-          "lines": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReceiptLine"
-            }
-          },
-          "orderId": {
-            "$ref": "#/components/schemas/ServiceOrderId"
-          },
-          "orderNumber": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "payments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReceiptPayment"
-            }
-          },
-          "printerId": {
-            "$ref": "#/components/schemas/FiscalPrinterId"
-          },
-          "receiptNumber": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Code"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "resolvedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "result": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Note"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "state": {
-            "$ref": "#/components/schemas/FiscalJobState"
-          },
-          "takenAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "total": {
-            "$ref": "#/components/schemas/PositiveAmount_Amount"
-          }
-        },
-        "additionalProperties": false
-      },
-      "JobSearch": {
-        "type": "object",
-        "description": "Job-history criteria; customer names and plates are personal data, so they travel only in a\nbody.",
-        "properties": {
-          "q": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/SearchText",
-                "description": "Literal space/comma-separated words, folded for case and accents; each must occur in the\norder number, customer name (or the order's contact name), receipt number, vehicle plate\nor a line name."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "JobSearch_JobSearch": {
-        "type": "object",
-        "description": "Job-history criteria; customer names and plates are personal data, so they travel only in a\nbody.",
-        "properties": {
-          "q": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/SearchText",
-                "description": "Literal space/comma-separated words, folded for case and accents; each must occur in the\norder number, customer name (or the order's contact name), receipt number, vehicle plate\nor a line name."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "JobSort": {
-        "type": "string",
-        "enum": [
-          "Id",
-          "CreatedAt"
-        ]
-      },
-      "JobSource": {
-        "type": "string",
-        "description": "Who queued a job. Staff identities are never exposed through this.",
-        "enum": [
-          "staff",
-          "device"
-        ]
-      },
-      "JobView": {
-        "type": "object",
-        "description": "A job-history row. The order's current names live outside [`Job`], so renaming a customer\nnever changes a job's representation or its `etag`.",
-        "required": [
-          "job",
-          "customerName",
-          "vehiclePlate",
-          "source"
-        ],
-        "properties": {
-          "customerName": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Name",
-                "description": "The order's customer, or the contact name of an order without one."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "job": {
-            "$ref": "#/components/schemas/Versioned_Job"
-          },
-          "source": {
-            "$ref": "#/components/schemas/JobSource"
-          },
-          "vehiclePlate": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/LicensePlate",
-                "description": "The order vehicle's current plate."
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "Label": {
-        "type": "string",
-        "examples": [
-          "Example"
-        ],
-        "maxLength": 64,
-        "minLength": 1,
-        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
-      },
       "Language": {
         "type": "string",
         "enum": [
@@ -1611,14 +932,6 @@
           "es",
           "ru"
         ]
-      },
-      "LicensePlate": {
-        "type": "string",
-        "description": "Normalized on input; responses always match `^[A-Z0-9]{2,12}$`.",
-        "examples": [
-          "WA12345"
-        ],
-        "minLength": 1
       },
       "Name": {
         "type": "string",
@@ -1705,99 +1018,6 @@
         ],
         "pattern": "^(?!0(?:\\.0+)?$)[0-9]{1,14}(\\.[0-9]{1,8})?$"
       },
-      "Printer": {
-        "type": "object",
-        "required": [
-          "vendor",
-          "capabilities",
-          "id",
-          "branchId",
-          "name",
-          "uniqueNumber",
-          "model",
-          "firmware",
-          "appVersion",
-          "vatRates"
-        ],
-        "properties": {
-          "appVersion": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Code"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "branchId": {
-            "$ref": "#/components/schemas/BranchId"
-          },
-          "capabilities": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PrinterCapabilities"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "firmware": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Code"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "id": {
-            "$ref": "#/components/schemas/FiscalPrinterId"
-          },
-          "model": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Code"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "name": {
-            "$ref": "#/components/schemas/Label"
-          },
-          "uniqueNumber": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/UniqueNumber"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "vatRates": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/VatRateMapping"
-            }
-          },
-          "vendor": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/FiscalVendor"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
       "PrinterCapabilities": {
         "type": "object",
         "required": [
@@ -1841,48 +1061,6 @@
         ],
         "maximum": 2147483647,
         "minimum": 1
-      },
-      "PrinterStatus": {
-        "type": "object",
-        "required": [
-          "printer",
-          "configuration",
-          "isOnline",
-          "lastSeenAt",
-          "updatedAt",
-          "deletedAt"
-        ],
-        "properties": {
-          "configuration": {
-            "$ref": "#/components/schemas/Versioned_PrinterConfiguration"
-          },
-          "deletedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "ID lookups resolve deleted printers; they can no longer pair, queue or print."
-          },
-          "isOnline": {
-            "type": "boolean"
-          },
-          "lastSeenAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "printer": {
-            "$ref": "#/components/schemas/Printer"
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "additionalProperties": false
       },
       "Problem": {
         "type": "object",
@@ -2019,128 +1197,6 @@
         },
         "additionalProperties": false
       },
-      "SearchText": {
-        "type": "string",
-        "examples": [
-          "Example"
-        ],
-        "maxLength": 128,
-        "minLength": 1,
-        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
-      },
-      "ServiceOrderId": {
-        "type": "string",
-        "format": "uuid",
-        "examples": [
-          "0199aabc-1234-7000-8000-000000000001"
-        ]
-      },
-      "ServiceOrderId_ServiceOrderId": {
-        "type": "string",
-        "format": "uuid",
-        "examples": [
-          "0199aabc-1234-7000-8000-000000000001"
-        ]
-      },
-      "TableSearch_AgentDocumentFilter_DocumentSearch_DocumentSort": {
-        "type": "object",
-        "description": "`POST …/search`: a table read with body-only criteria, an allowlisted sort and a cursor.\n\nPersonal criteria, including `q`, belong only in `search`. Empty sorting uses the service\ndefault; at most 100 keys are accepted. The `cursor` object is required and its token\noptional; `limit` defaults to `min(50, ClientLimits.max_page_size)`. Handlers must be\nside-effect free.",
-        "required": [
-          "filter",
-          "search",
-          "cursor"
-        ],
-        "properties": {
-          "cursor": {
-            "$ref": "#/components/schemas/CursorQuery"
-          },
-          "filter": {
-            "type": "object",
-            "description": "The device feed's `filter` member is empty. Send the `TableSearch` envelope with a required\n`cursor` object, not an empty body.",
-            "additionalProperties": false
-          },
-          "search": {
-            "$ref": "#/components/schemas/DocumentSearch_DocumentSearch"
-          },
-          "sort": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "occurredAt",
-                "-occurredAt"
-              ]
-            },
-            "default": [
-              "occurredAt"
-            ],
-            "maxItems": 100
-          }
-        },
-        "additionalProperties": false
-      },
-      "TableSearch_AgentJobFilter_JobSearch_JobSort": {
-        "type": "object",
-        "description": "`POST …/search`: a table read with body-only criteria, an allowlisted sort and a cursor.\n\nPersonal criteria, including `q`, belong only in `search`. Empty sorting uses the service\ndefault; at most 100 keys are accepted. The `cursor` object is required and its token\noptional; `limit` defaults to `min(50, ClientLimits.max_page_size)`. Handlers must be\nside-effect free.",
-        "required": [
-          "filter",
-          "search",
-          "cursor"
-        ],
-        "properties": {
-          "cursor": {
-            "$ref": "#/components/schemas/CursorQuery"
-          },
-          "filter": {
-            "type": "object",
-            "description": "The device feed is always its own printer's; it filters no other printer.",
-            "properties": {
-              "orderId": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/ServiceOrderId_ServiceOrderId"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "state": {
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/FiscalJobState"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "additionalProperties": false
-          },
-          "search": {
-            "$ref": "#/components/schemas/JobSearch_JobSearch"
-          },
-          "sort": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "id",
-                "-id",
-                "createdAt",
-                "-createdAt"
-              ]
-            },
-            "default": [
-              "-createdAt",
-              "-id"
-            ],
-            "maxItems": 100
-          }
-        },
-        "additionalProperties": false
-      },
       "Telemetry": {
         "type": "object",
         "required": [
@@ -2229,195 +1285,6 @@
           },
           "vatRate": {
             "$ref": "#/components/schemas/VatRate"
-          }
-        },
-        "additionalProperties": false
-      },
-      "Versioned_Job": {
-        "type": "object",
-        "required": [
-          "id",
-          "orderId",
-          "orderNumber",
-          "printerId",
-          "state",
-          "kind",
-          "allocationId",
-          "buyerNip",
-          "companyName",
-          "total",
-          "lines",
-          "advances",
-          "payments",
-          "attempt",
-          "receiptNumber",
-          "issuedAt",
-          "result",
-          "createdAt",
-          "takenAt",
-          "resolvedAt",
-          "etag"
-        ],
-        "properties": {
-          "advances": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AdvanceDeduction"
-            }
-          },
-          "allocationId": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/PaymentAllocationId"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "attempt": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Attempt"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "buyerNip": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Nip"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "companyName": {
-            "$ref": "#/components/schemas/Name"
-          },
-          "createdAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "etag": {
-            "$ref": "#/components/schemas/Etag"
-          },
-          "id": {
-            "$ref": "#/components/schemas/FiscalJobId"
-          },
-          "issuedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "The printer's issue time of the job's receipt."
-          },
-          "kind": {
-            "$ref": "#/components/schemas/FiscalReceiptKind"
-          },
-          "lines": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReceiptLine"
-            }
-          },
-          "orderId": {
-            "$ref": "#/components/schemas/ServiceOrderId"
-          },
-          "orderNumber": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "payments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReceiptPayment"
-            }
-          },
-          "printerId": {
-            "$ref": "#/components/schemas/FiscalPrinterId"
-          },
-          "receiptNumber": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Code"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "resolvedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "result": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Note"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "state": {
-            "$ref": "#/components/schemas/FiscalJobState"
-          },
-          "takenAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "total": {
-            "$ref": "#/components/schemas/PositiveAmount_Amount"
-          }
-        },
-        "additionalProperties": false
-      },
-      "Versioned_PrinterConfiguration": {
-        "type": "object",
-        "description": "Stable staff command target, separate from live device telemetry and pairing proofs.",
-        "required": [
-          "id",
-          "branchId",
-          "name",
-          "credentialRevision",
-          "deletedAt",
-          "etag"
-        ],
-        "properties": {
-          "branchId": {
-            "$ref": "#/components/schemas/BranchId"
-          },
-          "credentialRevision": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "deletedAt": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "etag": {
-            "$ref": "#/components/schemas/Etag"
-          },
-          "id": {
-            "$ref": "#/components/schemas/FiscalPrinterId"
-          },
-          "name": {
-            "$ref": "#/components/schemas/Label"
           }
         },
         "additionalProperties": false

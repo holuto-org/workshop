@@ -35,7 +35,8 @@ jobs:
         shell: bash
     env:
       SENTRY_DSN: ${{ vars.SENTRY_DSN }}
-      HOLUTO_API_URL: ${{ vars.HOLUTO_API_URL }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      TLD_PRODUCTION: ${{ vars.TLD_PRODUCTION }}
       SENTRY_ENVIRONMENT: production
 
     steps:
@@ -54,6 +55,11 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libfontconfig1-dev fonts-dejavu-core xvfb xauth dbus-x11 xdotool x11-utils desktop-file-utils binutils
+
+      - name: Derive the production Holuto API URL
+        run: |
+          app=$(printf '%s' "${APP_NAME:?}" | tr '[:upper:]' '[:lower:]')
+          echo "HOLUTO_API_URL=https://app.$app.${TLD_PRODUCTION:?}/api" >> "$GITHUB_ENV"
 
       - name: Require the production telemetry and Holuto configuration
         run: test -n "$SENTRY_DSN" && test -n "$HOLUTO_API_URL"

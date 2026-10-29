@@ -19,7 +19,7 @@ use crate::{
         PrinterInfo, PrinterStatus, ReceiptKind, ResultForm, Telemetry, VatCode, VatLetter,
         VatRateMapping,
     },
-    testing::{JOB_ID, ORDER_ID, job_json, status_json},
+    testing::{JOB_ID, PRINTER_ID, job_json, status_json},
 };
 
 /// The field or variant names a derived `Deserialize` asks its deserializer for.
@@ -96,12 +96,12 @@ fn strings(value: &Value) -> BTreeSet<String> {
 #[test]
 fn response_types_read_only_required_schema_fields_and_decode_every_enum_value() {
     for (fields, component) in [
-        (names::<Job>(), "Versioned_Job"),
+        (names::<Job>(), "AgentJob"),
         (names::<JobLine>(), "ReceiptLine"),
         (names::<JobAdvance>(), "AdvanceDeduction"),
         (names::<JobPayment>(), "ReceiptPayment"),
-        (names::<PrinterStatus>(), "PrinterStatus"),
-        (names::<PrinterInfo>(), "Printer"),
+        (names::<PrinterStatus>(), "AgentSession"),
+        (names::<PrinterInfo>(), "AgentPrinter"),
         (names::<PrinterCapabilities>(), "PrinterCapabilities"),
         (names::<VatRateMapping>(), "VatRateMapping"),
         (names::<Pairing>(), "AgentPaired"),
@@ -212,7 +212,7 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
     value["advances"] = json!([{"vatLetter": "A","vatRate":"23","amount":"33.21"}]);
     let job: Job = serde_json::from_value(value).unwrap();
     let mut value = status_json();
-    value["printer"]["name"] = json!("PRIVATE-PRINTER-NAME");
+    value["printer"]["uniqueNumber"] = json!("PRIVATE-UNIQUE-NUMBER");
     let status: PrinterStatus = serde_json::from_value(value).unwrap();
     let mut telemetry = Telemetry::new("PRIVATE-DEVICE-UNIQUE_NUMBER", Vendor::Posnet);
     telemetry.model = "PRIVATE-MODEL".into();
@@ -226,7 +226,7 @@ fn wire_debug_never_exposes_customer_receipt_or_telemetry_values_but_keeps_enum_
         state: Outcome::Done,
     };
     let pairing: Pairing = serde_json::from_value(json!({
-        "printerId":ORDER_ID, "token":"PRIVATE-TOKEN"
+        "printerId":PRINTER_ID, "token":"PRIVATE-TOKEN"
     }))
     .unwrap();
     let records: [(&dyn Debug, &str); 10] = [
