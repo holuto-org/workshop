@@ -17,21 +17,24 @@ Before changing wire, preflight, profiles or recovery certainty, read the
 owning module docs and the
 [public protocol sources](../../docs/fiscal-contract.md#specification-sources).
 
-- Use the definitions for the actual model, protocol and operating mode.
-  Shared command names do not make legacy behavior applicable to ONLINE
-  printers or one brand's completion semantics applicable to another.
-- Separate vendor guarantees, conservative host policy and measured hardware.
-  Do not present parser restrictions, limits or deadlines as vendor mandates.
-  Simulator fixtures and candidate model names do not qualify hardware; use
-  the [qualification procedure](../../docs/testing/hardware-acceptance.md)
-  before enabling unqualified capabilities.
-- Keep command acceptance, completed printing and proof of refusal distinct.
-  An acknowledgement or a counter change alone is not completion evidence;
-  Elzab daily `RRP` is a concrete acceptance-only case. Changes to certainty
-  must satisfy
-  [recovery classification](../../docs/testing/fiscal-safety.md#recovery-classification),
-  not merely a successful simulator reply or a vendor error name.
-- Record an unmeasured discrepancy as an
-  [open hardware question](../../docs/testing/hardware-acceptance.md#open-hardware-questions),
-  not a confirmed device bug. Do not change fiscal behavior to resolve an
-  unsupported assumption, or weaken a safety check to make a fixture pass.
+- Match the actual model, protocol revision and operating mode. Cite the
+  document, revision and command or section behind a claim. Shared names do
+  not transfer legacy behavior to ONLINE printers or completion semantics
+  between brands.
+- Label vendor guarantees, host policy and hardware observations separately.
+  Label uncited parser restrictions, limits and deadlines as host policy,
+  not vendor mandates. Simulator fixtures and candidate model names do not
+  qualify hardware. Before enabling unqualified capabilities, obtain scoped,
+  supervised evidence through the
+  [qualification procedure](../../docs/testing/hardware-acceptance.md).
+- Distinguish acceptance, completed printing and proven refusal. Elzab daily
+  `RRP` proves acceptance only; ACK, idle status and advancing counters do not
+  prove completion. Before changing certainty, satisfy
+  [recovery classification](../../docs/testing/fiscal-safety.md#recovery-classification).
+  A passing simulator reply or an error-table entry alone cannot prove that
+  the device had no effects.
+- When behavior depends on unmeasured hardware, preserve the existing fiscal
+  behavior and record a suspected discrepancy under
+  [open hardware questions](../../docs/testing/hardware-acceptance.md#open-hardware-questions).
+  Missing proof is not a confirmed device bug or permission to remove an
+  existing certainty exception. Do not weaken a safety check for a fixture.

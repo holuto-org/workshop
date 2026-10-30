@@ -1,23 +1,21 @@
 # Workshop Hard Requirements
 
-- Never run anything that talks to a real printer (the app or scripts pointed at
-  a serial port). Exercise printer code only through the `posnet`, `novitus` and
-  `elzab` simulators and tests. Why: a fiscal receipt or report is an
-  irreversible legal record.
-- Preserve the fiscal safety invariants (README "Fiscal safety") in every
-  driver, agent or desktop change: verify the printer state before every
-  operation; journal fiscal intent before the first fiscal command reaches the
-  printer; never retry a command on the device and never reprint; an uncertain
-  outcome blocks further operations across restarts until a person resolves it,
-  and resolving never reissues anything. Why: breaking any of them can
-  double-print or lose a fiscal record.
-- Printer I/O and Holuto requests run only on the single `agent::worker::Worker`
-  thread; the GUI thread only submits commands and receives events. Stop it
-  cooperatively (`Worker::stop`, then `join` after `Event::Stopped`); never
-  block the GUI thread on it and never abandon it mid-operation. Why: a frozen
-  UI invites a second click, and a killed operation leaves an uncertain fiscal
-  outcome.
+- Never run the app or scripts against a real printer, including through a
+  serial port. Exercise printer code only through the `posnet`, `novitus` and
+  `elzab` simulators and tests: fiscal receipts and reports are irreversible
+  legal records.
+- Preserve README "Fiscal safety" in driver, agent and desktop changes: verify
+  printer state before each operation; journal fiscal intent before sending any
+  fiscal command; never retry a device command or reprint. Uncertain outcomes
+  block receipts and reports across restarts until a person resolves them.
+  Resolution never reissues anything.
+- Run printer I/O and Holuto requests only on the single
+  `agent::worker::Worker` thread. The GUI only submits commands and receives
+  events. During GUI shutdown, call `Worker::stop`, receive `Event::Stopped`,
+  then `join`; never block the live GUI on an active worker. If the event loop
+  has ended, stop and join outside it (`Application::finish_after_event_loop`).
+  Never abandon an operation: interruption can leave its fiscal outcome unknown.
 - Configure `workshop` through its CLI or GUI and pair with a one-time Holuto
-  code; never ask for, read or log a device token. Pairing uses `Worker::pair`
-  without opening a printer. Why: credentials must stay internal, and pairing is
-  not permission to print.
+  code. Use `Worker::pair` without opening a printer: pairing does not permit
+  printing. Never ask for, read or log a live device token. Use synthetic
+  credentials in tests; keep real credentials internal.

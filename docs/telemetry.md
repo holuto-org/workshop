@@ -13,14 +13,14 @@ is disabled; simulator builds never report either. A debug build with a DSN
 can report, using environment `development`. `SENTRY_AUTH_TOKEN` is an upload
 credential used only by CI, never an application setting or binary value.
 
-The **Udostępniaj diagnostykę** settings toggle defaults on; a successfully saved
-off value survives restart. Missing settings use that default; unreadable or
-malformed settings disable diagnostics at normal startup. Turning the toggle
-off immediately gates new structured capture, envelopes and Holuto trace
-propagation. Queued envelopes are checked again on the HTTP thread; an HTTP
-request already started cannot be recalled. Restart to disable the native crash
-reporter. Turning it on after a disabled startup also needs a restart to
-initialize the client. Diagnostics consent does not disable Holuto requests
+The **Share diagnostics** settings toggle (**Udostępniaj diagnostykę** in Polish)
+defaults on. A saved off value survives restart. Missing settings use that
+default; unreadable or malformed settings disable diagnostics at normal startup.
+Turning it off immediately gates new structured capture, envelopes and Holuto
+trace propagation. Queued envelopes are checked again on the HTTP thread; an
+HTTP request already started cannot be recalled. Restart to disable the native
+crash reporter. Enabling diagnostics after a disabled startup also needs a
+restart to initialize the client. Consent does not disable Holuto requests
 required to print.
 To opt out before the first GUI launch, run
 `workshop config set --diagnostics off` while the application is stopped.
@@ -49,10 +49,10 @@ Structured diagnostics use an allowlist:
   `fiscal.operation`; timings/status and span operations remain, but
   descriptions, span data/tags and transaction extras are cleared.
 - **HTTP trace propagation**: While diagnostics are on, SDK-provided headers
-  link requests to Holuto, including unsampled requests. The API records
-  method/route-template/status locally; structured transport removes their
-  span data. SDK 0.49.3 emits `sentry-trace`, not `baggage`; future SDK-provided
-  baggage is forwarded, never fabricated.
+  link requests to Holuto, including unsampled requests. Local instrumentation
+  records method/route-template/status; structured transport removes that span
+  data. SDK 0.49.3 emits `sentry-trace`, not `baggage`; the client forwards
+  SDK-provided headers without fabricating baggage.
 - **Release health**: Application-mode sessions: a generated session identity,
   release/environment, start/duration, error count and session status needed for
   crash-free-session accounting. Workshop does not set a user identity.
@@ -63,12 +63,11 @@ Structured diagnostics use an allowlist:
   release/debug identifiers and available allowlisted context; see the memory
   privacy warning below.
 
-Normal three-second polling creates HTTP-call spans but no poll-specific root
-span or INFO message. ERROR
-means someone must act (uncertain fiscal outcome, corrupt journal, worker panic,
-unexpected API contract violation); WARN is degraded but handled (printer not
-ready, operator wait, retrying start); INFO is a milestone (connected, claimed,
-receipt/report printed).
+Three-second polling creates HTTP-call spans, not poll-specific roots or INFO
+messages. ERROR needs action (uncertain fiscal outcome, corrupt journal, worker
+panic, unexpected API contract violation); WARN is degraded but handled (printer
+not ready, operator wait, retrying start); INFO is a milestone (connected,
+claimed, receipt/report printed).
 
 The desktop owns Sentry initialization, transport using OS trust roots, tracing
 subscriber, scrubbing, sessions and minidump reporter. Driver/agent
@@ -78,16 +77,21 @@ scrubbed/allowlisted; `before_send` alone does not cover every signal
 ([Sentry sensitive-data guidance](https://docs.sentry.io/platforms/rust/data-management/sensitive-data/),
 [Rust logs](https://docs.sentry.io/platforms/rust/guides/tracing/logs/)).
 
+When adding a reviewed fixed message, update `message()` in
+[`telemetry.rs`](../crates/desktop/src/telemetry.rs) and check its outgoing text
+with a capturing transport. An unlisted message loses its meaning even when it
+contains no private data.
+
 ## What structured diagnostics never send
 
-- Customer/company/person names, buyer NIP,
+- Customer/company/person names, vehicle plates, buyer NIP, search text,
   receipt line names/text, amounts, prices, quantities or payment/deduction
   payloads.
 - Pairing codes, the device token, authorization headers, passwords, arbitrary
   server response/problem bodies, settings or journal contents.
 - Actual API URL path/query, hostname/server name,
-  user-account identity, home directory or local state path. HTTP spans carry
-  fixed route templates instead.
+  user-account identity, home directory or local state path. Fixed HTTP route
+  templates exist only in local instrumentation; outgoing span data is cleared.
 - Screenshots, session replay, receipt/document attachments or automatic copies
   of local files.
 - Stack-frame local paths are removed; file basenames and debug identifiers
@@ -110,11 +114,12 @@ customer/receipt data that happened to be in memory. Local structured-event
 hooks cannot promise that those bytes never leave the computer. Opt out if this
 risk is unacceptable.
 
-The reporter writes the dump to `crashes/` in the private state directory.
-Before starting it, Workshop creates or secures both directories without taking
-state locks; failure disables diagnostics initialization. On Unix both directories
-are **0700**. The SDK-created dump file itself follows the process umask; its
-privacy depends on those protected directories, not a promised **0600** file mode.
+The reporter writes dumps to `crashes/` in the state directory. Before starting
+it, Workshop creates both directories without state locks; failure disables
+diagnostics initialization. On Unix it also tightens existing directories to
+**0700**. On Windows it creates missing directories with inherited permissions,
+not an explicit Workshop ACL. The SDK-created dump follows the process umask on
+Unix; protection comes from the directories, not a promised **0600** file mode.
 The SDK's default shared temporary `Crashes` directory would not protect it.
 
 The [SDK dump writer][dump-writer] attempts deletion after its upload callback,
@@ -150,9 +155,13 @@ Keeping native dump attachment storage disabled is a separate requirement, not
 a retention limit for those structured signals.
 
 The Linux native-crash regression uses a crashing child and a capturing
-transport to check first-launch dump placement and private Unix directories.
-It does not prove remote delivery, symbolication, server retention or
-Windows/macOS native-crash behavior.
+transport to check dump placement and private directories on first launch.
+Directory tests also cover existing permissive directories before state locking.
+Checking permissions only after `StateDir` opens would miss the startup gap.
+These tests do not prove delivery, symbolication, server retention or
+Windows/macOS native-crash behavior. Separately, the live-consent regression
+checks real loopback Holuto requests: opt-out removes trace headers but requests
+still succeed. An empty Sentry transport alone does not prove that.
 
 ## Release and debug files
 

@@ -11,7 +11,8 @@ dependencies:
   `cargo deny`, unused-dependency detection, ShellCheck, actionlint and OpenAPI
   JSON syntax validation. Windows and macOS also run default/all-feature Clippy.
   Native nextest runs on the five test runners below; a separate job exercises
-  debug-only acceptance gates. Pull requests do not build packages.
+  debug-only acceptance gates. Pull requests and merge groups do not build
+  packages, so packaging failures first appear after a push to `master`.
 - **[Release](../.github/workflows/release.yml)** runs on every push to `master`:
   Checks → all five native Package jobs → version lookup → Publish when new.
   Package verification and Sentry uploads must succeed on every target before
@@ -25,7 +26,9 @@ dependencies:
   PR from this repository, excluding the repository's default branch.
 
 `production` is the packaged app's Sentry environment, not a second release
-path. Required branch checks/protection are repository settings.
+path. Required checks are repository settings, not workflow YAML. When changing
+job names or matrix entries, update the required-check list too, or a PR can
+wait for a check that no longer reports.
 
 CI does not run the local Markdown/link checks, rustdoc build, coverage report,
 stress repetitions or manual symbolication check described in
@@ -36,17 +39,17 @@ documented advisory exceptions; this is not a promise of zero vulnerabilities.
 
 ## Native matrix
 
-- **`ubuntu-latest` — Linux x64**: Native tests, Unix ptys, private modes/locks
+- **`ubuntu-latest`: Linux x64**: Native tests, Unix ptys, private modes/locks
   and session-bus tests under `dbus-run-session`; static/acceptance checks.
-- **`ubuntu-24.04` — Linux x64 package only**: `.deb` build, system installation
+- **`ubuntu-24.04`: Linux x64 package only**: `.deb` build, system installation
   and launch; the build host's glibc is the package's `libc6` floor.
-- **`ubuntu-24.04-arm` — Linux ARM64**: Native tests and `.deb` installation/launch.
-- **`windows-latest` — Windows x64**: Native tests with the signed com0com
+- **`ubuntu-24.04-arm`: Linux ARM64**: Native tests and `.deb` installation/launch.
+- **`windows-latest`: Windows x64**: Native tests with the signed com0com
   pair supplied through `HOLUTO_TEST_COM_PAIR`; PE resources/subsystem, static
   CRT imports and executable launch checks.
-- **`macos-latest` — macOS ARM64**: Native tests, Unix ptys; bundle/plist/dmg,
+- **`macos-latest`: macOS ARM64**: Native tests, Unix ptys; bundle/plist/dmg,
   architecture, ad-hoc signature and launch checks.
-- **`macos-26-intel` — macOS x64**: Native Intel tests and the same macOS
+- **`macos-26-intel`: macOS x64**: Native Intel tests and the same macOS
   package checks.
 
 [GitHub runner documentation](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
@@ -56,8 +59,9 @@ real fiscal printer.
 
 The [`ci` nextest profile](../.config/nextest.toml) includes platform tests;
 the default profile excludes `com_pair`. Session-bus and COM-pair tests each
-have a serial group; test retries are disabled. JUnit reports are uploaded for
-the native and acceptance suites, including failed runs, with seven-day retention.
+have a serial group; test retries are disabled. Native and acceptance jobs
+always attempt to upload JUnit reports with seven-day retention. An early
+setup or build failure may leave no report.
 Ordinary tests use all features; Clippy also checks default-feature production
 code. Packaging never enables desktop `simulator` or agent `testing` and each
 package job checks that a simulator release build fails with the expected guard.
@@ -75,6 +79,22 @@ connectivity. Linux uses Xvfb/X11; this is not a Wayland launch check. macOS
 launches a copied app bundle and Windows a copied standalone EXE, not the
 end-user install scripts. Windows smoke requires a clean disposable profile and
 refuses existing app state: Known Folders ignore a `LOCALAPPDATA` override.
+
+## Diagnose failed checks
+
+- **Windows serial setup hangs**: Compare
+  [the com0com setup script](../.github/scripts/com0com.ps1) with the
+  [com0com setup requirements](testing/platforms.md#windows-com0com-locally).
+- **actionlint installation fails**: Keep the pinned, checksum-verified download
+  in Checks. `install-action` has no actionlint manifest, and its
+  `cargo-binstall` fallback cannot install this Go tool.
+- **A durable model test times out**: Read the nextest profile before changing
+  a suite-wide timeout or adding retries. The reconciliation model has a longer
+  timeout because each generated case syncs journal writes to disk, which was
+  slower on Windows and macOS runners.
+
+Linux checks do not prove Windows or macOS fixes. Read the affected native job
+results; cross-compilation alone does not exercise OS behavior.
 
 ## Release assets and trust
 
@@ -103,11 +123,11 @@ smoke does not prove those public downloads or attestations can be retrieved.
 ## Release telemetry artifacts
 
 Release builds embed `https://app.<APP_NAME lowercased>.<TLD_PRODUCTION>/api` as the
-production Holuto API default, from organization variables `APP_NAME` and
-`TLD_PRODUCTION`. Set repository variables `SENTRY_DSN`, `SENTRY_ORG=holuto` and
-`SENTRY_PROJECT=workshop`, plus organization-token secret `SENTRY_AUTH_TOKEN`
-for Sentry uploads. Package jobs require nonempty API URL and DSN; that check
-does not validate either service's availability or configuration.
+production Holuto API default. Configure Actions variables `APP_NAME`,
+`TLD_PRODUCTION`, `SENTRY_DSN`, `SENTRY_ORG` and `SENTRY_PROJECT`, plus secret
+`SENTRY_AUTH_TOKEN` for debug uploads. Package jobs require a nonempty API URL
+and DSN; that check does not validate either service's availability or
+configuration.
 
 Release builds report as `workshop@<workspace version>` in Sentry environment
 `production`. CI uploads debug files/source context; it does not explicitly

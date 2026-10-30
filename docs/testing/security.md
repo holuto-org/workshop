@@ -1,8 +1,8 @@
 # Security and privacy tests
 
-Use this page to choose security evidence, not as a claim that every check below
-has run. Linked tests show existing regression coverage; native OS results and
-release checks must be reported separately.
+This page helps you choose evidence; it does not claim every check has run.
+Linked tests provide regression coverage. Report native OS and release results
+separately.
 
 Use fresh temporary state, synthetic pairing codes/tokens/customer data,
 `agent::testing::Holuto` on loopback and capturing Sentry transports. Printer
@@ -21,9 +21,9 @@ intentional; redacted formatting does not encrypt the stored credential.
 
 Required coverage through the production HTTP client:
 
-- Reject cleartext remote URLs, credentials, queries and fragments before a
-  request. Exercise deceptive loopback names, IPv4 boundaries and IPv6, and
-  preserve allowed path prefixes.
+- Reject remote HTTP URLs and any API URL containing credentials, queries or
+  fragments before a request. Exercise deceptive loopback names, IPv4 boundaries
+  and IPv6, and preserve allowed path prefixes.
 - Reject an untrusted loopback TLS peer before it receives HTTP credentials;
   never disable certificate verification to make the fake work.
 - Refuse redirects and assert **zero requests at the target**, not merely a
@@ -95,14 +95,16 @@ canaries in nested fields and malformed errors. Inspect the entire serialized
 envelope. Also assert the expected event/log/transaction actually exists:
 dropping every signal would pass an absence-only test.
 
-[Telemetry tests](../../crates/desktop/src/telemetry/tests.rs) cover these
-structured surfaces, immediate opt-out gating (including sessions), absent DSN
-and simulator gating. [Path tests](../../crates/desktop/src/telemetry/privacy/tests.rs)
-check symbols/debug identifiers survive without local paths or source text.
-Retain useful classifications and known device tags, and clear stale printer
-identity when processing stops. API tests separately check local route templates
-and exact SDK trace-header propagation; those local fields are not permission
-to transmit raw URL paths.
+[Telemetry tests](../../crates/desktop/src/telemetry/tests.rs) check structured
+capture, opt-out gating (including sessions), absent DSN and simulator gating.
+Capturing transports do not prove delivery. For live opt-out, distinguish
+capture-time gating from the HTTP-thread consent check: an HTTP request already
+started cannot be recalled.
+[Path tests](../../crates/desktop/src/telemetry/privacy/tests.rs) check that
+symbols/debug identifiers survive without local paths or source text. Retain
+useful classifications and known device tags, and clear stale printer identity
+when processing stops. API tests check local route templates and exact SDK
+trace-header propagation, not permission to transmit raw URL paths.
 
 ## Native dumps are different
 
@@ -114,9 +116,11 @@ describes server processing, not proof that sensitive bytes never leave the PC.
 
 The Linux `native_crash_dump_is_written_inside_the_private_state_directory`
 test in [telemetry tests](../../crates/desktop/src/telemetry/tests.rs) crashes an
-isolated child with a capturing transport and checks the dump location. It does
-**not** prove upload, symbolication, Windows/macOS dump handling or absence of
-private memory. Reporter-marker detection is not an end-to-end delivery test.
+isolated child with a capturing transport, including in the re-executed reporter.
+It checks the dump location, 0700 state/crash directories on first launch and no
+fiscal locks or journal creation. It does **not** prove upload, symbolication,
+Windows/macOS dump handling or absence of private memory. Reporter-marker
+detection is not an end-to-end delivery test.
 
 Any additional native-crash test needs synthetic process data, private temporary
 state and a capturing destination in the re-executed reporter too. Test startup
@@ -127,18 +131,24 @@ requires restart. Never claim an absolute no-PII guarantee for dump memory.
 ## Installer trust boundary
 
 Use [installer fixtures](../../scripts/test-install.sh) and their
-[PowerShell counterpart](../../scripts/test-install.ps1), not a real download or
-install, for malicious/missing/duplicate checksum entries, attestation failure,
-refused replacement and preservation of existing files. Require that failed
-verification cannot reach install side effects. These fixtures replace external
-commands; they do not authenticate a real release or prove SmartScreen/Gatekeeper
-reputation.
+[PowerShell counterpart](../../scripts/test-install.ps1) for malformed, missing
+or duplicate checksum entries, attestation failure, refused replacement and
+preservation of existing files. Failed verification must not reach installation.
+These tests fake downloads and external effects; they do not authenticate a real
+release or prove SmartScreen/Gatekeeper reputation.
 
-Test checksum integrity separately from provenance: both installers permit a
-warned checksum-only path when `gh` is absent, while a present verifier's failure
-is fatal. Preserve workflow/branch-bound attestation arguments, macOS quarantine
-and Windows Internet-zone marking. The
-[install guide](../install-with-ai.md#2-pin-download-and-verify-before-running-anything)
-owns the user trust/consent procedure; [package checks](platforms.md#package-checks)
-own native package isolation and smoke evidence. Neither installation nor
-pairing authorizes launching processing, printing or journal resolution.
+Record which fixture branches ran, not just the final success message. Shell
+full-install cases skip under root; Linux package cases need Ubuntu/Debian, and
+macOS app replacement needs PlistBuddy. PowerShell tests outside Windows replace
+Internet-zone writes and skip native stream/registry checks.
+
+Test checksum integrity separately from provenance. Both installers warn and
+allow checksum-only verification when `gh` is absent; a present verifier's failure
+is fatal. Real attestation checks need `gh` 2.68.0 or newer, signed in to
+github.com. Preserve workflow/branch-bound verification arguments, macOS
+quarantine and Windows Internet-zone marking.
+
+The [install guide](../install-with-ai.md#2-pin-download-and-verify-before-running-anything)
+owns user trust and consent; [package checks](platforms.md#package-checks) own
+native isolation and smoke evidence. Neither installation nor pairing authorizes
+processing, printing or journal resolution.

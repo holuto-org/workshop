@@ -25,7 +25,7 @@ Do not turn implementation details into requirements just to make them testable.
 - Follow the existing layout: module tests in `foo/tests.rs`, crate-wide
   scenarios in `src/tests.rs` / `src/tests/`, rather than a new top-level
   `tests/` tree. Native main-thread tests may need a harness-free Cargo target,
-  as `desktop/src/bin_tests/macos_quit.rs` does.
+  as `crates/desktop/src/bin_tests/macos_quit.rs` does.
 - Keep local fixtures with their tests; share cross-module fixtures through the
   crate's `testing` module. Reuse the existing brand simulators and
   `agent::testing` across crates instead of maintaining competing fakes.
@@ -42,8 +42,9 @@ Do not turn implementation details into requirements just to make them testable.
   production client. Do not replace the code whose behavior the test promises.
   Low-level transport tests may fake the external serial API.
 - UI wiring tests keep production callbacks and event delivery; use the
-  existing Slint application fixture and semantic controls. Backend setup and
-  runner requirements belong in the [UI guide](../../docs/testing/ui.md).
+  existing Slint application fixture and semantic controls. Backend setup,
+  runner requirements and acknowledgement handling belong in the
+  [UI guide](../../docs/testing/ui.md).
 - Use fresh temporary state, synthetic credentials and local capturing
   telemetry transports, never saved user settings, live services or printers.
   See the [privacy tests](../../docs/testing/security.md).
@@ -63,16 +64,19 @@ Do not turn implementation details into requirements just to make them testable.
   Snapshot review and regression-seed procedures live in
   [workflows](../../docs/workflows.md#finishing-a-change).
 - Control races with acknowledgements/holds, not sleeps. Keep failure cleanup
-  able to release holds and stop/join fixture threads. When proving deadline
-  values, record configured deadlines rather than elapsed wall time; simulator
-  acceleration is not evidence of a production deadline. Follow the
+  able to release holds and stop/join fixture threads. Follow the
   [concurrency guide](../../docs/testing/concurrency.md) for overlap scenarios.
+- For deadline values, record configured budgets, not elapsed wall time.
+  For serial commands, wrap the simulator's `Link`/`Port`, run the real command
+  and assert its reply and the timeout passed to `write_all` at simulator and
+  production scales. See `crates/elzab/src/session/tests.rs` for the recording
+  wrapper and scale cases.
 - Environment overrides and process locks use a child with child-local
   environment, not process-global mutation. Assert an explicit child outcome
   and durable state; exit success alone can mean the test filter matched
   nothing.
 - Gate tests by the platform behavior they prove and obtain native evidence for
-  platform-specific changes. Do not weaken a test or silently skip it merely
-  because this host cannot run it; report that limitation. Serial pairs,
-  private buses and package isolation are documented in
+  platform-specific changes. Do not change OS gates to run a native test on the
+  wrong host, weaken it or silently skip it; report the native evidence missing.
+  Serial pairs, private buses and package isolation are documented in
   [platform procedures](../../docs/testing/platforms.md).

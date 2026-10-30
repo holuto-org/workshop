@@ -12,17 +12,16 @@ interruptMode: never
 
 # Localization
 
-Follow the [translation procedure](../../docs/localization.md); rendering and
-catalog invariants live in the `i18n` module, not a second locale mechanism.
+Follow the [translation procedure](../../docs/localization.md). Keep rendering
+and catalog invariants in `i18n` and Slint labels in the existing `Translations`
+bridge, not a second locale mechanism.
 
-- Treat safety wording as behavior. Every translation must preserve the
-  distinction between stopped, refused, unknown and completed operations, and
-  between resolving evidence and printing. Never soften uncertainty into a
-  suggestion to retry or remove a confirmation to shorten a label.
+- Treat safety wording as behavior. Preserve stopped, refused, unknown and
+  completed outcomes, and the distinction between resolving evidence and
+  printing. Never turn uncertainty into advice to retry or remove a
+  confirmation to shorten a label.
 - Translate presentation, not fiscal evidence. Preserve literal device/server
-  detail, identifiers and entered receipt text; never reuse translated UI
-  strings as wire commands, persisted state names or API values.
-- Catalog validity is not linguistic or layout proof. Review changed meaning
-  across languages and in the real control/dialog context; use the existing
-  privacy policy when interpolating values. A translated error is not made
-  safe for logging merely because its `Debug` is redacted.
+  detail, identifiers and entered receipt text. Never use translated UI strings
+  as wire commands, persisted state names or API values.
+- Apply the existing privacy policy to interpolated values. A translated error
+  is not safe to log merely because its `Debug` is redacted.

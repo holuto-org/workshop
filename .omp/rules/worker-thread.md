@@ -10,22 +10,29 @@ interruptMode: never
 The thread-ownership and cooperative-stop requirements live in
 [the hard requirements](../RULES.md).
 
-- A callback can overwrite input even without touching an input field:
-  `with_app` syncs the whole model afterward. Capture still-editable window
-  state **before** applying the callback's model changes, including worker,
-  preferences, tray and termination callbacks. A late completion must not
-  restore an older live preference.
-- Keep slow persistence and OS autostart registration off the GUI thread.
-  When adding background work, account for its completion in Start and quit:
-  Start must use durably saved settings; a failed or unsubmitted write must
-  not leave either action waiting for a completion that will never arrive.
-- Keep window close, stop-processing and quit distinct. Closing must not
-  strand the operator without a usable tray or stop processing implicitly.
-  Trace every quit entry point, not just the window button, and retain cleanup
-  for an event loop that ends before it can deliver `Event::Stopped`
-  (`Application::finish_after_event_loop`). Waiting there is not a GUI callback.
-- Native termination has platform-specific semantics; do not replace it with
-  a generic immediate exit or a refusal to quit. Read `application/macos.rs`
-  before changing its hook: holding AppKit termination requires an explicit
-  reply, not merely quitting Slint's event loop. Do not claim that cooperative
-  shutdown covers forced termination or an unhandled OS session-end path.
+- In `crates/desktop/src/application.rs`, `with_app` syncs the whole model
+  after each callback. Capture still-editable window state before applying
+  model changes, even for a status-only callback. Include worker, preferences,
+  tray and termination callbacks. Keep newer live telemetry, theme and
+  language choices when adopting an older save result.
+- Keep persistence and OS autostart registration off the GUI thread. Use the
+  existing `application/preferences.rs` writer. Start only with durably saved
+  settings. Cancel pending Start on a failed save or submission.
+- Track only successfully submitted writes as pending. Quit waits for their
+  completions, not for successful `status.json` persistence. Report write
+  errors and allow quit after pending writes drain. A failed submission has
+  no completion; an older completion must not revive that wait.
+- Keep window close, stop-processing and quit distinct. Close must not stop
+  processing. Keep the window visible when no usable tray is available.
+  Trace the Quit action, tray Quit, Unix SIGTERM/SIGHUP/SIGINT, macOS native
+  termination and event-loop loss.
+- In a live GUI, request `Worker::stop` and join after `Event::Stopped`.
+  Preserve `Application::finish_after_event_loop`: after the loop ends,
+  stop and join there even when the GUI cannot receive `Stopped`. No live
+  GUI remains to block; do not remove this cleanup.
+- Read `crates/desktop/src/application/macos.rs` before changing native quit.
+  Hold pending AppKit termination with `TerminateLater`, then explicitly
+  reply when shutdown is safe. Quitting Slint's loop alone does not reply.
+  Do not replace the hook with immediate exit or `TerminateCancel`, which
+  cancels logout/shutdown. Do not claim coverage for forced termination or
+  an unhandled OS session-end path.

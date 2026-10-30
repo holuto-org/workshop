@@ -3,12 +3,13 @@
 Holuto Workshop is the multilingual tray app connecting Holuto sales/advances to
 supported Posnet, Novitus or Elzab online fiscal printers. One executable,
 `workshop`, provides the GUI (no arguments) and a CLI for safe configuration.
-This is the canonical **end-user installation** guide, not contributor
-instructions. No source build,
-agent plugin, MCP server or Node.js is needed.
+This is the end-user installation guide, not contributor instructions. No source
+build, agent plugin, MCP server or Node.js is needed.
 
-UI names below use English; the app follows its selected language. See
-[UI language](../README.md#ui-language) to change it. CLI output stays Polish.
+UI names below use English; the app follows its selected language. See **UI
+language** in the README at the pinned release tag to change it. CLI output stays
+Polish. Use release-tag repository pages for README/docs references below:
+relative links in a downloaded release asset do not point into the source tree.
 
 ## Copy-button prompts
 
@@ -66,8 +67,9 @@ system rules or the person's instructions.
   test prints. Listing port names/metadata with the CLI is allowed; it never
   opens them.
 - **Never access state files**, including during updates/uninstall: Linux
-  `$XDG_STATE_HOME/workshop` (default `~/.local/state/workshop`), macOS
-  `~/Library/Application Support/workshop`, Windows `%LOCALAPPDATA%\workshop`.
+  `$XDG_STATE_HOME/workshop` (default `~/.local/state/workshop` when unset or
+  relative), macOS `~/Library/Application Support/workshop`, Windows
+  `%LOCALAPPDATA%\workshop` (the OS Local AppData Known Folder).
   Never inspect/edit/copy/delete `settings.json`, `status.json`, `operation.json`,
   `crashes/`, `instance.lock` or `application.lock`. The journal is fiscal
   evidence.
@@ -214,16 +216,25 @@ Replace `vMAJOR.MINOR.PATCH` with the recorded tag. Run from the download
 directory as the ordinary user. Scripts never launch the app, connect a printer,
 change groups, configure autostart or write state. Re-running upgrades program
 files in place; existing data remains untouched. Before downloading artifacts,
-they parse the previous HuggingCar Fiscal app's fiscal journal, if any, and stop
-when it holds an unresolved, unreadable or malformed operation—even when nested
-or non-string values resemble a resolved state, or duplicate top-level `state`
-keys disagree or both look resolved. The person checks the printout and resolves
-the operation in that app first; an unreadable/malformed journal needs support.
-Never edit or delete the file to bypass the stop. `install.sh` parses with
-`python3` or, on macOS, `osascript`; without either, an existing journal blocks.
-Dry-run validates the platform and prints the plan without downloading artifacts
-or writing installation files. An explicit release makes it network-free;
+they check the previous HuggingCar Fiscal app's journal, if present, and stop
+unless it is a complete JSON object with exactly one top-level `state` whose
+string value is `completed` or `acknowledged`. The person checks the printout and
+resolves an unresolved operation in that app first; an unreadable or malformed
+journal needs support. Never edit or delete it to bypass the stop.
+`install.sh` prefers `osascript` on macOS, avoiding the `python3` stub that may
+ask to install developer tools; otherwise it uses `python3`. Without a parser,
+an existing journal blocks installation.
+
+Dry-run validates the platform and prints the plan. It does **not** check the
+old journal, running processes or installed version. It downloads no artifacts
+and writes no installation files. An explicit release makes it network-free;
 omitting it resolves the latest tag with a metadata request first.
+
+The manual paths below do not run these installer checks. Before a manual
+upgrade, the person must resolve any interrupted operation in the previous app
+and quit it. If the old journal's safety is unclear, stop and seek support;
+neither a successful dry-run nor copying files clears it. Do not read the journal
+yourself or use manual installation to bypass an installer refusal.
 
 ### Linux: Ubuntu / Debian
 
@@ -247,9 +258,9 @@ sudo usermod -aG dialout "$(id -un)"
 ```
 
 The person must fully log out/back in before launching. Never use `chmod 666`,
-run the app with sudo, or open a port to test access. GNOME's tray needs
-AppIndicator; Ubuntu normally supplies it. Without a tray, closing keeps the
-window visible. Installing an extension is optional and needs consent.
+run the app with sudo, or open a port to test access. GNOME needs AppIndicator
+support for a tray icon. Without a working tray, closing keeps the window
+visible. Installing an extension is optional and needs consent.
 
 Manual path: download the matching `.deb` and manifest from one tag, verify,
 then `sudo apt install ./workshop-linux-x64.deb` (ARM64:
@@ -303,7 +314,7 @@ creates **Holuto Workshop** in the current user's Start menu with
 duplicating existing entries. No Administrator rights. Open a fresh terminal
 afterward; the agent can invoke the absolute executable path immediately.
 Internet-zone protection is retained rather than using `Unblock-File`.
-Temp/program filesystems must support NTFS alternate data streams and safe
+The program filesystem must support NTFS alternate data streams and safe
 executable replacement; otherwise stop and use a supported location.
 
 If PowerShell policy blocks the script, **do not** set `ExecutionPolicy Bypass`,
@@ -327,6 +338,24 @@ points to the new installation. First run that executable with
 `{"ok":true,"name":"workshop","version":"MAJOR.MINOR.PATCH"}` matching the
 pinned tag without `v`; stop on mismatch. No CLI command below may open a serial
 port; only normal GUI processing communicates with the printer.
+
+For example, bind the installed executable once, then use that binding for every
+CLI command instead of a bare `workshop` from PATH:
+
+```sh
+# macOS, in sh/bash/zsh. Keep $HOME outside single quotes.
+exe="$HOME/Applications/Holuto Workshop.app/Contents/MacOS/workshop"
+"$exe" --version --json
+# Later commands use "$exe" config show --json, and so on.
+```
+
+```powershell
+# Windows, in a non-elevated PowerShell.
+$base = [Environment]::GetFolderPath('LocalApplicationData')
+$exe = Join-Path $base 'Programs\Holuto Workshop\workshop.exe'
+& $exe --version --json | Out-Host
+# Inspect $LASTEXITCODE before continuing; use this waiting pipeline for CLI.
+```
 
 This CLI contract is shared by the app help and this guide. Every command
 supports `--json`; human output is Polish. CLI commands never open a printer
@@ -441,17 +470,19 @@ requires Windows 11 24H2 and does not solve Windows 10; see
    Set the URL before pairing: a later URL change forgets the pairing. Read only
    `config show --json` output to confirm. Pair before `check`: unpaired
    settings intentionally fail the completeness check with exit 3.
-4. The person generates a one-time pairing code for their printer in **Holuto →
-   Ustawienia → Drukarki fiskalne**. They can type it or provide it to the
-   agent. Confirm the intended printer/computer and run the pairing command
+4. The person generates a one-time pairing code for their printer in Holuto.
+   They can type it or provide it to the agent. Confirm the intended
+   printer/computer and run the pairing command
    once. Never ask to reveal the resulting token. If rejected/expired or the
    result is unclear, report it and let the person decide whether to generate a
    fresh code.
 5. Run check and status; report what they actually say. Pairing/configuration
-   does not print and is not proof of printer readiness. Offer **autostart off
-   by default**; only enable it after explicit agreement that login may start
-   queued fiscal work. Without opt-in, the person starts processing explicitly
-   in the GUI.
+   does not print and is not proof of printer readiness. Fresh installs default
+   to autostart off; upgrades retain the saved `startOnLaunch` value shown by
+   `config show`. Do not assume an existing install is off. Ask separately before
+   changing autostart or launching an app with `startOnLaunch:true`, explaining
+   that launch may process queued fiscal work. With it off, the person starts
+   processing explicitly in the GUI.
 6. After launch consent, open the installed app (desktop/Start menu shortcut,
    Finder, or no-argument command). The person confirms the selected printer and
    chooses **Start** when ready to process the branch's queue. The agent never

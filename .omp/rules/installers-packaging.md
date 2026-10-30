@@ -15,29 +15,30 @@ interruptMode: never
 # Installers and packaging
 
 The [install guide](../../docs/install-with-ai.md) owns installer behavior and
-trust boundaries;
-[platform procedures](../../docs/testing/platforms.md#package-checks) own package
-checks. [Workflow YAML](../../.github/workflows/release.yml) owns the native
-matrix and release commands.
+trust boundaries. [Platform procedures](../../docs/testing/platforms.md#package-checks)
+own package checks; [release YAML](../../.github/workflows/release.yml) owns the
+native matrix and release commands.
 
-- A blocked update is not permission to kill a running app, discard fiscal
-  evidence, or interpret an unreadable/malformed legacy journal as resolved.
+- Never kill a running app or discard fiscal evidence to unblock an update.
   Preserve a recoverable previous installation when replacement fails.
-- Keep download integrity distinct from provenance and OS approval. A checksum
-  is not proof of the release workflow; failed attestation must not silently
-  fall back to checksums. Do not strip quarantine/Mark-of-the-Web or bypass OS
-  policy to make installation succeed.
-- Use the target's stock tools: the Unix installer must work with macOS
-  [Bash 3.2](https://github.com/apple-oss-distributions/bash) and BSD utilities;
-  Windows installer changes must work in Windows PowerShell 5.1, not only pwsh.
-  A newer shell on a developer machine is not a reason to raise prerequisites.
-- Use isolated unpaired state for package launch checks, never saved user state.
-  Follow the platform procedures for Windows Known Folders and Unix isolation.
-  Separate local build/verification from workflow steps that install system
+- The legacy-journal update gate in the
+  [install guide](../../docs/install-with-ai.md#3-install-on-the-detected-os)
+  fails closed: parse the whole file, never grep for an accepted state, and
+  never rewrite the evidence.
+- Keep download integrity, provenance and OS approval distinct. Checksums do not
+  prove release-workflow provenance. If `gh` exists, failed attestation stops
+  installation; never remove it or fall back to checksums. If `gh` is absent,
+  retain the documented checksum-only path with its explicit warning.
+  Never strip quarantine/Mark-of-the-Web or bypass OS policy.
+- Keep Unix installers compatible with macOS
+  [Bash 3.2](https://github.com/apple-oss-distributions/bash) and BSD utilities,
+  and Windows installers compatible with Windows PowerShell 5.1.
+  Use `Set-Content -Stream Zone.Identifier`: .NET Framework file methods reject
+  `file:stream` paths. Newer developer shells do not raise prerequisites.
+- Separate local package checks from workflow steps that install system
   packages, upload symbols, attest or publish releases.
-- Native checks prove OS behavior; containers and dry runs prove only their
-  exercised branches. Report skipped branches and do not present a dry run as
-  installation or a cross-build as native validation.
+- Report exercised branches and skipped native checks. A dry run is not an
+  installation; containers and cross-builds do not prove another OS's behavior.
 - Changes to assets, prerequisites or installer behavior must keep the
   [install guide](../../docs/install-with-ai.md), [README](../../README.md#install),
   [LLM index](../../llms.txt) and release workflow consistent. Do not copy their

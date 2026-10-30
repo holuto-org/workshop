@@ -4,16 +4,15 @@ Rust/Slint tray application and `workshop` CLI for workshop PCs connected to a
 supported Posnet, Novitus or Elzab online fiscal printer. It prints only Holuto
 sales/advances queued in the Holuto web app, plus fiscal reports: no receipt
 list, manual queuing or receipt editor and no separate agent service. Closing
-to the tray keeps processing; starting is explicit
-unless the user opts into autostart. Hard requirements are in
-[`.omp/RULES.md`](.omp/RULES.md).
+to the tray keeps processing. Production starts only on request or opted-in
+autostart. Read the [hard requirements](.omp/RULES.md) before acting.
 
 ## Where guidance lives
 
-Each fact has one home: the first item that fits. When a change makes guidance
-untrue, update its home in the same change. This repository is public: never
-commit references to local-agent plans, private backend source files or
-gitignored paths (see `.gitignore`) other than build output.
+Each fact has one home below. Update that home when behavior changes.
+This repository is public: never commit references to local-agent plans,
+private backend source files, unpublished documents or gitignored paths
+(see `.gitignore`) other than build output.
 
 - **A machine can decide it**: lints, tests, `deny.toml`, `.config/nextest.toml`
   and CI. Do not restate checkable rules as prose.
@@ -59,8 +58,8 @@ them); other agents read the rule before changing that area.
 
 ## Crates and boundaries
 
-One Cargo workspace; dependency versions and lints live only in the root
-`Cargo.toml`; crates use `workspace = true`.
+One Cargo workspace owns dependency versions and lints in the root
+`Cargo.toml`; crates inherit them with `workspace = true`.
 
 - **`crates/i18n`**: embedded Fluent catalogs, deferred operator messages and
   system-language negotiation; UI rendering takes an explicit language.
@@ -79,30 +78,33 @@ One Cargo workspace; dependency versions and lints live only in the root
 - **`crates/desktop`** (binary `workshop`): multilingual Slint UI/tray, CLI,
   pairing, per-user autostart and Sentry lifecycle/privacy.
 
-Each driver's `simulator` feature provides its offline peer. Agent `testing`
-enables those features and exposes the loopback Holuto fake; desktop `simulator`
-runs all three peers and a loopback Holuto with sample queued jobs that print
-once processing starts, with
-state in a separate `workshop-simulator` directory; it never reaches a real
-Holuto. Agent `testing` and desktop `simulator` fail to compile without debug
-assertions; the drivers' `simulator` features have no release guard of their
-own. The debug-only `cfg(workshop_acceptance)` is not a Cargo feature; see
+Driver `simulator` features provide offline peers. Agent `testing` enables
+them and exposes the loopback Holuto fake. Desktop `simulator` starts all
+three peers and sample Holuto jobs, **processing immediately on launch**.
+It uses separate `workshop-simulator` state and never reaches a real Holuto.
+See [`simulators.rs`](crates/desktop/src/simulators.rs) for setup.
+Agent `testing` and desktop `simulator` require debug assertions; driver
+`simulator` features have no guard of their own.
+The debug-only `cfg(workshop_acceptance)` is not a Cargo feature; follow
 [hardware acceptance](docs/testing/hardware-acceptance.md).
 
 ### External surfaces
 
-The crates are workspace-internal (`publish = false`) and no other repository
-depends on them: `pub` is not external API and needs no search outside this
-repository. The simulators' and
-`agent::testing`'s `pub` items are a shared harness: check `agent::testing`
-and desktop tests before calling one dead. External surfaces are the `/agent`
-API, the files in the state directory, the CLI and its JSON
-([install guide](docs/install-with-ai.md)), the telemetry allowlist and the
-release assets the install scripts fetch.
+Workspace crates use `publish = false`. Treat their `pub` items as internal;
+check workspace callers before changing them. Simulators and `agent::testing`
+are shared harnesses: check `agent::testing` and desktop tests before calling
+an item dead. External surfaces are the `/agent` API, stored files, the CLI
+and its JSON ([install guide](docs/install-with-ai.md)), the telemetry
+allowlist and release assets fetched by installers.
 
 Before the first Workshop release, change stored formats, CLI and package
 metadata by clean cutover: no migrations, aliases, legacy names or package
 replacement metadata. After it they are contracts.
+
+Clean cutover is not recovery permission. If a format change prevents CLI/GUI
+startup, report the missing supported recovery path. Do not patch or delete
+settings or the journal to make a smoke run pass, including simulator state.
+Follow the [configuration boundary](.omp/RULES.md) and preserve fiscal evidence.
 
 ## Code conventions
 
@@ -110,12 +112,11 @@ replacement metadata. After it they are contracts.
   Polish for CLI and persisted diagnostics; the UI renders deferred
   `i18n::Message` values in its selected language. Follow the
   [translation procedure](docs/localization.md) for wording changes.
-- Comments and docs cite only public sources, such as the vendor spec pages
-  listed in the [fiscal contract](docs/fiscal-contract.md); never private
-  repositories, their file/line numbers or unpublished documents.
-- `posnet`, `novitus` and `elzab` share one shape (session, preflight, profile,
-  simulator). A bug or simplification found in one driver: check the other
-  two, and change all three or say why one differs.
+- Follow the [public-source boundary](#where-guidance-lives) for comments and
+  docs; vendor sources live in the [fiscal contract](docs/fiscal-contract.md).
+- After a driver bug fix or simplification, inspect the matching paths in the
+  other two drivers. Change each affected driver or explain its intentional
+  difference; similar structure does not prove identical protocol behavior.
 - For inline Rust changes, run scoped clippy after the first coherent edit,
   not only at the end. Parallel slices defer checks to their integrator.
 
@@ -131,9 +132,11 @@ These look removable but are deliberate:
 - driver profile slots awaiting [hardware acceptance](docs/testing/hardware-acceptance.md);
 - derives and items used only by tests, simulators or other crates' tests.
 
-Before calling an item dead, check it with and without
-`--cfg workshop_acceptance` and with `cargo check --workspace --all-targets
---all-features --keep-going`, so one failing crate cannot hide another's use.
+Before calling an item dead, inspect test/simulator callers and acceptance-cfg
+uses. Check with and without `RUSTFLAGS='--cfg workshop_acceptance'`, in separate
+target directories. Use `cargo check --workspace --all-targets --all-features
+--keep-going` on an integrated or isolated tree so a failing crate cannot hide
+another's use.
 
 ## API contract
 
@@ -151,29 +154,24 @@ Nothing compares the live API with the schema: deploy the backend first. See
 
 ## Tests
 
-Plan each change from [the feature checklist](docs/testing/checklist.md) and the
-changed module's invariants; [the testing guide](docs/testing/README.md) explains
-what earns a test its place. A bug fix leaves a test that fails without it; see
-it fail for the stated reason before fixing.
-
-Brands deliberately differ: before reporting a behavior as a bug, check the
-[fiscal contract](docs/fiscal-contract.md) and the module docs. A finding that
-depends on unmeasured printer behavior is reported as suspected, not fixed (see
-[open hardware questions](docs/testing/hardware-acceptance.md#open-hardware-questions)).
+Plan from [the feature checklist](docs/testing/checklist.md) and module invariants.
+Observe a regression fail for the stated reason before fixing. Follow
+[writing-tests](.omp/rules/writing-tests.md) for placement and harnesses.
+Use the [fiscal-evidence rule](.omp/rules/fiscal-evidence.md) before calling
+brand differences bugs or changing behavior based on unmeasured hardware.
 
 ## Shared checkout
 
-Other agent sessions and the maintainer's editor edit and commit this checkout
-while you work. Changes and commits you did not make are someone else's work in
-progress: never revert, stash, reset, stage, commit or reformat them, and do
-not attribute them to the user.
+Other sessions and the maintainer's editor may edit and commit this checkout.
+Never revert, stash, reset, stage, commit or reformat work you did not make.
+Do not attribute it to the user.
 
 - Format only files you changed:
   `rustfmt +nightly-2026-10-06 --config skip_children=true <files>`.
 - Lint and test only your crates:
   `cargo clippy -p <crate> --all-targets [--all-features] --no-deps -- -D warnings`
-  and `cargo nextest run -p <crate> --all-features`. `--workspace` filters
-  still compile every test binary, so a break elsewhere stops them.
+  and `cargo nextest run -p <crate> --all-features`. A nextest `-E` filter
+  selects execution, not compilation; `--workspace` still builds every test binary.
 - A compile failure in code you did not touch: report it, do not fix or wait
   for it. Verify your change in a clean copy (`git worktree add --detach
   /tmp/workshop-<task>`, apply your diff, remove the worktree afterwards).
@@ -190,7 +188,8 @@ Select checks from the changed behavior and
 [finishing a change](docs/workflows.md#finishing-a-change). Documentation-only
 changes need Markdown/link checks, not a Rust rebuild or package launch.
 For Rust changes, cover affected crates and dependents with production and
-all-feature builds/tests. Slice agents defer checks until integration.
+all-feature builds/tests. [Slice agents](docs/workflows.md#parallel-agent-work)
+defer checks until integration.
 
 The full workspace batch below is for a clean integrated tree or workspace-wide
 changes. In a shared checkout, use the scoped crate and changed-file formatting
@@ -204,8 +203,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace --all-features
 ```
 
-Scoped runs select a changed crate and its dependents (in a shared checkout,
-use the `-p` forms above):
+In an integrated or isolated tree, nextest filters select which tests run:
 
 ```sh
 # or rdeps(posnet), rdeps(novitus), rdeps(elzab), rdeps(agent)
@@ -213,20 +211,19 @@ cargo nextest run --workspace --all-features -E 'rdeps(fiscal)'
 cargo nextest run --workspace --all-features -E 'package(workshop)'
 ```
 
-A change is done when its area's evidence from
-[finishing a change](docs/workflows.md#finishing-a-change) also exists.
-Report every check you did not run and why.
+Report checks run, their scope/results, and missing
+[finishing evidence](docs/workflows.md#finishing-a-change).
 
 For native dependencies, COM-pair/session-bus setup and changes this host cannot
 compile or run, follow [platform procedures](docs/testing/platforms.md).
 Do not treat Linux evidence as Windows or macOS coverage; report native checks
 not run and rely on CI's native matrix.
 
-User-level evidence an agent can produce comes from the end-to-end scenarios in
-`crates/desktop/src/application/tests/end_to_end.rs` (real application, worker,
-simulator and loopback Holuto). The GUI smoke run needs a display, so it is a
-human check, against simulators and the built-in sample Holuto, never a
-printer:
+Use [end-to-end scenarios](crates/desktop/src/application/tests/end_to_end.rs)
+for application/worker wiring. Visual smoke checks need a display and real
+renderer; headless interaction tests do not prove layout. Follow the
+[UI guide](docs/testing/ui.md) and run against simulators and sample Holuto,
+never a printer:
 
 ```sh
 cargo run -p workshop --features simulator          # Posnet peer

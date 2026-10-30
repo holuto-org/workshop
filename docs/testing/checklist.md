@@ -1,23 +1,25 @@
 # Feature coverage checklist
 
-These are requirements by changed area, not a claim of complete existing
-coverage. Select the guarantees a change can affect, retain their existing
-evidence and add or strengthen tests where needed. Every fixed bug gets a
-regression that fails without it. An unrelated edit does not require the whole
-matrix.
+Select the guarantees a change can affect. Keep their existing evidence and
+strengthen tests where needed. Every fixed bug needs a regression that fails
+without the fix; unrelated edits do not require the whole matrix. This is a
+requirements checklist, not a claim of complete coverage.
 
-The **Test shape** lines are evidence examples, not a requirement to add every
-listed test kind. Use the cheapest consumer boundary that proves the guarantee;
-see the [testing guide](README.md) and its concern guides. Exact protocol fields,
-limits and invariants belong in the implementing modules and
-[fiscal contract](../fiscal-contract.md), not a second specification here.
+**Test shape** lines are examples. Use the cheapest consumer boundary that proves
+the guarantee; see the [testing guide](README.md) and its concern guides. Keep
+exact protocol fields, limits and invariants in the implementing modules and
+[fiscal contract](../fiscal-contract.md).
+
+Check expected bytes and effects independently. A simulator fault that skips
+execution cannot prove a hardware refusal has no effects; see the
+[fault matrix](fiscal-safety.md#fault-matrix).
 
 ## Posnet driver
 
 - **Windows-1250 text and CRC frames**
   - Required guarantee: Independently checked byte/checksum vectors; exact
     Polish bytes; no transliteration/truncation; reject unassigned bytes,
-    controls, duplicate keys, corrupt/oversized frames
+    invalid controls, duplicate keys and corrupt/oversized frames; allow header LF
   - Test shape: Unit boundary table + round-trip properties + driver scenario
 - **Decimal, quantity and grosze**
   - Required guarantee: Plain unsigned decimals only; range/overflow boundaries;
@@ -140,9 +142,14 @@ Posnet's capabilities, waits, report dates or completion rules to other brands.
 - **Recovery lifecycle**
   - Required guarantee: `NotStarted` + taken → accepted failed without block;
     `NotStarted` + server unknown retains evidence for staff resolution;
-    `Dispatching` → unknown/block; completed evidence preserved; attempt/serial
+    `Dispatching` without a saved certain-failure result → unknown/block;
+    a saved certain failure replays only its result while taken and stays blocked
+    if the server is unknown; completed evidence preserved; attempt/serial
     mismatch fails closed
-  - Test shape: State/command table + generated model + real restarts
+  - Test shape: State/result/command table + real restarts. The generated
+    [reconciliation model](../../crates/agent/src/agent/tests/reconciliation.rs)
+    starts with seeded receipt evidence; it does not cover claim/dispatch/print,
+    reports or concurrent worker actions.
 - **Orphaned completed receipt**
   - Required guarantee: Server failed/expired never discards completed
     evidence; blocked notice identifies job/order and receipt or unreadable number;
@@ -173,10 +180,11 @@ Posnet's capabilities, waits, report dates or completion rules to other brands.
     final `Stopped`
   - Test shape: Held command + channels + real `Worker::spawn`
 - **Settings**
-  - Required guarantee: Exact current save/load and validation; diagnostics on
-    and autostart off for fresh settings; private token/debug/errors
-  - Test shape: Current-format literal fixture + table + filesystem/security
-    scenario
+  - Required guarantee: Exact current save/load and validation, including required
+    theme/language fields; diagnostics on and autostart off for fresh settings;
+    private token/debug/errors
+  - Test shape: Current-format literal fixture + missing/invalid-field table +
+    filesystem/security scenario
 - **Operation journal**
   - Required guarantee: Current receipt/report variants retain meaning;
     corrupt/unreadable files block; atomic durable replacement and retained
@@ -185,8 +193,10 @@ Posnet's capabilities, waits, report dates or completion rules to other brands.
     tests on every OS
 - **State directory/instance lock**
   - Required guarantee: OS `workshop` paths, Unix 0700/0600, safe replacement;
-    one process per directory
-  - Test shape: Platform filesystem tests + child-process lock contenders
+    stale Windows temporary names neither block a new write nor lose evidence;
+    one process per directory, not one process per token or physical printer
+  - Test shape: Platform filesystem tests + child-process lock contenders.
+    Failure injection does not prove power-loss durability.
 - **HTTP security/limits**
   - Required guarantee: HTTPS except genuine loopback; OS trust roots; no
     redirect or credential escape; proxy behavior explicit; bounded
@@ -200,6 +210,13 @@ Posnet's capabilities, waits, report dates or completion rules to other brands.
     autostart opted in; running settings cannot silently change worker;
     telemetry opt-out persists
   - Test shape: Slint accessible-label scenario + real files
+- **Language and theme**
+  - Required guarantee: Saved preferences work before pairing; system defaults;
+    language changes retranslate open views and notices without losing typed
+    input, report selection, keyboard focus or diagnostic consent; fiscal bytes,
+    CLI, HTTP diagnostics and persisted result text do not change language
+  - Test shape: Catalog/locale tables + accessible keyboard scenario during a
+    pending save + held-print scenario; verify both light and dark views
 - **Pairing**
   - Required guarantee: One-time code exchanged through production HTTP;
     invalid/expired/used/throttled errors; credentials never displayed; failed
@@ -223,10 +240,11 @@ Posnet's capabilities, waits, report dates or completion rules to other brands.
   - Test shape: Real application with accessible labels + real worker
 - **Report confirmation**
   - Required guarantee: Daily/monthly/periodic wording and parameters; valid
-    leap dates; ordered periodic dates and lower bound 2000-01-01; UI date
-    validation is not the driver's
+    leap dates; padded dates, ordered range, no future dates and lower bound
+    2000-01-01; monthly selection survives rollover and language changes;
+    UI date validation is not the driver's
     [brand-specific date guard](../fiscal-contract.md#report-dates-and-printer-clock)
-  - Test shape: Injected-today table + accessible dialog scenario
+  - Test shape: Injected-today table + accessible dialog/month-selector scenario
 - **Worker event bridge**
   - Required guarantee: Worker connection, device, problem, completion and stop
     events reach Slint; blocked/stopping disables fiscal actions
@@ -237,14 +255,17 @@ Posnet's capabilities, waits, report dates or completion rules to other brands.
   - Test shape: Controlled Posnet hold + event acknowledgement, not elapsed-time
     assertion
 - **Close/reopen/tray**
-  - Required guarantee: Close hides only while a host shows this app's icon;
-    otherwise remains visible; recreate restores displayed state; worker remains
-    active
+  - Required guarantee: Close hides only when the tray check permits it;
+    Linux verifies a live host shows this process's icon, while Windows/macOS
+    assume tray availability; a refused close stays visible; reopening restores
+    displayed state without stopping the worker
   - Test shape: Testing backend application scenario + Linux `session_bus`
 - **Stop/quit**
   - Required guarantee: Current print finishes; no second submission; quit
-    after `Stopped`/join, not abandoned worker
-  - Test shape: End-to-end held-print shutdown scenario
+    after `Stopped`/join, not abandoned worker; native macOS Quit and Unix session
+    signals use cooperative shutdown too
+  - Test shape: Held-print shutdown scenario + native macOS harness + Unix signal
+    child process; compile target-specific tests on their own OS
 - **Local orphan acknowledgement**
   - Required guarantee: Button only for completed-but-failed/expired conflict;
     exact evidence in confirmation; cancel no effect; confirm no print/server
@@ -266,5 +287,13 @@ Posnet's capabilities, waits, report dates or completion rules to other brands.
   - Required guarantee: Workshop
     executable/version/resources/dependencies;
     mount/extract/install; installed CLI help/check and main window with isolated,
-    unconfigured state and no connected printer; debug files match release
+    unconfigured state and no connected printer; preserve any build-time API URL
+    rather than assume it is empty; debug files match release
   - Test shape: Package check on Windows x64, Linux x64/ARM64, macOS x64/ARM64
+- **Installer fiscal guard**
+  - Required guarantee: An existing legacy journal blocks installation unless it
+    is a complete object with exactly one top-level string `state`, either
+    `completed` or `acknowledged`; reject arrays, duplicate/escaped duplicate
+    state keys and torn JSON without changing evidence
+  - Test shape: Unix and PowerShell installer fixtures, including Windows
+    PowerShell 5.1; run the macOS parser branch on macOS
