@@ -63,9 +63,7 @@ starting diagnostic batch, not proof that a race cannot occur. Stress is
 parallel copies of the same test or permission to tolerate flakes. A failure
 needs investigation, not a passing rerun substituted for it. If setup failed,
 correct it and report both attempts; a stale `TMPDIR` is not a race failure.
-Linux watcher tests start their own private bus through `dbus-run-session`;
-install that command, but do not set their internal private-bus marker yourself.
-Windows COM tests need the `ci` profile and a configured virtual pair. See
+Watcher and COM-pair tests have native prerequisites; see
 [platform procedures](testing/platforms.md).
 
 For properties, `PROPTEST_CASES` raises the default generated-case count unless

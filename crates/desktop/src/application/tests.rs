@@ -1222,8 +1222,7 @@ fn production_run_opens_the_window_and_publishes_stopped_state() -> Result<(), B
     clippy::panic_in_result_fn,
     reason = "A failed tray probe must keep the window and operator edits"
 )]
-fn native_close_probe_submission_failure_preserves_operator_input()
--> Result<(), Box<dyn Error>> {
+fn native_close_probe_submission_failure_preserves_operator_input() -> Result<(), Box<dyn Error>> {
     // The no-event-loop backend makes spawn_local fail before the tray probe runs.
     let (_temporary, _app, window) = fixture()?;
     window.set_pairing_code("ABCD-1234".into());

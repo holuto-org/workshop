@@ -19,11 +19,8 @@ interruptMode: never
 # Holuto API
 
 - Keep `openapi/agent.json` as the backend's exported contract, not a list of
-  Workshop callers. Never hand-edit it or prune it when removing client code.
-  Change the backend first, regenerate its export, then follow the
-  [sync procedure](../../AGENTS.md#api-contract). The sync script only copies
-  the export; confirm the backend branch and deploy it before a client that
-  requires the change.
+  Workshop callers. Never hand-edit it or prune it when removing client code;
+  follow the [sync procedure](../../AGENTS.md#api-contract).
 - Keep wire decoding separate from per-job fiscal validation (see
   `crates/agent/src/api/model.rs`). Leave amounts as strings so an invalid
   claimed job can be journaled and reported failed without fiscal commands.

@@ -42,9 +42,9 @@ Do not turn implementation details into requirements just to make them testable.
   production client. Do not replace the code whose behavior the test promises.
   Low-level transport tests may fake the external serial API.
 - UI wiring tests keep production callbacks and event delivery; use the
-  existing Slint application fixture and semantic controls. Await the action's
-  acknowledgement before asserting effects; queuing a callback is not completion.
-  Backend setup and runner requirements belong in the [UI guide](../../docs/testing/ui.md).
+  existing Slint application fixture and semantic controls. Backend setup,
+  runner requirements and acknowledgement handling belong in the
+  [UI guide](../../docs/testing/ui.md).
 - Use fresh temporary state, synthetic credentials and local capturing
   telemetry transports, never saved user settings, live services or printers.
   See the [privacy tests](../../docs/testing/security.md).

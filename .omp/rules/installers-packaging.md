@@ -21,11 +21,10 @@ native matrix and release commands.
 
 - Never kill a running app or discard fiscal evidence to unblock an update.
   Preserve a recoverable previous installation when replacement fails.
-- An existing legacy journal permits an update only when the whole file parses
-  as a JSON object with exactly one top-level `state` whose string value is
-  `completed` or `acknowledged`. Arrays, duplicate state keys, torn JSON, read
-  failures and an unavailable parser block the update. Do not grep for an
-  accepted state or rewrite the evidence.
+- The legacy-journal update gate in the
+  [install guide](../../docs/install-with-ai.md#3-install-on-the-detected-os)
+  fails closed: parse the whole file, never grep for an accepted state, and
+  never rewrite the evidence.
 - Keep download integrity, provenance and OS approval distinct. Checksums do not
   prove release-workflow provenance. If `gh` exists, failed attestation stops
   installation; never remove it or fall back to checksums. If `gh` is absent,
@@ -36,16 +35,8 @@ native matrix and release commands.
   and Windows installers compatible with Windows PowerShell 5.1.
   Use `Set-Content -Stream Zone.Identifier`: .NET Framework file methods reject
   `file:stream` paths. Newer developer shells do not raise prerequisites.
-- Launch package checks only with isolated, unpaired state. Use temporary
-  HOME/XDG directories on Unix and a clean disposable Windows user profile;
-  environment overrides do not isolate Windows Known Folders. Before every GUI
-  smoke launch, save `config set --diagnostics off` through that executable,
-  including packages with the production DSN.
-- Use separate checkouts for concurrent packaging. `packaging/build.sh` clears
-  `release/`, its host staging directory and all `packaging/build/symbols`;
-  separate `CARGO_TARGET_DIR` values do not isolate those outputs.
-  Separate local checks from workflow steps that install system packages,
-  upload symbols, attest or publish releases.
+- Separate local package checks from workflow steps that install system
+  packages, upload symbols, attest or publish releases.
 - Report exercised branches and skipped native checks. A dry run is not an
   installation; containers and cross-builds do not prove another OS's behavior.
 - Changes to assets, prerequisites or installer behavior must keep the

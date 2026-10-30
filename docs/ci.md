@@ -82,10 +82,9 @@ refuses existing app state: Known Folders ignore a `LOCALAPPDATA` override.
 
 ## Diagnose failed checks
 
-- **Windows serial setup hangs**: Inspect
-  [the com0com setup script](../.github/scripts/com0com.ps1). `setupc.exe`
-  must run from its installation directory to find `com0com.inf`, with
-  `--silent` so an error cannot leave an interactive dialog waiting.
+- **Windows serial setup hangs**: Compare
+  [the com0com setup script](../.github/scripts/com0com.ps1) with the
+  [com0com setup requirements](testing/platforms.md#windows-com0com-locally).
 - **actionlint installation fails**: Keep the pinned, checksum-verified download
   in Checks. `install-action` has no actionlint manifest, and its
   `cargo-binstall` fallback cannot install this Go tool.

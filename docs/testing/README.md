@@ -128,9 +128,8 @@ integration.
   generated cases when sequence interactions are the risk. Neither repetition
   nor a passing rerun explains a failure.
 - **Resource bounds:** assert the documented body, work or output limit rather
-  than wall-clock speed on a shared runner. For production deadlines, record
-  the budgets at the production session's transport boundary with an unscaled link;
-  accelerated waits and private-helper tests do not prove the dispatch budget.
+  than wall-clock speed on a shared runner. Deadline tests follow the
+  [writing-tests rule](../../.omp/rules/writing-tests.md).
 
 Run and review procedures live in
 [workflows](../workflows.md#finishing-a-change); CI's actual checks live in

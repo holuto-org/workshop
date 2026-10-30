@@ -6,6 +6,7 @@ use objc2::{runtime::NSObject, sel};
 use objc2_app_kit::NSApplicationTerminateReply;
 
 use agent::testing::{self, Holuto};
+use posnet::simulator::Hold;
 use serde_json::json;
 
 use super::*;
@@ -264,11 +265,7 @@ fn native_quit_callback_requests_cooperative_shutdown_during_a_held_print()
 }
 
 #[test]
-#[expect(
-    clippy::panic_in_result_fn,
-    reason = "The missing-boundary regression checks cleanup before an error returns"
-)]
-fn missing_print_hold_stops_the_app_before_reporting_failure() -> Result<(), Box<dyn Error>> {
+fn missing_print_hold_stops_the_app_before_reporting_failure() {
     let result = held_print_quit("command-that-is-never-sent", Duration::ZERO);
     assert_eq!(
         result.err().map(|error| error.to_string()).as_deref(),
@@ -278,10 +275,9 @@ fn missing_print_hold_stops_the_app_before_reporting_failure() -> Result<(), Box
         APPLICATION.with(|slot| slot.borrow().is_none()),
         "the failed scenario must release the application"
     );
-    Ok(())
 }
 
-fn wait_for_print_hold(held: &posnet::simulator::Hold, timeout: Duration) -> Result<(), String> {
+fn wait_for_print_hold(held: &Hold, timeout: Duration) -> Result<(), String> {
     if held.reached(timeout) {
         return Ok(());
     }

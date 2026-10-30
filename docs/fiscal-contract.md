@@ -160,8 +160,9 @@ buyer-identifier characters, ten quantity digits and 16 nonzero payments;
 Elzab allows seven nonzero payments.
 
 Acceptance mode uses `--cfg workshop_acceptance`, not a Cargo feature or an
-ordinary debug build. It enables unqualified paths and cannot compile in release
-mode. Never publish its expanded capabilities as production telemetry.
+ordinary debug build. It enables unqualified paths and fails to compile when
+debug assertions are disabled; see [hardware acceptance](testing/hardware-acceptance.md).
+Never publish its expanded capabilities as production telemetry.
 
 ## Discovery and readiness
 

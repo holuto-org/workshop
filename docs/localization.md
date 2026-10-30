@@ -35,6 +35,9 @@ catalog would not cover deferred worker notices.
    menu when the language changes. Do not add a second translation mechanism.
    Recovery instructions must name the translated action the operator can
    actually choose; catalogs can reference that action's message ID.
+   Toolkit-owned text, such as input context menus, is outside these catalogs:
+   check it separately and use the toolkit's supported localization path
+   before changing it.
 
 ## Verify the changed boundary
 
@@ -53,8 +56,10 @@ and check that journal/API diagnostics stay Polish.
 
 Use the [real application fixture](testing/ui.md) for language-switch behavior.
 Set its starting language explicitly so the runner's locale cannot change
-control lookup. Preserve typed input and the selected report period while
-updating month labels, warnings, dialogs and tray text. Check keyboard focus
+control lookup, and keep existing behavior assertions when localizing a test.
+Preserve typed input and the selected report period while updating month
+labels, warnings, dialogs and tray text; report-month tests keep the 24-month
+range and the selection across tab switches. Check keyboard focus
 during preference saving: Space must not toggle diagnostic consent, Return
 must reopen the language choices, and a second selection must persist.
 
