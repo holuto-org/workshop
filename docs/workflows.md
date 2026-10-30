@@ -61,38 +61,47 @@ Confirm the selection actually runs the intended tests. Ten repetitions are a
 starting diagnostic batch, not proof that a race cannot occur. Stress is
 [nextest's repetition mode](https://nexte.st/docs/features/stress-tests/), not
 parallel copies of the same test or permission to tolerate flakes. A failure
-needs investigation, not a passing rerun substituted for it. Linux watcher tests
-require `dbus-run-session`; Windows COM tests require the `ci` profile and a
-configured virtual pair. See [platform procedures](testing/platforms.md).
+needs investigation, not a passing rerun substituted for it. If setup failed,
+correct it and report both attempts; a stale `TMPDIR` is not a race failure.
+Linux watcher tests start their own private bus through `dbus-run-session`;
+install that command, but do not set their internal private-bus marker yourself.
+Windows COM tests need the `ci` profile and a configured virtual pair. See
+[platform procedures](testing/platforms.md).
 
-For properties, `PROPTEST_CASES` raises the default generated-case count; scope
-the run to the affected test and account for the durable model's larger runtime
-and nextest timeout. More cases complement boundary examples and independent
-oracles, not replace them. Keep
+For properties, `PROPTEST_CASES` raises the default generated-case count unless
+the test overrides it. Check the affected test's configuration before claiming
+an expanded run. Scope the run to that test and allow for the durable model's
+larger runtime and nextest timeout. More cases complement boundary examples and
+independent oracles, not replace them. Keep
 [persisted failure seeds](https://proptest-rs.github.io/proptest/proptest/failure-persistence.html)
 from real failures with the regression fix. If a strategy changes, preserve a
 concrete regression too: the same seed need not generate the original input.
 
-For snapshots, ordinary `cargo nextest run -p <driver> --all-features`
-(`posnet`, `novitus` or `elzab`) writes pending `.snap.new` output on a mismatch.
-Review only snapshots owned by the change, using their absolute `.snap` paths:
+For snapshots, run ordinary `cargo nextest run -p <driver> --all-features`
+(`posnet`, `novitus` or `elzab`) to expose mismatches. Outside CI, file snapshots
+write `.snap.new`; inline snapshots, such as Elzab's, write `.pending-snap`.
+CI detection disables pending output by default. Review only snapshots owned
+by the change, using absolute `.snap` paths for file snapshots:
 
 ```sh
 cargo insta review --manifest-path crates/<driver>/Cargo.toml \
   --snapshot /absolute/path/to/owned.snap
 ```
 
-Repeat `--snapshot` for more files. Crate scope alone does not protect another
-session's pending snapshots in that crate. Never blanket-accept fiscal output
-or reject/delete another session's pending files. The
+For inline snapshots, use the absolute Rust source path followed by `:line`
+instead of a `.snap` path. `cargo insta pending-snapshots` lists pending entries.
+Repeat `--snapshot` for more entries. Crate scope alone does not protect another
+session's pending snapshots. Never blanket-accept fiscal output or reject/delete
+another session's pending files. The
 [`cargo insta test`](https://insta.rs/docs/cli/) command forces snapshots to pass
 by default and may remove old pending output; it is not final verification.
 After review, rerun ordinary nextest without snapshot-update/force-pass
-overrides. Commit accepted snapshots, not `.snap.new` files. Fixed inputs
-should remove nondeterminism; do not redact amounts, VAT, text or command order.
+overrides. Commit accepted `.snap` files or inline Rust changes, not pending
+files. Fixed inputs should remove nondeterminism; do not redact amounts, VAT,
+text or command order.
 
-Coverage is an optional local diagnostic, not a finish gate. With `llvm-tools`
-and `cargo-llvm-cov` installed on the project toolchain:
+Coverage is an optional local diagnostic, not a finish gate. Install Rust's
+`llvm-tools-preview` component for the project toolchain and `cargo-llvm-cov`:
 
 ```sh
 cargo llvm-cov nextest --workspace --all-features --html
@@ -101,14 +110,15 @@ cargo llvm-cov nextest --workspace --all-features --html
 The HTML report defaults to `target/llvm-cov/html`. Scope to affected crates
 when useful, and isolate coverage builds from concurrent checks. Use the report
 to find unexecuted error branches, not to claim correctness or meet a percentage.
-[CI](ci.md) owns automated checks and pinned tool versions; the
-[platform guide](testing/platforms.md) owns native prerequisites.
+[CI](ci.md) owns automated checks and tool versions, some pinned only to a major;
+the [platform guide](testing/platforms.md) owns native prerequisites.
 
 ## Sentry release check
 
 [CI](ci.md#release-telemetry-artifacts) defines release identity, configuration
-and matching debug/source uploads. Releases publish automatically after their
-configured jobs succeed; this procedure is not an extra approval gate.
+and matching debug/source uploads. A new workspace version publishes
+automatically after the configured jobs succeed; an already published version
+is checked but not republished. This procedure is not an extra approval gate.
 When setting up or changing release telemetry, verify the project/DSN, opt-out
 and the server-side privacy settings described in [telemetry](telemetry.md).
 Inspect debug upload results for each target and confirm that symbols and the
@@ -118,9 +128,10 @@ With explicit approval, a synthetic event from an isolated release-test
 environment may confirm readable function/file/line frames, release association
 and, when relevant, backend trace linkage. Do not use live customer data,
 credentials or a configured printer, and never crash the production app during
-a fiscal operation. Local capturing-transport tests do not send such a probe:
-they exercise structured envelopes and shutdown, not native crash capture or
-server-side symbolication.
+a fiscal operation. Local capturing transports do not send such a probe.
+Structured-envelope and shutdown tests do not prove native crash capture; the
+Linux crashing-child regression checks dump placement and directory privacy.
+Neither proves remote delivery or server-side symbolication.
 [Sentry's source-context guide](https://docs.sentry.io/platforms/rust/source-context/)
 explains symbol/source artifacts; [telemetry](telemetry.md) states what is sent.
 

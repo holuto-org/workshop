@@ -12,10 +12,10 @@ dispatch**, not exactly-once printing.
 - **Fiscal device**: Persist each fiscal stage before sending its command.
   Never retry or reprint. If execution cannot be determined, retain evidence
   and block across restarts for a person.
-- **Holuto result**: Persist the result before reporting. Recovery reconciles
-  server state first and, when permitted, resends the identical saved result
-  for the same attempt and printer issue time. This is not a second print or
-  an unconditional guarantee that Holuto will accept it.
+- **Holuto result**: Persist the result before reporting. Recovery reads server
+  state first and, when permitted, resends the saved result for the same attempt.
+  A done result also preserves printer issue time; failed/unknown results send
+  no issue time. This never prints again or guarantees Holuto will accept it.
 
 Use a fresh temporary `StateDir` with the production durable writer and HTTP
 client, never a workstation's saved state. Script both failure before result
@@ -31,6 +31,25 @@ paths, `Journal::dispatching` must finish durably before the corresponding send;
 failure prevents that send. Inject failures at claim, first/later dispatch,
 completion, result-outbox and settlement writes. The previous durable evidence,
 not a command name or an advanced counter, decides recovery after interruption.
+
+Exercise guards through the real agent entry points, not only journal helpers:
+
+- Fail the receipt's claim write and its first dispatch write separately.
+  `Journal::fail_write_after` counts successful writes before the injected
+  failure. A report's first write is its first dispatch intent.
+- Seed an interrupted report, then call both `step` and `run_report`. Neither
+  may start new fiscal work; `step` must not claim a queued job.
+- Reoffer the journaled job ID and try a different job over an unresolved
+  operation. Both must preserve the evidence and send no fiscal command.
+- Return HTTP 200 with a different job ID, attempt, state or receipt number from
+  `/result`. The production client must reject the response, not settle locally.
+
+A lost `/jobs/take` reply is a separate case: the backend may have claimed the
+job before the agent received it, so no local claim journal exists. Assert no
+printing and no re-serving of that taken attempt, including after restart.
+Expiry leaves it unknown for staff. This relies on the
+[backend lifecycle policy](../fiscal-contract.md#agent-api), not an idempotent
+take operation.
 
 ## Fault matrix
 
@@ -54,9 +73,9 @@ Fix the printer clock and readiness with each brand's `simulator::Simulator`.
 Posnet's `hold`/`reached` lets a worker test read the journal before a held
 command executes while asynchronous `!sprn`/`!sdev` remain answerable.
 Release holds and join threads on failure paths. Use accelerated simulator
-deadlines rather than a real ten-minute wait; production-deadline assertions
-need an unscaled link as described in the
-[test rule](../../.omp/rules/writing-tests.md#per-kind).
+deadlines rather than a real ten-minute wait. For production deadlines, record
+the configured durations through an unscaled link, not elapsed wall time; see
+the [test rule](../../.omp/rules/writing-tests.md#per-kind).
 
 Vary identity, fiscal mode, header, mechanism, queue, transaction/footer state
 and current VAT in the execution session. A **preflight** refusal must leave
@@ -96,14 +115,16 @@ server state, printer binding and attempt:
   journal**: fail closed and preserve evidence; never delete/reset the file.
 
 An interrupted report requires explicit `Command::ResolveReport` on the same
-ready printer; it records acknowledgement, prints nothing and sends no receipt
-result. An overdue daily report or read-only mode alone does not prevent either
-local resolution, or the report needed to recover could never run again.
+printer, verified through `Driver::verify`; it records acknowledgement, prints
+nothing and sends no receipt result. Verification permits an overdue daily
+report or read-only mode, but still requires identity and other readiness checks.
+These exceptions apply to orphaned-receipt acknowledgement too.
 
 The receipt exception is `Command::AcknowledgeOrphanedReceipt`, exposed through
-`Event::Device.orphaned_receipt`. It is not a general acknowledgement of an
-ordinary unknown receipt. Test successful resolution and every refused
-resolution for unchanged evidence and zero new fiscal frames.
+`Event::Device.orphaned_receipt`. It cannot clear an ordinary unknown receipt.
+Test success and refusal, including taken/unknown server state, a different
+attempt, an already-settled journal and a printer that fails verification.
+Refusal must leave evidence unchanged and send zero new fiscal frames.
 
 Backend expiry distinguishes queued jobs (expired) from taken attempts
 (unknown). Exercise both rather than making a fake expire every state
@@ -125,11 +146,10 @@ correlated to the sent command:
 - **Novitus:** `$h` refusal; codes 36 and 37 naming `#r`; code 4 naming `#o`.
   v1.15 §3.4.1 pp. 91–93 says `$h` sets transaction bits without printing the
   header. §3.7.1 pp. 137–138 describes an already-recorded zero report (36)
-  and cancellation before printing (37). §3.7.2 pp. 138–139 describes code 4
-  as invalid dates/range or no fiscal records **in an error table**; that entry
-  alone is not an independent no-effects guarantee. Preserve that distinction
-  when reviewing the existing exception; a passing `Refuse(4)` test supplies no
-  additional vendor evidence. Track the missing evidence under
+  and cancellation before printing (37). §3.7.2 pp. 138–139 lists code 4 for
+  invalid dates/range or missing fiscal records, but does not independently
+  guarantee no effects. The current exception remains a host assumption;
+  `Refuse(4)` supplies no vendor evidence. Track it under
   [open hardware questions](hardware-acceptance.md#open-hardware-questions).
 - **Elzab:** transport rejection of the initial single-frame `LOR` only.
   *Basics of ElzabSTX communications protocol*, release 0.16,
@@ -167,8 +187,9 @@ hardware outcome is covered**:
 - [Reconciliation model](../../crates/agent/src/agent/tests/reconciliation.rs):
   generates settlement, network failure, staff resolution and orphan
   acknowledgement from seeded receipt evidence/server states. It reconstructs
-  the agent per action, but does **not** generate the claim/dispatch/print
-  lifecycle, report operations or concurrent worker actions.
+  the agent for settlement, network failure and acknowledgement, not staff
+  actions. It does **not** generate claim/dispatch/print, report operations or
+  concurrent worker actions.
 
 For changed transitions, use table scenarios plus an independent reference model
 with invariants after each action
@@ -199,6 +220,6 @@ normalize away unsupported text. Freeze printer time, including Warsaw DST
 repeated/skipped times; never replace printer time with the host clock. Inject
 `today` only into pure UI/date functions.
 
-The **Stan** tab is display state, not fiscal evidence. Unknown outcomes remain
-blocked until a person resolves them; display state must never turn
+The **Status** tab (**Stan** in Polish) displays state, not fiscal evidence.
+Unknown outcomes stay blocked until resolved; display state must never turn
 uncertainty into permission to print.

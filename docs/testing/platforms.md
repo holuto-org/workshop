@@ -47,7 +47,7 @@ the runtime check; never claim Windows or macOS behavior from Linux execution.
 ## Ordinary local run
 
 ```sh
-cargo nextest run --workspace --all-features
+cargo nextest run --locked --workspace --all-features
 ```
 
 Unix pty tests allocate their own pseudoterminals; no real serial path,
@@ -56,8 +56,9 @@ the production serial transport to a scripted fake peer, not a physical device.
 On macOS they use baud 0 because the pty rejects `IOSSIOSPEED`: this checks native
 opening, exclusivity, framing and timeouts, not physical baud-rate configuration.
 See [the harness](../../crates/posnet/src/session/tests.rs).
-Gate tests to the OS behavior they prove; macOS port filtering and platform path
-tests remain specific to their OS.
+Gate native tests to the OS behavior they prove. State-path tests run only on
+their OS; serial-filter fixtures simulate Linux, Windows and macOS metadata
+on every host.
 
 The default nextest profile excludes `com_pair` tests.
 [Nextest configuration](../../.config/nextest.toml) assigns `session_bus` and
@@ -66,9 +67,9 @@ re-executes itself under `dbus-run-session`; the caller need not supply a
 session-bus address. CI also wraps the complete Linux run:
 
 ```sh
-dbus-run-session -- cargo nextest run --profile ci --workspace --all-features
+dbus-run-session -- cargo nextest run --locked --profile ci --workspace --all-features
 # Only the fake tray watcher scenarios:
-dbus-run-session -- cargo nextest run --profile ci -p workshop --all-features \
+dbus-run-session -- cargo nextest run --locked --profile ci -p workshop --all-features \
   -E 'test(session_bus)'
 ```
 
@@ -83,12 +84,14 @@ the native macOS quit harness and package startup are separate native UI checks.
 
 Use a dedicated Windows test machine with the signed com0com null-modem driver;
 do not disable driver-signature enforcement. Create a virtual pair with
-com0com's setup utility, choose unused COM names, and disconnect all physical
-fiscal printers. Give **only that virtual pair** to the tests (PowerShell):
+com0com's setup utility from its installation directory, where `com0com.inf`
+lives. For `setupc.exe`, use `--silent` so a setup error fails instead of waiting
+on a dialog. Choose unused COM names and disconnect all physical fiscal printers.
+Give **only that virtual pair** to the tests (PowerShell):
 
 ```powershell
 $env:HOLUTO_TEST_COM_PAIR = 'COM10,COM11'
-cargo nextest run --profile ci -p posnet --all-features -E 'test(com_pair)'
+cargo nextest run --locked --profile ci -p posnet --all-features -E 'test(com_pair)'
 ```
 
 `com_pair` reads both names and opens exactly those endpoints; a missing
@@ -114,6 +117,9 @@ Autostart registers the current executable and saves `startOnLaunch`:
   executable even when the CLI runs through the `~/.local/bin/workshop` link.
 - Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`,
   `REG_SZ` value `Holuto Workshop` containing the quoted executable path.
+  Configuration also removes that value from
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run`,
+  so a previous Task Manager disable flag does not override `autostart on`.
 
 Disabling removes this registration and clears the preference. See the
 [CLI guide](../install-with-ai.md#4-configure-through-the-cli-not-files) for use.
@@ -147,13 +153,13 @@ bash packaging/build.sh
 bash packaging/verify.sh
 ```
 
-Both scripts need the build toolchain and `jq`; the platform tools are required
-as well. On Linux the build needs `binutils` and `dpkg-deb`, and verification
-needs Python 3, Xvfb, `xauth`, D-Bus, `xdotool`, `x11-utils`,
+The build needs the Rust/native build toolchain and `jq`. On Linux, install
+`pkg-config`, Fontconfig development headers, `binutils` and `dpkg-deb`;
+verification also needs Python 3, Xvfb, `xauth`, D-Bus, `xdotool`, `x11-utils`,
 `desktop-file-utils` and desktop fonts. The
 [Package job in the Release workflow](../../.github/workflows/release.yml)
-owns the CI dependency installation. The native macOS tools include `iconutil`,
-`hdiutil`, `strip`, `plutil`, `lipo`, `codesign` and `osascript`;
+owns the CI dependency installation. Native macOS tools include `iconutil`,
+`hdiutil`, `strip`, `ditto`, `plutil`, `lipo`, `codesign` and `osascript`;
 launch verification needs a logged-in graphical session with System Events
 access, not just an SSH shell.
 
@@ -167,9 +173,10 @@ the app, including when the executable embeds the production DSN.
 The verifier checks `workshop --help`, expects fresh unpaired
 `workshop check --json` to exit 3, and requires the **Holuto Workshop main
 window**: a process that merely survives a timeout could be stuck in an error
-dialog. Linux checks `.deb` dependencies/desktop entry and ELF compatibility;
-only with `CI=true` and `apt-get` available does it install the `.deb`
-system-wide, using sudo. Otherwise it launches the extracted tree.
+dialog. Linux checks `.deb` metadata, the desktop entry, declared direct ELF
+dependencies and absence of `.debug_info`/`.symtab`. Only with `CI=true` and
+`apt-get` available does it install the `.deb` system-wide, using sudo.
+Otherwise it launches the extracted tree.
 macOS mounts the `.dmg`, copies the `.app` to a temporary location, checks
 Info.plist, host architecture and ad-hoc signature, then launches that copy.
 Windows checks PE subsystem, static CRT and version/icon resources before
@@ -179,19 +186,22 @@ separate from stripped distribution packages.
 On Linux, `python3 packaging/test-smoke.py target/release/workshop` exercises
 standalone smoke isolation and diagnostics opt-out through the real CLI, with a
 launch probe instead of a GUI. It never starts a printer worker; run it after
-building the executable. Substitute the actual release executable path when
-using a custom `CARGO_TARGET_DIR`.
+building the executable, with the same `HOLUTO_API_URL` value used at build time
+(unset if the build used none). The test compares fresh-state configuration
+with that compiled default, not an assumed empty URL. Substitute the actual
+release executable path when using a custom `CARGO_TARGET_DIR`.
 
 Headless launch is not proof of physical printer access, real tray integration
 on every desktop shell, Wayland layout, SmartScreen/Gatekeeper reputation,
 Windows Authenticode signing or macOS Developer ID signing/notarization.
-All printer behavior in checks remains simulator/pty/com0com only.
+No automated check qualifies a physical printer.
 
 ## Multi-vendor qualification
 
-The ordinary all-feature suite proves production gates for Posnet, Novitus and
-Elzab. Serial enumeration fixtures distinguish OS metadata from verified
-identity; USB hints never qualify a model. Native simulator tests do not prove
+The ordinary all-feature suite, without `RUSTFLAGS='--cfg workshop_acceptance'`,
+proves production gates for Posnet, Novitus and Elzab. Serial enumeration
+fixtures distinguish OS metadata from verified identity; USB hints never qualify
+a model. Native simulator tests do not prove
 USB descriptors, interface-to-PC1 mapping or physical print fidelity.
 The [hardware checklist](hardware-acceptance.md) owns the separate debug
 acceptance command and human-only evidence collection on each OS/model.

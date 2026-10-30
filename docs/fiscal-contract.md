@@ -31,9 +31,10 @@ for the update procedure. Nothing checks the live API against this copy: deploy
 backend changes first.
 
 Authenticated requests use `/agent`, `Authorization: Bearer <device token>`,
-`App-Version: agent/<version>` and `Accept-Language: pl`, plus SDK-provided
-`sentry-trace` propagation. `POST /agent/pair` exchanges `{code}` for
-`{token, printerId}` without bearer or device-identity headers.
+`App-Version: agent/<version>` and `Accept-Language: pl`. With diagnostics enabled,
+the client also forwards SDK-provided `sentry-trace` headers.
+`POST /agent/pair` exchanges `{code}` for `{token, printerId}` without bearer
+or device-identity headers.
 `POST /agent/session` sends `Telemetry` at startup and when the profile changes;
 its exact fields are defined in the linked schema. It answers
 `{printer: {id, uniqueNumber, capabilities, vatRates}}` as Holuto recorded them.
@@ -62,7 +63,7 @@ Authenticated routes other than `/agent/session` carry
 `X-Device-Unique-Number`; the session carries `uniqueNumber` in its body.
 Device swaps are rejected before taking or printing jobs.
 
-The vendored schema has only pair, session, heartbeat and the job routes below.
+Under `/agent`, the schema has only pair, session, heartbeat and these job routes:
 
 - **`POST /agent/jobs/take`**: Claim a job; no body, 204 for an empty queue.
 - **`GET /agent/jobs/{id}`**: Reconcile job state without printing.
@@ -114,10 +115,14 @@ each driver's same-session preflight and wire validation:
   gross job total must match exactly. Although the API unit-price scalar permits
   eight fractional places, Workshop accepts money only with at most two,
   including trailing zeros; it never rounds a supplied price to make it fit.
+  The API quantity scalar permits six fractional places; a driver's advertised
+  eight-place precision does not widen that API limit.
 - Deductions cannot exceed gross sales in their VAT slot; slot/rate pairs must
   match current telemetry. Payments must exactly cover gross sales minus
   deductions, including a zero balance. A zero-value payment sends no payment
   command. An advance receipt is distinct from a sale deducting earlier advances.
+- A non-null `buyerNip` must contain exactly ten ASCII digits at the agent
+  boundary, even when the driver's wire format accepts a longer identifier.
 - Text is sent unchanged or rejected before dispatch: no truncation,
   transliteration or replacement. Lengths count Unicode scalar values, not UTF-8
   bytes. Each field must fit the fresh repertoire and local limits.
@@ -149,10 +154,14 @@ fallback. Elzab uses a host ceiling of 255 lines, 64-character names,
 42-character company names and five quantity decimals. The 255-line ceilings
 are not measured hardware buffer sizes. Neither brand inherits Posnet's limits.
 A missing footer capability is a local check: the company name must already
-occur in the decoded header or the job fails before dispatch. Buyer-NIP limits
-and extra wire restrictions also remain local: for example Novitus accepts at
-most 16 ASCII alphanumeric NIP characters and ten quantity digits in total.
-Debug acceptance flags never belong in production telemetry.
+occur in the decoded header or the job fails before dispatch. Driver-only wire
+restrictions also remain local: Novitus allows at most 16 ASCII alphanumeric
+buyer-identifier characters, ten quantity digits and 16 nonzero payments;
+Elzab allows seven nonzero payments.
+
+Acceptance mode uses `--cfg workshop_acceptance`, not a Cargo feature or an
+ordinary debug build. It enables unqualified paths and cannot compile in release
+mode. Never publish its expanded capabilities as production telemetry.
 
 ## Discovery and readiness
 
@@ -215,6 +224,9 @@ physical paper completion.
   Cite document/revision and command, using the ONLINE-specific definition
   where present: shared legacy names do not establish ONLINE semantics.
   Do not redistribute vendor documents or extracted text.
+
+Use the specification for the exact model and protocol revision before changing
+wire behavior. Another model's monthly-report rule does not establish Temo's.
 
 For local searching: `pdftotext -layout /tmp/vendor.pdf /tmp/vendor.txt`;
 keep downloads and extracted text in `/tmp`, never commit them.

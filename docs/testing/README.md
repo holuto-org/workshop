@@ -36,10 +36,12 @@ owns commands, snapshot review and regression-seed handling.
 ## Rank what must never break
 
 1. **Double print or reprint.** A timeout, restart, second click or API replay
-   must never execute a fiscal command twice.
-2. **Lost fiscal evidence or an uncertainty that fails to block.** Persist
-   intent before dispatch; retain completed/ambiguous evidence across restarts
-   until the appropriate explicit human resolution.
+   must never redispatch the same fiscal operation. At-most-once dispatch is
+   not a guarantee that a receipt printed.
+2. **Lost fiscal evidence or uncertainty that fails to block.** Persist intent
+   before dispatch; retain completed/ambiguous evidence across restarts.
+   Recovery may settle a receipt from confirmed server state; unresolved
+   uncertainty needs the appropriate human resolution, never replay.
 3. **Wrong amount, VAT or text.** Exact grosze, half-up rounding at the
    documented step, per-line VAT slots, unchanged Polish text, payments and
    deductions.
@@ -79,6 +81,7 @@ use the [fiscal fault matrix](fiscal-safety.md#fault-matrix). A refusal's eviden
 includes which device, journal and server effects did **not** occur. API
 serialization and error handling need the production-client boundary; UI callback
 or event-delivery changes need the real wiring, not just a displayed-state test.
+When moving an input, assert its exact value at the downstream boundary too.
 [Compatibility](compatibility.md) owns stored-format evidence and
 [platforms](platforms.md) owns native evidence and isolation.
 
@@ -103,8 +106,8 @@ not a requirement to use every technique for every change:
   or documented relation; a round trip alone cannot prove correct encoding
 - **Lifecycle sequence interactions**: `proptest-state-machine` reference model
   plus real boundary scenarios; a model does not prove filesystem durability
-- **Binding receipt/report output**: Reviewed `insta` snapshot of fixed printer
-  output, checked against the protocol; never a substitute for semantic assertions
+- **Receipt/report wire output**: Reviewed `insta` snapshot of fixed printer
+  frames, checked against the protocol; keep separate assertions for device effects
 - **Serial transport, locks, Known Folder, session bus**: Platform-gated test on
   the actual OS, using pty/com0com/private bus rather than hardware or a live bus
 - **Release artifact**: Package metadata/dependencies/resources and isolated
@@ -125,7 +128,9 @@ integration.
   generated cases when sequence interactions are the risk. Neither repetition
   nor a passing rerun explains a failure.
 - **Resource bounds:** assert the documented body, work or output limit rather
-  than wall-clock speed on a shared runner.
+  than wall-clock speed on a shared runner. For production deadlines, record
+  the budgets at the production session's transport boundary with an unscaled link;
+  accelerated waits and private-helper tests do not prove the dispatch budget.
 
 Run and review procedures live in
 [workflows](../workflows.md#finishing-a-change); CI's actual checks live in

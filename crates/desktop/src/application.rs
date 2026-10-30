@@ -716,6 +716,7 @@ fn request_close() -> CloseRequestResponse {
     });
     if let Err(error) = check {
         with_app(move |app| {
+            app.capture();
             app.model.problem(Message::literal(error.to_string()));
             Ok(())
         });

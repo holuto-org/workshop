@@ -16,11 +16,11 @@ Use the existing evidence homes when changing a stored format:
   results and settlements. Check both exact written bytes and restored values,
   including blocked/settled meaning after reopening the state directory.
 - **`settings.json`**:
-  [settings tests](../../crates/agent/src/settings/tests.rs) pin the format and
-  exercise connection and UI preferences, required nullable `vendor`, required
-  `theme` and `language` choices, diagnostics opt-out across restart and rejected
-  saves preserving pairing. `language` is `system`, `en`, `pl`, `es` or `ru`;
-  a fresh preference is `system`.
+  [settings tests](../../crates/agent/src/settings/tests.rs) pin the format,
+  diagnostics opt-out at startup and rejected saves preserving pairing.
+  The [reader](../../crates/agent/src/settings.rs) requires nullable `vendor`
+  and explicit `theme` and `language` keys. `language` is `system`, `en`, `pl`,
+  `es` or `ru`; fresh settings use `system`.
 - **`status.json`**:
   [snapshot tests](../../crates/agent/src/status/tests.rs) pin the display
   shape, disconnected identity/block flags and credential-free contents.
@@ -39,8 +39,9 @@ printer commands.
 
 Run the [store tests](../../crates/agent/src/store/tests.rs) natively on each
 supported OS for replacement, open readers, process locks, state paths and
-Unix permissions. Check read-only loads create no state and failed replacement
-preserves prior evidence. Linux success does not establish Windows behavior.
+Unix permissions. Check read-only loads create no state, failed replacement
+preserves prior evidence and stale Windows temporary names neither block a
+write nor lose crash evidence. Linux success does not establish Windows behavior.
 Windows replacement can fail on sharing, access or filesystem restrictions;
 the open-reader test covers its particular handle and filesystem, not every
 Windows sharing mode. Synced temporary files and atomic replacement are not a
@@ -54,10 +55,12 @@ defines the expected wire contract; it is neither evidence of the deployed
 version nor a complete lifecycle specification. Keep these checks distinct:
 
 1. **Schema and wire types**:
-   [contract tests](../../crates/agent/src/api/contract/tests.rs) compare the
-   hand-written response fields/enums with the schema and exercise required
-   nullable keys. The feature-gated fake validates normal JSON request/response
-   bodies against the vendored schema, including formats and patterns.
+   [contract tests](../../crates/agent/src/api/contract/tests.rs) check that
+   every response field the client reads is required by the schema and that
+   decoded enums match its values. They also exercise required nullable keys.
+   These checks do not compare every field's Rust type with its schema.
+   The fake validates normal JSON bodies against the vendored schema,
+   including formats and patterns, in test and agent `testing` builds.
    Headers, authorization, transitions and idempotency need behavioral tests;
    body-schema validation cannot prove them.
 2. **Fiscal boundary**: Runtime wire decoding is not full schema validation.
@@ -65,8 +68,8 @@ version nor a complete lifecycle specification. Keep these checks distinct:
    structurally decodable but invalid claimed job can be journaled and reported
    failed, without a fiscal command. Test that path independently of malformed
    JSON, missing required keys or unknown enums, which prevent wire decoding.
-   Use explicit malformed-response faults when schema validation would otherwise
-   stop the fake before the client sees the bad value.
+   Use `Fault::Body` for deliberately malformed responses that schema validation
+   would otherwise stop before the client sees them.
 3. **Lifecycle**: Update the [loopback fake](../../crates/agent/src/testing.rs)
    alongside contract changes, then exercise the production `ureq` client and
    assert both requests and resulting fake state in
@@ -79,6 +82,8 @@ version nor a complete lifecycle specification. Keep these checks distinct:
    evidence conflicting with failed/expired needs local acknowledgement, not a
    server write. The [fiscal contract](../fiscal-contract.md) owns these
    lifecycle decisions.
+   Keep the fake's drop-time panic propagation: a schema violation on its server
+   thread must fail the owning test, not appear only as a client HTTP error.
 
 Capability telemetry must match the connected driver. Check unsupported
 advances, zero-total sales and excess quantity precision at both boundaries:

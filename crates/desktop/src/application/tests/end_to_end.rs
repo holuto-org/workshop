@@ -253,26 +253,54 @@ fn overdue_elzab_daily_report_is_available_and_leaves_an_unresolved_block()
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn quitting_during_a_held_print_waits_for_print_and_settlement() -> Result<(), Box<dyn Error>> {
-    held_print_quit()
+    held_print_quit("trend", Duration::from_secs(10))
 }
 
 #[cfg(target_os = "macos")]
 #[test]
 fn native_quit_callback_requests_cooperative_shutdown_during_a_held_print()
 -> Result<(), Box<dyn Error>> {
-    held_print_quit()
+    held_print_quit("trend", Duration::from_secs(10))
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "The missing-boundary regression checks cleanup before an error returns"
+)]
+fn missing_print_hold_stops_the_app_before_reporting_failure() -> Result<(), Box<dyn Error>> {
+    let result = held_print_quit("command-that-is-never-sent", Duration::ZERO);
+    assert_eq!(
+        result.err().map(|error| error.to_string()).as_deref(),
+        Some("receipt did not reach held final fiscal command")
+    );
+    assert!(
+        APPLICATION.with(|slot| slot.borrow().is_none()),
+        "the failed scenario must release the application"
+    );
+    Ok(())
+}
+
+fn wait_for_print_hold(held: &posnet::simulator::Hold, timeout: Duration) -> Result<(), String> {
+    if held.reached(timeout) {
+        return Ok(());
+    }
+    held.release();
+    slint::invoke_from_event_loop(|| with_app(|app| app.stop(true)))
+        .map_err(|error| error.to_string())?;
+    Err("receipt did not reach held final fiscal command".into())
 }
 
 #[expect(
     clippy::panic_in_result_fn,
     reason = "End-to-end tests assert while propagating fixture errors"
 )]
-fn held_print_quit() -> Result<(), Box<dyn Error>> {
+fn held_print_quit(command: &str, timeout: Duration) -> Result<(), Box<dyn Error>> {
     i_slint_backend_testing::init_integration_test_with_mock_time();
     let temporary = TempDir::new()?;
     let simulator = Arc::new(Simulator::start());
     simulator.set_clock("2025-10-24T10:00:00Z".parse()?);
-    let held = simulator.hold("trend");
+    let held = simulator.hold(command);
     let holuto = Arc::new(Holuto::new());
     let job = holuto.enqueue(testing::job_json());
     let settings = Settings {
@@ -300,11 +328,8 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
     let coordinator = thread::Builder::new()
         .name("held-print observer".into())
         .spawn(move || {
-            assert!(
-                held.reached(Duration::from_secs(10)),
-                "receipt reaches held final fiscal command"
-            );
-            let _scheduled = slint::invoke_from_event_loop(move || {
+            wait_for_print_hold(&held, timeout)?;
+            slint::invoke_from_event_loop(move || {
                 #[cfg(target_os = "macos")]
                 request_native_termination();
                 with_app(move |app| {
@@ -330,16 +355,20 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
                     held.release();
                     Ok(())
                 });
-            });
+            })
+            .map_err(|error| error.to_string())?;
+            Ok::<(), String>(())
         })?;
     slint::run_event_loop_until_quit()?;
-    coordinator
+    let observed = coordinator
         .join()
         .map_err(|_panic| "held-print coordinator panicked")?;
     assert!(
         app.borrow().worker.is_none(),
         "Stopped permits the join before exit"
     );
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    observed?;
     assert_eq!(
         simulator.receipts().len(),
         1,
@@ -350,7 +379,6 @@ fn held_print_quit() -> Result<(), Box<dyn Error>> {
         "done",
         "cooperative quit settles the printed result"
     );
-    APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
 
@@ -398,26 +426,24 @@ fn event_loop_ending_without_quit_still_finishes_the_held_print() -> Result<(), 
     let coordinator = thread::Builder::new()
         .name("display loss".into())
         .spawn(move || {
-            assert!(
-                held.reached(Duration::from_secs(10)),
-                "receipt reaches held final fiscal command"
-            );
-            let _scheduled = slint::invoke_from_event_loop(|| {
+            wait_for_print_hold(&held, Duration::from_secs(10))?;
+            slint::invoke_from_event_loop(|| {
                 let _event_loop_closed = slint::quit_event_loop();
-            });
-            assert_eq!(
-                ended.recv_timeout(Duration::from_secs(10)),
-                Ok(()),
-                "the event loop ends while the print is held"
-            );
+            })
+            .map_err(|error| error.to_string())?;
+            let ended = ended.recv_timeout(Duration::from_secs(10));
             held.release();
+            ended.map_err(|error| error.to_string())
         })?;
     slint::run_event_loop_until_quit()?;
-    loop_ended.send(())?;
+    let notified = loop_ended.send(());
     app.borrow_mut().finish_after_event_loop();
-    coordinator
+    let observed = coordinator
         .join()
         .map_err(|_panic| "display-loss coordinator panicked")?;
+    APPLICATION.with(|slot| *slot.borrow_mut() = None);
+    observed?;
+    notified?;
     assert!(
         app.borrow().worker.is_none(),
         "exit never leaves the worker running"
@@ -432,7 +458,6 @@ fn event_loop_ending_without_quit_still_finishes_the_held_print() -> Result<(), 
         "done",
         "the printed result settles before exit"
     );
-    APPLICATION.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
 

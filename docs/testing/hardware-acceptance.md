@@ -8,28 +8,24 @@ Disconnect production printers during automated verification.
 
 ## Scope and evidence record
 
-Create a separate signed record per physical unit, model, firmware, transport
-and OS tested. Do not turn an untested entry into a pass. Record `PASS`, `FAIL`
-or `UNPROVEN`, the expected and observed values, timestamp, operator/reviewer,
-and evidence attachment IDs for **every numbered step below**. An absent
-measurement remains `UNPROVEN`; never substitute a simulator trace.
+Create a signed record for each physical unit, model, firmware, transport and
+OS. For every numbered step and scenario variant, record `PASS`, `FAIL` or
+`UNPROVEN`, expected and observed values, timestamp, operator/reviewer and
+evidence attachment IDs. Missing measurements and inapplicable rows remain
+`UNPROVEN`, with an explanation. A passing refusal qualifies only that refusal,
+not the refused capability.
 
-This checklist is an evidence-record procedure, not a completed qualification
-record or a machine-readable import format. Keep separate rows for each
-scenario variant (payment, fault point, model and transport), not one blanket
-pass per phase. A passing expected refusal proves that refusal only; it does
-not qualify the refused capability. Explain inapplicable rows and retain them
-as `UNPROVEN`, not `PASS`. Link the source document/version/command, simulator
-fixture and physical capture separately so none can be mistaken for another.
+This checklist is a procedure, not a completed qualification record or import
+format. Link vendor document/version/command, simulator fixture and physical
+capture separately. A simulator trace never substitutes for a measurement.
 
 Record the Workshop commit/build hash, Rust toolchain, acceptance cfg present
 or absent, OS/version/architecture, driver version, printer label/model,
 firmware, masked fiscal unique number, demo/fiscal status, paper width/font,
-physical socket,
-port path, USB descriptors and menu configuration. Keep full identity and raw
-wire captures in an access-controlled evidence store, not source control,
-Sentry or chat. Use approved synthetic company/NIP data on demo units.
-Record fiscalized test documents in Holuto and retain physical printouts.
+physical socket, port path, USB descriptors and menu configuration. Keep full
+identity and raw wire captures in an access-controlled evidence store, not
+source control, Sentry or chat. Use approved synthetic company/NIP data on demo
+units. Record fiscalized test documents in Holuto and retain physical printouts.
 
 Candidates covered by this procedure: Posnet Temo Online; Novitus HD II Online,
 Deon Online, Bono Online and Point; Elzab Zeta Online, Mera Online and Cube Online.
@@ -55,6 +51,12 @@ Ordinary `--all-features`, **without the acceptance cfg**, must continue to prov
 production gates. Acceptance is **not a Cargo feature**. Its switch is
 `cfg(workshop_acceptance)`, supplied here through `RUSTFLAGS`; the workspace
 declares this cfg for `unexpected_cfgs` checking.
+
+Run from the repository root in a POSIX shell, without inherited acceptance
+flags for the first command. Install the native dependencies and `cargo-nextest`
+used by the [acceptance CI job](../../.github/workflows/checks.yml). Linux watcher
+tests need `dbus-run-session`. The default nextest profile excludes Windows
+`com_pair` tests; run those separately using the [platform procedures](platforms.md).
 
 ```sh
 cargo nextest run --locked --workspace --all-features
@@ -107,14 +109,17 @@ It never treats Elzab daily-report acceptance as completion.
 
 For human hardware work, use a dedicated technician OS account and an isolated,
 approved Holuto test branch with autostart off and no queued production jobs.
-Acceptance without the `simulator` feature uses that account's normal state
-directory; it does not create a new acceptance state path, isolate the API
-endpoint or force demo mode. The cfg also permits fiscalized devices: it is
-not a hardware safety interlock. Never delete or edit fiscal evidence to
-isolate a run. Configure and pair through the CLI/GUI with a one-time code;
-never copy credentials or inspect token-bearing settings. Do not ship this
-executable or set these flags in packaging. Only the supervising person
-launches it with the approved device connected.
+Without `simulator`, acceptance uses that account's normal state directory; it
+does not isolate the API endpoint or force demo mode. Set the approved endpoint
+with `workshop config set --api-url <approved-url>` before pairing. The GUI has
+no API-address field; a local build has no default address unless compiled with
+`HOLUTO_API_URL`. Changing the endpoint clears pairing.
+
+The cfg permits fiscalized devices: it is not a hardware safety interlock.
+Never delete or edit fiscal evidence to isolate a run. Pair through the CLI/GUI
+with a one-time code; never copy credentials or inspect token-bearing settings.
+Do not ship this executable or use acceptance flags in packaging. Only the
+supervising person launches it with the approved device connected.
 
 ## Phase A: read-only qualification
 
@@ -131,16 +136,18 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
    and parent/interface/driver properties, macOS System Information USB and
    IORegistry serial ancestry. Record VID:PID, manufacturer, product, USB
    serial, class/subclass/protocol, interface numbers and resulting port names.
-   Expected hints are Posnet `1424:*`, Novitus `1A28:2512` (A `MI_00`, B
-   `MI_02`), and candidate Elzab `0483:5740`; none proves identity. Capture
-   actual Temo and each ONLINE Elzab model, not legacy STM/FTDI examples.
+   Implemented hints are Posnet `1424:*`, Novitus `1A28:2512` and candidate
+   Elzab `0483:5740`; none proves identity or a physical socket mapping.
+   Measure Novitus A/B interface IDs on each unit. Capture actual Temo and each
+   ONLINE Elzab model, not legacy STM/FTDI examples.
    **Fills:** evidence for `fiscal::link` USB-hint/filter fixtures, not a
    capability flag. Any new ID needs reviewed model-attributed evidence.
 2. **Transport lifecycle.** Record actual baud, 8N1, flow control, DTR/RTS,
    OS driver, close/reopen and unplug/replug port stability on USB and RS232.
    Expected: exclusive serial open, no unsolicited fiscal action or reset,
-   stable by-id path where available. Elzab RS232 must be STX (documented
-   factory baud 9600); USB baud/parity behavior must be measured, not assumed.
+   stable by-id path where available. Elzab RS232 must use ElzabSTX; record the
+   unit's configured baud rather than assuming Workshop's default 9600 is its
+   factory setting. Measure USB baud/parity behavior too.
    **Fills:** `Connection.baud_rate`, transport/OS qualification evidence.
 3. **Identity.** Save literal original replies: Posnet `getrealid`; Novitus
    `30#v` and unique number from `23#s`; Elzab `XTR` fields B/D and `FNR` B.
@@ -158,8 +165,10 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
    refusals without deliberately fiscalizing PC2. **Fills:** PC1/dialect
    preflight evidence; no capability flag may bypass these gates.
 5. **Fiscal/read-only truth table.** Save Posnet `scomm`/`sdev`/`strns` and
-   mechanism state; Novitus `11$i`, raw DLE/ENQ/DLE2; Elzab all three lowercase
-   `ySR` packages and read-only `LPC` receipt permission (inner B zero/empty).
+   mechanism state; Novitus `11$i`, then raw DLE, DLE2 and ENQ only if the
+   preceding checks show no problem. An unhealthy/busy printer may not answer
+   ENQ. Save Elzab's three lowercase `ySR` packages and read-only `LPC` receipt
+   permission (inner B zero/empty).
    Expected production: fiscal, writable, header initialized, no open document,
    no menu/buffer/printing/error and healthy mechanism. Novitus mode 0 is demo,
    1 fiscal, 2 read-only; Elzab training is package 2 bit 3 and writable bit 2
@@ -168,8 +177,9 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
    Do not confuse uppercase `YSR` with `ySR`. **Fills:** driver's readiness
    truth table, not new profile booleans. Record absent all-interface queue or
    ownership proof explicitly; dedicate the unit, never cancel/adopt a document.
-6. **Header and VAT.** Capture complete decoded header, taxpayer identity and
-   A–G VAT readbacks: Posnet `vatget`, Novitus `23#s`, Elzab `FTR`.
+6. **Header and VAT.** Capture the complete decoded header and taxpayer identity:
+   Posnet `hdrget`, Novitus `^u`, Elzab `YYR J` then each `yHR va<index>` and
+   `yHR x`. Read A–G VAT separately: Posnet `vatget`, Novitus `23#s`, Elzab `FTR`.
    Expected Novitus exempt `98.99`/`100`, inactive `99.99`/`101`; Elzab exempt
    `=`, inactive `?`. Compare to the unit's programmed table/vendor evidence;
    contradictory administrative prose is not a mapping. Unknown sentinels
@@ -194,10 +204,12 @@ read-only phase. Workshop's normal Novitus session selects response mode 3
    [per-brand clock rules](../fiscal-contract.md#report-dates-and-printer-clock).
    **Fills:** `Printed.issued_at` and clock-parser qualification, no profile
    clock field.
-9. **Frames and response ordering.** Capture Novitus mode-3 switch ACK,
-   data+ACK exceptions, checksum, multi-digit error and raw DLE2 byte order
-   under known states; zero flags alone cannot establish byte order. For Elzab,
-   capture a complete observed `XTR` request/reply with fresh matching command
+9. **Frames and response ordering.** Capture any Novitus mode-3 switch ACK
+   (the driver does not wait for one), data+ACK exceptions and delayed query ACKs
+   across discovery/close/reopen in power-on mode 0 and preconfigured mode 3.
+   Record checksum, multi-digit errors and raw DLE2 byte order under known
+   states; zero flags alone cannot establish byte order. For Elzab, capture a
+   complete observed `XTR` request/reply with fresh matching command
    IDs. Offline references: CRC-16/ARC input `31 1C 58 54 52` gives `BA44`;
    `31 1C 4C 4F 52` gives `4E0E`. The latter is a fiscal `LOR` vector:
    **calculate offline, never send it in this phase**. Expected full-frame CRC
@@ -285,6 +297,10 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    state. Expected: each fiscal command sent once; no hidden transport retry,
    cancel, resume or reprint. Novitus waits observe DLE2/DLE, not ENQ while a
    fiscal command is pending; record byte order by known physical state.
+   Record post-close footer faults separately: after a successful Posnet
+   `trend`, a footer failure still returns the printed receipt; an unfinished
+   `strns.fe` blocks the next preflight. Novitus/Elzab footer-path failures
+   remain uncertain. Do not treat every footer fault as an unknown fiscal close.
    Elzab paper-out may auto-cancel, but still
    leaves uncertainty; record each Elzab reply delay and whether a paper or
    operator wait withholds the reply. **Fills:** fault/wait/readiness masks,

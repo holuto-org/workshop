@@ -11,6 +11,8 @@ invariants; this guide describes how to obtain evidence for them.
 1. Start the real worker with a loopback Holuto fake, simulator and fresh state
    directory. Keep the production client, driver and, for GUI scenarios,
    callbacks/event bridge intact; use the [UI fixture](ui.md#backend-and-event-loop).
+   When exercising application Start, save synthetic paired settings in that
+   directory first. Start reads the stored token, not the window's token.
 2. Choose the boundary to hold:
    - Posnet's `hold(command)` signals `reached` after recording the incoming
      frame, before executing it. Inspect `operation.json` while held to check
@@ -30,9 +32,12 @@ invariants; this guide describes how to obtain evidence for them.
    journal, stored settings/status and final events as relevant.
 
 Bounded receives diagnose deadlocks; they are not elapsed-time expectations.
-Make failure paths release gates and stop/join fixture threads before
-propagating an error. Freeze the worker poll clock when asserting exact event
-sequences; Slint mock time does not freeze worker I/O or the printer clock.
+Release gates and stop/join fixture threads before propagating an error.
+In worker unit tests, enter `ClockScope` before spawning to freeze background
+polls for exact event-sequence assertions. That test-only clock is unavailable
+to desktop tests; do not require an exact count of incidental polls there.
+Fix the application's `today` function and simulator printer clock separately.
+Slint mock time controls neither worker I/O nor those clocks.
 See the [test construction rule](../../.omp/rules/writing-tests.md#per-kind).
 
 ## Required guarantees
@@ -115,10 +120,11 @@ Keep these distinct in the test:
   a live GUI. This fallback protects the in-flight fiscal operation; it does
   not drain GUI write callbacks or guarantee a final status/preferences flush.
 
-The [held-print lifecycle tests](../../crates/desktop/src/application/tests/end_to_end.rs)
-cover normal quit, final status acknowledgement and, outside macOS, simulated
-event-loop loss. Quitting the testing event loop is not a real compositor-loss
-or OS logout test.
+The [lifecycle tests](../../crates/desktop/src/application/tests/end_to_end.rs)
+cover held-print quit, final status acknowledgement and, outside macOS, simulated
+event-loop loss. For loop-loss evidence, acknowledge that the event loop ended
+before releasing the held print. Quitting the testing loop is not real
+compositor loss or OS logout.
 
 - **Linux/Unix signals:** the child-process
   [signal test](../../crates/desktop/src/application/tests/signals.rs) delivers
@@ -130,7 +136,9 @@ or OS logout test.
   unregistered, registered, hostless, vanished and unresponsive hosts. It
   proves D-Bus registration checks, not icon visibility on every desktop.
 - **macOS:** the ordinary direct-hook unit scenario is not native AppKit
-  evidence. The main-thread, harness-free
+  evidence. Pairing, Start and tray-creation scenarios need the real main thread;
+  the corresponding ordinary unit scenarios are gated off on macOS.
+  The main-thread, harness-free
   [`macos_quit` target](../../crates/desktop/src/bin_tests/macos_quit.rs) invokes
   real AppKit termination while a print is held; its parent checks the marker,
   stopped status, accepted Holuto result and settled journal. AppKit's

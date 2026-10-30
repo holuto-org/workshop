@@ -1,8 +1,8 @@
 # UI testing with Slint
 
-When claiming UI wiring, use the real application, callbacks and worker event
-bridge. Model tests are cheaper for calculation and state-transition cases;
-they cannot prove that an operator's action reaches the worker.
+Use the real application, callbacks and worker event bridge to prove UI wiring.
+Use model tests for calculation and state transitions; they cannot prove that
+an operator's action reaches the worker.
 
 ## Backend and event loop
 
@@ -26,11 +26,25 @@ callbacks completed. Existing fixtures live in
 worker scenarios live in
 [`application/tests/end_to_end.rs`](../../crates/desktop/src/application/tests/end_to_end.rs).
 
+Run application scenarios from the repository root with nextest:
+
+```sh
+cargo nextest run --locked -p workshop --all-features -E 'test(application::tests::)'
+```
+
+`--all-features` includes the Elzab scenario gated by `simulator`. This selection
+does not run the separate native `macos_quit` harness or tray watcher tests;
+follow [platform procedures](platforms.md) for those.
+
 Both modes mock Slint time. Advance UI timers/animations explicitly with
 `mock_elapsed_time`; this does not advance the simulator printer clock, the
 worker's clock or I/O deadlines. Keep those controls separate; see
 [concurrency evidence](concurrency.md). Use event acknowledgements/holds, not a
 delay after clicking; bounded waits diagnose a missing acknowledgement.
+On a timeout or assertion failure, release holds and arrange event-loop shutdown
+before joining fixture threads or propagating the failure. A coordinator that
+panics before requesting shutdown can leave the event loop running until nextest
+kills the process.
 
 ## Drive what the operator can reach
 
@@ -42,8 +56,10 @@ delay after clicking; bounded waits diagnose a missing acknowledgement.
 3. Invoke the accessible action or set an input's accessible value. A property
    assignment is not a keyboard edit, focus change or menu selection: exercise
    those events when their callbacks are the behavior under test. Existing
-   combo-box tests expand the control and click the semantically located item;
-   the confirmation test sends Return to check safe initial focus.
+   combo-box tests expand the control and click the semantically located item.
+   For focus tests, click the control itself first; expanding it through an
+   accessible action alone does not establish keyboard focus. The confirmation
+   test sends Return to check safe initial focus on each opening.
 4. Await the relevant acknowledgement, then assert exact displayed text/control
    state and the fake/device/filesystem effect, including absent side effects
    after refusal. A queued event alone is not completion.
@@ -60,10 +76,12 @@ callbacks. These still exercise the testing backend, not the native input stack.
 
 Use these as scenario boundaries, not a claim that every case runs on every OS:
 
-- Save validates and persists; Start waits for required durable settings and
-  remains explicit unless autostart was opted into. Connection settings cannot
-  silently reconfigure a running worker. A background completion must not
-  overwrite edits made meanwhile; live telemetry opt-out persists.
+- Selecting a printer port or baud rate triggers the save callback; there is no
+  Save button. Check validation and persistence through that selection, not a
+  property assignment. Start waits for required durable settings and remains
+  explicit unless autostart was opted into. Connection settings cannot silently
+  reconfigure a running worker. A background completion must not overwrite newer
+  edits; live telemetry opt-out persists.
 - Set the fixture language explicitly when locating translated labels. Exercise
   real language selection before pairing and during processing: preserve input
   and the selected report month, update month labels, existing warnings/dialogs
@@ -80,8 +98,8 @@ Use these as scenario boundaries, not a claim that every case runs on every OS:
 - Autostart toggles registration and preference without committing unrelated
   connection edits or starting work immediately. Isolate OS registration from
   the operator's account as in [platform checks](platforms.md).
-- **Stan** is read-only: verify each row (**Obsługa drukarki**, **Holuto**,
-  **Drukarka**, **Stan drukarki**) follows worker events, including **Gotowa**,
+- In Polish fixtures, **Stan** is read-only: verify each row (**Obsługa drukarki**,
+  **Holuto**, **Drukarka**, **Stan drukarki**) follows worker events, including **Gotowa**,
   **Niegotowa: …** and **Zablokowana: wymaga rozstrzygnięcia**. A job enqueued
   in the loopback Holuto fake prints without any click.
 - Report confirmation shows exact dates/summary. With injected `today` in pure
@@ -120,6 +138,9 @@ Keep close, Stop and Quit separate:
   for held operations, early event-loop termination and the real main-thread
   `macos_quit` harness. Invoking the Rust termination callback on the testing
   backend cannot prove AppKit's nested-loop/reply behavior.
+  In the native harness, dispatch AppKit termination on the native main queue,
+  outside a Slint user-event callback. Calling it inside that callback can block
+  the nested loop from delivering the worker completion needed to exit.
 
 The testing backend renders **no pixels** and uses fixed text measurement. It
 proves application semantics and declared accessibility metadata, not fonts,
