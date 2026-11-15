@@ -48,7 +48,7 @@ visible locally, but telemetry omits rates outside Holuto's supported set.
 Illegal A–E assignments remain not ready and are not uploaded.
 The `capabilities` object carries `maxItemNameLength`, `maxLinesPerReceipt`,
 `maxCompanyNameLength`, `allowedCharacters` (printable characters, NFC),
-`maxQuantityDecimals` (0–8), `advanceDeductions` and `zeroTotalReceipts`.
+`maxQuantityDecimals` (0–8), `canDeductAdvances` and `canPrintZeroTotalReceipts`.
 Holuto refuses to queue a job for a printer without telemetry
 (`fiscal_printer_limits_unknown`); queueing happens in the web app, outside
 `/agent`. The schema does not encode every backend business-validation rule.
@@ -101,9 +101,10 @@ time of the receipt, set exactly when the job has one: `done` or `voided`) and
 deductions, at most one per letter, each positive; duplicates and zero deductions
 fail before fiscal commands. Advance jobs have no deductions. `payments`
 contains `{form, amount}`; forms are `cash`, `card`, `transfer`, `mobile` and
-`credit`. Decimals are unsigned plain strings such as `12.50`, with an optional
-`.` fraction; no exponent or digit grouping. Use a matching backend; older
-protocol shapes are unsupported.
+`credit`. Decimals are unsigned plain strings; no exponent or digit grouping.
+Amounts always carry two fraction digits, such as `12.50`; `quantity` and
+`unitPrice` drop trailing fraction zeros, such as `12.5` or `2`. Use a matching
+backend; older protocol shapes are unsupported.
 
 ### Receipt validation
 

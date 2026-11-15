@@ -91,23 +91,63 @@ fn strings(value: &Value) -> BTreeSet<String> {
         .collect()
 }
 
+/// The item schema of `component`'s array `property`, which the backend exports as a
+/// generated capped-array component rather than a named item component.
+fn array_items(component: &str, property: &str) -> Value {
+    let reference = schema(component)["properties"][property]["$ref"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("#/components/schemas/")
+        .unwrap()
+        .to_owned();
+    schema(&reference)["items"].clone()
+}
+
 /// Responses: a contract change that renames, removes or makes optional a field the
 /// client reads, or adds a value to an enum it decodes, fails here, not in the field.
 #[test]
 fn response_types_read_only_required_schema_fields_and_decode_every_enum_value() {
-    for (fields, component) in [
-        (names::<Job>(), "AgentJob"),
-        (names::<JobLine>(), "ReceiptLine"),
-        (names::<JobAdvance>(), "AdvanceDeduction"),
-        (names::<JobPayment>(), "ReceiptPayment"),
-        (names::<PrinterStatus>(), "AgentSession"),
-        (names::<PrinterInfo>(), "AgentPrinter"),
-        (names::<PrinterCapabilities>(), "PrinterCapabilities"),
-        (names::<VatRateMapping>(), "VatRateMapping"),
-        (names::<Pairing>(), "AgentPaired"),
+    for (fields, component, object) in [
+        (names::<Job>(), "AgentJob", schema("AgentJob")),
+        (
+            names::<JobLine>(),
+            "AgentJob.lines[]",
+            array_items("AgentJob", "lines"),
+        ),
+        (
+            names::<JobAdvance>(),
+            "AgentJob.advances[]",
+            array_items("AgentJob", "advances"),
+        ),
+        (
+            names::<JobPayment>(),
+            "AgentJob.payments[]",
+            array_items("AgentJob", "payments"),
+        ),
+        (
+            names::<PrinterStatus>(),
+            "AgentSession",
+            schema("AgentSession"),
+        ),
+        (
+            names::<PrinterInfo>(),
+            "AgentPrinter",
+            schema("AgentPrinter"),
+        ),
+        (
+            names::<PrinterCapabilities>(),
+            "PrinterCapabilities",
+            schema("PrinterCapabilities"),
+        ),
+        (
+            names::<VatRateMapping>(),
+            "AgentPrinter.vatRates[]",
+            array_items("AgentPrinter", "vatRates"),
+        ),
+        (names::<Pairing>(), "AgentPaired", schema("AgentPaired")),
     ] {
         let fields: BTreeSet<String> = fields.into_iter().map(str::to_owned).collect();
-        let required = strings(&schema(component)["required"]);
+        let required = strings(&object["required"]);
         assert!(!fields.is_empty(), "{component}");
         assert!(
             fields.is_subset(&required),

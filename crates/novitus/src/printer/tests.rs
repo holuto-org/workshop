@@ -275,8 +275,8 @@ fn identify_accepts_supported_models_only() {
         assert_eq!(device.capabilities.max_company_name, company_width);
         assert_eq!(
             (
-                device.capabilities.advance_deductions,
-                device.capabilities.zero_total_receipts,
+                device.capabilities.can_deduct_advances,
+                device.capabilities.can_print_zero_total_receipts,
                 device.capabilities.company_footer,
             ),
             (

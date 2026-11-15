@@ -297,7 +297,7 @@ impl<'dir> Journal<'dir> {
     }
 }
 
-/// API `Code` rules; raw printer evidence remains in `Device::Completed`.
+/// API `DeviceCode` rules; raw printer evidence remains in `Device::Completed`.
 fn receipt_code(raw: &str) -> Option<String> {
     const MAX_LENGTH: usize = 64;
     if raw.chars().nth(MAX_LENGTH).is_some() {

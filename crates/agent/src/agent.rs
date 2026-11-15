@@ -139,7 +139,7 @@ impl<'dir> Agent<'dir> {
         if !self.describable() {
             return Ok(false);
         }
-        // `Code` constraints belong to the API, not the vendor's identity protocol.
+        // `DeviceCode` constraints belong to the API, not the vendor's identity protocol.
         if [&self.telemetry.model, &self.telemetry.firmware]
             .iter()
             .any(|value| {
@@ -481,7 +481,7 @@ impl<'dir> Agent<'dir> {
     fn receipt(&self, job: &Job, capabilities: &Capabilities) -> Result<Receipt, Message> {
         job.check(capabilities.max_lines)
             .map_err(|problem| Message::new("agent-invalid-job-shape").arg("problem", problem))?;
-        if !job.advances.is_empty() && !capabilities.advance_deductions {
+        if !job.advances.is_empty() && !capabilities.can_deduct_advances {
             return Err(Message::new("agent-unsupported-advances"));
         }
         let rates = &self.telemetry.vat_rates;
@@ -554,7 +554,7 @@ impl<'dir> Agent<'dir> {
             capabilities,
         )
         .map_err(|error| error.message())?;
-        if receipt.fiscal_total() == Grosze::ZERO && !capabilities.zero_total_receipts {
+        if receipt.fiscal_total() == Grosze::ZERO && !capabilities.can_print_zero_total_receipts {
             return Err(Message::new("agent-unsupported-zero"));
         }
         Ok(receipt)

@@ -423,7 +423,8 @@ fn handle(mut request: Request, shared: &Arc<Mutex<State>>) {
 }
 
 fn problem(status: u16, code: &str, detail: &str) -> Value {
-    json!({"type":"about:blank","title":"Holuto","status":status,"code":code,"detail":detail})
+    json!({"type":format!("https://holuto.com/problems/{code}"),"title":"Holuto","status":status,
+        "code":code,"detail":detail})
 }
 #[expect(
     clippy::unwrap_used,
@@ -480,8 +481,9 @@ fn invalid(pointer: &str, code: &str) -> (u16, Value) {
     (
         400,
         json!({
-            "type": "about:blank", "title": "Holuto", "status": 400,
-            "code": "validation_failed", "detail": problem_detail("validation_failed"),
+            "type": "https://holuto.com/problems/validation_failed", "title": "Holuto",
+            "status": 400, "code": "validation_failed",
+            "detail": problem_detail("validation_failed"),
             "errors": [{"pointer": pointer, "code": code, "detail": problem_detail(code)}]
         }),
     )
@@ -695,7 +697,7 @@ fn route_request(state: &mut State, request: &RequestLog) -> (u16, Value) {
     }
 }
 
-/// Holuto's rules for `Code` (NFKC, single line, 64 chars) and `Note` (NFC, multiline,
+/// Holuto's rules for `DeviceCode` (NFKC, single line, 64 chars) and `Note` (NFC, multiline,
 /// 2000 chars): normalized text is echoed; blank, oversized or invisible text is refused.
 fn backend_text(value: &str, note: bool) -> Result<String, &'static str> {
     let max = if note { 2000 } else { 64 };
@@ -751,9 +753,9 @@ pub fn job_json() -> Value {
         "payments": [{"form": "card", "amount": "250.00"}],
         "companyName": "Warsztat Kowalski", "buyerNip": null, "total": "250.00",
         "lines": [
-            {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100.00",
+            {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100",
              "total": "200.00", "vatRate": "23", "vatLetter": "A"},
-            {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
+            {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50",
              "total": "50.00", "vatRate": "8", "vatLetter": "B"}
         ],
         "attempt": ATTEMPT, "receiptNumber": null, "issuedAt": null, "result": null
@@ -770,7 +772,7 @@ pub fn with(mut value: Value, changes: &Value) -> Value {
 pub fn printer_json() -> Value {
     json!({
         "id":PRINTER_ID,"uniqueNumber":"DEM0000000001","vatRates":[],
-        "capabilities":{"advanceDeductions":true,"zeroTotalReceipts":true,
+        "capabilities":{"canDeductAdvances":true,"canPrintZeroTotalReceipts":true,
             "maxQuantityDecimals":8,"maxItemNameLength":80,"maxLinesPerReceipt":500,
             "maxCompanyNameLength":40,"allowedCharacters":"ABCabc 0123456789.,-ĄąĘęŁłŃńÓóŚśŹźŻżĆć"}
     })

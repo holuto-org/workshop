@@ -20,8 +20,8 @@ pub fn lookup(model: &str) -> Option<Capabilities> {
         max_buyer_nip: 42,
         max_quantity_decimals: 5,
         allowed_characters: text::printable_cp1250(),
-        advance_deductions: true, // ONLINE LDS extension.
-        zero_total_receipts: cfg!(workshop_acceptance), // Error1008, unqualified.
+        can_deduct_advances: true, // ONLINE LDS extension.
+        can_print_zero_total_receipts: cfg!(workshop_acceptance), // Error1008, unqualified.
         company_footer: cfg!(workshop_acceptance), // Native LAL order unqualified.
     })
 }

@@ -16,8 +16,8 @@ fn device() -> Device {
             max_buyer_nip: 30,
             max_quantity_decimals: 5,
             allowed_characters: " Aą1".to_owned(),
-            advance_deductions: false,
-            zero_total_receipts: false,
+            can_deduct_advances: false,
+            can_print_zero_total_receipts: false,
             company_footer: false,
         },
     }

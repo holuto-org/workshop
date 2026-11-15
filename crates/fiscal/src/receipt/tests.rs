@@ -16,8 +16,8 @@ pub(crate) fn capabilities() -> Capabilities {
         max_buyer_nip: 30,
         max_quantity_decimals: 8,
         allowed_characters: (' '..='~').chain("ĄĆĘŁŃÓŚŹŻąćęłńóśźż".chars()).collect(),
-        advance_deductions: true,
-        zero_total_receipts: true,
+        can_deduct_advances: true,
+        can_print_zero_total_receipts: true,
         company_footer: true,
     }
 }

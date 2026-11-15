@@ -100,13 +100,13 @@ pub struct VatRateMapping {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrinterCapabilities {
-    pub advance_deductions: bool,
     pub allowed_characters: String,
+    pub can_deduct_advances: bool,
+    pub can_print_zero_total_receipts: bool,
     pub max_company_name_length: usize,
     pub max_item_name_length: usize,
     pub max_lines_per_receipt: usize,
     pub max_quantity_decimals: u8,
-    pub zero_total_receipts: bool,
 }
 
 /// `POST /agent/session` body: what the connected printer reports.
@@ -296,13 +296,13 @@ impl Telemetry {
         Self {
             app_version: APP_VERSION,
             capabilities: PrinterCapabilities {
-                advance_deductions: false,
                 allowed_characters: String::new(),
+                can_deduct_advances: false,
+                can_print_zero_total_receipts: false,
                 max_company_name_length: 0,
                 max_item_name_length: 0,
                 max_lines_per_receipt: 0,
                 max_quantity_decimals: 0,
-                zero_total_receipts: false,
             },
             firmware: String::new(),
             model: String::new(),
@@ -319,13 +319,13 @@ impl Telemetry {
         device.firmware.clone_into(&mut self.firmware);
         let c = &device.capabilities;
         self.capabilities = PrinterCapabilities {
-            advance_deductions: c.advance_deductions,
             allowed_characters: c.allowed_characters.clone(),
+            can_deduct_advances: c.can_deduct_advances,
+            can_print_zero_total_receipts: c.can_print_zero_total_receipts,
             max_company_name_length: c.max_company_name,
             max_item_name_length: c.max_item_name,
             max_lines_per_receipt: c.max_lines,
             max_quantity_decimals: c.max_quantity_decimals,
-            zero_total_receipts: c.zero_total_receipts,
         };
         self.vat_rates = rates;
         skipped

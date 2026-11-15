@@ -85,7 +85,7 @@ fn queue_samples(holuto: &Holuto) {
             "companyName": COMPANY, "kind": "advance", "allocationId": Uuid::from_u128(7042),
             "total": "300.00", "payments": [{"form": "card", "amount": "300.00"}],
             "lines": [
-                {"name": "Zaliczka 23%", "quantity": "1", "unitPrice": "300.00",
+                {"name": "Zaliczka 23%", "quantity": "1", "unitPrice": "300",
                  "total": "300.00", "vatRate": "23", "vatLetter": "A"}
             ]
         }),

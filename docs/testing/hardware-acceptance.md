@@ -254,14 +254,14 @@ Holuto test queue. Confirm each scenario's full input and expected output.
    storno or negative item. Novitus uses first-match item-bound `@z`; prove
    each allocated deduction attaches to the intended line, including repeated
    names. Elzab uses per-slot `LDS` with D settlement marker. **Fills:**
-   `Capabilities.advance_deductions` for the tested model/firmware. A single
+   `Capabilities.can_deduct_advances` for the tested model/firmware. A single
    Novitus 1000−100=900 example is insufficient for general qualification.
 4. **Fully prepaid close.** Deduct every slot completely and send zero total,
    with no nominal 0.01 sale/payment. Expected a demo zero-total document and
    correct settlements if supported, not proof of a legal fiscalized print.
    Capture actual close bytes and any refusal; Elzab error 1008 remains a failing
    capability, not proof of no effects. **Fills:**
-   `Capabilities.zero_total_receipts`; an unqualified production gate stays
+   `Capabilities.can_print_zero_total_receipts`; an unqualified production gate stays
    false pending reviewed demo evidence and vendor reconciliation of zero-close
    semantics. Phase C separately checks approved fiscalized behavior.
 5. **Company text and completion.** Compare company present in header (no

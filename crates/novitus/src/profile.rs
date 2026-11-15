@@ -21,8 +21,8 @@ pub fn lookup(model: &str, firmware: &str) -> Option<Capabilities> {
         max_quantity_decimals: 8,
         // ASCII only until 52$i confirms attr1 bit 0x0200 (full Windows-1250).
         allowed_characters: (' '..='~').collect(),
-        advance_deductions: cfg!(workshop_acceptance),
-        zero_total_receipts: cfg!(workshop_acceptance),
+        can_deduct_advances: cfg!(workshop_acceptance),
+        can_print_zero_total_receipts: cfg!(workshop_acceptance),
         // Footer support still requires hardware qualification.
         company_footer: cfg!(workshop_acceptance),
     })
