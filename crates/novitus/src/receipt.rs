@@ -33,12 +33,12 @@ impl Step {
 }
 
 fn validate(receipt: &Receipt, footer: Option<&str>, caps: &Capabilities) -> Result<(), Error> {
-    if !receipt.advances().is_empty() && !caps.advance_deductions {
+    if !receipt.advances().is_empty() && !caps.can_deduct_advances {
         return Err(Error::Invalid(i18n::Message::new(
             "drivers-advances-unsupported",
         )));
     }
-    if receipt.fiscal_total() == Grosze::ZERO && !caps.zero_total_receipts {
+    if receipt.fiscal_total() == Grosze::ZERO && !caps.can_print_zero_total_receipts {
         return Err(Error::Invalid(i18n::Message::new(
             "drivers-advance-only-unsupported",
         )));

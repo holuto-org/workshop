@@ -25,7 +25,13 @@
             "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "examples": [
+                "ABC1234567890"
+              ],
+              "maxLength": 13,
+              "minLength": 13,
+              "pattern": "^[A-Z]{3}[0-9]{10}$"
             }
           }
         ],
@@ -70,7 +76,13 @@
             "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "examples": [
+                "ABC1234567890"
+              ],
+              "maxLength": 13,
+              "minLength": 13,
+              "pattern": "^[A-Z]{3}[0-9]{10}$"
             }
           }
         ],
@@ -136,7 +148,13 @@
             "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "examples": [
+                "ABC1234567890"
+              ],
+              "maxLength": 13,
+              "minLength": 13,
+              "pattern": "^[A-Z]{3}[0-9]{10}$"
             }
           }
         ],
@@ -201,7 +219,13 @@
             "description": "Fiscal memory unique number pinned by the printer's first session.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "examples": [
+                "ABC1234567890"
+              ],
+              "maxLength": 13,
+              "minLength": 13,
+              "pattern": "^[A-Z]{3}[0-9]{10}$"
             }
           }
         ],
@@ -285,7 +309,7 @@
             "headers": {
               "Cache-Control": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/NoStoreCacheControl"
                 }
               }
             },
@@ -420,10 +444,10 @@
           {
             "name": "file",
             "in": "path",
-            "description": "`<audience>.json`",
+            "description": "Audience document filename.",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/OpenApiFile"
             }
           }
         ],
@@ -481,26 +505,6 @@
   },
   "components": {
     "schemas": {
-      "AdvanceDeduction": {
-        "type": "object",
-        "required": [
-          "vatLetter",
-          "vatRate",
-          "amount"
-        ],
-        "properties": {
-          "amount": {
-            "$ref": "#/components/schemas/PositiveAmount_Amount"
-          },
-          "vatLetter": {
-            "$ref": "#/components/schemas/FiscalVatLetter"
-          },
-          "vatRate": {
-            "$ref": "#/components/schemas/VatRate"
-          }
-        },
-        "additionalProperties": false
-      },
       "AgentJob": {
         "type": "object",
         "required": [
@@ -523,10 +527,7 @@
         ],
         "properties": {
           "advances": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AdvanceDeduction"
-            }
+            "$ref": "#/components/schemas/CappedSet0To5_AdvanceDeduction"
           },
           "allocationId": {
             "oneOf": [
@@ -576,20 +577,13 @@
             "$ref": "#/components/schemas/FiscalReceiptKind"
           },
           "lines": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReceiptLine"
-            }
+            "$ref": "#/components/schemas/Capped1To100000_ReceiptLine"
           },
           "orderNumber": {
-            "type": "integer",
-            "format": "int64"
+            "$ref": "#/components/schemas/OrderNumber"
           },
           "payments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ReceiptPayment"
-            }
+            "$ref": "#/components/schemas/CappedSet0To5_ReceiptPayment"
           },
           "printerId": {
             "$ref": "#/components/schemas/FiscalPrinterId"
@@ -597,7 +591,7 @@
           "receiptNumber": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Code"
+                "$ref": "#/components/schemas/DeviceCode"
               },
               {
                 "type": "null"
@@ -634,7 +628,7 @@
             "$ref": "#/components/schemas/FiscalPrinterId"
           },
           "token": {
-            "$ref": "#/components/schemas/Token_TokenKindAgent"
+            "$ref": "#/components/schemas/Token"
           }
         },
         "additionalProperties": false
@@ -672,10 +666,7 @@
             ]
           },
           "vatRates": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/VatRateMapping"
-            }
+            "$ref": "#/components/schemas/CappedSet0To7_VatRateMapping"
           }
         },
         "additionalProperties": false
@@ -699,6 +690,7 @@
         "examples": [
           " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-.,"
         ],
+        "maxLength": 4194304,
         "minLength": 1,
         "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
       },
@@ -708,6 +700,165 @@
         "examples": [
           "01925d4f-a342-7a33-91fe-000000000001"
         ]
+      },
+      "CallerVary": {
+        "type": "string",
+        "enum": [
+          "Authorization, Cookie, Accept-Language"
+        ]
+      },
+      "Capped0To100_FieldError": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "code",
+            "pointer",
+            "detail"
+          ],
+          "properties": {
+            "code": {
+              "$ref": "#/components/schemas/ErrorCode"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "pointer": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 100,
+        "minItems": 0
+      },
+      "Capped0To70_VatRateMapping": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "letter",
+            "vatRate"
+          ],
+          "properties": {
+            "letter": {
+              "$ref": "#/components/schemas/FiscalVatLetter"
+            },
+            "vatRate": {
+              "$ref": "#/components/schemas/VatRate"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 70,
+        "minItems": 0
+      },
+      "Capped1To100000_ReceiptLine": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "name",
+            "quantity",
+            "unitPrice",
+            "total",
+            "vatRate",
+            "vatLetter"
+          ],
+          "properties": {
+            "name": {
+              "$ref": "#/components/schemas/Title"
+            },
+            "quantity": {
+              "$ref": "#/components/schemas/PositiveQuantity_Quantity"
+            },
+            "total": {
+              "$ref": "#/components/schemas/PositiveAmount_Amount"
+            },
+            "unitPrice": {
+              "$ref": "#/components/schemas/PositiveUnitPrice_UnitPrice"
+            },
+            "vatLetter": {
+              "$ref": "#/components/schemas/FiscalVatLetter"
+            },
+            "vatRate": {
+              "$ref": "#/components/schemas/VatRate"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 100000,
+        "minItems": 1
+      },
+      "CappedSet0To5_AdvanceDeduction": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "vatLetter",
+            "vatRate",
+            "amount"
+          ],
+          "properties": {
+            "amount": {
+              "$ref": "#/components/schemas/PositiveAmount_Amount"
+            },
+            "vatLetter": {
+              "$ref": "#/components/schemas/FiscalVatLetter"
+            },
+            "vatRate": {
+              "$ref": "#/components/schemas/VatRate"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 5,
+        "minItems": 0,
+        "uniqueItems": true
+      },
+      "CappedSet0To5_ReceiptPayment": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "form",
+            "amount"
+          ],
+          "properties": {
+            "amount": {
+              "$ref": "#/components/schemas/PositiveAmount_Amount"
+            },
+            "form": {
+              "$ref": "#/components/schemas/FiscalPaymentForm"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 5,
+        "minItems": 0,
+        "uniqueItems": true
+      },
+      "CappedSet0To7_VatRateMapping": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "letter",
+            "vatRate"
+          ],
+          "properties": {
+            "letter": {
+              "$ref": "#/components/schemas/FiscalVatLetter"
+            },
+            "vatRate": {
+              "$ref": "#/components/schemas/VatRate"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 7,
+        "minItems": 0,
+        "uniqueItems": true
       },
       "ClientLimits": {
         "type": "object",
@@ -726,92 +877,60 @@
         ],
         "properties": {
           "downloadUrlValiditySeconds": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProductConstant300"
           },
           "maxFileBytesByMimeType": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 0
-            },
-            "propertyNames": {
-              "type": "string",
-              "enum": [
-                "application/pdf",
-                "image/jpeg",
-                "video/mp4"
-              ]
-            }
+            "$ref": "#/components/schemas/FileByteLimits"
           },
           "maxFilesPerTarget": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/FileCountLimit"
           },
           "maxPageSize": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/PageSize"
           },
           "photoJpegQualityPercent": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProductConstant85"
           },
           "photoMaxEdge": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProductConstant2560"
           },
           "previewJpegQualityPercent": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProductConstant80"
           },
           "previewMaxBytes": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProductConstant262144"
           },
           "previewMaxEdge": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProductConstant512"
           },
           "videoBitsPerSecond": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProductConstant6000000"
           },
           "videoMaxEdge": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProductConstant1920"
           }
         },
         "additionalProperties": false
       },
-      "Code": {
+      "Cursor": {
         "type": "string",
-        "examples": [
-          "Example"
-        ],
-        "maxLength": 64,
-        "minLength": 1,
-        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+        "description": "Authenticated opaque continuation token, bounded on both input and production.",
+        "maxLength": 16384,
+        "minLength": 38
       },
       "CursorQuery": {
         "type": "object",
         "properties": {
           "cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Opaque: pass a page's `nextCursor` or `previousCursor` unchanged."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Cursor",
+                "description": "Opaque: pass a page's `nextCursor` or `previousCursor` unchanged."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "limit": {
             "type": "integer",
@@ -823,11 +942,41 @@
         },
         "additionalProperties": false
       },
+      "DeviceCode": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+      },
+      "DeviceCodeInput": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 64,
+        "minLength": 1
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Stable machine-readable message identifier, independent of localized wording.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9]*(_[a-z0-9]+)*$"
+      },
       "Etag": {
         "type": "string",
         "maxLength": 32,
         "minLength": 32,
         "pattern": "^[0-9a-f]{32}$"
+      },
+      "EtagHeader": {
+        "type": "string",
+        "maxLength": 36,
+        "minLength": 34,
+        "pattern": "^(W/)?\"[0-9a-f]{32}\"$"
       },
       "FieldError": {
         "type": "object",
@@ -838,7 +987,7 @@
         ],
         "properties": {
           "code": {
-            "type": "string"
+            "$ref": "#/components/schemas/ErrorCode"
           },
           "detail": {
             "type": "string"
@@ -848,6 +997,43 @@
           }
         },
         "additionalProperties": false
+      },
+      "FileByteLimits": {
+        "type": "object",
+        "required": [
+          "application/pdf",
+          "image/jpeg",
+          "video/mp4"
+        ],
+        "properties": {
+          "application/pdf": {
+            "type": "integer",
+            "enum": [
+              20971520
+            ]
+          },
+          "image/jpeg": {
+            "type": "integer",
+            "enum": [
+              8388608
+            ]
+          },
+          "video/mp4": {
+            "type": "integer",
+            "enum": [
+              262144000
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileCountLimit": {
+        "type": "integer",
+        "examples": [
+          100
+        ],
+        "maximum": 1000,
+        "minimum": 0
       },
       "FiscalJobId": {
         "type": "string",
@@ -919,10 +1105,16 @@
         ],
         "properties": {
           "status": {
-            "type": "string"
+            "$ref": "#/components/schemas/HealthStatus"
           }
         },
         "additionalProperties": false
+      },
+      "HealthStatus": {
+        "type": "string",
+        "enum": [
+          "ok"
+        ]
       },
       "Language": {
         "type": "string",
@@ -944,11 +1136,18 @@
       },
       "Nip": {
         "type": "string",
-        "description": "Normalized on input; responses always match `^[1-9]((\\d[1-9])|([1-9]\\d))\\d{7}$`.",
         "examples": [
           "5260250274"
         ],
-        "minLength": 1
+        "maxLength": 10,
+        "minLength": 10,
+        "pattern": "^[1-9]((\\d[1-9])|([1-9]\\d))\\d{7}$"
+      },
+      "NoStoreCacheControl": {
+        "type": "string",
+        "enum": [
+          "no-store"
+        ]
       },
       "Note": {
         "type": "string",
@@ -959,6 +1158,32 @@
         "minLength": 1,
         "pattern": "^[^\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]+$"
       },
+      "NoteInput": {
+        "type": "string",
+        "examples": [
+          "Example"
+        ],
+        "maxLength": 2000,
+        "minLength": 1
+      },
+      "OpenApiFile": {
+        "type": "string",
+        "enum": [
+          "auth.json",
+          "customer.json",
+          "staff.json",
+          "agent.json",
+          "ops.json"
+        ]
+      },
+      "OrderNumber": {
+        "type": "integer",
+        "examples": [
+          1
+        ],
+        "maximum": 9223372036854775807,
+        "minimum": 1
+      },
       "Outcome": {
         "type": "string",
         "enum": [
@@ -966,6 +1191,14 @@
           "failed",
           "unknown"
         ]
+      },
+      "PageSize": {
+        "type": "integer",
+        "examples": [
+          50
+        ],
+        "maximum": 100,
+        "minimum": 1
       },
       "PairForm": {
         "type": "object",
@@ -981,8 +1214,9 @@
       },
       "PairingInput": {
         "type": "string",
-        "description": "Retain malformed submitted proofs privately so all string proofs get the same refusal.",
-        "example": "ABCD-2345"
+        "description": "All string proofs enter redemption, including overlong ones, so refusal stays uniform.\nOnly a bounded, parsed proof is retained; malformed or overlong input keeps no private bytes.",
+        "example": "ABCD-2345",
+        "maxLength": 4096
       },
       "PaymentAllocationId": {
         "type": "string",
@@ -998,7 +1232,9 @@
         "examples": [
           "1234.50"
         ],
-        "pattern": "^(?!0(?:\\.0+)?$)[0-9]{1,16}(\\.[0-9]{1,2})?$"
+        "maxLength": 19,
+        "minLength": 4,
+        "pattern": "^(?!0+(?:\\.0+)?$)[0-9]{1,16}\\.[0-9]{2}$"
       },
       "PositiveQuantity_Quantity": {
         "type": "string",
@@ -1007,7 +1243,9 @@
         "examples": [
           "1.5"
         ],
-        "pattern": "^(?!0(?:\\.0+)?$)[0-9]{1,16}(\\.[0-9]{1,6})?$"
+        "maxLength": 23,
+        "minLength": 1,
+        "pattern": "^(?!0+(?:\\.0+)?$)(0|[1-9][0-9]{0,15})(\\.[0-9]{0,5}[1-9])?$"
       },
       "PositiveUnitPrice_UnitPrice": {
         "type": "string",
@@ -1016,7 +1254,9 @@
         "examples": [
           "11.27725962"
         ],
-        "pattern": "^(?!0(?:\\.0+)?$)[0-9]{1,14}(\\.[0-9]{1,8})?$"
+        "maxLength": 23,
+        "minLength": 1,
+        "pattern": "^(?!0+(?:\\.0+)?$)(0|[1-9][0-9]{0,13})(\\.[0-9]{0,7}[1-9])?$"
       },
       "PrinterCapabilities": {
         "type": "object",
@@ -1026,15 +1266,18 @@
           "maxLinesPerReceipt",
           "allowedCharacters",
           "maxQuantityDecimals",
-          "advanceDeductions",
-          "zeroTotalReceipts"
+          "canDeductAdvances",
+          "canPrintZeroTotalReceipts"
         ],
         "properties": {
-          "advanceDeductions": {
-            "type": "boolean"
-          },
           "allowedCharacters": {
             "$ref": "#/components/schemas/AllowedCharacters"
+          },
+          "canDeductAdvances": {
+            "type": "boolean"
+          },
+          "canPrintZeroTotalReceipts": {
+            "type": "boolean"
           },
           "maxCompanyNameLength": {
             "$ref": "#/components/schemas/PrinterLimit"
@@ -1047,9 +1290,6 @@
           },
           "maxQuantityDecimals": {
             "$ref": "#/components/schemas/QuantityDecimals"
-          },
-          "zeroTotalReceipts": {
-            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -1073,30 +1313,87 @@
         ],
         "properties": {
           "code": {
-            "type": "string"
+            "$ref": "#/components/schemas/ErrorCode"
           },
           "detail": {
             "type": "string"
           },
           "errors": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/FieldError"
-            }
+            "$ref": "#/components/schemas/Capped0To100_FieldError"
           },
           "status": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "$ref": "#/components/schemas/ProblemStatus"
           },
           "title": {
             "type": "string"
           },
           "type": {
-            "type": "string"
+            "$ref": "#/components/schemas/ProblemType"
           }
         },
         "additionalProperties": false
+      },
+      "ProblemStatus": {
+        "type": "integer",
+        "format": "int32",
+        "description": "The HTTP status-code range accepted by the HTTP stack (including extension statuses).",
+        "maximum": 999,
+        "minimum": 100
+      },
+      "ProblemType": {
+        "type": "string",
+        "description": "Fixed problem URI prefix followed by its checked machine identifier.",
+        "maxLength": 156,
+        "minLength": 29,
+        "pattern": "^https://holuto\\.com/problems/[a-z][a-z0-9]*(_[a-z0-9]+)*$"
+      },
+      "ProductConstant1920": {
+        "type": "integer",
+        "enum": [
+          1920
+        ]
+      },
+      "ProductConstant2560": {
+        "type": "integer",
+        "enum": [
+          2560
+        ]
+      },
+      "ProductConstant262144": {
+        "type": "integer",
+        "enum": [
+          262144
+        ]
+      },
+      "ProductConstant300": {
+        "type": "integer",
+        "enum": [
+          300
+        ]
+      },
+      "ProductConstant512": {
+        "type": "integer",
+        "enum": [
+          512
+        ]
+      },
+      "ProductConstant6000000": {
+        "type": "integer",
+        "enum": [
+          6000000
+        ]
+      },
+      "ProductConstant80": {
+        "type": "integer",
+        "enum": [
+          80
+        ]
+      },
+      "ProductConstant85": {
+        "type": "integer",
+        "enum": [
+          85
+        ]
       },
       "QuantityDecimals": {
         "type": "integer",
@@ -1105,54 +1402,6 @@
         ],
         "maximum": 8,
         "minimum": 0
-      },
-      "ReceiptLine": {
-        "type": "object",
-        "required": [
-          "name",
-          "quantity",
-          "unitPrice",
-          "total",
-          "vatRate",
-          "vatLetter"
-        ],
-        "properties": {
-          "name": {
-            "$ref": "#/components/schemas/Title"
-          },
-          "quantity": {
-            "$ref": "#/components/schemas/PositiveQuantity_Quantity"
-          },
-          "total": {
-            "$ref": "#/components/schemas/PositiveAmount_Amount"
-          },
-          "unitPrice": {
-            "$ref": "#/components/schemas/PositiveUnitPrice_UnitPrice"
-          },
-          "vatLetter": {
-            "$ref": "#/components/schemas/FiscalVatLetter"
-          },
-          "vatRate": {
-            "$ref": "#/components/schemas/VatRate"
-          }
-        },
-        "additionalProperties": false
-      },
-      "ReceiptPayment": {
-        "type": "object",
-        "required": [
-          "form",
-          "amount"
-        ],
-        "properties": {
-          "amount": {
-            "$ref": "#/components/schemas/PositiveAmount_Amount"
-          },
-          "form": {
-            "$ref": "#/components/schemas/FiscalPaymentForm"
-          }
-        },
-        "additionalProperties": false
       },
       "ResultForm": {
         "type": "object",
@@ -1174,7 +1423,7 @@
           "receiptNumber": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Code"
+                "$ref": "#/components/schemas/DeviceCodeInput"
               },
               {
                 "type": "null"
@@ -1184,7 +1433,7 @@
           "result": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Note"
+                "$ref": "#/components/schemas/NoteInput"
               },
               {
                 "type": "null"
@@ -1196,6 +1445,12 @@
           }
         },
         "additionalProperties": false
+      },
+      "RevalidateCacheControl": {
+        "type": "string",
+        "enum": [
+          "private, no-cache"
+        ]
       },
       "Telemetry": {
         "type": "object",
@@ -1210,25 +1465,22 @@
         ],
         "properties": {
           "appVersion": {
-            "$ref": "#/components/schemas/Code"
+            "$ref": "#/components/schemas/DeviceCodeInput"
           },
           "capabilities": {
             "$ref": "#/components/schemas/PrinterCapabilities"
           },
           "firmware": {
-            "$ref": "#/components/schemas/Code"
+            "$ref": "#/components/schemas/DeviceCodeInput"
           },
           "model": {
-            "$ref": "#/components/schemas/Code"
+            "$ref": "#/components/schemas/DeviceCodeInput"
           },
           "uniqueNumber": {
             "$ref": "#/components/schemas/UniqueNumber"
           },
           "vatRates": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/VatRateMapping"
-            }
+            "$ref": "#/components/schemas/Capped0To70_VatRateMapping"
           },
           "vendor": {
             "$ref": "#/components/schemas/FiscalVendor"
@@ -1245,7 +1497,7 @@
         "minLength": 1,
         "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
       },
-      "Token_TokenKindAgent": {
+      "Token": {
         "type": "string",
         "examples": [
           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -1260,6 +1512,8 @@
         "examples": [
           "ABC1234567890"
         ],
+        "maxLength": 13,
+        "minLength": 13,
         "pattern": "^[A-Z]{3}[0-9]{10}$"
       },
       "VatRate": {
@@ -1272,22 +1526,6 @@
           "0",
           "zw"
         ]
-      },
-      "VatRateMapping": {
-        "type": "object",
-        "required": [
-          "letter",
-          "vatRate"
-        ],
-        "properties": {
-          "letter": {
-            "$ref": "#/components/schemas/FiscalVatLetter"
-          },
-          "vatRate": {
-            "$ref": "#/components/schemas/VatRate"
-          }
-        },
-        "additionalProperties": false
       }
     },
     "responses": {
@@ -1353,6 +1591,13 @@
       },
       "PreconditionRequired": {
         "description": "An If-Match revision is required.",
+        "headers": {
+          "Cache-Control": {
+            "schema": {
+              "$ref": "#/components/schemas/NoStoreCacheControl"
+            }
+          }
+        },
         "content": {
           "application/problem+json": {
             "schema": {

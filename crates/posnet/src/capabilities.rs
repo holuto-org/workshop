@@ -36,8 +36,8 @@ pub fn capabilities() -> Capabilities {
         max_buyer_nip: MAX_BUYER_NIP,
         max_quantity_decimals: MAX_QUANTITY_DECIMALS,
         allowed_characters: printable_characters(),
-        advance_deductions: true,
-        zero_total_receipts: true,
+        can_deduct_advances: true,
+        can_print_zero_total_receipts: true,
         company_footer: true,
     }
 }

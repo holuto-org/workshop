@@ -480,7 +480,7 @@ fn claimed_job_needing_unqualified_capability_fails_without_fiscal_commands() ->
             true,
             3,
             json!({
-                "lines": [{"name": "Usługa", "quantity": "1.0001", "unitPrice": "250.00",
+                "lines": [{"name": "Usługa", "quantity": "1.0001", "unitPrice": "250",
                     "total": "250.03", "vatRate": "23", "vatLetter": "A"}],
                 "total": "250.03", "payments": [{"form": "card", "amount": "250.03"}]
             }),
@@ -489,8 +489,8 @@ fn claimed_job_needing_unqualified_capability_fails_without_fiscal_commands() ->
     ] {
         let sim = Simulator::start();
         let mut capabilities = capabilities();
-        capabilities.advance_deductions = advances;
-        capabilities.zero_total_receipts = zero;
+        capabilities.can_deduct_advances = advances;
+        capabilities.can_print_zero_total_receipts = zero;
         capabilities.max_quantity_decimals = precision;
         sim.set_capabilities(capabilities);
         let server = Holuto::new();
@@ -591,7 +591,8 @@ fn oversized_claim_fails_without_fiscal_commands_and_frees_the_queue() -> TestRe
 fn malformed_claim_with_lost_failure_acknowledgement_settles_after_restart() -> TestResult {
     let sim = Simulator::start();
     let server = Holuto::new();
-    let _id = server.enqueue(with(job_json(), &json!({"buyerNip": "123"})));
+    // Schema-valid but refused by claim-time validation: the lines sum to 250.00.
+    let _id = server.enqueue(with(job_json(), &json!({"total": "249.99"})));
     server.fault(
         "POST",
         &format!("/agent/jobs/{JOB_ID}/result"),
@@ -637,16 +638,16 @@ fn invalid_money_vat_or_text_fails_before_fiscal_commands() -> TestResult {
         ),
         (
             json!({"lines": [{
-                "name": "Pozycja", "quantity": "1", "unitPrice": "250.00",
+                "name": "Pozycja", "quantity": "1", "unitPrice": "250",
                 "total": "250.00", "vatRate": "8", "vatLetter": "A"
             }]}),
             "Stawka VAT 8% zadania nie odpowiada slotowi 0 drukarki. Odśwież stawki w Holuto.",
         ),
         (
             json!({"lines": [
-                {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100.00",
+                {"name": "Wymiana oleju", "quantity": "2", "unitPrice": "100",
                  "total": "199.99", "vatRate": "23", "vatLetter": "A"},
-                {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50.00",
+                {"name": "Klocki hamulcowe", "quantity": "1", "unitPrice": "50",
                  "total": "50.01", "vatRate": "8", "vatLetter": "B"}
             ]}),
             "Wartość pozycji nie zgadza się z zaokrąglonym iloczynem ilości i ceny.",
@@ -685,6 +686,42 @@ fn invalid_money_vat_or_text_fails_before_fiscal_commands() -> TestResult {
             "validation precedes every fiscal command"
         );
     }
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::panic_in_result_fn,
+    reason = "test assertions intentionally panic while setup errors use Result"
+)]
+fn buyer_nip_outside_the_contract_fails_before_fiscal_commands() -> TestResult {
+    let sim = Simulator::start();
+    let server = Holuto::new();
+    server.insert(job_json());
+    // The contract forbids this NIP, so the fake cannot serve it: script the claim reply.
+    server.fault(
+        "POST",
+        "/agent/jobs/take",
+        Fault::Body {
+            status: 200,
+            body: serde_json::to_vec(&with(job_json(), &json!({"buyerNip": "123"})))?,
+        },
+    );
+    let (_temporary, dir) = state_dir();
+    let mut agent = agent(&sim, &dir, &server)?;
+    let _delay = agent.step()?;
+    let reason = "Nieprawidłowe zadanie z Holuto: nieprawidłowy NIP nabywcy.";
+    assert_eq!(server.job(JOB_ID)["state"], "failed");
+    assert_eq!(server.job(JOB_ID)["result"], reason);
+    let operation = stored(&dir)?;
+    assert_eq!(operation.result, Some(JobResult::failed(reason)));
+    assert_eq!(
+        operation.device,
+        Device::NotStarted,
+        "validation precedes every fiscal command"
+    );
+    assert_eq!(sent(&sim, &RECEIPT_COMMANDS), Vec::<Vec<u8>>::new());
+    assert!(sim.receipts().is_empty(), "a refused claim never prints");
     Ok(())
 }
 
@@ -1057,9 +1094,9 @@ fn advance_allocation_and_named_mobile_payment_print_without_mutation() -> TestR
             "kind": "advance", "allocationId": ALLOCATION_ID,
             "total": "250.00", "payments": [{"form": "mobile", "amount": "250.00"}],
             "lines": [
-                {"name": "Zaliczka 23%", "quantity": "1", "unitPrice": "200.00",
+                {"name": "Zaliczka 23%", "quantity": "1", "unitPrice": "200",
                  "total": "200.00", "vatRate": "23", "vatLetter": "A"},
-                {"name": "Zaliczka 8%", "quantity": "1", "unitPrice": "50.00",
+                {"name": "Zaliczka 8%", "quantity": "1", "unitPrice": "50",
                  "total": "50.00", "vatRate": "8", "vatLetter": "B"}
             ]
         }),

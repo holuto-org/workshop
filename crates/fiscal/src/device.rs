@@ -89,8 +89,8 @@ pub struct Capabilities {
     pub max_quantity_decimals: u8,
     /// Every character the device prints unchanged, NFC. Text is never rewritten to fit.
     pub allowed_characters: String,
-    pub advance_deductions: bool,
-    pub zero_total_receipts: bool,
+    pub can_deduct_advances: bool,
+    pub can_print_zero_total_receipts: bool,
     pub company_footer: bool,
 }
 

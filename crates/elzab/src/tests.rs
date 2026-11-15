@@ -51,7 +51,7 @@ fn printer(sim: &Simulator) -> Printer {
 }
 fn receipt(advance: u64, footer: bool) -> Receipt {
     let mut caps = profile::lookup("ELZAB CUBE online").unwrap();
-    caps.zero_total_receipts = true;
+    caps.can_print_zero_total_receipts = true;
     let lines = vec![
         Line::new(
             "Łożysko",

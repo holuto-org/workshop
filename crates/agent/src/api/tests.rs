@@ -388,7 +388,7 @@ fn every_endpoint_uses_device_credentials_and_correct_serial_binding() -> TestRe
                 "vendor": "posnet", "uniqueNumber": "DEM0000000001",
                 "model": "POSNET TEMO ONLINE", "firmware": "32.01", "vatRates": [],
                 "capabilities": {
-                    "advanceDeductions": true, "zeroTotalReceipts": true,
+                    "canDeductAdvances": true, "canPrintZeroTotalReceipts": true,
                     "maxItemNameLength": 80, "maxCompanyNameLength": 40,
                     "maxLinesPerReceipt": 500, "maxQuantityDecimals": 8,
                     "allowedCharacters": "AĄa 1"

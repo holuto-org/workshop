@@ -12,13 +12,14 @@ all-features = true
 yanked = "deny"
 unsound = "all"
 unused-ignored-advisory = "deny"
-# Unmaintained, not vulnerable; required by Slint 1.18's fonts and Linux tray.
-# Remove as Slint upgrades. The desktop probe shares the tray's zbus 5.
+# Unmaintained, not vulnerable; required by Slint 1.18's fonts, Skia renderer and
+# Linux tray. Remove as Slint upgrades. The desktop probe shares the tray's zbus 5.
 ignore = [
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser via Slint's font stack" },
     { id = "RUSTSEC-2026-0370", reason = "zvariant via zbus 5 (Slint tray)" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names via zbus 5 (Slint tray)" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive via zbus 5 (Slint tray)" },
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils via spin_on (Slint Skia renderer)" },
 ]
 
 [licenses]
